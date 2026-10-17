@@ -38,6 +38,14 @@ $F status demo
 $F merge <changeId>                # fusiona fab/<id> en la rama actual del repo
 ```
 
+Panel interactivo (lista de changes, detalle con specs, eventos y aprobar/comentar/rechazar con el teclado):
+
+```bash
+$F tui demo                        # ↑↓ mover · enter detalle · a aprobar · c comentar · d rechazar · r reintentar · q salir
+```
+
+El pool (`fab run`) y el panel son procesos separados: deja uno corriendo en otra terminal.
+
 Otros comandos: `fab show <change>`, `fab retry <change>`, `fab reject <change>`, `fab events <ws>`.
 Opciones de `ws create`: `--concurrency N`, `--task-limit N`, `--no-change-approval`,
 `--no-spec-approval`.

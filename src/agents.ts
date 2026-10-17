@@ -26,7 +26,8 @@ const claude: AgentAdapter = {
     [
       'Read', 'Edit', 'Write', 'Glob', 'Grep',
       'Bash(git:*)', 'Bash(python3:*)', 'Bash(python:*)', 'Bash(pytest:*)',
-      'Bash(npm test:*)', 'Bash(bun test:*)', 'Bash(ls:*)', 'Bash(cat:*)',
+      'Bash(npm ci:*)', 'Bash(npm test:*)', 'Bash(npm run test:*)', 'Bash(npm run lint:*)', 'Bash(npx vitest:*)', 'Bash(npx tsc:*)',
+      'Bash(bun test:*)', 'Bash(ls:*)', 'Bash(cat:*)',
       // The user's global RTK hook rewrites `git ...`/`pytest ...` to `rtk git ...` before the
       // permission check, so the rewritten form must be allowed too.
       'Bash(rtk:*)',

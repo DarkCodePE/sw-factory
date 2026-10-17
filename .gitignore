@@ -5,3 +5,4 @@ node_modules/
 .fabrica/
 .serena/
 graft/
+.ignore

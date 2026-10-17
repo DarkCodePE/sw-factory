@@ -8,6 +8,7 @@ import { AGENT_NAMES } from './agents.ts';
 import type { ReviewDecision, WorkstreamState } from './enums.ts';
 import { runPool } from './pool.ts';
 import { Store, StoreError } from './store.ts';
+import { runTui } from './tui.ts';
 import { mergeAndCleanup, removeWorktree } from './worktrees.ts';
 
 const STATE_DIR = resolve(process.env.FABRICA_HOME ?? resolve(process.env.HOME ?? '.', '.fabrica'));
@@ -24,6 +25,7 @@ const HELP = `fab — fábrica de software local
   fab inbox [slug]
   fab review <activityId> <approve|comment|decline> [--comment <text>]
   fab run <slug> [--once] [--agent <name>]
+  fab tui <slug>                panel interactivo: changes, bandeja y eventos
   fab status <slug>
   fab show <changeId>
   fab merge <changeId>          fusiona la rama fab/<id> en el repo y cierra el change
@@ -149,6 +151,10 @@ async function main(argv: string[]): Promise<number> {
       }
       case 'run': {
         await runPool(store, { workstream: sub ?? '', stateDir: STATE_DIR, agentOverride: values.agent, untilIdle: !!values.once });
+        return 0;
+      }
+      case 'tui': {
+        await runTui(store, store.getWorkstream(sub ?? '').id);
         return 0;
       }
       case 'status': {
