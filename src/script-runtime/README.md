@@ -54,7 +54,14 @@ No se entregan objetos o funciones del host al programa: las APIs se construyen
 en su realm, los datos se serializan y el bootstrap se elimina antes de evaluar.
 No están disponibles require/process/Bun/fetch/WebAssembly/SharedArrayBuffer/
 Atomics; se impiden imports y generación dinámica de código. `globalThis` es el
-del contexto. `node:vm` y un proceso separado **no constituyen aislamiento del SO**:
-no se añaden namespaces/seccomp ni un límite de memoria del proceso. Las tools
-del padre son capacidades explícitas y deben aplicar su política de permisos;
-una tool ya despachada no se puede cancelar mediante esta API al vencer el timeout.
+del contexto. El worker utiliza el sandbox del SO (`required` o `best-effort`,
+por defecto), con sistema de archivos de solo lectura, directorio temporal privado
+y sin red; `sandbox: 'off'` permite desactivarlo explícitamente. El resultado
+`sandboxed` indica si se aplicó. No se limita la memoria del proceso.
+Las tools del padre son capacidades explícitas y deben aplicar permisos.
+Cada callback recibe además `{ signal }`: se cancela cuando termina la evaluación,
+incluidos timeout, error y aborto externo. Debe observar esa señal y liberar sus
+recursos; no es posible terminar JavaScript arbitrario del padre desde el worker.
+`runScript` recolecta el hijo y devuelve dentro del timeout; el llamador conserva
+la responsabilidad de drenar callbacks antes de reutilizar recursos compartidos.
+El puente del agente realiza ese drenaje antes de continuar o liberar la sesión.

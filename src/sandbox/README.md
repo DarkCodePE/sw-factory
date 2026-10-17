@@ -6,7 +6,7 @@ Módulo de contención y aislamiento para comandos ejecutados por los agentes de
 
 ## 1. Diseño y Modelo de Seguridad
 
-Este módulo proporciona aislamiento de procesos apoyándose en `bubblewrap` (`bwrap`), siguiendo los principios de contención analizados en el informe de referencia (`doc/droid-re/reports/07-sandbox-nativo-apply-seccomp.md`):
+Este módulo proporciona aislamiento de procesos apoyándose en `bubblewrap` (`bwrap`):
 
 1. **User Namespaces (`userns`)**: Creación de namespaces de usuario sin privilegios para aislar las identidades UID/GID.
 2. **Mount Namespaces (`CLONE_NEWNS`)**:

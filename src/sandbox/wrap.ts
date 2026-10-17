@@ -93,6 +93,11 @@ export async function wrapCommand(
     }
   }
 
+  // Read-only binds from one location to another (e.g. dependencies into a scratch copy)
+  for (const b of opts.readOnlyBinds ?? []) {
+    bwrapArgs.push('--ro-bind', path.resolve(b.source), path.resolve(b.target));
+  }
+
   // Namespaces and session lifecycle
   bwrapArgs.push(
     '--unshare-pid',

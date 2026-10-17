@@ -211,7 +211,7 @@ export class Store {
         slug: input.slug,
         goal: input.goal,
         repo: input.repo,
-        agent: input.agent ?? 'claude',
+        agent: input.agent ?? 'native',
         wc: input.workerConcurrency ?? 2,
         tl: input.taskLimit ?? 20,
         rca: input.requireChangeApproval ?? true ? 1 : 0,

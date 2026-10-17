@@ -13,6 +13,8 @@ export interface WrapCommandOptions {
   workdir: string;
   allowNetwork?: boolean;
   readOnlyPaths?: string[];
+  /** Mount `source` read-only at `target` (the target directory must already exist). Applied after the path binds. */
+  readOnlyBinds?: Array<{ source: string; target: string }>;
   writablePaths?: string[];
   env?: Record<string, string>;
   mode?: SandboxMode;

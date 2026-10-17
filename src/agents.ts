@@ -1,5 +1,7 @@
 // Headless coding-agent adapters. Each turns (prompt, cwd) into one non-interactive run.
 // The factory never edits code itself; it hands one activity to one agent run.
+import { fileURLToPath } from 'node:url';
+import { reportStatusLine } from './prompts.ts';
 
 export interface AgentRun {
   ok: boolean;
@@ -10,7 +12,7 @@ export interface AgentRun {
 
 export interface AgentAdapter {
   name: string;
-  command(prompt: string): string[];
+  command(prompt: string, options?: { readOnly?: boolean }): string[];
   env?(): Record<string, string>;
 }
 
@@ -45,7 +47,7 @@ const codex: AgentAdapter = {
 /**
  * Factory's droid CLI in airgap mode with a bring-your-own model.
  * Requires FABRICA_DROID_HOME (a home dir whose .factory/settings.json defines customModels)
- * and FABRICA_DROID_MODEL (e.g. custom:qwen-capture). See doc/droid-re/reports/05.
+ * and FABRICA_DROID_MODEL (e.g. custom:qwen-capture).
  */
 const droid: AgentAdapter = {
   name: 'droid',
@@ -79,24 +81,47 @@ const fake: AgentAdapter = {
   ],
 };
 
-const ADAPTERS: Record<string, AgentAdapter> = { claude, codex, droid, fake };
+const native: AgentAdapter = {
+  name: 'native',
+  command: (prompt, options) => [process.execPath, '--no-env-file',
+    fileURLToPath(new URL('./agent/exec.ts', import.meta.url)),
+    '--require-status',
+    '--auto', process.env.FABRICA_AGENT_AUTONOMY ?? 'medium',
+    ...(process.env.FABRICA_AGENT_SETTINGS ? ['--settings', process.env.FABRICA_AGENT_SETTINGS] : []),
+    ...(process.env.FABRICA_AGENT_TIMEOUT_MS ? ['--timeout-ms', process.env.FABRICA_AGENT_TIMEOUT_MS] : []),
+    ...(process.env.FABRICA_AGENT_MAX_TURNS ? ['--max-turns', process.env.FABRICA_AGENT_MAX_TURNS] : []),
+    ...(options?.readOnly ? ['--use-spec'] : []), prompt],
+};
+
+const ADAPTERS: Record<string, AgentAdapter> = { claude, codex, droid, native, fake };
 
 export function getAgent(name: string): AgentAdapter {
-  const a = ADAPTERS[name];
+  const a = Object.hasOwn(ADAPTERS, name) ? ADAPTERS[name] : undefined;
   if (!a) throw new Error(`unknown agent "${name}" (available: ${Object.keys(ADAPTERS).join(', ')})`);
   return a;
 }
 
 export const AGENT_NAMES = Object.keys(ADAPTERS);
 
+/** Preserve the factory decision line when retaining a bounded report tail. */
+export function boundedAgentOutput(text: string): string {
+  const max = 20_000;
+  const output = text.trim();
+  if (output.length <= max) return output;
+  const status = reportStatusLine(output) ?? 'STATUS: blocked - report has no STATUS line';
+  const prefix = status.slice(0, 1024) + '\n\n[Report body truncated]\n';
+  return prefix + output.slice(-(max - prefix.length));
+}
+
 export async function runAgent(
   agent: AgentAdapter,
   prompt: string,
   cwd: string,
-  timeoutMs = 20 * 60_000
+  timeoutMs = 20 * 60_000,
+  options: { readOnly?: boolean } = {}
 ): Promise<AgentRun> {
   const start = Date.now();
-  const proc = Bun.spawn(agent.command(prompt), {
+  const proc = Bun.spawn(agent.command(prompt, options), {
     cwd,
     env: { ...process.env, ...(agent.env?.() ?? {}) },
     stdin: 'ignore',
@@ -110,6 +135,6 @@ export async function runAgent(
     proc.exited,
   ]);
   clearTimeout(timer);
-  const output = (stdout.trim() || stderr.trim()).slice(-20_000);
+  const output = boundedAgentOutput(stdout.trim() || stderr.trim());
   return { ok: exitCode === 0 && output.length > 0, output, exitCode, durationMs: Date.now() - start };
 }

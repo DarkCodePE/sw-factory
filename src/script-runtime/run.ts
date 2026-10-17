@@ -39,6 +39,7 @@ export async function runScript(opts: RunScriptOptions): Promise<RunScriptResult
   let scratch: string | undefined;
   const failure = (error: ScriptError): RunScriptResult => ({ ok: false, error, content, notifications, sandboxed });
   try {
+    if (opts.signal?.aborted) return failure({ origin: 'runtime', message: 'Script aborted' });
     if (!opts || typeof opts.code !== 'string') throw new Error('Script code must be a string');
     const limits = resolveLimits(opts.limits);
     const timeoutMs = opts.timeoutMs ?? DEFAULT_TIMEOUT_MS;
@@ -71,6 +72,7 @@ export async function runScript(opts: RunScriptOptions): Promise<RunScriptResult
       sandboxed = !wrapped.degraded;
       cwd = scratch;
     }
+    if (opts.signal?.aborted) return failure({ origin: 'runtime', message: 'Script aborted' });
     const child = Bun.spawn(argv, {
       env,
       cwd,
@@ -84,10 +86,13 @@ export async function runScript(opts: RunScriptOptions): Promise<RunScriptResult
       const pending = new Set<string>();
       const usedIds = new Set<string>();
       let writes = Promise.resolve();
+      const calls = new AbortController();
       const finish = (answer: RunScriptResult) => {
         if (finished) return;
         finished = true;
+        calls.abort(new Error('Script evaluation ended'));
         clearTimeout(deadline);
+        opts.signal?.removeEventListener('abort', abort);
         // SIGKILL also stops synchronous loops and VM microtask starvation.
         try { child.kill('SIGKILL'); } catch { /* Already exited. */ }
         void child.exited.then(() => resolve(answer), () => resolve(answer));
@@ -99,6 +104,9 @@ export async function runScript(opts: RunScriptOptions): Promise<RunScriptResult
       const deadline = setTimeout(() => finish(failure({
         origin: 'timeout', message: 'Script total timeout exceeded',
       })), Math.max(0, timeoutMs - (performance.now() - startedAt)));
+      const abort = () => finish(failure({ origin: 'runtime', message: 'Script aborted' }));
+      opts.signal?.addEventListener('abort', abort, { once: true });
+      if (opts.signal?.aborted) abort();
 
       const write = (frame: unknown) => {
         // Serialize before enqueueing; callbacks cannot change the queued payload.
@@ -127,7 +135,7 @@ export async function runScript(opts: RunScriptOptions): Promise<RunScriptResult
         pending.add(toolUseId);
         void Promise.resolve().then(() => {
           if (finished) return;
-          return tools.get(toolName)!(frame.input);
+          return tools.get(toolName)!(frame.input, { signal: calls.signal });
         }).then(value => {
           if (!finished) write({ type: 'tool_result', toolUseId, isError: false, content: value ?? null });
         }, error => {
