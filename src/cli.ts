@@ -8,6 +8,9 @@ import { AGENT_NAMES } from './agents.ts';
 import type { ReviewDecision, WorkstreamState } from './enums.ts';
 import { runPool } from './pool.ts';
 import { Store, StoreError } from './store.ts';
+import { sandboxReport } from './sandbox/index.ts';
+import { runScript } from './script-runtime/index.ts';
+import { openSearch } from './search/index.ts';
 import { runTui } from './tui.ts';
 import { mergeAndCleanup, removeWorktree } from './worktrees.ts';
 
@@ -32,6 +35,7 @@ const HELP = `fab — fábrica de software local
   fab retry <changeId>          re-encola la última actividad de un change fallido
   fab reject <changeId>         cancela el change y borra su worktree
   fab events <slug>
+  fab doctor                    estado del sandbox, del runtime de Script y de la búsqueda
 
 Estado en ${STATE_DIR} (cambiar con FABRICA_HOME). Agentes: ${AGENT_NAMES.join(', ')}`;
 
@@ -201,6 +205,15 @@ async function main(argv: string[]): Promise<number> {
         await removeWorktree(store.getWorkstream(c.workstreamId).repo, STATE_DIR, c.id);
         store.closeChange(c.id, 'canceled');
         console.log(`change ${short(c.id)} cancelado`);
+        return 0;
+      }
+      case 'doctor': {
+        console.log(await sandboxReport(true));
+        const script = await runScript({ code: 'return 6 * 7;', tools: {} });
+        console.log(`script runtime: ${script.ok && script.output === 42 ? 'ok' : 'FALLA'} (sandboxed=${script.sandboxed})`);
+        const search = await openSearch(process.cwd());
+        console.log(`búsqueda: ${search.name}`);
+        search.close();
         return 0;
       }
       case 'events': {

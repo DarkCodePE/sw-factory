@@ -1,4 +1,9 @@
+import { mkdtempSync, rmSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
+
+import { wrapCommand } from '../sandbox/index.ts';
 import {
   DEFAULT_TIMEOUT_MS, RuntimeFailure, contentBytes, encodeFrame, errorMessage,
   isContent, readFrames, record, resolveLimits,
@@ -30,7 +35,9 @@ export async function runScript(opts: RunScriptOptions): Promise<RunScriptResult
   const startedAt = performance.now();
   const content: ScriptContent[] = [];
   const notifications: string[] = [];
-  const failure = (error: ScriptError): RunScriptResult => ({ ok: false, error, content, notifications });
+  let sandboxed = false;
+  let scratch: string | undefined;
+  const failure = (error: ScriptError): RunScriptResult => ({ ok: false, error, content, notifications, sandboxed });
   try {
     if (!opts || typeof opts.code !== 'string') throw new Error('Script code must be a string');
     const limits = resolveLimits(opts.limits);
@@ -44,12 +51,29 @@ export async function runScript(opts: RunScriptOptions): Promise<RunScriptResult
     if (performance.now() - startedAt >= timeoutMs) {
       return failure({ origin: 'timeout', message: 'Script total timeout exceeded' });
     }
-    const child = Bun.spawn([
+    const workerArgv = [
       process.execPath, '--no-env-file', fileURLToPath(new URL('./worker.ts', import.meta.url)),
       JSON.stringify(limits),
-    ], {
-      env: { PATH: process.env.PATH ?? '' },
-      cwd: fileURLToPath(new URL('.', import.meta.url)),
+    ];
+    let argv = workerArgv;
+    const env = { PATH: process.env.PATH ?? '' };
+    let cwd = fileURLToPath(new URL('.', import.meta.url));
+    if ((opts.sandbox ?? 'best-effort') !== 'off') {
+      // The VM context is not a security boundary on its own; the worker process itself runs
+      // inside the OS sandbox: read-only system, private /tmp, no network, empty environment.
+      scratch = mkdtempSync(join(tmpdir(), 'fab-script-'));
+      const wrapped = await wrapCommand(workerArgv, {
+        workdir: scratch,
+        env,
+        mode: opts.sandbox === 'required' ? 'required' : 'best-effort',
+      });
+      argv = wrapped.argv;
+      sandboxed = !wrapped.degraded;
+      cwd = scratch;
+    }
+    const child = Bun.spawn(argv, {
+      env,
+      cwd,
       stdin: 'pipe', stdout: 'pipe', stderr: 'ignore',
     });
 
@@ -157,7 +181,7 @@ export async function runScript(opts: RunScriptOptions): Promise<RunScriptResult
                 if (Buffer.byteLength(JSON.stringify(frame.output)) > limits.maxResultBytes) {
                   throw new RuntimeFailure('output_limit', 'Script result limit exceeded');
                 }
-                finish({ ok: true, output: frame.output, content, notifications });
+                finish({ ok: true, output: frame.output, content, notifications, sandboxed });
                 break;
               }
               default: throw new Error('Unknown Script worker frame');
@@ -169,5 +193,7 @@ export async function runScript(opts: RunScriptOptions): Promise<RunScriptResult
     });
   } catch (error) {
     return failure({ origin: error instanceof RuntimeFailure ? error.origin : 'runtime', message: errorMessage(error) });
+  } finally {
+    if (scratch) rmSync(scratch, { recursive: true, force: true });
   }
 }
