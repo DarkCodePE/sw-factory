@@ -25,7 +25,7 @@ export async function processActivity(store: Store, activity: Activity, workerId
     store.setChangeBranch(change.id, branch);
     const prompt = buildWorkerPrompt({ workstream: ws, change, activity: a, history, worktree: path, branch });
     log(`[${workerId}] ${a.kind} "${change.title}" -> ${agent.name} in ${path}`);
-    const run = await runAgent(agent, prompt, path);
+    const run = await runAgent(agent, prompt, path, undefined, { readOnly: a.kind === 'investigation' });
     const status = parseReportStatus(run.output);
     if (!run.ok) {
       store.failActivity(a.id, workerId, `agent exit ${run.exitCode}: ${run.output.slice(-1000)}`);

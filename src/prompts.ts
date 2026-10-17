@@ -64,10 +64,20 @@ ${SHARED_RULES}`;
 }
 
 /** The first report line decides success; anything else counts as blocked. */
+export function reportStatusLine(output: string): string | undefined {
+  return output.split('\n').map(line => line.trim().replace(/^#{1,6}\s+/, '').replace(/\*/g, '').trim())
+    .find(line => /^STATUS:/i.test(line));
+}
+
+export function validateReportStatus(output: string): string | undefined {
+  const line = reportStatusLine(output);
+  return line && /^STATUS:\s*(?:done\s*|blocked\s*-\s*\S.*)$/i.test(line)
+    ? undefined : 'Include a first STATUS line containing exactly STATUS: done or STATUS: blocked - <reason>.';
+}
+
 export function parseReportStatus(output: string): { done: boolean; reason: string } {
-  const line = output.split('\n').find((l) => /^\**STATUS:/i.test(l.trim()));
+  const line = reportStatusLine(output);
   if (!line) return { done: false, reason: 'report has no STATUS line' };
-  const clean = line.replace(/\*/g, '').trim();
-  if (/^STATUS:\s*done/i.test(clean)) return { done: true, reason: '' };
-  return { done: false, reason: clean.replace(/^STATUS:\s*/i, '') };
+  if (/^STATUS:\s*done\s*$/i.test(line)) return { done: true, reason: '' };
+  return { done: false, reason: line.replace(/^STATUS:\s*/i, '') };
 }

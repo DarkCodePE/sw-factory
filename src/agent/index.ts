@@ -1,0 +1,5 @@
+export { runCodingAgent, listConfiguredToolCatalog } from './engine.ts';
+export { createOpenAICompatibleProvider, ProviderError } from './provider.ts';
+export { ExecRpc, serveExecRpc, type RpcOptions } from './rpc.ts';
+export { McpManager, type McpConfig, type McpServerConfig } from './mcp.ts';
+export type * from './types.ts';

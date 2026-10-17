@@ -18,8 +18,10 @@ export interface ScriptLimits {
 
 export interface RunScriptOptions {
   code: string;
-  tools: Record<string, (input: unknown) => Promise<unknown>>;
+  /** Host callbacks must observe signal for cancellation; arbitrary host JS cannot be killed by the worker. */
+  tools: Record<string, (input: unknown, context: { signal: AbortSignal }) => Promise<unknown>>;
   timeoutMs?: number;
+  signal?: AbortSignal;
   limits?: ScriptLimits;
   /** OS isolation for the worker process (default 'best-effort'): bwrap without network. */
   sandbox?: 'required' | 'best-effort' | 'off';

@@ -13,12 +13,13 @@ import { runScript } from './script-runtime/index.ts';
 import { openSearch } from './search/index.ts';
 import { runTui } from './tui.ts';
 import { mergeAndCleanup, removeWorktree } from './worktrees.ts';
+import { execMain } from './agent/exec.ts';
 
 const STATE_DIR = resolve(process.env.FABRICA_HOME ?? resolve(process.env.HOME ?? '.', '.fabrica'));
 
 const HELP = `fab — fábrica de software local
 
-  fab ws create <slug> --repo <path> --goal <text> [--agent claude|codex|droid|fake]
+  fab ws create <slug> --repo <path> --goal <text> [--agent ${AGENT_NAMES.join('|')}]
                 [--concurrency N] [--task-limit N] [--no-change-approval] [--no-spec-approval]
   fab ws list
   fab ws state <slug> <active|paused|archived>
@@ -35,9 +36,11 @@ const HELP = `fab — fábrica de software local
   fab retry <changeId>          re-encola la última actividad de un change fallido
   fab reject <changeId>         cancela el change y borra su worktree
   fab events <slug>
+  fab exec [prompt]             agente propio; fab exec --help para opciones
   fab doctor                    estado del sandbox, del runtime de Script y de la búsqueda
 
-Estado en ${STATE_DIR} (cambiar con FABRICA_HOME). Agentes: ${AGENT_NAMES.join(', ')}`;
+Estado en ${STATE_DIR} (cambiar con FABRICA_HOME). Agente predeterminado: native.
+Agentes: ${AGENT_NAMES.join(', ')}`;
 
 function openStore(): Store {
   mkdirSync(STATE_DIR, { recursive: true });
@@ -61,6 +64,7 @@ function allChanges(store: Store) {
 }
 
 async function main(argv: string[]): Promise<number> {
+  if (argv[0] === 'exec') return execMain(argv.slice(1));
   const { values, positionals } = parseArgs({
     args: argv,
     allowPositionals: true,

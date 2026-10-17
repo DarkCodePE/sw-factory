@@ -1,6 +1,5 @@
 // Domain vocabulary for the local software factory.
-// Values follow the workstream -> signal -> change -> activity design described in
-// doc/droid-re/reports/01-software-factory-y-missions.md.
+// Values follow the workstream -> signal -> change -> activity pipeline.
 
 export const WorkstreamState = {
   Draft: 'draft',
