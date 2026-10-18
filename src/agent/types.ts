@@ -41,6 +41,14 @@ export interface ToolContext {
   toolUseId?: string;
   missionDir?: string;
   missionReadOnly?: boolean;
+  fileJournal?: FileJournal;
+}
+export interface FileSnapshot { data: Uint8Array; mode: number }
+export interface FileMutation { path: string; before?: FileSnapshot; after: Uint8Array; mode: number }
+/** Trusted host-only observer; called at the anchored write boundary, including Script callbacks. */
+export interface FileJournal {
+  prepare(change: FileMutation, context: ToolContext): Promise<(applied: FileSnapshot) => Promise<void>>;
+  barrier(toolName: string, context: ToolContext): Promise<void>;
 }
 export interface AgentTool {
   schema: ToolSchema;
@@ -49,7 +57,7 @@ export interface AgentTool {
   run(input: unknown, context: ToolContext): Promise<unknown>;
 }
 export interface AgentEvent {
-  type: 'init' | 'assistant_delta' | 'assistant' | 'tool_call' | 'tool_result' | 'compaction' | 'result' | 'error' |
+  type: 'init' | 'usage' | 'assistant_delta' | 'assistant' | 'tool_call' | 'tool_result' | 'compaction' | 'result' | 'error' |
     'mission_state_changed' | 'mission_worker_started' | 'mission_worker_completed';
   sessionId: string;
   [key: string]: unknown;
@@ -82,6 +90,7 @@ export interface AgentOptions {
   onEvent?: (event: AgentEvent) => void;
   beforeTool?: (call: ToolCall) => Promise<boolean>;
   afterTool?: (call: ToolCall, result: unknown, isError: boolean) => Promise<void>;
+  fileJournal?: FileJournal;
   /** A reason rejects the final answer and asks the model to repair it within the recovery budget. */
   validateFinal?: (text: string) => string | undefined | Promise<string | undefined>;
   mission?: { workerProvider?: ModelProvider; validatorProvider?: ModelProvider };

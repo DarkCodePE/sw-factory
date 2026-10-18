@@ -1,0 +1,451 @@
+{
+  "date": "2026-10-18 05:44:08 UTC",
+  "scope": "Local CLI/TUI implementation and offline validation; not complete Droid parity or a release authorization.",
+  "authority": {
+    "type": "user-task",
+    "decision": "Implement own CLI/TUI and inspect Droid with REA",
+    "writer": "Codex /root",
+    "workspace": "/home/orlando/Desktop/factory/sw-factory-tui",
+    "isolationReason": "A second process changed sw-factory-agent during inspection; own edits performed only in the separate worktree.",
+    "commitPushMergeOrGlobalInstall": false
+  },
+  "branch": "feat/droid-tui",
+  "base": "c2be50bd4190118e15b6048e3e384662d02f26e3",
+  "dirty": true,
+  "preexistingCorrections": {
+    "copiedFrom": "/home/orlando/Desktop/factory/sw-factory-agent",
+    "paths": [
+      "src/agent/chatgpt.ts",
+      "src/agent/engine.ts",
+      "src/agent/provider.ts",
+      "tests/agent-chatgpt.test.ts"
+    ],
+    "description": "R-01/R-02/R-09 corrections already being written by the other writer, preserved before this implementation."
+  },
+  "source": {
+    "sha256": "8e9524f800354697f96e62fe0d03d7fe3f732e4e514d9377bf39a47284d41830",
+    "fileCount": 55,
+    "scope": [
+      "src/**/*.ts",
+      "package.json",
+      "tsconfig.json"
+    ],
+    "algorithm": "SHA256 of compact sorted-key JSON mapping each POSIX relative filename to SHA256 of its bytes.",
+    "bunLockSha256": "0389f9adb1ffe7b26f7b41ff0ac68a816d3958ebe21262ac8c523ea4b2c51e5b",
+    "limitation": "Does not fingerprint all installed node_modules; dependencies reused locally without installation."
+  },
+  "checks": [
+    {
+      "command": "bun test",
+      "exit": 0,
+      "pass": 145,
+      "fail": 0,
+      "expect": 579,
+      "files": 15,
+      "durationSeconds": 14.98
+    },
+    {
+      "command": "bunx --no-install tsc --noEmit -p .",
+      "exit": 0
+    },
+    {
+      "command": "git diff --check",
+      "exit": 0
+    }
+  ],
+  "build": {
+    "command": "bun build --compile --no-compile-autoload-dotenv --no-compile-autoload-bunfig src/cli.ts --outfile dist/fab",
+    "exit": 0,
+    "bunVersion": "1.3.14",
+    "platform": "linux-x64",
+    "artifact": "dist/fab",
+    "sha256": "fa2f0bd5bd9532cb5121c546b5a7749bc18d14747a8bf8478593823bbdbaaa4d"
+  },
+  "compiledProbe": {
+    "command": "bun scripts/probe-compiled-cli.ts ./dist/fab",
+    "exit": 0,
+    "binary": "/home/orlando/Desktop/factory/sw-factory-tui/dist/fab",
+    "sha256": "fa2f0bd5bd9532cb5121c546b5a7749bc18d14747a8bf8478593823bbdbaaa4d",
+    "results": [
+      {
+        "case": "callback",
+        "exit": 0,
+        "ok": true,
+        "sandboxedCallbackObserved": true,
+        "toolCalls": 1,
+        "durationMs": 111
+      },
+      {
+        "case": "timeout",
+        "exit": 1,
+        "ok": false,
+        "error": "timeout",
+        "sandboxedCallbackObserved": false,
+        "toolCalls": 1,
+        "durationMs": 1010
+      }
+    ]
+  },
+  "rea": {
+    "modelMenuAndShortcuts": {
+      "evidenceId": "ev_61b924034750d3489dcea8402ed2eb72024469ee106a125e2bf511c8bc8a0280",
+      "exit": {
+        "code": 0,
+        "signal": 0,
+        "reason": "exited"
+      },
+      "truncated": false,
+      "scenario": {
+        "executable": "/usr/bin/bwrap",
+        "arguments": [
+          "--ro-bind",
+          "/",
+          "/",
+          "--dev",
+          "/dev",
+          "--proc",
+          "/proc",
+          "--tmpfs",
+          "/tmp",
+          "--bind",
+          "/tmp/fab-droid-parity.YACmqF",
+          "/tmp/fab-droid-parity.YACmqF",
+          "--chdir",
+          "/tmp/fab-droid-parity.YACmqF/workspace",
+          "--unshare-pid",
+          "--unshare-ipc",
+          "--unshare-uts",
+          "--unshare-net",
+          "--die-with-parent",
+          "--new-session",
+          "--clearenv",
+          "--setenv",
+          "PATH",
+          "/usr/local/bin:/usr/bin:/bin",
+          "--setenv",
+          "HOME",
+          "/tmp/fab-droid-parity.YACmqF/home",
+          "--setenv",
+          "FACTORY_HOME_OVERRIDE",
+          "/tmp/fab-droid-parity.YACmqF/home",
+          "--setenv",
+          "FACTORY_AIRGAP_ENABLED",
+          "1",
+          "--setenv",
+          "FACTORY_API_KEY",
+          "",
+          "--setenv",
+          "FABRICA_HOME",
+          "/tmp/fab-droid-parity.YACmqF/fab-home",
+          "--setenv",
+          "FABRICA_AGENT_SETTINGS",
+          "/tmp/fab-droid-parity.YACmqF/fab-settings.json",
+          "--",
+          "/home/orlando/Desktop/factory/sw-factory-tui/dist/fab",
+          "tui",
+          "-m",
+          "custom:offline",
+          "--auto",
+          "off"
+        ],
+        "working_directory": "/home/orlando/Desktop/factory",
+        "environment": {},
+        "filesystem_observation_paths": [],
+        "terminal": {
+          "columns": 125,
+          "rows": 32,
+          "scrollback": 160
+        },
+        "events": [
+          {
+            "at_ms": 450,
+            "type": "input",
+            "data": "/model\r",
+            "sensitive": false
+          },
+          {
+            "at_ms": 900,
+            "type": "input",
+            "data": "\u001b[B\u001b[B\r",
+            "sensitive": false
+          },
+          {
+            "at_ms": 1300,
+            "type": "input",
+            "data": "/mode spec\r",
+            "sensitive": false
+          },
+          {
+            "at_ms": 1700,
+            "type": "input",
+            "data": "\u001b[Z",
+            "sensitive": false
+          },
+          {
+            "at_ms": 2100,
+            "type": "input",
+            "data": "\u000e",
+            "sensitive": false
+          },
+          {
+            "at_ms": 2500,
+            "type": "input",
+            "data": "\f",
+            "sensitive": false
+          },
+          {
+            "at_ms": 2900,
+            "type": "input",
+            "data": "/status\r",
+            "sensitive": false
+          },
+          {
+            "at_ms": 3300,
+            "type": "input",
+            "data": "/exit\r",
+            "sensitive": false
+          }
+        ],
+        "timeout_ms": 4800,
+        "idle_timeout_ms": 30000,
+        "settle_ms": 100,
+        "limits": {
+          "output_bytes": 200000,
+          "files": 10000,
+          "file_bytes": 10000000,
+          "processes": 1000,
+          "filesystem_depth": 16
+        },
+        "normalization": {
+          "paths": false,
+          "pids": true,
+          "ports": true,
+          "time_bucket_ms": 10,
+          "patterns": []
+        },
+        "finalization_ms": 300,
+        "executable_sha256": "e318903862396f96de3df57264e0158682b952fd3fb53ac23d876413e7b30f71"
+      },
+      "lastScreen": [
+        "╭─ fab · agente propio ───────────────────────────────",
+        "custom:offline · auto · auto off · /tmp/fab-droid-parity.YACmqF/workspace · sesión (nueva)",
+        "╰─ / o Tab: comandos · /mode: auto/spec/mission · Ctrl+C: cancelar",
+        "fab [auto/off] › /model",
+        "Modelo (cancela con Enter; /model <id> admite otro ID)",
+        "  1. custom:offline",
+        "  2. custom:second",
+        "Número (↑↓ y Enter, vacío cancela): 2",
+        "custom:second · auto · auto off · /tmp/fab-droid-parity.YACmqF/workspace · sesión (nueva)",
+        "fab [auto/off] › /mode spec",
+        "custom:second · spec · auto off · /tmp/fab-droid-parity.YACmqF/workspace · sesión (nueva)",
+        "fab [spec/off] ›",
+        "custom:second · auto · auto off · /tmp/fab-droid-parity.YACmqF/workspace · sesión (nueva)",
+        "fab [auto/off] ›",
+        "custom:offline · auto · auto off · /tmp/fab-droid-parity.YACmqF/workspace · sesión (nueva)",
+        "fab [auto/off] ›",
+        "custom:offline · auto · auto low · /tmp/fab-droid-parity.YACmqF/workspace · sesión (nueva)",
+        "fab [auto/low] › /status",
+        "custom:offline · auto · auto low · /tmp/fab-droid-parity.YACmqF/workspace · sesión (nueva)",
+        "fab [auto/low] › /exit",
+        "",
+        "",
+        "",
+        "",
+        "",
+        "",
+        "",
+        "",
+        "",
+        "",
+        "",
+        ""
+      ],
+      "limitations": [
+        "Artifact identity is unavailable for this observation.",
+        "The executable digest is a prelaunch file sample; matching path metadata immediately after spawn does not prove an atomic operating-system image binding.",
+        "Process trees are sampled and may omit short-lived descendants.",
+        "Filesystem observations are before/after snapshots, not syscall traces.",
+        "Inherited host environment variables are not recorded and may affect results.",
+        "No filesystem observation paths were selected; filesystem effects remain unknown."
+      ]
+    },
+    "dashboardToAgentAndBack": {
+      "evidenceId": "ev_473748e822c5a72fc092ca8a612d1ecf2047a2e0d346392d958afe02e06c52dd",
+      "exit": {
+        "code": 0,
+        "signal": 0,
+        "reason": "exited"
+      },
+      "truncated": false,
+      "scenario": {
+        "executable": "/usr/bin/bwrap",
+        "arguments": [
+          "--ro-bind",
+          "/",
+          "/",
+          "--dev",
+          "/dev",
+          "--proc",
+          "/proc",
+          "--tmpfs",
+          "/tmp",
+          "--bind",
+          "/tmp/fab-droid-parity.YACmqF",
+          "/tmp/fab-droid-parity.YACmqF",
+          "--chdir",
+          "/tmp/fab-droid-parity.YACmqF/workspace",
+          "--unshare-pid",
+          "--unshare-ipc",
+          "--unshare-uts",
+          "--unshare-net",
+          "--die-with-parent",
+          "--new-session",
+          "--clearenv",
+          "--setenv",
+          "PATH",
+          "/usr/local/bin:/usr/bin:/bin",
+          "--setenv",
+          "HOME",
+          "/tmp/fab-droid-parity.YACmqF/home",
+          "--setenv",
+          "FACTORY_HOME_OVERRIDE",
+          "/tmp/fab-droid-parity.YACmqF/home",
+          "--setenv",
+          "FACTORY_AIRGAP_ENABLED",
+          "1",
+          "--setenv",
+          "FACTORY_API_KEY",
+          "",
+          "--setenv",
+          "FABRICA_HOME",
+          "/tmp/fab-droid-parity.YACmqF/dashboard-home",
+          "--setenv",
+          "FABRICA_AGENT_SETTINGS",
+          "/tmp/fab-droid-parity.YACmqF/fab-settings.json",
+          "--",
+          "/home/orlando/Desktop/factory/sw-factory-tui/dist/fab",
+          "tui",
+          "demo"
+        ],
+        "working_directory": "/home/orlando/Desktop/factory",
+        "environment": {},
+        "filesystem_observation_paths": [],
+        "terminal": {
+          "columns": 125,
+          "rows": 32,
+          "scrollback": 160
+        },
+        "events": [
+          {
+            "at_ms": 450,
+            "type": "input",
+            "data": "g",
+            "sensitive": false
+          },
+          {
+            "at_ms": 1000,
+            "type": "input",
+            "data": "/status\r",
+            "sensitive": false
+          },
+          {
+            "at_ms": 1500,
+            "type": "input",
+            "data": "/exit\r",
+            "sensitive": false
+          },
+          {
+            "at_ms": 2400,
+            "type": "input",
+            "data": "q",
+            "sensitive": false
+          }
+        ],
+        "timeout_ms": 4800,
+        "idle_timeout_ms": 30000,
+        "settle_ms": 100,
+        "limits": {
+          "output_bytes": 200000,
+          "files": 10000,
+          "file_bytes": 10000000,
+          "processes": 1000,
+          "filesystem_depth": 16
+        },
+        "normalization": {
+          "paths": false,
+          "pids": true,
+          "ports": true,
+          "time_bucket_ms": 10,
+          "patterns": []
+        },
+        "finalization_ms": 300,
+        "executable_sha256": "e318903862396f96de3df57264e0158682b952fd3fb53ac23d876413e7b30f71"
+      },
+      "lastScreen": [
+        "╭─ fab · agente propio ───────────────────────────────",
+        "custom:offline · auto · auto off · /tmp/fab-droid-parity.YACmqF/workspace · sesión (nueva)",
+        "╰─ / o Tab: comandos · /mode: auto/spec/mission · Ctrl+C: cancelar",
+        "fab [auto/off] › /status",
+        "custom:offline · auto · auto off · /tmp/fab-droid-parity.YACmqF/workspace · sesión (nueva)",
+        "fab [auto/off] › /exit",
+        "",
+        "",
+        "",
+        "",
+        "",
+        "",
+        "",
+        "",
+        "",
+        "",
+        "",
+        "",
+        "",
+        "",
+        "",
+        "",
+        "",
+        "",
+        "",
+        "",
+        "",
+        "",
+        "",
+        "",
+        "",
+        ""
+      ],
+      "limitations": [
+        "Artifact identity is unavailable for this observation.",
+        "The executable digest is a prelaunch file sample; matching path metadata immediately after spawn does not prove an atomic operating-system image binding.",
+        "Process trees are sampled and may omit short-lived descendants.",
+        "Filesystem observations are before/after snapshots, not syscall traces.",
+        "Inherited host environment variables are not recorded and may affect results.",
+        "No filesystem observation paths were selected; filesystem effects remain unknown."
+      ]
+    }
+  },
+  "regressionsObservedAndFixed": [
+    {
+      "evidenceId": "ev_463f6a96e3138c10bf69da8c5adc27c332a9cbe5b64b0d5b425ff8f4d98314fb",
+      "issue": "Shift+Tab inserted an extra slash; input routing now consumes shortcuts before readline completion."
+    },
+    {
+      "evidenceId": "ev_8231b87fdb6fb8057c1d64464d8ba43a8a798639c099e5d1ba94f8b992442a52",
+      "issue": "stdin remained paused when opening the agent from dashboard; listener attachment/resume lifecycle fixed."
+    }
+  ],
+  "coverage": {
+    "droidSlashNamesObserved": 44,
+    "ownCommandEntries": 45,
+    "localCommandEntries": 31,
+    "explicitlyUnavailableEntries": 14,
+    "note": "These counts are inventories, not a parity score. MCP, skills and /droids expose bounded own capabilities."
+  },
+  "limitations": [
+    "No production model calls or paid external services tested.",
+    "No Factory login/sharing/remote automation backend, plugin marketplace, effect rewind, ACP or daemon compatibility.",
+    "Linux x64 only; no global installation, deployment or publication.",
+    "The original full CLI review still contains unrelated backend findings outside this interface work."
+  ]
+}

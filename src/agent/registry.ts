@@ -73,8 +73,9 @@ export class ToolRuntime {
         if (outcome !== 'proceed_once') throw new Error('Tool execution cancelled by caller');
         granted = true;
       }
-      const run = () => {
+      const run = async () => {
         if (opts.missionWorker?.sealed() && ['write', 'execute'].includes(t.effect)) throw new Error('Worker workspace mutation is closed after EndFeatureRun');
+        if (t.effect !== 'read' && !['Edit', 'Create', 'Script'].includes(name)) await context.fileJournal?.barrier(name, context);
         return t.run(input, { ...context, signal, toolUseId: actual.id, ...(granted ? { autonomy: 'high' as const } : {}) });
       };
       const work = ['Script', 'TaskOutput', 'TaskStop', 'InterruptAgent'].includes(name) ? run() : scheduler.run(t.effect === 'read', signal, run);

@@ -1,147 +1,84 @@
-// `fab` with no arguments: an interactive terminal chat with the fab coding agent.
-// Each prompt is one agent run on the same persisted session, so the conversation continues.
-import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
-import { homedir } from 'node:os';
-import { join, resolve } from 'node:path';
-import * as readline from 'node:readline/promises';
+import { existsSync, statSync } from 'node:fs';
+import { readFile, realpath } from 'node:fs/promises';
+import { resolve } from 'node:path';
+import { parseArgs } from 'node:util';
+import { loadExecSettings } from './agent/settings.ts';
+import { AUTONOMIES, chatHome, loadChatConfig, terminalText } from './chat/config.ts';
+import { ChatController } from './chat/controller.ts';
+import { TerminalInput } from './chat/terminal.ts';
+import { commandHelp } from './chat/commands.ts';
 
-import { runCodingAgent } from './agent/engine.ts';
-import { defaultAuthFile } from './agent/chatgpt.ts';
-import { configuredProviders, loadExecSettings } from './agent/settings.ts';
-import type { AgentEvent, Autonomy, PermissionRequest } from './agent/types.ts';
-
-const AUTONOMIES: Autonomy[] = ['off', 'low', 'medium', 'high'];
-const c = (code: string) => (s: string) => (process.stdout.isTTY ? `\x1b[${code}m${s}\x1b[0m` : s);
-const dim = c('2'), bold = c('1'), cyan = c('36'), red = c('31'), green = c('32'), yellow = c('33');
-
-export interface ChatConfig { model: string; autonomy: Autonomy }
-
-const home = () => resolve(process.env.FABRICA_HOME ?? join(homedir(), '.fabrica'));
-const configPath = () => join(home(), 'chat.json');
-
-/** Model precedence: FABRICA_LLM_MODEL, saved choice, ChatGPT if Codex is logged in, local Ollama. */
-export function loadChatConfig(): ChatConfig {
-  let saved: Partial<ChatConfig> = {};
-  try { saved = JSON.parse(readFileSync(configPath(), 'utf8')); } catch { /* first run */ }
-  const model = process.env.FABRICA_LLM_MODEL ?? saved.model ?? (existsSync(defaultAuthFile()) ? 'chatgpt:gpt-6-luna' : 'qwen3.5-32k:latest');
-  const autonomy = AUTONOMIES.includes(saved.autonomy as Autonomy) ? saved.autonomy as Autonomy : 'medium';
-  return { model, autonomy };
-}
-
-function saveChatConfig(config: ChatConfig) {
-  mkdirSync(home(), { recursive: true });
-  writeFileSync(configPath(), JSON.stringify(config, null, 2) + '\n');
-}
-
-/** One-line description of a tool call, e.g. `Execute bun test` or `Read src/calc.ts`. */
-export function describeCall(name: string, args: string): string {
-  let input: Record<string, unknown> = {};
-  try { input = JSON.parse(args); } catch { /* show the name only */ }
-  const target = input.command ?? input.file_path ?? input.path ?? input.pattern ?? input.query ?? input.description;
-  const text = typeof target === 'string' ? target.replace(/\s+/g, ' ') : '';
-  return text ? `${name} ${text.length > 100 ? text.slice(0, 97) + '…' : text}` : name;
-}
-
-/** Short summary of a tool result for the transcript. */
-export function describeResult(value: unknown, isError: boolean): string {
-  if (isError) return red(`error: ${String((value as { message?: unknown })?.message ?? value).split('\n')[0]!.slice(0, 160)}`);
-  const v = value as Record<string, unknown> | null;
-  if (v && typeof v.exitCode === 'number') return v.exitCode === 0 ? green('exit 0') : yellow(`exit ${v.exitCode}`);
-  if (typeof value === 'string') return dim(`${value.split('\n').length} líneas`);
-  return green('ok');
-}
-
-export type SlashResult = { kind: 'prompt'; text: string } | { kind: 'command'; name: string; arg: string } | { kind: 'empty' };
-
-export function parseInput(line: string): SlashResult {
-  const text = line.trim();
-  if (!text) return { kind: 'empty' };
-  if (!text.startsWith('/')) return { kind: 'prompt', text };
-  const [name, ...rest] = text.slice(1).split(/\s+/);
-  return { kind: 'command', name: name!.toLowerCase(), arg: rest.join(' ') };
-}
-
-const HELP = `${bold('Comandos')}
-  /model <id>    cambia de modelo (chatgpt:gpt-6-luna, qwen3.5-32k:latest, custom:…)
-  /auto <nivel>  autonomía: off · low · medium · high
-  /new           empieza una conversación nueva
-  /status        modelo, autonomía, carpeta y sesión
-  /exit          salir (también Ctrl+D)
-${dim('Ctrl+C interrumpe el turno en curso. Una línea terminada en \\ continúa en la siguiente.')}`;
+export { loadChatConfig } from './chat/config.ts';
+export { parseInput } from './chat/commands.ts';
+export type { ChatConfig } from './chat/config.ts';
+export const describeCall = (name: string, args: string) => `${name} ${terminalText(args).slice(0, 160)}`;
+export const describeResult = (value: unknown, isError: boolean) => `${isError ? 'error: ' : ''}${terminalText(JSON.stringify(value)).slice(0, 160)}`;
 
 export async function chatMain(argv: string[]): Promise<number> {
-  const cwd = resolve(argv.find(a => !a.startsWith('-')) ?? process.cwd());
-  const config = loadChatConfig();
-  const settings = await loadExecSettings(process.env.FABRICA_AGENT_SETTINGS);
-  const providerFor = (model: string) => {
-    const configured = configuredProviders({ ...settings, modelId: model }, {
-      model, baseUrl: process.env.FABRICA_LLM_BASE_URL ?? (model.startsWith('chatgpt:') ? undefined : 'http://127.0.0.1:11434/v1'),
-      apiKey: process.env.FABRICA_LLM_API_KEY,
-    });
-    return configured.providers[configured.defaultModelId]!;
-  };
-  let provider = providerFor(config.model);
-  let sessionId: string | undefined;
-  let running: AbortController | undefined;
-  const sessionDir = join(home(), 'agent-sessions');
-
-  const rl = readline.createInterface({ input: process.stdin, output: process.stdout, terminal: process.stdin.isTTY });
-  rl.on('SIGINT', () => {
-    if (running) { running.abort(new Error('Interrumpido por el usuario')); process.stdout.write(yellow('\n⏹ interrumpido\n')); }
-    else { process.stdout.write(dim('\n(Ctrl+D o /exit para salir)\n')); rl.prompt(); }
-  });
-
-  const permission = async (request: PermissionRequest): Promise<'proceed_once' | 'cancel'> => {
-    const use = request.toolUses[0]?.toolUse;
-    const what = use ? describeCall(use.name, JSON.stringify(use.input)) : 'esta acción';
-    const answer = (await rl.question(yellow(`\n¿Permitir ${what}? [s/N] `))).trim().toLowerCase();
-    return answer === 's' || answer === 'si' || answer === 'sí' || answer === 'y' ? 'proceed_once' : 'cancel';
-  };
-
-  const onEvent = (event: AgentEvent) => {
-    if (event.type === 'assistant_delta') process.stdout.write(String(event.text));
-    else if (event.type === 'tool_call') process.stdout.write(`\n${cyan('●')} ${describeCall(String(event.toolName), String(event.arguments))}\n`);
-    else if (event.type === 'tool_result') process.stdout.write(`  ${dim('⎿')} ${describeResult(event.value, event.isError === true)}\n`);
-    else if (event.type === 'compaction') process.stdout.write(dim('\n(contexto compactado)\n'));
-  };
-
-  console.log(`${bold('fab')} ${dim('· agente de código')}  ${cyan(config.model)} ${dim(`· auto ${config.autonomy} · ${cwd}`)}`);
-  console.log(dim('Escribe una tarea, o /help.\n'));
-
-  let buffer = '';
-  for (;;) {
-    let line: string;
-    try { line = await rl.question(buffer ? dim('… ') : bold('› ')); }
-    catch { break; } // stdin closed (Ctrl+D)
-    if (line.endsWith('\\')) { buffer += line.slice(0, -1) + '\n'; continue; }
-    const input = parseInput(buffer + line); buffer = '';
-    if (input.kind === 'empty') continue;
-    if (input.kind === 'command') {
-      if (input.name === 'exit' || input.name === 'quit') break;
-      if (input.name === 'help') console.log(HELP);
-      else if (input.name === 'new') { sessionId = undefined; console.log(dim('Conversación nueva.')); }
-      else if (input.name === 'status') console.log(`modelo ${config.model} · auto ${config.autonomy} · ${cwd} · sesión ${sessionId ?? '(nueva)'}`);
-      else if (input.name === 'auto' && AUTONOMIES.includes(input.arg as Autonomy)) {
-        config.autonomy = input.arg as Autonomy; saveChatConfig(config); console.log(dim(`autonomía: ${config.autonomy}`));
-      } else if (input.name === 'model' && input.arg) {
-        try { provider = providerFor(input.arg); config.model = input.arg; saveChatConfig(config); console.log(dim(`modelo: ${config.model}`)); }
-        catch (error) { console.log(red(error instanceof Error ? error.message : String(error))); }
-      } else console.log(red(`Comando desconocido o incompleto: /${input.name}. Prueba /help.`));
-      continue;
-    }
-    running = new AbortController();
+  const args = argv.map((arg, i) => ['--resume', '-r'].includes(arg) && (!argv[i + 1] || argv[i + 1]!.startsWith('-')) ? '--resume=' : arg);
+  let io: TerminalInput | undefined;
+  try {
+    const { values: v, positionals } = parseArgs({ args, allowPositionals: true, options: {
+      cwd: { type: 'string' }, settings: { type: 'string' }, model: { type: 'string', short: 'm' }, auto: { type: 'string' },
+      'use-spec': { type: 'boolean' }, mission: { type: 'boolean' }, resume: { type: 'string', short: 'r' },
+      last: { type: 'boolean' }, fork: { type: 'string' }, 'session-id': { type: 'string' },
+      'append-system-prompt': { type: 'string' }, 'append-system-prompt-file': { type: 'string' },
+      'timeout-ms': { type: 'string' }, 'max-turns': { type: 'string' }, 'max-context-tokens': { type: 'string' },
+      'only-tools': { type: 'string' }, 'remove-tools': { type: 'string' }, sandbox: { type: 'string' },
+      help: { type: 'boolean', short: 'h' },
+    } });
+    if (v.help) { console.log('fab [prompt] | fab chat [carpeta] [--cwd path] [--settings file] [-m id] [--auto off|low|medium|high]\n  --resume [id] --last --fork id --use-spec --mission\n\n' + commandHelp()); return 0; }
+    if (v.fork && (v.resume !== undefined || v['session-id'] || v.last)) throw new Error('--fork no se combina con --resume/--last/--session-id');
+    if (v['use-spec'] && v.mission) throw new Error('--use-spec y --mission son excluyentes');
+    const folder = !v.cwd && positionals.length === 1 && existsSync(positionals[0]!) && statSync(positionals[0]!).isDirectory() ? positionals.pop() : undefined;
+    const cwd = await realpath(resolve(v.cwd ?? folder ?? process.cwd()));
+    if (!statSync(cwd).isDirectory()) throw new Error('--cwd requiere un directorio');
+    const settings = await loadExecSettings(v.settings ?? process.env.FABRICA_AGENT_SETTINGS);
+    const home = chatHome(), config = loadChatConfig(settings, home);
+    if (v.model) config.model = v.model;
+    if (v.auto) { if (!AUTONOMIES.includes(v.auto as any)) throw new Error('Autonomía inválida'); config.autonomy = v.auto as typeof config.autonomy; }
+    if (v['use-spec']) config.mode = 'spec'; if (v.mission) config.mode = 'mission';
+    if (config.mode === 'mission' && config.autonomy !== 'high') throw new Error('Mission exige --auto high');
+    if (v.sandbox && !['required', 'best-effort'].includes(v.sandbox)) throw new Error('Sandbox inválido');
+    const number = (key: 'timeout-ms' | 'max-turns' | 'max-context-tokens') => {
+      if (v[key] === undefined) return;
+      const n = Number(v[key]); if (!Number.isSafeInteger(n) || n < 1 || n > 2147483647) throw new Error(`Límite inválido: ${key}`); return n;
+    };
+    const append = [v['append-system-prompt'], v['append-system-prompt-file'] ? await readFile(resolve(v['append-system-prompt-file']), 'utf8') : ''].filter(Boolean).join('\n');
+    io = new TerminalInput(process.stdin, process.stdout, !!process.stdin.isTTY);
+    const app = new ChatController({ cwd, home, settings, config, agent: {
+      timeoutMs: number('timeout-ms'), maxTurns: number('max-turns'), maxContextTokens: number('max-context-tokens'),
+      sandbox: v.sandbox as 'required' | 'best-effort' | undefined, appendSystemPrompt: append,
+      onlyTools: v['only-tools']?.split(',').filter(Boolean), removeTools: v['remove-tools']?.split(',').filter(Boolean),
+    } }, io);
+    io.controller = app;
+    await app.syncHistory(); io.update(app.statusState);
+    let closing = false;
+    const stop = () => { if (app.busy) app.interrupt(); else { app.print('Ctrl+D o /exit para salir'); io?.clearInput(); } };
+    const terminate = () => { closing = true; app.interrupt(); io?.close(); };
+    io.onInterrupt = stop;
+    io.onClose = () => { if (process.stdin.isTTY) { closing = true; app.interrupt(); } };
+    process.on('SIGINT', stop); process.on('SIGTERM', terminate);
     try {
-      const result = await runCodingAgent({
-        prompt: input.text, cwd, provider, autonomy: config.autonomy, interactionMode: 'auto',
-        sessionDir, sessionId, signal: running.signal, onEvent, permissionHandler: permission,
-      });
-      sessionId = result.sessionId;
-      if (!result.ok && !running.signal.aborted) console.log(red(`\n${result.error?.type}: ${result.error?.message}`));
-      console.log(dim(`\n${result.turns} turnos · ${result.toolCalls} herramientas · ${(result.durationMs / 1000).toFixed(1)} s\n`));
-    } catch (error) {
-      console.log(red(`\n${error instanceof Error ? error.message : String(error)}\n`));
-    } finally { running = undefined; }
-  }
-  rl.close();
-  return 0;
+      await app.refreshCommands(); app.provider();
+      app.print('╭─ fab · agente propio ───────────────────────────────');
+      app.print(app.status()); app.print('╰─ / o Tab: comandos · /mode: auto/spec/mission · Ctrl+C: cancelar');
+      if (v.resume !== undefined || v['session-id'] || v.last) await app.submit('/resume ' + ((v['session-id'] ?? v.resume) || (v.last ? '--last' : '')));
+      if (v.fork) { await app.submit('/resume ' + v.fork); await app.submit('/fork'); }
+      const initial = positionals.join(' ');
+      if (initial && !await app.submit(initial)) return 0;
+      let buffer = '';
+      while (!closing) {
+        await app.syncHistory();
+        let line: string;
+        try { line = await io.question(buffer ? '… ' : `fab [${app.config.mode}/${app.config.autonomy}] › `); } catch { break; }
+        if (line.endsWith('\\')) { buffer += line.slice(0, -1) + '\n'; continue; }
+        try { if (!await app.submit(buffer + line)) break; }
+        catch (e) { app.print(e instanceof Error ? e.message : String(e)); }
+        buffer = '';
+      }
+    } finally { process.removeListener('SIGINT', stop); process.removeListener('SIGTERM', terminate); }
+    return 0;
+  } catch (e) { console.error(terminalText(e instanceof Error ? e.message : String(e))); return 1; }
+  finally { io?.close(); }
 }

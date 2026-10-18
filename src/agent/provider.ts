@@ -49,7 +49,8 @@ export async function* sseData(body: ReadableStream<Uint8Array>, maxBytes: numbe
   }
 }
 
-function validateTurn(turn: ModelTurn): ModelTurn {
+/** Provider-independent turn contract: tools only from a completed tool_calls turn, unique well-formed IDs. */
+export function validateTurn(turn: ModelTurn): ModelTurn {
   if (typeof turn.text !== 'string' || !Array.isArray(turn.toolCalls)) throw new ProviderError('Invalid model message');
   if (!['stop', 'tool_calls', 'length'].includes(turn.finishReason)) {
     throw new ProviderError(`Unsupported model finish reason: ${turn.finishReason || 'missing'}`);

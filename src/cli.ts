@@ -15,6 +15,7 @@ import { runTui } from './tui.ts';
 import { mergeAndCleanup, removeWorktree } from './worktrees.ts';
 import { execMain } from './agent/exec.ts';
 import { chatMain } from './chat.ts';
+import { localCommandMain } from './chat/cli.ts';
 import { runScriptWorker } from './script-runtime/worker.ts';
 import { SCRIPT_WORKER_COMMAND } from './script-runtime/run.ts';
 import pkg from '../package.json' with { type: 'json' };
@@ -25,6 +26,11 @@ const HELP = `fab — agente de código y fábrica de software local
 
   fab [carpeta]                 chat interactivo con el agente (por defecto, la carpeta actual)
   fab exec [prompt] ...         una tarea sin interfaz (fab exec --help)
+  fab tui                      agente interactivo; / o Tab para comandos
+  fab resume [id] [--last]      reanudar conversación local
+  fab search|find <texto>       buscar sesiones de la carpeta actual
+  fab mcp list --settings f    listar servidores configurados
+  fab --cwd <path> [prompt]     conversación, --use-spec o --mission --auto high
   fab --version
 
   fab ws create <slug> --repo <path> --goal <text> [--agent ${AGENT_NAMES.join('|')}]
@@ -74,9 +80,16 @@ function allChanges(store: Store) {
 async function main(argv: string[]): Promise<number> {
   if (argv[0] === 'exec') return execMain(argv.slice(1));
   if (argv[0] === '--version' || argv[0] === '-v') { console.log(`fab ${pkg.version}`); return 0; }
-  if (argv[0] === 'chat' || argv.length === 0 || argv.length === 1 && !argv[0]!.startsWith('-') && !COMMANDS.has(argv[0]!)) {
-    return chatMain(argv[0] === 'chat' ? argv.slice(1) : argv);
+  if (['daemon', 'update', 'plugin', 'computer'].includes(argv[0] ?? '')) {
+    console.error(`fab ${argv[0]}: falta un backend propio; no se invoca Droid ni se envía este comando al modelo.`);
+    return 1;
   }
+  if (argv[0] === 'resume') return chatMain(argv.slice(1).includes('--fork') ? argv.slice(1) : ['--resume', ...argv.slice(1)]);
+  if (argv[0] === 'search' || argv[0] === 'find' || argv[0] === 'mcp') return localCommandMain(argv[0], argv.slice(1));
+  if (argv[0] === 'help' && argv[1] === 'exec') return execMain(['--help']);
+  if (argv[0] === 'help') return chatMain(['--help']);
+  if (argv[0] === 'chat' || argv[0] === 'tui' && (argv.length === 1 || argv[1]!.startsWith('-'))) return chatMain(argv.slice(1));
+  if (!argv.length || argv[0] !== '--help' && argv[0] !== '-h' && !COMMANDS.has(argv[0]!)) return chatMain(argv);
   const { values, positionals } = parseArgs({
     args: argv,
     allowPositionals: true,

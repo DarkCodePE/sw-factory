@@ -87,6 +87,8 @@ export async function decodeResponses(stream: ReadableStream<Uint8Array>, maxByt
   for await (const data of sseData(stream, maxBytes)) {
     let event: any;
     try { event = JSON.parse(data); } catch { throw new ProviderError('Invalid Responses event'); }
+    // Nothing may follow the terminal event: a turn is only usable if it ended exactly once.
+    if (finish) throw new ProviderError('Data after model finish', true);
     switch (event?.type) {
       case 'response.output_text.delta':
         if (typeof event.delta === 'string') { text += event.delta; delta?.(event.delta); }
@@ -95,13 +97,17 @@ export async function decodeResponses(stream: ReadableStream<Uint8Array>, maxByt
         if (event.item?.type === 'function_call') {
           const { call_id, name, arguments: args } = event.item;
           if (typeof call_id !== 'string' || typeof name !== 'string' || typeof args !== 'string') throw new ProviderError('Invalid function call item');
-          calls.set(Number(event.output_index) || calls.size, { id: call_id, type: 'function', function: { name, arguments: args } });
+          const index = Number.isSafeInteger(event.output_index) && event.output_index >= 0 ? event.output_index : 1_000_000 + calls.size;
+          if (calls.has(index)) throw new ProviderError('Duplicate function call output index');
+          calls.set(index, { id: call_id, type: 'function', function: { name, arguments: args } });
         }
         break;
       case 'response.completed': case 'response.incomplete': case 'response.failed': {
         const r = event.response ?? {};
         if (event.type === 'response.failed') throw new ProviderError(`ChatGPT response failed: ${r.error?.message ?? 'unknown error'}`, true);
         if (r.usage) usage = { inputTokens: Number(r.usage.input_tokens) || 0, outputTokens: Number(r.usage.output_tokens) || 0 };
+        // Tools from an incomplete response are never dispatched; the call can be retried without effects.
+        if (event.type === 'response.incomplete' && calls.size) throw new ProviderError('Incomplete response contained tool calls', true);
         finish = event.type === 'response.incomplete' ? 'length' : calls.size ? 'tool_calls' : 'stop';
         break;
       }

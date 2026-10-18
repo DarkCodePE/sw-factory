@@ -47,12 +47,12 @@ export async function readAnchored(parent: FileHandle, name: string): Promise<{ 
   } finally { await file.close(); }
 }
 
-export async function atomicReplace(parent: FileHandle, name: string, text: string | Uint8Array, signal: AbortSignal, mode = 0o600) {
+export async function atomicReplace(parent: FileHandle, name: string, text: string | Uint8Array, signal: AbortSignal, mode = 0o600, exactMode = false) {
   if (Buffer.byteLength(text) > MAX_FILE) throw new Error('File result exceeds 1 MiB');
   const temporary = fdPath(parent.fd, `.fab-${crypto.randomUUID()}.tmp`);
   const file = await open(temporary, constants.O_WRONLY | constants.O_CREAT | constants.O_EXCL | constants.O_NOFOLLOW, mode);
   try {
-    await file.writeFile(text); await file.sync(); await file.close();
+    await file.writeFile(text); if (exactMode) await file.chmod(mode); await file.sync(); await file.close();
     signal.throwIfAborted();
     await rename(temporary, fdPath(parent.fd, name));
     await parent.sync();

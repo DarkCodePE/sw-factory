@@ -1,0 +1,483 @@
+{
+  "target": {
+    "path": "/home/orlando/.local/bin/droid",
+    "version": "0.244.0",
+    "sha256": "f4740a4821288415a5089c04a3cc3e6bfbd7866137863422d1d9a220b31640e2"
+  },
+  "observedCommands": [
+    "/account",
+    "/cd",
+    "/cwd",
+    "/droids",
+    "/fast",
+    "/skills",
+    "/hooks",
+    "/language",
+    "/login",
+    "/logout",
+    "/plugins",
+    "/mcp",
+    "/model",
+    "/settings",
+    "/statusline",
+    "/terminal-setup",
+    "/themes",
+    "/commands",
+    "/diagnostics",
+    "/limits",
+    "/context",
+    "/status",
+    "/archive",
+    "/btw",
+    "/clear",
+    "/compress",
+    "/handoff",
+    "/new",
+    "/favorite",
+    "/pin",
+    "/fork",
+    "/rename",
+    "/quit",
+    "/exit",
+    "/rewind-conversation",
+    "/sessions",
+    "/resume",
+    "/share",
+    "/tree",
+    "/init",
+    "/migrate",
+    "/install-code-review",
+    "/install-triage",
+    "/simplify"
+  ],
+  "captures": [
+    {
+      "evidenceId": "ev_204b753b444ef8db3e2a053729093cca195c298a59a985411fa9ffed96c17a72",
+      "operation": "capture_process_scenario",
+      "exit": {
+        "code": 0,
+        "signal": 0,
+        "reason": "exited"
+      },
+      "truncated": false,
+      "scenario": {
+        "executable": "/usr/bin/bwrap",
+        "arguments": [
+          "--ro-bind",
+          "/",
+          "/",
+          "--dev",
+          "/dev",
+          "--proc",
+          "/proc",
+          "--tmpfs",
+          "/tmp",
+          "--bind",
+          "/tmp/fab-droid-parity.YACmqF",
+          "/tmp/fab-droid-parity.YACmqF",
+          "--chdir",
+          "/tmp/fab-droid-parity.YACmqF/workspace",
+          "--unshare-pid",
+          "--unshare-ipc",
+          "--unshare-uts",
+          "--unshare-net",
+          "--die-with-parent",
+          "--new-session",
+          "--clearenv",
+          "--setenv",
+          "PATH",
+          "/usr/local/bin:/usr/bin:/bin",
+          "--setenv",
+          "HOME",
+          "/tmp/fab-droid-parity.YACmqF/home",
+          "--setenv",
+          "FACTORY_HOME_OVERRIDE",
+          "/tmp/fab-droid-parity.YACmqF/home",
+          "--setenv",
+          "FACTORY_AIRGAP_ENABLED",
+          "1",
+          "--setenv",
+          "FACTORY_API_KEY",
+          "",
+          "--",
+          "/home/orlando/.local/bin/droid",
+          "--help"
+        ],
+        "working_directory": "/home/orlando/Desktop/factory",
+        "environment": {},
+        "filesystem_observation_paths": [],
+        "terminal": {
+          "columns": 110,
+          "rows": 35,
+          "scrollback": 400
+        },
+        "events": [],
+        "timeout_ms": 12000,
+        "idle_timeout_ms": 30000,
+        "settle_ms": 300,
+        "limits": {
+          "output_bytes": 50000,
+          "files": 10000,
+          "file_bytes": 10000000,
+          "processes": 1000,
+          "filesystem_depth": 16
+        },
+        "normalization": {
+          "paths": false,
+          "pids": true,
+          "ports": true,
+          "time_bucket_ms": 10,
+          "patterns": []
+        },
+        "executable_sha256": "e318903862396f96de3df57264e0158682b952fd3fb53ac23d876413e7b30f71"
+      },
+      "limitations": [
+        "Artifact identity is unavailable for this observation.",
+        "The executable digest is a prelaunch file sample; matching path metadata immediately after spawn does not prove an atomic operating-system image binding.",
+        "Process trees are sampled and may omit short-lived descendants.",
+        "Filesystem observations are before/after snapshots, not syscall traces.",
+        "Inherited host environment variables are not recorded and may affect results.",
+        "No filesystem observation paths were selected; filesystem effects remain unknown."
+      ]
+    },
+    {
+      "evidenceId": "ev_ee92bdb0f43618d77dffb2183697d89fa5a1da18153a6ac8b7d272138859c30b",
+      "operation": "capture_process_scenario",
+      "exit": {
+        "code": 0,
+        "signal": 0,
+        "reason": "exited"
+      },
+      "truncated": false,
+      "scenario": {
+        "executable": "/usr/bin/bwrap",
+        "arguments": [
+          "--ro-bind",
+          "/",
+          "/",
+          "--dev",
+          "/dev",
+          "--proc",
+          "/proc",
+          "--tmpfs",
+          "/tmp",
+          "--bind",
+          "/tmp/fab-droid-parity.YACmqF",
+          "/tmp/fab-droid-parity.YACmqF",
+          "--chdir",
+          "/tmp/fab-droid-parity.YACmqF/workspace",
+          "--unshare-pid",
+          "--unshare-ipc",
+          "--unshare-uts",
+          "--unshare-net",
+          "--die-with-parent",
+          "--new-session",
+          "--clearenv",
+          "--setenv",
+          "PATH",
+          "/usr/local/bin:/usr/bin:/bin",
+          "--setenv",
+          "HOME",
+          "/tmp/fab-droid-parity.YACmqF/home",
+          "--setenv",
+          "FACTORY_HOME_OVERRIDE",
+          "/tmp/fab-droid-parity.YACmqF/home",
+          "--setenv",
+          "FACTORY_AIRGAP_ENABLED",
+          "1",
+          "--setenv",
+          "FACTORY_API_KEY",
+          "",
+          "--",
+          "/home/orlando/.local/bin/droid",
+          "resume",
+          "--help"
+        ],
+        "working_directory": "/home/orlando/Desktop/factory",
+        "environment": {},
+        "filesystem_observation_paths": [],
+        "terminal": {
+          "columns": 110,
+          "rows": 32,
+          "scrollback": 100
+        },
+        "events": [],
+        "timeout_ms": 5000,
+        "idle_timeout_ms": 30000,
+        "settle_ms": 100,
+        "limits": {
+          "output_bytes": 12000,
+          "files": 10000,
+          "file_bytes": 10000000,
+          "processes": 1000,
+          "filesystem_depth": 16
+        },
+        "normalization": {
+          "paths": false,
+          "pids": true,
+          "ports": true,
+          "time_bucket_ms": 10,
+          "patterns": []
+        },
+        "executable_sha256": "e318903862396f96de3df57264e0158682b952fd3fb53ac23d876413e7b30f71"
+      },
+      "limitations": [
+        "Artifact identity is unavailable for this observation.",
+        "The executable digest is a prelaunch file sample; matching path metadata immediately after spawn does not prove an atomic operating-system image binding.",
+        "Process trees are sampled and may omit short-lived descendants.",
+        "Filesystem observations are before/after snapshots, not syscall traces.",
+        "Inherited host environment variables are not recorded and may affect results.",
+        "No filesystem observation paths were selected; filesystem effects remain unknown."
+      ]
+    },
+    {
+      "evidenceId": "ev_c0177a450aa868ae673511c01c82580d26f1688d3c561ead47ba7b3cd99828b4",
+      "operation": "capture_process_scenario",
+      "exit": {
+        "code": 0,
+        "signal": 0,
+        "reason": "exited"
+      },
+      "truncated": false,
+      "scenario": {
+        "executable": "/usr/bin/bwrap",
+        "arguments": [
+          "--ro-bind",
+          "/",
+          "/",
+          "--dev",
+          "/dev",
+          "--proc",
+          "/proc",
+          "--tmpfs",
+          "/tmp",
+          "--bind",
+          "/tmp/fab-droid-parity.YACmqF",
+          "/tmp/fab-droid-parity.YACmqF",
+          "--chdir",
+          "/tmp/fab-droid-parity.YACmqF/workspace",
+          "--unshare-pid",
+          "--unshare-ipc",
+          "--unshare-uts",
+          "--unshare-net",
+          "--die-with-parent",
+          "--new-session",
+          "--clearenv",
+          "--setenv",
+          "PATH",
+          "/usr/local/bin:/usr/bin:/bin",
+          "--setenv",
+          "HOME",
+          "/tmp/fab-droid-parity.YACmqF/home",
+          "--setenv",
+          "FACTORY_HOME_OVERRIDE",
+          "/tmp/fab-droid-parity.YACmqF/home",
+          "--setenv",
+          "FACTORY_AIRGAP_ENABLED",
+          "1",
+          "--setenv",
+          "FACTORY_API_KEY",
+          "",
+          "--",
+          "/home/orlando/.local/bin/droid",
+          "mcp",
+          "--help"
+        ],
+        "working_directory": "/home/orlando/Desktop/factory",
+        "environment": {},
+        "filesystem_observation_paths": [],
+        "terminal": {
+          "columns": 110,
+          "rows": 32,
+          "scrollback": 100
+        },
+        "events": [],
+        "timeout_ms": 5000,
+        "idle_timeout_ms": 30000,
+        "settle_ms": 100,
+        "limits": {
+          "output_bytes": 12000,
+          "files": 10000,
+          "file_bytes": 10000000,
+          "processes": 1000,
+          "filesystem_depth": 16
+        },
+        "normalization": {
+          "paths": false,
+          "pids": true,
+          "ports": true,
+          "time_bucket_ms": 10,
+          "patterns": []
+        },
+        "executable_sha256": "e318903862396f96de3df57264e0158682b952fd3fb53ac23d876413e7b30f71"
+      },
+      "limitations": [
+        "Artifact identity is unavailable for this observation.",
+        "The executable digest is a prelaunch file sample; matching path metadata immediately after spawn does not prove an atomic operating-system image binding.",
+        "Process trees are sampled and may omit short-lived descendants.",
+        "Filesystem observations are before/after snapshots, not syscall traces.",
+        "Inherited host environment variables are not recorded and may affect results.",
+        "No filesystem observation paths were selected; filesystem effects remain unknown."
+      ]
+    },
+    {
+      "evidenceId": "ev_aa71d912c220cc406a0d80918a389e89330207fd288cafb4420f603dec891731",
+      "operation": "capture_process_scenario",
+      "exit": {
+        "code": 0,
+        "signal": 0,
+        "reason": "exited"
+      },
+      "truncated": false,
+      "scenario": {
+        "executable": "/usr/bin/bwrap",
+        "arguments": [
+          "--ro-bind",
+          "/",
+          "/",
+          "--dev",
+          "/dev",
+          "--proc",
+          "/proc",
+          "--tmpfs",
+          "/tmp",
+          "--bind",
+          "/tmp/fab-droid-parity.YACmqF",
+          "/tmp/fab-droid-parity.YACmqF",
+          "--chdir",
+          "/tmp/fab-droid-parity.YACmqF/workspace",
+          "--unshare-pid",
+          "--unshare-ipc",
+          "--unshare-uts",
+          "--unshare-net",
+          "--die-with-parent",
+          "--new-session",
+          "--clearenv",
+          "--setenv",
+          "PATH",
+          "/usr/local/bin:/usr/bin:/bin",
+          "--setenv",
+          "HOME",
+          "/tmp/fab-droid-parity.YACmqF/home",
+          "--setenv",
+          "FACTORY_HOME_OVERRIDE",
+          "/tmp/fab-droid-parity.YACmqF/home",
+          "--setenv",
+          "FACTORY_AIRGAP_ENABLED",
+          "1",
+          "--setenv",
+          "FACTORY_API_KEY",
+          "",
+          "--",
+          "/home/orlando/.local/bin/droid",
+          "--settings",
+          "/tmp/fab-droid-parity.YACmqF/settings.json"
+        ],
+        "working_directory": "/home/orlando/Desktop/factory",
+        "environment": {},
+        "filesystem_observation_paths": [],
+        "terminal": {
+          "columns": 110,
+          "rows": 44,
+          "scrollback": 200
+        },
+        "events": [
+          {
+            "at_ms": 1200,
+            "type": "input",
+            "data": "/",
+            "sensitive": false
+          },
+          {
+            "at_ms": 2000,
+            "type": "input",
+            "data": "\u001b[B\u001b[B\u001b[B\u001b[B\u001b[B",
+            "sensitive": false
+          },
+          {
+            "at_ms": 2650,
+            "type": "input",
+            "data": "\u001b[B\u001b[B\u001b[B\u001b[B\u001b[B",
+            "sensitive": false
+          },
+          {
+            "at_ms": 3300,
+            "type": "input",
+            "data": "\u001b[B\u001b[B\u001b[B\u001b[B\u001b[B",
+            "sensitive": false
+          },
+          {
+            "at_ms": 3950,
+            "type": "input",
+            "data": "\u001b[B\u001b[B\u001b[B\u001b[B\u001b[B",
+            "sensitive": false
+          },
+          {
+            "at_ms": 4600,
+            "type": "input",
+            "data": "\u001b[B\u001b[B\u001b[B\u001b[B\u001b[B",
+            "sensitive": false
+          },
+          {
+            "at_ms": 5250,
+            "type": "input",
+            "data": "\u001b[B\u001b[B\u001b[B\u001b[B\u001b[B",
+            "sensitive": false
+          },
+          {
+            "at_ms": 5900,
+            "type": "input",
+            "data": "\u001b[B\u001b[B\u001b[B\u001b[B\u001b[B",
+            "sensitive": false
+          },
+          {
+            "at_ms": 6550,
+            "type": "input",
+            "data": "\u001b[B\u001b[B\u001b[B\u001b[B\u001b[B",
+            "sensitive": false
+          },
+          {
+            "at_ms": 7200,
+            "type": "input",
+            "data": "\u001b[B\u001b[B\u001b[B\u001b[B\u001b[B",
+            "sensitive": false
+          },
+          {
+            "at_ms": 8200,
+            "type": "input",
+            "data": "\u0003\u0003",
+            "sensitive": false
+          }
+        ],
+        "timeout_ms": 9500,
+        "idle_timeout_ms": 30000,
+        "settle_ms": 100,
+        "limits": {
+          "output_bytes": 220000,
+          "files": 10000,
+          "file_bytes": 10000000,
+          "processes": 1000,
+          "filesystem_depth": 16
+        },
+        "normalization": {
+          "paths": false,
+          "pids": true,
+          "ports": true,
+          "time_bucket_ms": 10,
+          "patterns": []
+        },
+        "finalization_ms": 300,
+        "executable_sha256": "e318903862396f96de3df57264e0158682b952fd3fb53ac23d876413e7b30f71"
+      },
+      "limitations": [
+        "Artifact identity is unavailable for this observation.",
+        "The executable digest is a prelaunch file sample; matching path metadata immediately after spawn does not prove an atomic operating-system image binding.",
+        "Process trees are sampled and may omit short-lived descendants.",
+        "Filesystem observations are before/after snapshots, not syscall traces.",
+        "Inherited host environment variables are not recorded and may affect results.",
+        "No filesystem observation paths were selected; filesystem effects remain unknown."
+      ]
+    }
+  ],
+  "provenance": "Runtime terminal observations, not recovered proprietary source. bwrap launcher hash differs from separately sampled Droid identity. No model tasks submitted; network namespace disabled."
+}
