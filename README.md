@@ -22,8 +22,8 @@ signal ──triage──▶ change ──▶ [revisión del change] ──▶ i
 Cada GitHub Release incluye su instalador, binarios y checksums. Las versiones de prueba se instalan con su versión explícita; consulta el estado publicado en [Releases](https://github.com/DarkCodePE/sw-factory/releases). Para la RC, una vez publicada:
 
 ```bash
-curl -fsSL https://github.com/DarkCodePE/sw-factory/releases/download/v0.1.0-rc.1/install.sh |
-  sh -s -- --version v0.1.0-rc.1
+curl -fsSL https://github.com/DarkCodePE/sw-factory/releases/download/v0.1.0-rc.2/install.sh |
+  sh -s -- --version v0.1.0-rc.2
 ```
 
 Detecta Linux con glibc o macOS y arquitectura x64/arm64. Descarga `fab-<sistema>-<arquitectura>` y su `.sha256`, verifica SHA-256 y `fab --version`, e instala en `~/.local/bin/fab`. No requiere Bun ni sudo, no cambia perfiles de shell y conserva la instalación anterior si falla la descarga/verificación. Añade `~/.local/bin` a tu PATH si aún no está incluido. Windows: usar este instalador dentro de WSL; Windows nativo y Alpine/musl todavía no están soportados.
@@ -38,8 +38,8 @@ fab tui                    # abre el agente interactivo
 Repetir el instalador sin fijar versión actualiza a la última release estable sin cambiar sesiones o configuración; una RC siempre usa `--version`. Para una versión publicada concreta o una carpeta diferente:
 
 ```bash
-curl -fsSL https://github.com/DarkCodePE/sw-factory/releases/download/v0.1.0-rc.1/install.sh |
-  sh -s -- --version v0.1.0-rc.1 --install-dir "$HOME/.local/bin"
+curl -fsSL https://github.com/DarkCodePE/sw-factory/releases/download/v0.1.0-rc.2/install.sh |
+  sh -s -- --version v0.1.0-rc.2 --install-dir "$HOME/.local/bin"
 ```
 
 También puedes descargar el script, revisarlo y ejecutarlo con `sh install.sh`. Una versión fijada exige que la release y `fab --version` coincidan. El checksum comprueba integridad frente al archivo publicado en la misma release; no es una firma independiente.

@@ -5,6 +5,7 @@ import { join, dirname } from 'node:path';
 import { tmpdir } from 'node:os';
 import { binaryPath, ensureBinary, platformAsset, validateManifest } from '../packaging/npm/runtime.mjs';
 import { junit } from '../scripts/release/common.mjs';
+import { collectNative } from '../scripts/release/collect-native.mjs';
 const directories = [];
 afterEach(async () => { for (const path of directories.splice(0)) await rm(path, { recursive: true, force: true }); });
 const payload = Buffer.from('verified native fixture');
@@ -42,4 +43,17 @@ test('redirects are bounded and reject HTTP or hosts outside GitHub', async () =
 test('release QA refuses empty, skipped, failed and malformed JUnit instead of sealing it', () => {
   expect(junit('<testsuites tests="4" failures="0" skipped="0"></testsuites>')).toEqual({ tests: 4, failures: 0, skipped: 0 });
   for (const xml of ['', '<testsuites tests="0" failures="0" skipped="0">', '<testsuites tests="4" failures="1" skipped="0">', '<testsuites tests="4" failures="0" skipped="1">', '<testsuites tests="4" failures="0" skipped="0"><error/>']) expect(() => junit(xml)).toThrow();
+});
+test('collecting native artifacts preserves sealed duplicate metadata and rejects changed bytes or overwrite', async () => {
+  const source = await home(), destination = await home(), name = 'fab-linux-x64', m = manifest();
+  await writeFile(join(source, name), payload);
+  await writeFile(join(source, name + '.receipt.json'), 'duplicate from native artifact');
+  await writeFile(join(destination, name + '.receipt.json'), 'authoritative sealed receipt');
+  await collectNative(source, destination, name, m);
+  expect(await readFile(join(destination, name))).toEqual(payload);
+  expect(await readFile(join(destination, name + '.receipt.json'), 'utf8')).toBe('authoritative sealed receipt');
+  await expect(collectNative(source, destination, name, m)).rejects.toThrow();
+  await writeFile(join(source, name), 'changed bytes');
+  await expect(collectNative(source, await home(), name, m)).rejects.toThrow('differs from seal');
+  await expect(collectNative(source, destination, '../outside', m)).rejects.toThrow('Unexpected native asset');
 });

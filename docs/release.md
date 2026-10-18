@@ -1,6 +1,6 @@
 # CI/CD y distribución de FAB
 
-La primera versión de prueba es `0.1.0-rc.1`, paquete npm `@darkcodepe/fab`, dist-tag `next`. No reemplaza una versión estable. El estado real de publicación se comprueba en GitHub/npm; la presencia de estos workflows por sí sola no prueba una release.
+La versión de prueba es `0.1.0-rc.2`, paquete npm `@darkcodepe/fab`, dist-tag `next`. No reemplaza una versión estable. El estado real de publicación se comprueba en GitHub/npm; la presencia de estos workflows por sí sola no prueba una release.
 
 ## Contrato
 
@@ -26,19 +26,19 @@ FAB_TARGETS=bun-linux-x64 sh scripts/build.sh
 node scripts/release/smoke.mjs dist/fab-linux-x64
 
 # Subir el candidato y consultar su ejecución:
-git push origin HEAD:release/0.1.0-rc.1
+git push origin HEAD:release/0.1.0-rc.2
 gh run list -R DarkCodePE/sw-factory --workflow release-candidate-preflight.yml
 # Solo tras preflight verde sobre el SHA exacto:
-git tag v0.1.0-rc.1 <SHA-verificado>
-git push origin v0.1.0-rc.1
+git tag v0.1.0-rc.2 <SHA-verificado>
+git push origin v0.1.0-rc.2
 ```
 
 Una vez publicada y verificada la RC:
 
 ```sh
-curl -fsSL https://github.com/DarkCodePE/sw-factory/releases/download/v0.1.0-rc.1/install.sh |
-  sh -s -- --version v0.1.0-rc.1
-npm install -g @darkcodepe/fab@0.1.0-rc.1
+curl -fsSL https://github.com/DarkCodePE/sw-factory/releases/download/v0.1.0-rc.2/install.sh |
+  sh -s -- --version v0.1.0-rc.2
+npm install -g @darkcodepe/fab@0.1.0-rc.2
 fab --version
 fab tui
 ```
@@ -66,3 +66,5 @@ Antigravity (`agy-ollama`, pane Herdr `w6:p4`) hizo una revisión de referencias
 ## Primera ejecución y portabilidad
 
 El [preflight inicial](https://github.com/DarkCodePE/sw-factory/actions/runs/39151420453), SHA `1b8729cc5cf762f445b8f2ce4c810c34b4b0ada9`, pasó QA y ambos Linux, pero rechazó ambos macOS: el acceso seguro a archivos admitía únicamente Linux. No produjo un sello ni una publicación. La corrección conserva descriptores y rechazo de symlinks: Linux utiliza `/proc/self/fd`; Darwin utiliza `openat`/`mkdirat`/`renameat`/`unlinkat` mediante un módulo Node-API propio compilado en el host. Los journals TUI utilizan el mismo contrato. El build requiere C y headers de Node; Bun incluye el addon en el ejecutable. Las pruebas locales del addon sobre Linux no demuestran su ABI Darwin: esa comprobación corresponde a los dos runners macOS y a sus instalaciones posteriores.
+
+El [preflight corregido](https://github.com/DarkCodePE/sw-factory/actions/runs/39153001782), SHA `17bd9441c6e227527ce50e3277998a6e806a7eb6`, pasó 202 pruebas sin omisiones y las cuatro plataformas. El [primer publicador](https://github.com/DarkCodePE/sw-factory/actions/runs/39153199668) se detuvo al extraer recibos duplicados de los artefactos nativos; no creó una release. La recolección ahora descarga cada artefacto en un directorio independiente y copia únicamente el binario, después de compararlo con el manifest sellado. Una regresión comprueba que los recibos no se sobrescriben. Se conserva el tag anterior `v0.1.0-rc.1`; el siguiente candidato usa versión/tag nuevos `0.1.0-rc.2`.
