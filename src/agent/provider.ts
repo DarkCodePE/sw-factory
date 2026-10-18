@@ -1,10 +1,6 @@
 import type { Message, ModelProvider, ModelRequest, ModelTurn, ToolCall } from './types.ts';
-
-export class ProviderError extends Error {
-  constructor(message: string, public readonly retryable = false, public readonly contextLimit = false) {
-    super(message);
-  }
-}
+import { ProviderError, streamIdleFromEnv, withIdleResponse } from './transport.ts';
+export { ProviderError, DEFAULT_STREAM_IDLE_MS, idleTimeout, streamIdleFromEnv } from './transport.ts';
 export interface OpenAICompatibleOptions {
   model: string;
   baseUrl?: string;
@@ -21,39 +17,6 @@ function object(v: unknown): v is Record<string, any> {
 }
 
 /** Byte bounded SSE decoding; network chunk boundaries are not event boundaries. */
-/** Default seconds without any byte from the model before a stream is treated as stalled. */
-export const DEFAULT_STREAM_IDLE_MS = 120_000;
-/** FABRICA_STREAM_IDLE_MS overrides the default for every provider. */
-export const streamIdleFromEnv = () => {
-  const v = Number(process.env.FABRICA_STREAM_IDLE_MS);
-  return Number.isFinite(v) && v >= 0 ? v : DEFAULT_STREAM_IDLE_MS;
-};
-
-/**
- * Wrap a response body so it fails when no chunk arrives for `idleMs`. A stalled stream is a
- * retryable provider error: no tool of the turn has been dispatched yet, so retrying has no effects.
- */
-export function idleTimeout(body: ReadableStream<Uint8Array>, idleMs = DEFAULT_STREAM_IDLE_MS): ReadableStream<Uint8Array> {
-  if (!(idleMs > 0)) return body;
-  const reader = body.getReader();
-  return new ReadableStream<Uint8Array>({
-    async pull(controller) {
-      let timer: ReturnType<typeof setTimeout> | undefined;
-      const stalled = new Promise<never>((_, reject) => {
-        timer = setTimeout(() => reject(new ProviderError(`Model stream stalled: no data for ${Math.round(idleMs / 1000)} s`, true)), idleMs);
-      });
-      try {
-        const next = await Promise.race([reader.read(), stalled]);
-        if (next.done) controller.close(); else controller.enqueue(next.value);
-      } catch (error) {
-        await reader.cancel(error).catch(() => {});
-        controller.error(error);
-      } finally { clearTimeout(timer); }
-    },
-    cancel(reason) { return reader.cancel(reason); },
-  });
-}
-
 export async function* sseData(body: ReadableStream<Uint8Array>, maxBytes: number) {
   const reader = body.getReader();
   const decoder = new TextDecoder('utf-8', { fatal: true });
@@ -166,12 +129,13 @@ export function createOpenAICompatibleProvider(opts: OpenAICompatibleOptions): M
   const url = new URL(baseUrl + '/chat/completions');
   if (!['http:', 'https:'].includes(url.protocol) || url.username || url.password) throw new Error('Invalid model base URL');
   const maxBytes = opts.maxResponseBytes ?? 8 * 1024 * 1024;
+  const idleMs = streamIdleFromEnv(opts.streamIdleMs);
   if (!Number.isSafeInteger(maxBytes) || maxBytes < 1) throw new Error('Invalid model response byte limit');
   if (opts.maxOutputTokens !== undefined && (!Number.isSafeInteger(opts.maxOutputTokens) || opts.maxOutputTokens < 1)) throw new Error('Invalid model output token limit');
   return {
     id: `${baseUrl}#${opts.model}`,
     async complete(request, signal, delta) {
-      const response = await fetch(url, {
+      return withIdleResponse(url, {
         method: 'POST', signal,
         headers: { 'content-type': 'application/json', ...(opts.apiKey ? { authorization: `Bearer ${opts.apiKey}` } : {}) },
         body: JSON.stringify({
@@ -181,45 +145,46 @@ export function createOpenAICompatibleProvider(opts: OpenAICompatibleOptions): M
           ...(opts.reasoningEffort ? { reasoning_effort: opts.reasoningEffort } : {}),
           ...(request.tools.length ? { tools: request.tools } : {}),
         }),
-      });
-      if (!response.ok) {
-        // Do not expose response bodies (which can echo keys, prompts, or provider internals).
-        let contextLimit = response.status === 413;
-        // Inspect at most 8 KiB locally; expose status only to callers/logs.
-        if (response.status === 400 && response.body) {
-          const reader = response.body.getReader();
-          let text = '';
-          try {
-            while (text.length < 8192) {
-              const part = await reader.read(); if (part.done) break;
-              text += new TextDecoder().decode(part.value.subarray(0, 8192 - text.length));
-            }
-            contextLimit = /context_length_exceeded|maximum context length|context window.*exceed/i.test(text);
-          } finally { await reader.cancel().catch(() => {}); reader.releaseLock(); }
-        } else await response.body?.cancel();
-        throw new ProviderError(`Model HTTP ${response.status}`, response.status === 429 || response.status >= 500, contextLimit);
-      }
-      if (response.headers.get('content-type')?.includes('text/event-stream')) {
-        return decodeStream(new Response(idleTimeout(response.body!, opts.streamIdleMs ?? streamIdleFromEnv())), maxBytes, delta);
-      }
-      if (!response.body) throw new ProviderError('Missing model response body');
-      const reader = response.body.getReader();
-      let bytes = 0;
-      const parts: Uint8Array[] = [];
-      try {
-        for (;;) {
-          const next = await reader.read(); if (next.done) break;
-          bytes += next.value.length;
-          if (bytes > maxBytes) throw new ProviderError('Model response exceeds byte budget');
-          parts.push(next.value);
+      }, idleMs, async response => {
+        if (!response.ok) {
+          // Do not expose response bodies (which can echo keys, prompts, or provider internals).
+          let contextLimit = response.status === 413;
+          // Inspect at most 8 KiB locally; expose status only to callers/logs.
+          if (response.status === 400 && response.body) {
+            const reader = response.body.getReader();
+            let text = '';
+            try {
+              while (text.length < 8192) {
+                const part = await reader.read(); if (part.done) break;
+                text += new TextDecoder().decode(part.value.subarray(0, 8192 - text.length));
+              }
+              contextLimit = /context_length_exceeded|maximum context length|context window.*exceed/i.test(text);
+            } finally { await reader.cancel().catch(() => {}); reader.releaseLock(); }
+          } else await response.body?.cancel();
+          throw new ProviderError(`Model HTTP ${response.status}`, response.status === 429 || response.status >= 500, contextLimit);
         }
-      } finally { await reader.cancel().catch(() => {}); reader.releaseLock(); }
-      let json: any;
-      try { json = JSON.parse(Buffer.concat(parts).toString('utf8')); } catch { throw new ProviderError('Malformed model JSON'); }
-      const choice = json.choices?.[0];
-      if (!choice || !object(choice.message)) throw new ProviderError('Missing model choice');
-      return validateTurn({ text: choice.message.content ?? '', toolCalls: choice.message.tool_calls ?? [], finishReason: choice.finish_reason,
-        ...(object(json.usage) ? { usage: { inputTokens: Number(json.usage.prompt_tokens ?? 0), outputTokens: Number(json.usage.completion_tokens ?? 0) } } : {}) });
+        if (response.headers.get('content-type')?.includes('text/event-stream')) {
+          return decodeStream(response, maxBytes, delta);
+        }
+        if (!response.body) throw new ProviderError('Missing model response body');
+        const reader = response.body.getReader();
+        let bytes = 0;
+        const parts: Uint8Array[] = [];
+        try {
+          for (;;) {
+            const next = await reader.read(); if (next.done) break;
+            bytes += next.value.length;
+            if (bytes > maxBytes) throw new ProviderError('Model response exceeds byte budget');
+            parts.push(next.value);
+          }
+        } finally { await reader.cancel().catch(() => {}); reader.releaseLock(); }
+        let json: any;
+        try { json = JSON.parse(Buffer.concat(parts).toString('utf8')); } catch { throw new ProviderError('Malformed model JSON'); }
+        const choice = json.choices?.[0];
+        if (!choice || !object(choice.message)) throw new ProviderError('Missing model choice');
+        return validateTurn({ text: choice.message.content ?? '', toolCalls: choice.message.tool_calls ?? [], finishReason: choice.finish_reason,
+          ...(object(json.usage) ? { usage: { inputTokens: Number(json.usage.prompt_tokens ?? 0), outputTokens: Number(json.usage.completion_tokens ?? 0) } } : {}) });
+      });
     },
   };
 }

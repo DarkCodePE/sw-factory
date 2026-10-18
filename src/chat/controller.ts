@@ -138,7 +138,11 @@ export class ChatController {
     const assistant = (text: string, final = false) => this.io.assistant ? this.io.assistant(text, final) : this.io.write(text + (final ? '\n' : ''));
     this.io.work?.('Modelo');
     const onEvent = (event: AgentEvent) => {
-      if (event.type === 'assistant_delta') { const t = terminalText(event.text); this.io.work?.(); assistant(t); streamed += t; }
+      if (event.type === 'provider_retry') {
+        if (streamed) assistant('', true); streamed = '';
+        this.print(`Reintento del proveedor ${event.attempt}/${event.maxAttempts}: ${event.message}`);
+        this.io.work?.('Modelo');
+      } else if (event.type === 'assistant_delta') { const t = terminalText(event.text); this.io.work?.(); assistant(t); streamed += t; }
       else if (event.type === 'assistant') {
         const full = terminalText(event.text);
         assistant(full.startsWith(streamed) ? full.slice(streamed.length) : full, true);

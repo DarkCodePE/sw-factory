@@ -115,7 +115,8 @@ export async function runCodingAgent(opts: AgentOptions, inherited?: AgentLineag
           emit('usage', { usage: { ...usage }, contextTokens: estimatedTokens(messages, withTools ? schemas : []), maxContextTokens: maxContext });
           return response;
         } catch (e) {
-          if (!(e instanceof ProviderError) || !e.retryable || attempt >= 2) throw e;
+          if (!(e instanceof ProviderError) || !e.retryable || attempt >= Math.min(2, maxRecovery)) throw e;
+          emit('provider_retry', { attempt: attempt + 2, maxAttempts: Math.min(2, maxRecovery) + 1, message: textError(e) });
           await abortable(Bun.sleep(50 * 2 ** attempt), context.signal);
         }
       }

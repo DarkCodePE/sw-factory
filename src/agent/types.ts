@@ -57,7 +57,7 @@ export interface AgentTool {
   run(input: unknown, context: ToolContext): Promise<unknown>;
 }
 export interface AgentEvent {
-  type: 'init' | 'usage' | 'assistant_delta' | 'assistant' | 'tool_call' | 'tool_result' | 'compaction' | 'result' | 'error' |
+  type: 'init' | 'usage' | 'provider_retry' | 'assistant_delta' | 'assistant' | 'tool_call' | 'tool_result' | 'compaction' | 'result' | 'error' |
     'mission_state_changed' | 'mission_worker_started' | 'mission_worker_completed';
   sessionId: string;
   [key: string]: unknown;

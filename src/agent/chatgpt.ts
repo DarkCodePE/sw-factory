@@ -6,7 +6,8 @@ import { readFile } from 'node:fs/promises';
 import { homedir } from 'node:os';
 import { join } from 'node:path';
 
-import { ProviderError, idleTimeout, sseData, streamIdleFromEnv } from './provider.ts';
+import { ProviderError, sseData, streamIdleFromEnv } from './provider.ts';
+import { withIdleResponse } from './transport.ts';
 import type { Message, ModelProvider, ModelRequest, ModelTurn, ToolCall } from './types.ts';
 
 export const CHATGPT_BASE_URL = 'https://chatgpt.com/backend-api/codex';
@@ -126,6 +127,7 @@ export function createChatGPTProvider(opts: ChatGPTOptions): ModelProvider {
   if (!opts.model?.trim()) throw new Error('A model is required');
   const baseUrl = (opts.baseUrl ?? CHATGPT_BASE_URL).replace(/\/$/, '');
   const maxBytes = opts.maxResponseBytes ?? 8 * 1024 * 1024;
+  const idleMs = streamIdleFromEnv(opts.streamIdleMs);
   return {
     id: `chatgpt#${opts.model}`,
     async complete(request, signal, delta) {
@@ -138,16 +140,17 @@ export function createChatGPTProvider(opts: ChatGPTOptions): ModelProvider {
         'content-type': 'application/json', accept: 'text/event-stream', originator: 'fab', 'user-agent': 'fab',
       };
       if (creds.residency) headers['x-openai-internal-codex-residency'] = creds.residency;
-      const response = await fetch(baseUrl + '/responses', {
+      return withIdleResponse(baseUrl + '/responses', {
         method: 'POST', signal, headers, redirect: 'error', body: JSON.stringify(responsesBody(opts.model, request, opts.reasoningEffort)),
+      }, idleMs, async response => {
+        if (response.status === 401) throw new ProviderError('ChatGPT rejected the login (401); run `codex login` again');
+        if (!response.ok || !response.body) {
+          const detail = (await response.text().catch(() => '')).slice(0, 300);
+          throw new ProviderError(`ChatGPT request failed (HTTP ${response.status}) ${detail}`, response.status === 429 || response.status >= 500,
+            /context|too long|maximum/i.test(detail));
+        }
+        return decodeResponses(response.body, maxBytes, delta);
       });
-      if (response.status === 401) throw new ProviderError('ChatGPT rejected the login (401); run `codex login` again');
-      if (!response.ok || !response.body) {
-        const detail = (await response.text().catch(() => '')).slice(0, 300);
-        throw new ProviderError(`ChatGPT request failed (HTTP ${response.status}) ${detail}`, response.status === 429 || response.status >= 500,
-          /context|too long|maximum/i.test(detail));
-      }
-      return decodeResponses(idleTimeout(response.body, opts.streamIdleMs ?? streamIdleFromEnv()), maxBytes, delta);
     },
   };
 }

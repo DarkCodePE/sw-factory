@@ -5,6 +5,7 @@ import { join, resolve } from 'node:path';
 
 const binary = resolve(process.argv[2] ?? 'dist/fab');
 const autonomy = process.argv[4] ?? 'low';
+const idleScenario = process.argv[5] === 'idle';
 if (!['off', 'low'].includes(autonomy)) throw new Error('Probe admite solo autonomía off o low');
 if (!process.argv[3]) throw new Error('Se requiere una carpeta temporal propia');
 const root = resolve(process.argv[3]), cwd = join(root, 'workspace'), home = join(root, 'home');
@@ -13,7 +14,10 @@ let turn = 0;
 const text = '# Verificación local\n**Completado** con `42`.\n- Sin proveedor comercial\n- Archivo creado y editado\n```ts\nconst resultado = 42;\n```\n| Prueba | Estado |\n| --- | --- |\n| Markdown | correcto |\n| Diff | correcto |\n';
 const server = Bun.serve({ hostname: '127.0.0.1', port: 0, async fetch(request) {
   await request.json(); const index = turn++;
-  await Bun.sleep(index < 2 ? 1100 : 700);
+  await Bun.sleep(idleScenario ? 150 : index < 2 ? 1100 : 700);
+  if (idleScenario && index === 1) return new Response(new ReadableStream<Uint8Array>({ start(c) {
+    c.enqueue(new TextEncoder().encode(`data: ${JSON.stringify({ choices: [{ index: 0, delta: { tool_calls: [{ index: 0, id: 'partial', type: 'function', function: { name: 'Create', arguments: JSON.stringify({ file_path: 'should-not-exist', content: 'unsafe partial' }) } }] }, finish_reason: null }] })}\n\n`));
+  } }), { headers: { 'content-type': 'text/event-stream' } });
   const tools = index === 0 ? { name: 'Create', input: { file_path: 'demo.ts', content: Array.from({ length: 28 }, (_, i) => `const valor${i} = ${i};`).join('\n') } }
     : index === 1 ? { name: 'Edit', input: { file_path: 'demo.ts', old_str: 'valor0 = 0', new_str: 'valor0 = 42' } } : undefined;
   if (tools) return Response.json({ choices: [{ message: { role: 'assistant', content: null,
@@ -34,7 +38,7 @@ const server = Bun.serve({ hostname: '127.0.0.1', port: 0, async fetch(request) 
 } });
 const settings = join(root, 'settings.json');
 await writeFile(settings, JSON.stringify({ modelId: 'custom:fixture', customModels: [{ id: 'custom:fixture', model: 'fixture',
-  provider: 'generic-chat-completion-api', baseUrl: server.url.href + 'v1' }] }));
+  provider: 'generic-chat-completion-api', baseUrl: server.url.href + 'v1' }], ...(idleScenario ? { streamIdleMs: 350 } : {}) }));
 const child = Bun.spawn([binary, 'tui', '--cwd', cwd, '--settings', settings, '--auto', autonomy], {
   env: { PATH: process.env.PATH ?? '', HOME: home, FABRICA_HOME: home }, stdin: 'inherit', stdout: 'inherit', stderr: 'inherit',
 });
