@@ -75,6 +75,14 @@ jobs:
       - run: bun install --frozen-lockfile
       - name: Native directory-capability regression tests
         run: bun test tests/agent-files.test.ts
+      - name: Linux native Script sandbox dependencies
+        if: matrix.os == 'linux'
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y bubblewrap
+          if sysctl kernel.apparmor_restrict_unprivileged_userns >/dev/null 2>&1; then
+            sudo sysctl -w kernel.apparmor_restrict_unprivileged_userns=0
+          fi
       - name: Compile and execute the artifact
         env:
           FAB_TARGETS: bun-${{ matrix.os }}-${{ matrix.arch }}
@@ -87,11 +95,6 @@ jobs:
         env:
           ASSET: fab-${{ matrix.os }}-${{ matrix.arch }}
         run: |
-          sudo apt-get update -qq
-          sudo apt-get install -y bubblewrap
-          if sysctl kernel.apparmor_restrict_unprivileged_userns >/dev/null 2>&1; then
-            sudo sysctl -w kernel.apparmor_restrict_unprivileged_userns=0
-          fi
           bun scripts/probe-compiled-cli.ts "dist/$ASSET" > "dist/$ASSET.script.json"
           node scripts/release/record-script.mjs "dist/$ASSET"
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
@@ -146,6 +149,14 @@ jobs:
       - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
         with:
           node-version: '24'
+      - name: Linux installed Script sandbox dependencies
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y bubblewrap
+          if sysctl kernel.apparmor_restrict_unprivileged_userns >/dev/null 2>&1; then
+            sudo sysctl -w kernel.apparmor_restrict_unprivileged_userns=0
+          fi
       - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093
         with:
           name: fab-candidate-${{ github.sha }}

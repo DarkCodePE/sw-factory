@@ -18,15 +18,24 @@ export async function smoke(binary, expectedVersion, { home: selectedHome } = {}
     child.on('error', error => { clearTimeout(timer); reject(error); });
     child.on('exit', (code, signal) => { clearTimeout(timer); resolve({ code, signal, out, err }); }); child.stdin.end(input);
   });
-  let turns = 0, receivedToolResults = 0;
+  let turns = 0, receivedToolResults = 0, scenario = 'read-edit', scriptIsolation = false, scriptTimeout = false;
   const server = createServer(async (req, res) => {
     try {
       const chunks = []; for await (const chunk of req) chunks.push(chunk);
       const body = JSON.parse(Buffer.concat(chunks).toString()); turns++;
       receivedToolResults = body.messages.filter(message => message.role === 'tool').length;
-      if (turns >= 2) assert(body.messages.some(message => message.tool_call_id === 'probe-1' && message.content.includes('a - b')), 'Read did not return the file contents');
-      if (turns >= 3) assert(body.messages.some(message => message.tool_call_id === 'probe-2' && JSON.parse(message.content).success === true), 'Edit did not report success');
-      const tool = turns === 1 ? { name: 'Read', arguments: JSON.stringify({ file_path: join(cwd, 'calc.txt') }) }
+      if (scenario === 'read-edit' && turns >= 2) assert(body.messages.some(message => message.tool_call_id === 'probe-1' && message.content.includes('a - b')), 'Read did not return the file contents');
+      if (scenario === 'read-edit' && turns >= 3) assert(body.messages.some(message => message.tool_call_id === 'probe-2' && JSON.parse(message.content).success === true), 'Edit did not report success');
+      if (scenario === 'script' && turns === 2) {
+        const raw = body.messages.find(message => message.role === 'tool')?.content;
+        assert(typeof raw === 'string' && !raw.startsWith('Error:'), `Installed Script failed: ${raw}`);
+        const value = JSON.parse(raw);
+        assert(value.ok === true && value.sandboxed === true && value.output?.answer === 42 && raw.includes('a - b'), `Installed Script callback failed: ${raw}`);
+        scriptIsolation = true;
+      }
+      const tool = scenario !== 'read-edit' ? (turns === 1 ? { name: 'Script', arguments: JSON.stringify({ code: scenario === 'script-timeout'
+        ? 'while(true) {}' : `const read = await tools.Read({file_path:${JSON.stringify(join(cwd, 'calc.txt'))}}); return {answer:42,read};` }) } : undefined)
+        : turns === 1 ? { name: 'Read', arguments: JSON.stringify({ file_path: join(cwd, 'calc.txt') }) }
         : turns === 2 ? { name: 'Edit', arguments: JSON.stringify({ file_path: join(cwd, 'calc.txt'), old_str: 'a - b', new_str: 'a + b' }) } : undefined;
       res.setHeader('content-type', 'application/json');
       res.end(JSON.stringify({ choices: [{ message: tool ? { role: 'assistant', content: null, tool_calls: [{ id: `probe-${turns}`, type: 'function', function: tool }] }
@@ -48,8 +57,19 @@ export async function smoke(binary, expectedVersion, { home: selectedHome } = {}
     assert(chat.code === 0 && chat.out.includes('/skill') && chat.out.includes('marketplace'), `Piped TUI commands failed: ${chat.err} ${chat.out}`);
     assert(turns === 3 && receivedToolResults === 2 && chat.out.includes('validated artifact task'), `TUI agent task failed: ${chat.err} ${chat.out}`);
     assert(await readFile(join(cwd, 'calc.txt'), 'utf8') === 'a - b\n', 'TUI rewind did not restore the file');
+    const readEditTurns = turns;
+    if (process.platform === 'linux') {
+      scenario = 'script'; turns = 0; receivedToolResults = 0;
+      const script = await execute(['exec', '--cwd', cwd, '--settings', settings, '--auto', 'low', '--timeout-ms', '5000', '-o', 'json', 'Run the Script callback probe.']);
+      assert(script.code === 0 && JSON.parse(script.out).ok && scriptIsolation && turns === 2 && receivedToolResults === 1, `Installed Script failed: ${script.err} ${script.out}`);
+      scenario = 'script-timeout'; turns = 0;
+      const stopped = await execute(['exec', '--cwd', cwd, '--settings', settings, '--auto', 'low', '--timeout-ms', '1000', '-o', 'json', 'Run the Script timeout probe.']);
+      const failure = JSON.parse(stopped.out);
+      assert(stopped.code === 1 && failure.ok === false && failure.error?.type === 'timeout' && failure.toolCalls === 1, `Installed Script timeout failed: ${stopped.err} ${stopped.out}`);
+      scriptTimeout = true;
+    }
     const mcp = await execute(['mcp', 'list', '--settings', settings]); assert(mcp.code === 0, 'MCP configuration command failed');
-    return { version: expectedVersion, platform: process.platform, arch: process.arch, checks: { version: true, help: true, readEditTask: true, toolCalls: result.toolCalls, turns, tuiCommands: true, tuiAgentTask: true, tuiRewind: true, mcpList: true }, sha256: await hashFile(binary) };
+    return { version: expectedVersion, platform: process.platform, arch: process.arch, checks: { version: true, help: true, readEditTask: true, toolCalls: result.toolCalls, turns: readEditTurns, tuiCommands: true, tuiAgentTask: true, tuiRewind: true, scriptIsolation, scriptTimeout, mcpList: true }, sha256: await hashFile(binary) };
   } finally { await new Promise(resolve => server.close(resolve)); server.closeAllConnections(); await rm(temp, { recursive: true, force: true }); }
 }
 if (process.argv[1] && resolve(process.argv[1]) === import.meta.filename) {

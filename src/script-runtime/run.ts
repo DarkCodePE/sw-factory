@@ -68,6 +68,9 @@ export async function runScript(opts: RunScriptOptions): Promise<RunScriptResult
       const wrapped = await wrapCommand(workerArgv, {
         workdir: scratch,
         env,
+        // Private /tmp hides installations and npm caches located there. Restore
+        // only the executable as read-only, not its enclosing host directory.
+        readOnlyPaths: [process.execPath],
         mode: opts.sandbox === 'required' ? 'required' : 'best-effort',
       });
       argv = wrapped.argv;

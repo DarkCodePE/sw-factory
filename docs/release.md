@@ -1,11 +1,11 @@
 # CI/CD y distribución de FAB
 
-La versión de prueba es `0.1.0-rc.2`, paquete npm `@darkcodepe/fab`, dist-tag `next`. No reemplaza una versión estable. El estado real de publicación se comprueba en GitHub/npm; la presencia de estos workflows por sí sola no prueba una release.
+La versión de prueba es `0.1.0-rc.3`, paquete npm `@darkcodepe/fab`, dist-tag `next`. No reemplaza una versión estable. El estado real de publicación se comprueba en GitHub/npm; la presencia de estos workflows por sí sola no prueba una release.
 
 ## Contrato
 
 1. `release-candidate-preflight.yml` se ejecuta al subir una rama `release/**`. Todos los jobs usan el mismo SHA explícito, sin credenciales Git persistidas. Linux ejecuta TypeScript y la suite completa con JUnit; se rechazan cero pruebas, fallos y omisiones.
-2. Cuatro hosts compilan y ejecutan sus binarios nativos: Linux x64/ARM64 y macOS Intel/ARM64. Cada uno verifica versión, ayuda, tarea Read → Edit → respuesta final con proveedor sintético local, respuestas de ambas herramientas, efecto real en archivo, tarea TUI seguida de `/rewind`, comandos TUI por pipe y listado MCP. Linux añade Script compilado, callback padre, sandbox requerido y timeout. No se presenta macOS como equivalente al sandbox Linux.
+2. Cuatro hosts compilan y ejecutan sus binarios nativos: Linux x64/ARM64 y macOS Intel/ARM64. Cada uno verifica versión, ayuda, tarea Read → Edit → respuesta final con proveedor sintético local, respuestas de ambas herramientas, efecto real en archivo, tarea TUI seguida de `/rewind`, comandos TUI por pipe y listado MCP. Linux añade Script compilado, callback padre, sandbox requerido y timeout, tanto en el build como en el binario instalado por el wrapper npm o el instalador público. No se presenta macOS como equivalente al sandbox Linux.
 3. `pack.mjs` reúne únicamente artefactos comprobados, genera manifest/checksums y un tarball npm con seis archivos explícitos. El paquete público no incluye el código fuente del workspace, pruebas, credenciales, capturas REA ni dependencias de desarrollo.
 4. La cualificación instala ese tarball en homes/prefix nuevos y ejecuta su entrada `fab`. Antes de publicar se precarga únicamente el binario ya verificado en la caché, porque los assets de un draft GitHub no son públicos. Ese modo se declara en los recibos; no sustituye la prueba posterior de descarga real.
 5. `seal.mjs` liga versión, SHA de origen, tarball, manifest, instalador, JUnit y cualificación de las cuatro plataformas. El artefacto `fab-sealed-<SHA>` conserva metadata y paquete; los binarios permanecen en sus artefactos nativos para evitar varias copias grandes.
@@ -26,19 +26,19 @@ FAB_TARGETS=bun-linux-x64 sh scripts/build.sh
 node scripts/release/smoke.mjs dist/fab-linux-x64
 
 # Subir el candidato y consultar su ejecución:
-git push origin HEAD:release/0.1.0-rc.2
+git push origin HEAD:release/0.1.0-rc.3
 gh run list -R DarkCodePE/sw-factory --workflow release-candidate-preflight.yml
 # Solo tras preflight verde sobre el SHA exacto:
-git tag v0.1.0-rc.2 <SHA-verificado>
-git push origin v0.1.0-rc.2
+git tag v0.1.0-rc.3 <SHA-verificado>
+git push origin v0.1.0-rc.3
 ```
 
 Una vez publicada y verificada la RC:
 
 ```sh
-curl -fsSL https://github.com/DarkCodePE/sw-factory/releases/download/v0.1.0-rc.2/install.sh |
-  sh -s -- --version v0.1.0-rc.2
-npm install -g @darkcodepe/fab@0.1.0-rc.2
+curl -fsSL https://github.com/DarkCodePE/sw-factory/releases/download/v0.1.0-rc.3/install.sh |
+  sh -s -- --version v0.1.0-rc.3
+npm install -g @darkcodepe/fab@0.1.0-rc.3
 fab --version
 fab tui
 ```
@@ -68,3 +68,5 @@ Antigravity (`agy-ollama`, pane Herdr `w6:p4`) hizo una revisión de referencias
 El [preflight inicial](https://github.com/DarkCodePE/sw-factory/actions/runs/39151420453), SHA `1b8729cc5cf762f445b8f2ce4c810c34b4b0ada9`, pasó QA y ambos Linux, pero rechazó ambos macOS: el acceso seguro a archivos admitía únicamente Linux. No produjo un sello ni una publicación. La corrección conserva descriptores y rechazo de symlinks: Linux utiliza `/proc/self/fd`; Darwin utiliza `openat`/`mkdirat`/`renameat`/`unlinkat` mediante un módulo Node-API propio compilado en el host. Los journals TUI utilizan el mismo contrato. El build requiere C y headers de Node; Bun incluye el addon en el ejecutable. Las pruebas locales del addon sobre Linux no demuestran su ABI Darwin: esa comprobación corresponde a los dos runners macOS y a sus instalaciones posteriores.
 
 El [preflight corregido](https://github.com/DarkCodePE/sw-factory/actions/runs/39153001782), SHA `17bd9441c6e227527ce50e3277998a6e806a7eb6`, pasó 202 pruebas sin omisiones y las cuatro plataformas. El [primer publicador](https://github.com/DarkCodePE/sw-factory/actions/runs/39153199668) se detuvo al extraer recibos duplicados de los artefactos nativos; no creó una release. La recolección ahora descarga cada artefacto en un directorio independiente y copia únicamente el binario, después de compararlo con el manifest sellado. Una regresión comprueba que los recibos no se sobrescriben. Se conserva el tag anterior `v0.1.0-rc.1`; el siguiente candidato usa versión/tag nuevos `0.1.0-rc.2`.
+
+La RC.2 (`fb8a1464c600cc25658b1949ea5510be098f89d5`) pasó [preflight](https://github.com/DarkCodePE/sw-factory/actions/runs/39153347517) con 203 pruebas y fue [publicada en GitHub](https://github.com/DarkCodePE/sw-factory/actions/runs/39153532536); las cuatro instalaciones públicas Read/Edit/TUI/rewind pasaron. npm rechazó PUT con E404 y el paquete no quedó publicado. Una comprobación adicional del binario instalado bajo `/tmp` detectó que el tmpfs privado ocultaba el ejecutable al relanzar Script. La RC.3 restaura exclusivamente ese archivo mediante un bind de solo lectura. Las instalaciones npm precargadas y públicas Linux ahora deben ejecutar también el callback Script aislado y su timeout; el sello rechaza recibos sin esas pruebas. No se reutiliza el tag/artefacto público anterior.
