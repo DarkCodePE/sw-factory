@@ -44,12 +44,12 @@ curl -fsSL https://github.com/DarkCodePE/sw-factory/releases/download/v0.1.0-rc.
 
 También puedes descargar el script, revisarlo y ejecutarlo con `sh install.sh`. Una versión fijada exige que la release y `fab --version` coincidan. El checksum comprueba integridad frente al archivo publicado en la misma release; no es una firma independiente.
 
-Para preparar los artefactos se dispone de `scripts/build.sh`: produce `fab-linux-x64`, `fab-linux-arm64`, `fab-darwin-x64`, `fab-darwin-arm64` y un `.sha256` por archivo. Cada binario debe probarse en su sistema antes de publicarlo; el soporte del instalador no certifica el runtime en esas cuatro plataformas. Actualmente el aislamiento del runtime depende de bubblewrap en Linux; no se promete aislamiento equivalente en macOS. El instalador no instala git, bubblewrap ni configura el proveedor del modelo.
+Para preparar un artefacto se dispone de `scripts/build.sh`: produce `fab-<sistema>-<arquitectura>` y su `.sha256` en el host nativo. El CI reúne Linux x64/ARM64 y macOS Intel/ARM64; no se permite compilar el módulo nativo para otro host. Cada binario debe probarse en su sistema antes de publicarlo. Actualmente el aislamiento del runtime depende de bubblewrap en Linux; no se promete aislamiento equivalente en macOS. El instalador no instala git, bubblewrap ni configura el proveedor del modelo.
 
 También se distribuye el paquete npm `@darkcodepe/fab` (RC en `next`). El [contrato de CI/CD](docs/release.md) describe cómo se prueban y publican los mismos bytes en ambos canales.
 
 ## Requisitos
-Para desarrollar desde fuente: [Bun](https://bun.sh) ≥ 1.3. Para usar la fábrica: git y un modelo configurado.
+Para desarrollar desde fuente: [Bun](https://bun.sh) ≥ 1.3. macOS y la compilación de distribuciones requieren además compilador C y Node con sus headers `include/node/node_api.h`; `bun install` prepara el módulo de archivos en macOS. Los binarios distribuidos lo incluyen y no requieren compilador. Para usar la fábrica: git y un modelo configurado.
 El agente `native` ejecuta su propio bucle y herramientas; no depende de ningún otro agente.
 En Linux, `bubblewrap` permite aislar los comandos; las operaciones que exigen aislamiento fallan si no está disponible.
 Los adaptadores externos requieren su CLI correspondiente.

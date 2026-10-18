@@ -1,7 +1,7 @@
 import { mkdtemp, symlink } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { atomicReplace, readWorkspaceFile, withWorkspaceFile } from './files.ts';
+import { atomicReplace, readWorkspaceFile, unlinkAnchored, withWorkspaceFile } from './files.ts';
 import { runProcess } from './process.ts';
 import { wrapCommand } from '../sandbox/index.ts';
 import { inputObject, stringArg, tool } from './tools.ts';
@@ -94,8 +94,7 @@ async function snapshotWorkspace(cwd: string, signal: AbortSignal): Promise<{ cw
       // Deleted tracked paths must be deleted in the child too. Other failures,
       // including symlinks and oversized files, fail closed without a stale copy.
       if (e.code !== 'ENOENT') throw e;
-      const { unlink } = await import('node:fs/promises');
-      await withWorkspaceFile(destination, path, false, (parent, name) => unlink(`/proc/self/fd/${parent.fd}/${name}`)).catch((e: any) => { if (e.code !== 'ENOENT') throw e; });
+      await withWorkspaceFile(destination, path, false, (parent, name) => unlinkAnchored(parent, name)).catch((e: any) => { if (e.code !== 'ENOENT') throw e; });
     }
   }
   // Dependency trees stay read-only to child commands through the OS sandbox.

@@ -1,10 +1,11 @@
 import { createHash } from 'node:crypto';
 import { constants } from 'node:fs';
-import { mkdir, open, realpath, unlink } from 'node:fs/promises';
+import { mkdir, open, realpath } from 'node:fs/promises';
 import { isAbsolute, join, relative, resolve, sep } from 'node:path';
-import { atomicReplace, readAnchored, withWorkspaceFile } from '../agent/files.ts';
+import { atomicReplace, readAnchored, unlinkAnchored, withWorkspaceFile } from '../agent/files.ts';
+import { openRelative, type CapabilityHandle } from '../agent/file-capabilities.ts';
 import type { FileMutation, FileSnapshot, ToolContext } from '../agent/types.ts';
-import { readLocalJSON, workspaceKey, writeLocalJSON } from './history.ts';
+import { workspaceKey } from './history.ts';
 
 const MAX_BYTES = 16 * 1024 * 1024;
 const hash = (data: Uint8Array) => createHash('sha256').update(data).digest('hex');
@@ -18,9 +19,9 @@ const safePath = (path: string) => !!path && !isAbsolute(path) && path.split(sep
 export class Checkpoints {
   private state!: Journal;
   private turn?: Turn;
-  private lock?: Awaited<ReturnType<typeof open>>;
+  private lock?: CapabilityHandle;
   private anchor?: Awaited<ReturnType<typeof open>>;
-  private statePath = '';
+  private stateName = '';
   readonly directory: string;
   readonly path: string;
   constructor(readonly cwd: string, readonly home: string) {
@@ -38,10 +39,10 @@ export class Checkpoints {
       this.anchor = await open(actual, constants.O_RDONLY | constants.O_DIRECTORY | constants.O_NOFOLLOW);
       const directoryStat = await this.anchor.stat();
       if (directoryStat.uid !== process.getuid?.() || directoryStat.mode & 0o022) throw new Error('El journal debe ser privado y no escribible por otros usuarios');
-      this.statePath = `/proc/self/fd/${this.anchor.fd}/${workspaceKey(this.cwd)}.json`;
-      this.lock = await open(this.statePath + '.lock', 'wx', 0o600);
+      this.stateName = `${workspaceKey(this.cwd)}.json`;
+      this.lock = await openRelative(this.anchor, this.stateName + '.lock', constants.O_WRONLY | constants.O_CREAT | constants.O_EXCL | constants.O_NOFOLLOW, 0o600);
       let raw: unknown;
-      try { raw = await readLocalJSON(this.statePath, MAX_BYTES); } catch (e: any) { if (e.code !== 'ENOENT') throw e; }
+      try { raw = JSON.parse((await readAnchored(this.anchor, this.stateName, MAX_BYTES)).text); } catch (e: any) { if (e.code !== 'ENOENT') throw e; }
       if (raw === undefined) this.state = { version: 1, cwd: this.cwd, generation: 0, turns: [] };
       else { this.validate(raw); this.state = raw; }
     } catch (e) { await this.finish(); throw e; }
@@ -60,8 +61,10 @@ export class Checkpoints {
     }
   }
   private async save() {
-    if (Buffer.byteLength(JSON.stringify(this.state)) > MAX_BYTES) throw new Error('Checkpoints exceden 16 MiB; escritura cancelada');
-    await writeLocalJSON(this.statePath, this.state);
+    const text = JSON.stringify(this.state) + '\n';
+    if (Buffer.byteLength(text) > MAX_BYTES) throw new Error('Checkpoints exceden 16 MiB; escritura cancelada');
+    if (!this.anchor) throw new Error('Journal sin directorio anclado');
+    await atomicReplace(this.anchor, this.stateName, text, new AbortController().signal, 0o600, true, MAX_BYTES);
   }
   async begin(label: string) {
     await this.acquire();
@@ -94,8 +97,8 @@ export class Checkpoints {
   }
   async finish() {
     this.turn = undefined;
-    try { if (this.lock) { await this.lock.close(); this.lock = undefined; await unlink(this.statePath + '.lock'); } }
-    finally { await this.anchor?.close(); this.anchor = undefined; this.statePath = ''; }
+    try { if (this.lock) { await this.lock.close(); this.lock = undefined; await unlinkAnchored(this.anchor!, this.stateName + '.lock'); } }
+    finally { await this.anchor?.close(); this.anchor = undefined; this.stateName = ''; }
   }
   async list() {
     await this.acquire();
@@ -121,7 +124,7 @@ export class Checkpoints {
         await withWorkspaceFile(this.cwd, entry.path, false, async (parent, name) => {
           await verify(parent, name, entry);
           if (entry.before) await atomicReplace(parent, name, Buffer.from(entry.before.data, 'base64'), signal, entry.before.mode, true);
-          else { signal.throwIfAborted(); await unlink(`/proc/self/fd/${parent.fd}/${name}`); await parent.sync(); }
+          else { signal.throwIfAborted(); await unlinkAnchored(parent, name); await parent.sync(); }
         });
       }
       turn.restored = true; turn.restoring = false; await this.save();

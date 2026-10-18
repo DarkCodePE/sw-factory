@@ -73,6 +73,8 @@ jobs:
           EXPECTED: ${{ matrix.os }}-${{ matrix.arch }}
         run: node -e 'if (`${process.platform}-${process.arch}` !== process.env.EXPECTED) process.exit(1)'
       - run: bun install --frozen-lockfile
+      - name: Native directory-capability regression tests
+        run: bun test tests/agent-files.test.ts
       - name: Compile and execute the artifact
         env:
           FAB_TARGETS: bun-${{ matrix.os }}-${{ matrix.arch }}

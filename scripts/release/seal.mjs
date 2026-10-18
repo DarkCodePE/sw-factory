@@ -38,7 +38,8 @@ if (process.argv[1] && resolve(process.argv[1]) === import.meta.filename) {
       const qualified = await readJson(join(directory, name.replace('fab-', 'qualification-') + '.json'));
       for (const report of [native, qualified]) {
         assert(report.sourceSha === sha && report.version === manifest.version && report.checks.version && report.checks.help
-          && report.checks.readEditTask && report.checks.toolCalls === 2 && report.checks.turns === 3 && report.checks.tuiCommands && report.checks.mcpList, `Qualification failed: ${name}`);
+          && report.checks.readEditTask && report.checks.toolCalls === 2 && report.checks.turns === 3 && report.checks.tuiCommands
+          && report.checks.tuiAgentTask && report.checks.tuiRewind && report.checks.mcpList, `Qualification failed: ${name}`);
       }
       assert(await hashFile(join(directory, name)) === native.sha256 && qualified.nativeSha256 === native.sha256 && qualified.packageSha256 === packageSha256, `Qualification bytes mismatch: ${name}`);
       qualifications.push({ asset: name, receiptSha256: await hashFile(join(directory, name.replace('fab-', 'qualification-') + '.json')) });
