@@ -188,9 +188,10 @@ function evaluate(frame: Record<string, unknown>): void {
   } catch (error) { fail('program', errorMessage(error)); }
 }
 
-async function main(): Promise<void> {
+/** Worker entry point; the compiled fab binary calls it for its hidden `__script-worker` subcommand. */
+export async function runScriptWorker(encodedLimits = process.argv[2]): Promise<void> {
   try {
-    limits = resolveLimits(JSON.parse(process.argv[2] ?? '{}'));
+    limits = resolveLimits(JSON.parse(encodedLimits ?? '{}'));
     process.on('unhandledRejection', error => fail('program', errorMessage(error)));
     process.on('uncaughtException', error => fail('program', errorMessage(error)));
     send({ type: 'ready', protocolVersion: 1 });
@@ -213,4 +214,4 @@ async function main(): Promise<void> {
   }
 }
 
-if (import.meta.main) void main();
+if (import.meta.main) void runScriptWorker();

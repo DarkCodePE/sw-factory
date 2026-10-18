@@ -1,6 +1,6 @@
 // Headless coding-agent adapters. Each turns (prompt, cwd) into one non-interactive run.
 // The factory never edits code itself; it hands one activity to one agent run.
-import { fileURLToPath } from 'node:url';
+import { selfCommand } from './self.ts';
 import { reportStatusLine } from './prompts.ts';
 
 export interface AgentRun {
@@ -98,8 +98,7 @@ const fake: AgentAdapter = {
 
 const native: AgentAdapter = {
   name: 'native',
-  command: (prompt, options) => [process.execPath, '--no-env-file',
-    fileURLToPath(new URL('./agent/exec.ts', import.meta.url)),
+  command: (prompt, options) => [...selfCommand('exec', new URL('./agent/exec.ts', import.meta.url)),
     '--require-status',
     '--auto', process.env.FABRICA_AGENT_AUTONOMY ?? 'medium',
     ...(process.env.FABRICA_AGENT_SETTINGS ? ['--settings', process.env.FABRICA_AGENT_SETTINGS] : []),

@@ -4,6 +4,10 @@ import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 import { wrapCommand } from '../sandbox/index.ts';
+import { isCompiled, selfCommand } from '../self.ts';
+
+/** Hidden fab subcommand that runs the Script worker from a compiled binary. */
+export const SCRIPT_WORKER_COMMAND = '__script-worker';
 import {
   DEFAULT_TIMEOUT_MS, RuntimeFailure, contentBytes, encodeFrame, errorMessage,
   isContent, readFrames, record, resolveLimits,
@@ -52,13 +56,11 @@ export async function runScript(opts: RunScriptOptions): Promise<RunScriptResult
     if (performance.now() - startedAt >= timeoutMs) {
       return failure({ origin: 'timeout', message: 'Script total timeout exceeded' });
     }
-    const workerArgv = [
-      process.execPath, '--no-env-file', fileURLToPath(new URL('./worker.ts', import.meta.url)),
-      JSON.stringify(limits),
-    ];
+    const workerArgv = [...selfCommand(SCRIPT_WORKER_COMMAND, new URL('./worker.ts', import.meta.url)), JSON.stringify(limits)];
     let argv = workerArgv;
     const env = { PATH: process.env.PATH ?? '' };
-    let cwd = fileURLToPath(new URL('.', import.meta.url));
+    // Inside a compiled binary the module directory is virtual; use a real directory instead.
+    let cwd = isCompiled() ? tmpdir() : fileURLToPath(new URL('.', import.meta.url));
     if ((opts.sandbox ?? 'best-effort') !== 'off') {
       // The VM context is not a security boundary on its own; the worker process itself runs
       // inside the OS sandbox: read-only system, private /tmp, no network, empty environment.
