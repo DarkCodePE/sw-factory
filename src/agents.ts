@@ -14,6 +14,8 @@ export interface AgentAdapter {
   name: string;
   command(prompt: string, options?: { readOnly?: boolean }): string[];
   env?(): Record<string, string>;
+  /** The agent cannot write Git metadata (its sandbox mounts .git read-only); the factory commits for it. */
+  factoryCommits?: boolean;
 }
 
 const claude: AgentAdapter = {
@@ -41,7 +43,20 @@ const claude: AgentAdapter = {
 
 const codex: AgentAdapter = {
   name: 'codex',
-  command: (prompt) => ['codex', 'exec', '--full-auto', '--skip-git-repo-check', prompt],
+  // codex-cli's workspace-write sandbox always mounts .git read-only, even with --add-dir.
+  factoryCommits: true,
+  // `--full-auto` was removed in codex-cli 0.160; workspace-write keeps writes inside the worktree.
+  // A linked worktree keeps its index and objects in the main repository's .git, which must also be
+  // writable or `git commit` fails; read-only activities keep the default read-only sandbox.
+  command: (prompt, options) => options?.readOnly
+    ? ['codex', 'exec', '--sandbox', 'read-only', '--skip-git-repo-check', prompt]
+    : ['codex', 'exec', '--sandbox', 'workspace-write', '--skip-git-repo-check', prompt],
+};
+
+/** Antigravity CLI in print mode; uses the signed-in Google AI subscription. */
+const agy: AgentAdapter = {
+  name: 'agy',
+  command: (prompt) => ['agy', '-p', prompt, '--dangerously-skip-permissions', '--output-format', 'text'],
 };
 
 /**
@@ -93,7 +108,7 @@ const native: AgentAdapter = {
     ...(options?.readOnly ? ['--use-spec'] : []), prompt],
 };
 
-const ADAPTERS: Record<string, AgentAdapter> = { claude, codex, droid, native, fake };
+const ADAPTERS: Record<string, AgentAdapter> = { claude, codex, agy, droid, native, fake };
 
 export function getAgent(name: string): AgentAdapter {
   const a = Object.hasOwn(ADAPTERS, name) ? ADAPTERS[name] : undefined;

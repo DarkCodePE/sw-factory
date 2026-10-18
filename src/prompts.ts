@@ -40,8 +40,12 @@ const IMPLEMENT = `Your task is an IMPLEMENTATION of the approved spec above.
 4. Commit your work on the current branch with a clear message (git add + git commit).
 If the spec turns out to be wrong, stop and explain instead of improvising a different change.`;
 
-export function buildWorkerPrompt(p: PromptInput): string {
-  const task = p.activity.kind === 'implementation' ? IMPLEMENT : INVESTIGATE;
+const IMPLEMENT_FACTORY_COMMITS = IMPLEMENT.replace(
+  '4. Commit your work on the current branch with a clear message (git add + git commit).',
+  '4. Do NOT run git add or git commit: leave the changes in the working tree; the factory commits them after your report.');
+
+export function buildWorkerPrompt(p: PromptInput, opts: { factoryCommits?: boolean } = {}): string {
+  const task = p.activity.kind === 'implementation' ? (opts.factoryCommits ? IMPLEMENT_FACTORY_COMMITS : IMPLEMENT) : INVESTIGATE;
   return `You are a worker in a software factory. You were assigned ONE activity on ONE change.
 
 # Workstream goal

@@ -1,12 +1,13 @@
 import { open } from 'node:fs/promises';
+import { createChatGPTProvider } from './chatgpt.ts';
 import { createOpenAICompatibleProvider } from './provider.ts';
 import type { McpConfig } from './mcp.ts';
 import type { ModelProvider } from './types.ts';
 
 export interface ExecSettings {
   modelId?: string;
-  customModels?: Array<{ id: string; model: string; provider: 'generic-chat-completion-api' | 'openai';
-    baseUrl?: string; apiKey?: string; maxOutputTokens?: number }>;
+  customModels?: Array<{ id: string; model: string; provider: 'generic-chat-completion-api' | 'openai' | 'chatgpt';
+    baseUrl?: string; apiKey?: string; maxOutputTokens?: number; authFile?: string }>;
   mcpServers?: Record<string, McpConfig>;
 }
 const object = (v: unknown): v is Record<string, any> => v !== null && typeof v === 'object' && !Array.isArray(v);
@@ -39,7 +40,9 @@ export async function loadExecSettings(path?: string): Promise<ExecSettings> {
   const ids = new Set<string>();
   for (const model of settings.customModels ?? []) {
     if (!object(model) || typeof model.id !== 'string' || !model.id || ids.has(model.id) || typeof model.model !== 'string' || !model.model ||
-        !['generic-chat-completion-api', 'openai'].includes(model.provider) || model.baseUrl !== undefined && typeof model.baseUrl !== 'string' ||
+        !['generic-chat-completion-api', 'openai', 'chatgpt'].includes(model.provider) || model.baseUrl !== undefined && typeof model.baseUrl !== 'string' ||
+        model.provider === 'chatgpt' && (model.apiKey !== undefined || model.baseUrl !== undefined) ||
+        model.authFile !== undefined && typeof model.authFile !== 'string' ||
         model.apiKey !== undefined && typeof model.apiKey !== 'string' || model.maxOutputTokens !== undefined &&
         (!Number.isSafeInteger(model.maxOutputTokens) || model.maxOutputTokens < 1 || model.maxOutputTokens > 1_000_000)) throw new Error('Invalid or unsupported custom model');
     ids.add(model.id); model.apiKey = envValue(model.apiKey);
@@ -58,14 +61,20 @@ export function configuredProviders(settings: ExecSettings, fallback: { model: s
   providers: Record<string, ModelProvider>; defaultModelId: string;
 } {
   const providers: Record<string, ModelProvider> = Object.create(null);
-  for (const model of settings.customModels ?? []) providers[model.id] = createOpenAICompatibleProvider({
-    model: model.model, baseUrl: model.baseUrl ?? (model.provider === 'openai' ? 'https://api.openai.com/v1' : undefined),
-    apiKey: model.apiKey, maxOutputTokens: model.maxOutputTokens, reasoningEffort: fallback.reasoningEffort,
-  });
+  // A ChatGPT subscription login is never combined with an API key or a custom endpoint.
+  for (const model of settings.customModels ?? []) providers[model.id] = model.provider === 'chatgpt'
+    ? createChatGPTProvider({ model: model.model, authFile: model.authFile, reasoningEffort: fallback.reasoningEffort })
+    : createOpenAICompatibleProvider({
+      model: model.model, baseUrl: model.baseUrl ?? (model.provider === 'openai' ? 'https://api.openai.com/v1' : undefined),
+      apiKey: model.apiKey, maxOutputTokens: model.maxOutputTokens, reasoningEffort: fallback.reasoningEffort,
+    });
   const selected = settings.modelId ?? fallback.model;
   if (!Object.hasOwn(providers, selected)) {
     if (selected.startsWith('custom:')) throw new Error('Unknown configured custom model');
-    providers[selected] = createOpenAICompatibleProvider({ ...fallback, model: selected });
+    // `chatgpt:<model>` uses the ChatGPT subscription of an existing Codex CLI login.
+    providers[selected] = selected.startsWith('chatgpt:')
+      ? createChatGPTProvider({ model: selected.slice('chatgpt:'.length), reasoningEffort: fallback.reasoningEffort })
+      : createOpenAICompatibleProvider({ ...fallback, model: selected });
   }
   return { providers, defaultModelId: selected };
 }

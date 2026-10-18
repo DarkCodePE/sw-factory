@@ -139,3 +139,22 @@ test('native factory completes investigation and implementation through its own 
     for (const key of Object.keys(settings)) { if (previous[key]===undefined) delete process.env[key]; else process.env[key]=previous[key]; }
   }
 }, 20_000);
+
+test('the factory commits for agents whose sandbox keeps Git metadata read-only', async () => {
+  const { commitWorktree } = await import('../src/worktrees.ts');
+  const { buildWorkerPrompt } = await import('../src/prompts.ts');
+  const { mkdtempSync, writeFileSync } = await import('node:fs');
+  const { tmpdir } = await import('node:os');
+  const { join } = await import('node:path');
+  const repo = mkdtempSync(join(tmpdir(), 'fab-commit-'));
+  const git = (...a: string[]) => Bun.spawnSync(['git', '-C', repo, '-c', 'user.name=t', '-c', 'user.email=t@t', ...a]).stdout.toString().trim();
+  git('init', '-q', '-b', 'main'); writeFileSync(join(repo, 'a.txt'), 'x\n'); git('add', '.'); git('commit', '-qm', 'init');
+  expect(await commitWorktree(repo, 'nothing')).toBe(false);
+  writeFileSync(join(repo, 'a.txt'), 'fixed\n'); writeFileSync(join(repo, 'b.txt'), 'new\n');
+  expect(await commitWorktree(repo, 'Fix a\n\nImplemented by codex.')).toBe(true);
+  expect(git('log', '-1', '--format=%an %s')).toBe('fab Fix a');
+  expect(git('status', '--porcelain')).toBe('');
+  const input = { workstream: { goal: 'g' }, change: { title: 't', description: 'd' }, activity: { kind: 'implementation' }, history: [], worktree: repo, branch: 'b' } as never;
+  expect(buildWorkerPrompt(input, { factoryCommits: true })).toContain('Do NOT run git add or git commit');
+  expect(buildWorkerPrompt(input)).toContain('Commit your work on the current branch');
+});
