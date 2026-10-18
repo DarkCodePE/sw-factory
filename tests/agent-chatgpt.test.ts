@@ -114,3 +114,29 @@ test('R-09: a tool at output index 0 is not overwritten by later items', async (
   expect(turn.toolCalls.map(c => c.id)).toEqual(['a', 'b']);
   await expect(decodeResponses(stream([item(0, 'a'), item(0, 'b'), { type: 'response.completed', response: {} }]), 1 << 20)).rejects.toThrow('Duplicate');
 });
+
+// A stalled model stream (no bytes for streamIdleMs) is a retryable error, not an endless wait.
+test('a stream that stops sending data fails after the idle timeout; a steady one does not', async () => {
+  const { idleTimeout, ProviderError } = await import('../src/agent/provider.ts');
+  const enc = new TextEncoder();
+  const hanging = () => new ReadableStream<Uint8Array>({ start(c) { c.enqueue(enc.encode('data: {"type":"response.output_text.delta","delta":"hi"}\n\n')); } });
+  const start = Date.now();
+  const error = await decodeResponses(idleTimeout(hanging(), 150), 1 << 20).catch(e => e);
+  expect(error).toBeInstanceOf(ProviderError);
+  expect(error.message).toContain('stalled');
+  expect(error.retryable).toBe(true);
+  expect(Date.now() - start).toBeLessThan(2000);
+  // Chunks arriving faster than the idle limit keep the stream alive past the limit as a whole.
+  const steady = new ReadableStream<Uint8Array>({ async start(c) {
+    for (const d of ['Re', 'ad', 'y']) { await Bun.sleep(80); c.enqueue(enc.encode(`data: ${JSON.stringify({ type: 'response.output_text.delta', delta: d })}\n\n`)); }
+    await Bun.sleep(80); c.enqueue(enc.encode(`data: ${JSON.stringify({ type: 'response.completed', response: {} })}\n\n`)); c.close();
+  } });
+  expect((await decodeResponses(idleTimeout(steady, 150), 1 << 20)).text).toBe('Ready');
+  // The ChatGPT provider applies it to real responses.
+  const server = Bun.serve({ port: 0, hostname: '127.0.0.1', fetch: () => new Response(hanging(), { headers: { 'content-type': 'text/event-stream' } }) });
+  try {
+    const file = await authFile({ exp: Math.floor(Date.now() / 1000) + 3600 });
+    const provider = createChatGPTProvider({ model: 'm', authFile: file, baseUrl: `http://127.0.0.1:${server.port}`, streamIdleMs: 150 });
+    await expect(provider.complete({ messages: [{ role: 'user', content: 'hi' }], tools: [], maxOutputTokens: 10 }, new AbortController().signal)).rejects.toThrow('stalled');
+  } finally { server.stop(true); }
+});

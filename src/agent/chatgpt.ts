@@ -6,7 +6,7 @@ import { readFile } from 'node:fs/promises';
 import { homedir } from 'node:os';
 import { join } from 'node:path';
 
-import { ProviderError, sseData } from './provider.ts';
+import { ProviderError, idleTimeout, sseData, streamIdleFromEnv } from './provider.ts';
 import type { Message, ModelProvider, ModelRequest, ModelTurn, ToolCall } from './types.ts';
 
 export const CHATGPT_BASE_URL = 'https://chatgpt.com/backend-api/codex';
@@ -18,6 +18,8 @@ export interface ChatGPTOptions {
   reasoningEffort?: string;
   maxResponseBytes?: number;
   baseUrl?: string;
+  /** Fail a stream that sends nothing for this long (default 120 s; 0 disables). */
+  streamIdleMs?: number;
 }
 
 interface Credentials { accessToken: string; accountId: string; residency?: string; expiresAt: number }
@@ -145,7 +147,7 @@ export function createChatGPTProvider(opts: ChatGPTOptions): ModelProvider {
         throw new ProviderError(`ChatGPT request failed (HTTP ${response.status}) ${detail}`, response.status === 429 || response.status >= 500,
           /context|too long|maximum/i.test(detail));
       }
-      return decodeResponses(response.body, maxBytes, delta);
+      return decodeResponses(idleTimeout(response.body, opts.streamIdleMs ?? streamIdleFromEnv()), maxBytes, delta);
     },
   };
 }

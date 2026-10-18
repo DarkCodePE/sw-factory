@@ -12,6 +12,8 @@ export interface OpenAICompatibleOptions {
   reasoningEffort?: string;
   maxResponseBytes?: number;
   maxOutputTokens?: number;
+  /** Fail a stream that sends nothing for this long (default 120 s; 0 disables). */
+  streamIdleMs?: number;
 }
 
 function object(v: unknown): v is Record<string, any> {
@@ -19,6 +21,39 @@ function object(v: unknown): v is Record<string, any> {
 }
 
 /** Byte bounded SSE decoding; network chunk boundaries are not event boundaries. */
+/** Default seconds without any byte from the model before a stream is treated as stalled. */
+export const DEFAULT_STREAM_IDLE_MS = 120_000;
+/** FABRICA_STREAM_IDLE_MS overrides the default for every provider. */
+export const streamIdleFromEnv = () => {
+  const v = Number(process.env.FABRICA_STREAM_IDLE_MS);
+  return Number.isFinite(v) && v >= 0 ? v : DEFAULT_STREAM_IDLE_MS;
+};
+
+/**
+ * Wrap a response body so it fails when no chunk arrives for `idleMs`. A stalled stream is a
+ * retryable provider error: no tool of the turn has been dispatched yet, so retrying has no effects.
+ */
+export function idleTimeout(body: ReadableStream<Uint8Array>, idleMs = DEFAULT_STREAM_IDLE_MS): ReadableStream<Uint8Array> {
+  if (!(idleMs > 0)) return body;
+  const reader = body.getReader();
+  return new ReadableStream<Uint8Array>({
+    async pull(controller) {
+      let timer: ReturnType<typeof setTimeout> | undefined;
+      const stalled = new Promise<never>((_, reject) => {
+        timer = setTimeout(() => reject(new ProviderError(`Model stream stalled: no data for ${Math.round(idleMs / 1000)} s`, true)), idleMs);
+      });
+      try {
+        const next = await Promise.race([reader.read(), stalled]);
+        if (next.done) controller.close(); else controller.enqueue(next.value);
+      } catch (error) {
+        await reader.cancel(error).catch(() => {});
+        controller.error(error);
+      } finally { clearTimeout(timer); }
+    },
+    cancel(reason) { return reader.cancel(reason); },
+  });
+}
+
 export async function* sseData(body: ReadableStream<Uint8Array>, maxBytes: number) {
   const reader = body.getReader();
   const decoder = new TextDecoder('utf-8', { fatal: true });
@@ -164,7 +199,9 @@ export function createOpenAICompatibleProvider(opts: OpenAICompatibleOptions): M
         } else await response.body?.cancel();
         throw new ProviderError(`Model HTTP ${response.status}`, response.status === 429 || response.status >= 500, contextLimit);
       }
-      if (response.headers.get('content-type')?.includes('text/event-stream')) return decodeStream(response, maxBytes, delta);
+      if (response.headers.get('content-type')?.includes('text/event-stream')) {
+        return decodeStream(new Response(idleTimeout(response.body!, opts.streamIdleMs ?? streamIdleFromEnv())), maxBytes, delta);
+      }
       if (!response.body) throw new ProviderError('Missing model response body');
       const reader = response.body.getReader();
       let bytes = 0;
