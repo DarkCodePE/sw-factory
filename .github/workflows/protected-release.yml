@@ -1,0 +1,132 @@
+name: FAB protected release
+on:
+  push:
+    tags: ['v*']
+permissions:
+  contents: read
+  actions: read
+concurrency:
+  group: fab-publish-${{ github.ref }}
+  cancel-in-progress: false
+jobs:
+  github:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    environment: release
+    permissions:
+      contents: write
+      actions: read
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        with:
+          ref: ${{ github.sha }}
+          persist-credentials: false
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
+        with:
+          node-version: '24'
+      - name: Admit a successful exact-SHA preflight and its sealed assets
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: node scripts/release/find-candidate.mjs
+      - name: Publish only sealed bytes, then download and compare
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: node scripts/release/publish-github.mjs
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: github-publication-${{ github.sha }}
+          path: dist/github-publication.json
+          if-no-files-found: error
+  npm:
+    needs: github
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    environment: release
+    permissions:
+      contents: read
+      actions: read
+      id-token: write
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        with:
+          ref: ${{ github.sha }}
+          persist-credentials: false
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
+        with:
+          node-version: '24'
+          registry-url: https://registry.npmjs.org
+      - name: Download sealed npm artifact
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          node scripts/release/find-candidate.mjs --metadata-only
+          node scripts/release/seal.mjs dist/candidate --verify --metadata-only
+      - name: Publish the exact package with provenance (OIDC or bootstrap token)
+        env:
+          NPM_TOKEN: ${{ secrets.NPM_TOKEN }}
+        run: |
+          if [ -n "$NPM_TOKEN" ]; then export NODE_AUTH_TOKEN="$NPM_TOKEN"; else unset NODE_AUTH_TOKEN; fi
+          node -e 'const a=require("child_process").execFileSync("npm",["--version"],{encoding:"utf8"}).trim().split(".").map(Number);if(a[0]<11||(a[0]===11&&(a[1]<5||(a[1]===5&&a[2]<1))))process.exit(1)'
+          version=$(node -p 'require("./dist/candidate/candidate-receipt.json").version')
+          package=$(node -p 'require("./dist/candidate/candidate-receipt.json").package.name')
+          archive=$(node -p 'require("./dist/candidate/candidate-receipt.json").package.filename')
+          if npm view "$package@$version" version >/dev/null 2>&1; then
+            echo 'Version exists; public byte verification must match the seal.'
+          else
+            case "$version" in *-*) channel=next ;; *) channel=latest ;; esac
+            npm publish "dist/candidate/$archive" --access public --tag "$channel" --provenance --ignore-scripts
+          fi
+  public-github:
+    needs: github
+    strategy:
+      fail-fast: false
+      matrix:
+        runner: [ubuntu-24.04, ubuntu-24.04-arm, macos-15, macos-15-intel]
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        with:
+          ref: ${{ github.sha }}
+          persist-credentials: false
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
+        with:
+          node-version: '24'
+      - name: Install anonymously through the public shell installer
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          node scripts/release/find-candidate.mjs --metadata-only
+          node scripts/release/public-install.mjs --github-only
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: public-github-${{ matrix.runner }}-${{ github.sha }}
+          path: dist/publication-github-*.json
+          if-no-files-found: error
+  public-npm:
+    needs: npm
+    strategy:
+      fail-fast: false
+      matrix:
+        runner: [ubuntu-24.04, ubuntu-24.04-arm, macos-15, macos-15-intel]
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        with:
+          ref: ${{ github.sha }}
+          persist-credentials: false
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
+        with:
+          node-version: '24'
+      - name: Verify public npm bytes and test a default installation from a fresh home
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          node scripts/release/find-candidate.mjs --metadata-only
+          node scripts/release/public-install.mjs --npm-only
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: public-npm-${{ matrix.runner }}-${{ github.sha }}
+          path: dist/publication-npm-*.json
+          if-no-files-found: error

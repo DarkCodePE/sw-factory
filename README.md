@@ -19,10 +19,11 @@ signal ──triage──▶ change ──▶ [revisión del change] ──▶ i
 
 ## Instalación desde GitHub
 
-El instalador está preparado para descargar binarios de GitHub Releases. **Todavía hay que publicar el script y una release con sus binarios y checksums** para habilitar este comando público:
+Cada GitHub Release incluye su instalador, binarios y checksums. Las versiones de prueba se instalan con su versión explícita; consulta el estado publicado en [Releases](https://github.com/DarkCodePE/sw-factory/releases). Para la RC, una vez publicada:
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/DarkCodePE/sw-factory/main/scripts/install.sh | sh
+curl -fsSL https://github.com/DarkCodePE/sw-factory/releases/download/v0.1.0-rc.1/install.sh |
+  sh -s -- --version v0.1.0-rc.1
 ```
 
 Detecta Linux con glibc o macOS y arquitectura x64/arm64. Descarga `fab-<sistema>-<arquitectura>` y su `.sha256`, verifica SHA-256 y `fab --version`, e instala en `~/.local/bin/fab`. No requiere Bun ni sudo, no cambia perfiles de shell y conserva la instalación anterior si falla la descarga/verificación. Añade `~/.local/bin` a tu PATH si aún no está incluido. Windows: usar este instalador dentro de WSL; Windows nativo y Alpine/musl todavía no están soportados.
@@ -34,16 +35,18 @@ fab tui                    # abre el agente interactivo
 ~/.local/bin/fab tui
 ```
 
-Repetir el instalador actualiza a la última release sin cambiar sesiones o configuración. Para una versión publicada concreta o una carpeta diferente:
+Repetir el instalador sin fijar versión actualiza a la última release estable sin cambiar sesiones o configuración; una RC siempre usa `--version`. Para una versión publicada concreta o una carpeta diferente:
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/DarkCodePE/sw-factory/main/scripts/install.sh |
-  sh -s -- --version v0.1.0 --install-dir "$HOME/.local/bin"
+curl -fsSL https://github.com/DarkCodePE/sw-factory/releases/download/v0.1.0-rc.1/install.sh |
+  sh -s -- --version v0.1.0-rc.1 --install-dir "$HOME/.local/bin"
 ```
 
 También puedes descargar el script, revisarlo y ejecutarlo con `sh install.sh`. Una versión fijada exige que la release y `fab --version` coincidan. El checksum comprueba integridad frente al archivo publicado en la misma release; no es una firma independiente.
 
 Para preparar los artefactos se dispone de `scripts/build.sh`: produce `fab-linux-x64`, `fab-linux-arm64`, `fab-darwin-x64`, `fab-darwin-arm64` y un `.sha256` por archivo. Cada binario debe probarse en su sistema antes de publicarlo; el soporte del instalador no certifica el runtime en esas cuatro plataformas. Actualmente el aislamiento del runtime depende de bubblewrap en Linux; no se promete aislamiento equivalente en macOS. El instalador no instala git, bubblewrap ni configura el proveedor del modelo.
+
+También se distribuye el paquete npm `@darkcodepe/fab` (RC en `next`). El [contrato de CI/CD](docs/release.md) describe cómo se prueban y publican los mismos bytes en ambos canales.
 
 ## Requisitos
 Para desarrollar desde fuente: [Bun](https://bun.sh) ≥ 1.3. Para usar la fábrica: git y un modelo configurado.
