@@ -8,7 +8,7 @@ export interface ExecSettings {
   modelId?: string;
   streamIdleMs?: number;
   customModels?: Array<{ id: string; model: string; provider: 'generic-chat-completion-api' | 'openai' | 'chatgpt';
-    baseUrl?: string; apiKey?: string; maxOutputTokens?: number; authFile?: string; streamIdleMs?: number }>;
+    baseUrl?: string; apiKey?: string; maxOutputTokens?: number; authFile?: string; streamIdleMs?: number; displayName?: string }>;
   mcpServers?: Record<string, McpConfig>;
 }
 const object = (v: unknown): v is Record<string, any> => v !== null && typeof v === 'object' && !Array.isArray(v);
@@ -45,6 +45,7 @@ export async function loadExecSettings(path?: string): Promise<ExecSettings> {
         !['generic-chat-completion-api', 'openai', 'chatgpt'].includes(model.provider) || model.baseUrl !== undefined && typeof model.baseUrl !== 'string' ||
         model.provider === 'chatgpt' && (model.apiKey !== undefined || model.baseUrl !== undefined) ||
         model.authFile !== undefined && typeof model.authFile !== 'string' ||
+        model.displayName !== undefined && (typeof model.displayName !== 'string' || !model.displayName.trim() || model.displayName.length > 200) ||
         model.streamIdleMs !== undefined && (!Number.isSafeInteger(model.streamIdleMs) || model.streamIdleMs < 0 || model.streamIdleMs > 2147483647) ||
         model.apiKey !== undefined && typeof model.apiKey !== 'string' || model.maxOutputTokens !== undefined &&
         (!Number.isSafeInteger(model.maxOutputTokens) || model.maxOutputTokens < 1 || model.maxOutputTokens > 1_000_000)) throw new Error('Invalid or unsupported custom model');

@@ -26,7 +26,7 @@ const HELP = `fab — agente de código y fábrica de software local
 
   fab [carpeta]                 chat interactivo con el agente (por defecto, la carpeta actual)
   fab exec [prompt] ...         una tarea sin interfaz (fab exec --help)
-  fab tui                      agente interactivo; / o Tab para comandos
+  fab tui                      agente interactivo; / para comandos, Tab para razonamiento
   fab resume [id] [--last]      reanudar conversación local
   fab search|find <texto>       buscar sesiones de la carpeta actual
   fab mcp list --settings f    listar servidores configurados

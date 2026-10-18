@@ -6,6 +6,8 @@ import type { ChatController, ChatIO } from './controller.ts';
 import { TerminalPresentation, type StatusState } from './presentation.ts';
 import type { FileChange } from './render.ts';
 import { PasteDecoder } from './paste.ts';
+import { renderPalette, suggestions, type PaletteEntry } from './palette.ts';
+import { welcome as renderWelcome } from './chrome.ts';
 
 /** Single input owner: abort removes the waiter, so the next prompt cannot satisfy an old permission. */
 export class TerminalInput implements ChatIO {
@@ -27,6 +29,11 @@ export class TerminalInput implements ChatIO {
   private safeOutput: Writable;
   private pasteEnabled = false;
   private windowTimer?: ReturnType<typeof setInterval>;
+  private paletteEntries: PaletteEntry[] = [];
+  private paletteIndex = -1;
+  private paletteLine = '';
+  private paletteSuppressed?: string;
+  private paletteTimer?: ReturnType<typeof setTimeout>;
   controller?: ChatController;
   onInterrupt?: () => void;
   onClose?: () => void;
@@ -65,6 +72,21 @@ export class TerminalInput implements ChatIO {
     if (this.ansi !== this.pasteEnabled) { this.output.write(this.ansi ? '\x1b[?2004h' : '\x1b[?2004l'); this.pasteEnabled = this.ansi; }
     this.presenter.update(state); this.redraw();
   }
+  welcome(tipIndex = Date.now() % 4) { if (this.controller) this.write(renderWelcome(this.size().columns, this.controller.resources, tipIndex)); }
+  private rootQuestion() { return !!this.waiter && this.prompt.startsWith('fab [') && !this.selection && !this.controller?.busy; }
+  private syncPalette() {
+    const line = this.rl.line;
+    if (line !== this.paletteLine) { this.paletteIndex = -1; this.paletteLine = line; }
+    const entries = this.rootQuestion() && line !== this.paletteSuppressed ? suggestions(line, this.controller?.palette ?? []) : [];
+    if (!entries.length && !this.paletteEntries.length) return;
+    this.paletteEntries = entries;
+    if (this.ansi) { this.write('\r\x1b[2K'); this.presenter.menu(renderPalette(entries, this.paletteIndex, this.size().columns)); this.redraw(); }
+  }
+  private closePalette() { this.paletteEntries = []; this.paletteIndex = -1; this.presenter.menu([]); }
+  private completePalette() {
+    const entry = this.paletteEntries[Math.max(0, this.paletteIndex)]; if (!entry) return;
+    this.clearLine(); if (this.ansi) this.write('\r\x1b[2K'); this.closePalette(); this.rl.write(`/${entry.name} `); this.redraw();
+  }
   private resize = () => { this.presenter.resize(); this.redraw(); };
   private refreshSize = () => (this.output as Writable & { _refreshSize?(): void })._refreshSize?.();
   private displayHistory(text: string) {
@@ -88,6 +110,7 @@ export class TerminalInput implements ChatIO {
     if (this.waiter && this.ansi) this.redraw();
   }
   private line = (line: string) => {
+    this.closePalette();
     for (const [token, text] of this.substitutions) if (line.includes(token)) line = line.replaceAll(token, text);
     this.installHistory(); this.presenter.pause(false);
     const waiter = this.waiter;
@@ -125,6 +148,8 @@ export class TerminalInput implements ChatIO {
         this.rl.write(this.displayHistory(text));
       }
     }
+    if (this.paletteTimer) clearTimeout(this.paletteTimer);
+    this.paletteTimer = setTimeout(() => this.syncPalette(), 0);
   };
   private forwardKeys = (data: Buffer) => {
     if (this.escapeTimer) clearTimeout(this.escapeTimer);
@@ -136,14 +161,20 @@ export class TerminalInput implements ChatIO {
       const b = bytes[i];
       if (b === 27 && (i + 1 === bytes.length || bytes[i + 1] === 91 && i + 2 === bytes.length)) {
         this.relay.write(bytes.subarray(start, i)); this.escape = Buffer.from(bytes.subarray(i));
-        this.escapeTimer = setTimeout(() => { this.relay.write(this.escape); this.escape = Buffer.alloc(0); }, 40); return;
+        this.escapeTimer = setTimeout(() => {
+          if (this.paletteEntries.length && this.escape.length === 1) { this.paletteSuppressed = this.rl.line; this.closePalette(); this.redraw(); }
+          else this.relay.write(this.escape);
+          this.escape = Buffer.alloc(0);
+        }, 40); return;
       }
       if (b === 27 && bytes[i + 1] === 91) {
         if (bytes[i + 2] === 90) { key = { name: 'tab', shift: true }; width = 3; }
         else if ((this.selection || this.waiter && this.prompt.startsWith('fab ')) && [65, 66].includes(bytes[i + 2]!)) { key = { name: bytes[i + 2] === 65 ? 'up' : 'down' }; width = 3; }
       } else if ([12, 14, 15].includes(b!)) key = { name: b === 12 ? 'l' : b === 14 ? 'n' : 'o', ctrl: true };
+      else if (b === 9 && this.rootQuestion()) key = { name: 'tab' };
+      else if ([10, 13].includes(b!) && this.paletteEntries.length && this.paletteIndex >= 0 && this.rootQuestion()) { key = { name: 'accept' }; if (b === 13 && bytes[i + 1] === 10) width = 2; }
       if (key && (this.selection || this.controller && (!this.controller.busy || key.name === 'o'))) {
-        this.relay.write(bytes.subarray(start, i)); this.shortcut(key); i += width; start = i;
+        this.relay.write(bytes.subarray(start, i)); this.syncPalette(); this.shortcut(key); i += width; start = i;
       } else i++;
     }
     this.relay.write(bytes.subarray(start));
@@ -154,6 +185,10 @@ export class TerminalInput implements ChatIO {
       menu.index = (menu.index + (key.name === 'down' ? 1 : -1) + menu.choices.length) % menu.choices.length;
       this.clearLine(); this.rl.write(String(menu.index + 1)); return;
     }
+    if (this.paletteEntries.length && this.rootQuestion()) {
+      if (key.name === 'up' || key.name === 'down') { this.paletteIndex = (this.paletteIndex + (key.name === 'down' ? 1 : -1) + this.paletteEntries.length) % this.paletteEntries.length; this.syncPalette(); return; }
+      if (key.name === 'accept' || key.name === 'tab' && !key.shift) { this.completePalette(); return; }
+    }
     if (key.name === 'up' || key.name === 'down') {
       if (this.historyIndex === this.ownHistory.length) this.historyDraft = this.rl.line;
       this.historyIndex = Math.max(0, Math.min(this.ownHistory.length, this.historyIndex + (key.name === 'up' ? -1 : 1)));
@@ -162,6 +197,13 @@ export class TerminalInput implements ChatIO {
     const app = this.controller; if (!app) return;
     if (key.ctrl && key.name === 'o') { app.toggleDetail(); return; }
     if (app.busy) return;
+    if (key.name === 'tab' && !key.shift) {
+      if (this.rl.line.startsWith('/')) {
+        const [values] = completions(this.rl.line, app.modelIds, app.customCommands);
+        if (values[0]) { this.clearLine(); this.rl.write(values[0]); this.redraw(); }
+      } else app.cycleReasoning();
+      return;
+    }
     this.write('\r\n');
     let action: Promise<unknown> | void;
     if (key.name === 'tab' && key.shift) app.cycleMode();
@@ -192,6 +234,7 @@ export class TerminalInput implements ChatIO {
       this.clearLine();
     }
     this.prompt = prompt; const display = this.displayPrompt();
+    this.paletteSuppressed = undefined;
     this.historyIndex = this.ownHistory.length; this.historyDraft = '';
     this.presenter.pause(true);
     this.installHistory();
@@ -207,6 +250,7 @@ export class TerminalInput implements ChatIO {
         reject(new Error('Pregunta cancelada'));
       };
       this.waiter = { resolve, reject, cleanup };
+      this.syncPalette();
       signal?.addEventListener('abort', abort, { once: true }); if (signal?.aborted) abort();
     });
   }
@@ -222,6 +266,7 @@ export class TerminalInput implements ChatIO {
     } finally { this.selection = undefined; }
   }
   close() {
+    if (this.paletteTimer) clearTimeout(this.paletteTimer);
     if (this.windowTimer) { clearInterval(this.windowTimer); this.windowTimer = undefined; }
     process.removeListener('SIGWINCH', this.refreshSize);
     this.presenter.close();

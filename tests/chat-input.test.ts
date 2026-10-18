@@ -66,7 +66,7 @@ test('status refresh and terminal resize preserve typed input; readline cannot e
     io.update(io.controller.statusState); const q = io.question('fab [auto/off] › ');
     input.write('trabajo sin perder'); shape.rows = 14;
     io.work('Modelo'); await Bun.sleep(170); io.update({ ...io.controller.statusState, inputTokens: 42 });
-    expect(refreshes).toBeGreaterThan(0); expect(text).toContain('\x1b[1;12r');
+    expect(refreshes).toBeGreaterThan(0); expect(text).toContain('\x1b[1;11r');
     expect(text).not.toContain('\x1b[0J'); expect(text).toContain('in 42');
     input.write('\r'); expect(await q).toBe('trabajo sin perder');
     io.controller.config.theme = 'plain'; io.update(io.controller.statusState);

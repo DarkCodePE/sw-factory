@@ -5,10 +5,13 @@ import { estimatedTokens } from '../agent/provider.ts';
 import { configuredProviders, type ExecSettings } from '../agent/settings.ts';
 import type { AgentEvent, AgentOptions, AgentResult, ModelProvider, PermissionRequest, ToolContext, UserAnswers } from '../agent/types.ts';
 import { detectSandbox } from '../sandbox/index.ts';
-import { AUTONOMIES, loadChatConfig, saveChatConfig, terminalText, type ChatConfig } from './config.ts';
+import { AUTONOMIES, REASONING, loadChatConfig, saveChatConfig, terminalText, type ChatConfig } from './config.ts';
 import { CHAT_COMMANDS, commandFor, commandHelp, parseInput } from './commands.ts';
 import { compressSession, editSession, forkSession, listSessions } from './sessions.ts';
-import { projectItems, projectPrompt } from './project.ts';
+import { projectItems, projectPrompt, projectCatalog, promptBody, type ProjectResource } from './project.ts';
+import { paletteCatalog } from './palette.ts';
+import type { Resources } from './chrome.ts';
+import { readWorkspaceFile } from '../agent/files.ts';
 import { Checkpoints } from './checkpoints.ts';
 import { PromptHistory } from './history.ts';
 import type { FileChange } from './render.ts';
@@ -28,7 +31,7 @@ export interface ChatIO {
 export interface ChatOptions {
   cwd: string; home: string; settings?: ExecSettings; config?: ChatConfig;
   agent?: Pick<AgentOptions, 'timeoutMs' | 'maxTurns' | 'maxContextTokens' | 'sandbox' | 'appendSystemPrompt' | 'onlyTools' | 'removeTools'>;
-  providerFor?: (model: string) => ModelProvider;
+  providerFor?: (model: string, reasoning?: string) => ModelProvider;
   run?: typeof runCodingAgent;
 }
 /** Shared command/application state used by the terminal and deterministic integration tests. */
@@ -45,6 +48,8 @@ export class ChatController {
   private settings: ExecSettings;
   private lastResult?: AgentResult;
   private customNames: string[] = [];
+  private projectResources: ProjectResource[] = [];
+  resources: Resources = { skills: 0, commands: 0, mcpConfigured: 0, agents: false, warnings: 0 };
   private tokens = { inputTokens: 0, outputTokens: 0 };
   private turnUsage = { inputTokens: 0, outputTokens: 0 };
   private contextTokens = 0;
@@ -56,24 +61,40 @@ export class ChatController {
   get sessionDir() { return join(this.options.home, 'agent-sessions'); }
   get busy() { return !!this.active; }
   get modelIds() { return [...new Set([this.config.model, ...this.settings.customModels?.map(m => m.id) ?? []])]; }
+  get modelLabel() { const model = this.settings.customModels?.find(m => m.id === this.config.model); return model?.displayName ?? model?.model ?? this.config.model; }
   get customCommands() { return this.customNames; }
+  get palette() { return paletteCatalog(this.projectResources); }
   get mcpServers() { return Object.fromEntries(Object.entries(this.settings.mcpServers ?? {}).filter(([name]) => !this.disabledMcp.has(name))); }
   print(value: unknown) { this.io.write(terminalText(value) + '\n'); }
-  status() { return `${this.config.model} · ${this.config.mode} · auto ${this.config.autonomy} · ${this.cwd} · sesión ${this.sessionId ?? '(nueva)'}`; }
+  status() { return `${this.config.model} (${this.config.reasoning ?? 'predeterminado'}) · ${this.config.mode} · auto ${this.config.autonomy} · ${this.cwd} · sesión ${this.sessionId ?? '(nueva)'}`; }
   get statusState(): StatusState { return { model: this.config.model, mode: this.config.mode, autonomy: this.config.autonomy,
     inputTokens: this.tokens.inputTokens + this.turnUsage.inputTokens, outputTokens: this.tokens.outputTokens + this.turnUsage.outputTokens,
-    contextTokens: this.contextTokens, maxContextTokens: this.options.agent?.maxContextTokens ?? 32000 }; }
+    contextTokens: this.contextTokens, maxContextTokens: this.options.agent?.maxContextTokens ?? 32000, reasoning: this.config.reasoning, modelLabel: this.modelLabel, resources: { ...this.resources, mcpConfigured: Object.keys(this.mcpServers).length } }; }
+  cycleReasoning() { this.config.reasoning = REASONING[(REASONING.indexOf(this.config.reasoning as any) + 1) % REASONING.length]; this.persist(); this.io.update?.(this.statusState); }
   toggleDetail() { this.detailed = !this.detailed; this.io.expand?.(this.detailed); }
   async syncHistory() { this.io.setHistory?.(await new PromptHistory(this.options.home, this.cwd).load()); }
   interrupt() { this.active?.abort(new Error('Interrumpido por el usuario')); }
   provider() {
-    if (this.options.providerFor) return this.options.providerFor(this.config.model);
+    if (this.options.providerFor) return this.options.providerFor(this.config.model, this.config.reasoning);
     const configured = configuredProviders({ ...this.settings, modelId: this.config.model }, {
-      model: this.config.model, baseUrl: process.env.FABRICA_LLM_BASE_URL, apiKey: process.env.FABRICA_LLM_API_KEY,
+      model: this.config.model, baseUrl: process.env.FABRICA_LLM_BASE_URL, apiKey: process.env.FABRICA_LLM_API_KEY, reasoningEffort: this.config.reasoning,
     });
     return configured.providers[configured.defaultModelId]!;
   }
-  async refreshCommands() { this.customNames = await projectItems(this.cwd, 'commands'); }
+  async refreshCommands() {
+    const catalog = await projectCatalog(this.cwd);
+    this.projectResources = catalog.resources; this.customNames = catalog.resources.filter(r => !commandFor(r.name.toLowerCase())).map(r => r.name.toLowerCase());
+    let agents = false; try { await readWorkspaceFile(this.cwd, 'AGENTS.md'); agents = true; } catch { /* Missing/unreadable guidance is shown as absent. */ }
+    this.resources = { skills: catalog.resources.filter(r => r.kind === 'skills').length, commands: catalog.resources.filter(r => r.kind === 'commands').length,
+      mcpConfigured: Object.keys(this.mcpServers).length, agents, warnings: catalog.warnings.length + catalog.resources.filter(r => !!commandFor(r.name.toLowerCase())).length };
+    this.io.update?.(this.statusState);
+  }
+  private async invokeResource(name: string, args: string, kind?: 'skills') {
+    await this.refreshCommands();
+    const resource = this.projectResources.find(r => r.name.toLowerCase() === name.toLowerCase() && (!kind || r.kind === kind));
+    if (!resource || commandFor(name) && !kind) throw new Error(`Recurso no disponible: ${name}`);
+    await this.runPrompt(promptBody(await projectPrompt(this.cwd, resource.kind, resource.name)).replaceAll('$ARGUMENTS', args));
+  }
   private persist() { saveChatConfig(this.config, this.options.home); }
   setMode(value: string) {
     if (!['auto', 'spec', 'mission'].includes(value)) throw new Error('Modo: auto, spec o mission');
@@ -222,6 +243,12 @@ export class ChatController {
         }
         case 'status': this.print(this.status()); break;
         case 'model': await this.changeModel(arg || undefined); break;
+        case 'reasoning': {
+          if (!arg) { this.cycleReasoning(); break; }
+          if (arg !== 'default' && !REASONING.includes(arg as any)) throw new Error('Razonamiento: default, low, medium o high');
+          this.config.reasoning = arg === 'default' ? undefined : arg as ChatConfig['reasoning']; this.persist(); break;
+        }
+        case 'skill': { const [name, ...args] = arg.split(/\s+/); if (!name) this.print((await projectItems(this.cwd, 'skills')).join('\n')); else await this.invokeResource(name, args.join(' '), 'skills'); break; }
         case 'auto': {
           const n = arg ? AUTONOMIES.indexOf(arg as any) : await this.io.select('Autonomía', AUTONOMIES, this.active.signal);
           if (n === undefined) break;
@@ -236,7 +263,7 @@ export class ChatController {
           if (n !== undefined) this.setMode(modes[n] ?? ''); break;
         }
         case 'settings':
-          if (arg) { const [key, ...value] = arg.split(/\s+/); if (!['model', 'auto', 'mode', 'theme'].includes(key!)) throw new Error('Ajuste: model, auto, mode o theme');
+          if (arg) { const [key, ...value] = arg.split(/\s+/); if (!['model', 'auto', 'mode', 'theme', 'reasoning'].includes(key!)) throw new Error('Ajuste: model, auto, mode, theme o reasoning');
             const nested = key === 'theme' ? 'themes' : key; this.active = undefined; return await this.submit(`/${nested} ${value.join(' ')}`); }
           this.print(JSON.stringify({ ...this.config, settingsModel: this.settings.modelId, mcp: Object.keys(this.mcpServers),
             maxTurns: this.options.agent?.maxTurns ?? 128, timeoutMs: this.options.agent?.timeoutMs ?? 1200000, only: this.only, removed: this.removed }, null, 2)); break;
@@ -305,10 +332,10 @@ export class ChatController {
         case 'limits': this.print(JSON.stringify({ timeoutMs: this.options.agent?.timeoutMs ?? 1200000, maxTurns: this.options.agent?.maxTurns ?? 128,
           maxContextTokens: this.options.agent?.maxContextTokens ?? 32000, lastUsage: this.lastResult?.usage, billing: 'Sin límites de crédito de Factory' }, null, 2)); break;
         case 'diagnostics': { const sandbox = await detectSandbox(); this.print(JSON.stringify({ sandbox, cwd: this.cwd, configuredModels: this.modelIds, mcpConfigured: Object.keys(this.mcpServers) }, null, 2)); break; }
-        case 'terminal-setup': this.print('Tab: completar comandos · ↑↓: historial por carpeta · pegado multilínea entre marcadores · Shift+Tab: auto/spec (mission solo con high) · Ctrl+N: siguiente modelo · Ctrl+L: autonomía · Ctrl+O: ampliar diff/detalle · Ctrl+C: cancelar · Ctrl+D: salir · \\ al final: multilínea'); break;
+        case 'terminal-setup': this.print('/: paleta con descripción y origen · ↑↓: sugerencias o historial · Tab: completar /comando; fuera de / cambia razonamiento · Enter sobre sugerencia elegida: rellenar · Esc: cerrar paleta · Shift+Tab: auto/spec (mission solo con high) · Ctrl+N: siguiente modelo · Ctrl+L: autonomía · Ctrl+O: ampliar diff · Ctrl+C: cancelar · Ctrl+D: salir'); break;
         case 'init': await this.runPrompt('Inspect this repository and prepare contributor guidance in AGENTS.md. Preserve existing guidance; ask before replacing unrelated content. ' + arg); break;
         default:
-          if (this.customNames.includes(name) && !CHAT_COMMANDS.some(c => c.name === name)) await this.runPrompt((await projectPrompt(this.cwd, 'commands', name)).replaceAll('$ARGUMENTS', arg));
+          if (this.customNames.includes(name) && !commandFor(name)) await this.invokeResource(name, arg);
           else throw new Error(`Comando desconocido: /${name}. Usa /help o Tab.`);
       }
       return true;

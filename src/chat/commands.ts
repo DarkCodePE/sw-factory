@@ -3,14 +3,16 @@ const unavailable = 'Necesita un servicio de Factory; fab no lo implementa.';
 export const CHAT_COMMANDS: ChatCommand[] = [
   { name: 'help', aliases: ['?'], group: 'Ayuda', help: 'Catálogo y atajos' },
   { name: 'model', group: 'Configuración', help: 'Seleccionar modelo configurado o introducir su ID' },
+  { name: 'reasoning', group: 'Configuración', help: 'Esfuerzo low, medium, high o default; Tab lo alterna' },
   { name: 'auto', group: 'Configuración', help: 'Autonomía off, low, medium o high' },
   { name: 'mode', group: 'Configuración', help: 'Modo auto, spec o mission (requiere high)' },
-  { name: 'settings', group: 'Configuración', help: 'Ver ajustes o cambiar model/auto/mode/theme' },
+  { name: 'settings', group: 'Configuración', help: 'Ver ajustes o cambiar model/auto/mode/theme/reasoning' },
   { name: 'themes', group: 'Configuración', help: 'Elegir color o plain' },
   { name: 'cwd', aliases: ['cd'], group: 'Configuración', help: 'Ver o cambiar carpeta; abre conversación nueva' },
   { name: 'mcp', group: 'Capacidades', help: 'Servidores configurados y exclusión local por sesión' },
   { name: 'tools', group: 'Capacidades', help: 'Catálogo de herramientas y filtros only/remove/reset' },
   { name: 'skills', group: 'Capacidades', help: 'Listar skills del proyecto o leer una por nombre' },
+  { name: 'skill', group: 'Capacidades', help: 'Invocar una skill local: /skill nombre argumentos' },
   { name: 'commands', group: 'Capacidades', help: 'Listar prompts propios de .agents/commands/*.md' },
   { name: 'droids', group: 'Capacidades', help: 'Ver capacidades y límites de subagentes propios' },
   { name: 'context', group: 'Sesión', help: 'Estimar tokens del historial, sin llamar al modelo' },
@@ -33,7 +35,9 @@ export const CHAT_COMMANDS: ChatCommand[] = [
   { name: 'init', group: 'Proyecto', help: 'Pedir al agente que prepare AGENTS.md, con los permisos actuales' },
   { name: 'terminal-setup', group: 'Ayuda', help: 'Mostrar atajos sin modificar el terminal' },
   { name: 'exit', aliases: ['quit'], group: 'Ayuda', help: 'Salir' },
-  ...['account', 'login', 'logout', 'share', 'install-code-review', 'install-triage'].map(name => ({ name, group: 'Sin backend', help: 'Servicio de Factory', unavailable })),
+  ...['account', 'login', 'logout', 'share', 'install-code-review'].map(name => ({ name, group: 'Sin backend', help: 'Servicio de Factory', unavailable })),
+  { name: 'install-triage', group: 'Sin backend', help: 'Configurar triage de canales y tareas; requiere integración de servicio', unavailable },
+  { name: 'detect-overlapping-workstreams', group: 'Sin backend', help: 'Detectar objetivos duplicados en workstreams de Factory', unavailable: 'La detección entre workstreams de Factory requiere su catálogo remoto; no está disponible.' },
   ...[
     ['plugins', 'No existe un gestor propio de plugins/marketplaces.'],
     ['hooks', 'No se ejecutan hooks de shell configurados por el proyecto.'],
@@ -60,6 +64,7 @@ export function parseInput(line: string): SlashResult {
 }
 export function completions(line: string, models: string[] = [], custom: string[] = []): [string[], string] {
   const options = line.startsWith('/model ') ? models.map(m => '/model ' + m)
+    : line.startsWith('/reasoning ') ? ['default', 'low', 'medium', 'high'].map(r => '/reasoning ' + r)
     : line.startsWith('/auto ') ? ['off', 'low', 'medium', 'high'].map(a => '/auto ' + a)
     : line.startsWith('/mode ') ? ['auto', 'spec', 'mission'].map(m => '/mode ' + m)
     : [...CHAT_COMMANDS.flatMap(c => [c.name, ...c.aliases ?? []]), ...custom].map(n => '/' + n);

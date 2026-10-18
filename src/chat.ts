@@ -60,15 +60,15 @@ export async function chatMain(argv: string[]): Promise<number> {
     io.onClose = () => { if (process.stdin.isTTY) { closing = true; app.interrupt(); } };
     process.on('SIGINT', stop); process.on('SIGTERM', terminate);
     try {
-      await app.refreshCommands(); app.provider();
-      app.print('╭─ fab · agente propio ───────────────────────────────');
-      app.print(app.status()); app.print('╰─ / o Tab: comandos · /mode: auto/spec/mission · Ctrl+C: cancelar');
+      await app.refreshCommands(); app.provider(); io.welcome();
+      app.print(app.status());
       if (v.resume !== undefined || v['session-id'] || v.last) await app.submit('/resume ' + ((v['session-id'] ?? v.resume) || (v.last ? '--last' : '')));
       if (v.fork) { await app.submit('/resume ' + v.fork); await app.submit('/fork'); }
       const initial = positionals.join(' ');
       if (initial && !await app.submit(initial)) return 0;
       let buffer = '';
       while (!closing) {
+        await app.refreshCommands();
         await app.syncHistory();
         let line: string;
         try { line = await io.question(buffer ? '… ' : `fab [${app.config.mode}/${app.config.autonomy}] › `); } catch { break; }

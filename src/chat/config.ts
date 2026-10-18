@@ -6,7 +6,8 @@ import type { ExecSettings } from '../agent/settings.ts';
 import type { Autonomy, InteractionMode } from '../agent/types.ts';
 
 export const AUTONOMIES: Autonomy[] = ['off', 'low', 'medium', 'high'];
-export interface ChatConfig { model: string; autonomy: Autonomy; mode: InteractionMode; theme: 'color' | 'plain' }
+export const REASONING = ['low', 'medium', 'high'] as const;
+export interface ChatConfig { model: string; autonomy: Autonomy; mode: InteractionMode; theme: 'color' | 'plain'; reasoning?: typeof REASONING[number] }
 export const chatHome = () => resolve(process.env.FABRICA_HOME ?? join(homedir(), '.fabrica'));
 export function loadChatConfig(settings: ExecSettings = {}, home = chatHome()): ChatConfig {
   let saved: Record<string, unknown> = {};
@@ -25,12 +26,12 @@ export function loadChatConfig(settings: ExecSettings = {}, home = chatHome()): 
     ?? (existsSync(defaultAuthFile()) ? 'chatgpt:gpt-6-luna' : 'qwen3.5-32k:latest');
   const autonomy = AUTONOMIES.includes(saved.autonomy as Autonomy) ? saved.autonomy as Autonomy : 'off';
   // Mission authority is deliberately invocation-local, never restored from preferences.
-  return { model, autonomy, mode: 'auto', theme: saved.theme === 'plain' ? 'plain' : 'color' };
+  return { model, autonomy, mode: 'auto', theme: saved.theme === 'plain' ? 'plain' : 'color', ...(REASONING.includes(saved.reasoning as any) ? { reasoning: saved.reasoning as ChatConfig['reasoning'] } : {}) };
 }
 export function saveChatConfig(config: ChatConfig, home = chatHome()) {
   mkdirSync(home, { recursive: true, mode: 0o700 });
   const file = join(home, 'chat.json'), temp = file + '.' + crypto.randomUUID() + '.tmp';
-  writeFileSync(temp, JSON.stringify({ model: config.model, autonomy: config.autonomy, theme: config.theme }, null, 2) + '\n', { mode: 0o600 });
+  writeFileSync(temp, JSON.stringify({ model: config.model, autonomy: config.autonomy, theme: config.theme, reasoning: config.reasoning }, null, 2) + '\n', { mode: 0o600 });
   renameSync(temp, file);
 }
 
