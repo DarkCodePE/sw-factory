@@ -39,6 +39,7 @@ if (process.argv[1] && resolve(process.argv[1]) === import.meta.filename) {
       for (const report of [native, qualified]) {
         assert(report.sourceSha === sha && report.version === manifest.version && report.checks.version && report.checks.help
           && report.checks.readEditTask && report.checks.toolCalls === 2 && report.checks.turns === 3 && report.checks.tuiCommands
+          && report.checks.tuiLinkedCatalog && report.checks.tuiRejectedCatalog
           && report.checks.tuiAgentTask && report.checks.tuiRewind && report.checks.mcpList, `Qualification failed: ${name}`);
         if (report.platform === 'linux') assert(report.checks.scriptIsolation && report.checks.scriptTimeout, `Installed Script qualification failed: ${name}`);
       }

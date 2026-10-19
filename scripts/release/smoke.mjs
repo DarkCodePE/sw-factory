@@ -1,7 +1,7 @@
 // Native executable and actual agent loop, driven by an offline provider.
 import { spawn } from 'node:child_process';
 import { createServer } from 'node:http';
-import { mkdtemp, mkdir, readFile, realpath, rm, writeFile } from 'node:fs/promises';
+import { mkdtemp, mkdir, readFile, realpath, rm, symlink, unlink, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
 import { assert, hashFile, sourceSha, version, writeJson } from './common.mjs';
@@ -53,11 +53,20 @@ export async function smoke(binary, expectedVersion, { home: selectedHome } = {}
     assert(task.code === 0 && result.ok === true && result.toolCalls === 2 && turns === 3 && receivedToolResults === 2, `Agent loop failed: ${task.err} ${task.out}`);
     assert(await readFile(join(cwd, 'calc.txt'), 'utf8') === 'a + b\n', 'Tool effect absent');
     await writeFile(join(cwd, 'calc.txt'), 'a - b\n'); turns = 0; receivedToolResults = 0;
-    const chat = await execute(['tui', '--cwd', cwd, '--settings', settings, '--auto', 'low', '--timeout-ms', '15000'], 'Read calc.txt and replace subtraction with addition.\n/rewind\n/help\n/plugins\n/exit\n');
+    await mkdir(join(cwd, 'skills/ReleaseProbe'), { recursive: true }); await mkdir(join(cwd, '.agents'));
+    await writeFile(join(cwd, 'skills/ReleaseProbe/SKILL.md'), '---\ndescription: Linked project skill\n---\nInspect the project.');
+    const alias = join(cwd, '.agents/skills'); await symlink('../skills', alias);
+    const chat = await execute(['tui', '--cwd', cwd, '--settings', settings, '--auto', 'low', '--timeout-ms', '15000'], '/skills\nRead calc.txt and replace subtraction with addition.\n/rewind\n/help\n/plugins\n/exit\n');
     assert(chat.code === 0 && chat.out.includes('/skill') && chat.out.includes('marketplace'), `Piped TUI commands failed: ${chat.err} ${chat.out}`);
+    assert(chat.out.includes('Skills (1)') && chat.out.includes('ReleaseProbe'), 'Installed TUI did not discover the internal catalog alias');
     assert(turns === 3 && receivedToolResults === 2 && chat.out.includes('validated artifact task'), `TUI agent task failed: ${chat.err} ${chat.out}`);
     assert(await readFile(join(cwd, 'calc.txt'), 'utf8') === 'a - b\n', 'TUI rewind did not restore the file');
     const readEditTurns = turns;
+    const outside = join(temp, 'external-skills'); await mkdir(join(outside, 'ExternalProbe'), { recursive: true });
+    await writeFile(join(outside, 'ExternalProbe/SKILL.md'), 'This prompt is outside the workspace.');
+    await unlink(alias); await symlink(outside, alias);
+    const blocked = await execute(['tui', '--cwd', cwd, '--settings', settings], '/help\n/exit\n');
+    assert(blocked.code === 0 && blocked.out.includes('Skills (0)') && blocked.out.includes('/skill') && !blocked.out.includes('ExternalProbe'), `External catalog blocked TUI startup or escaped its boundary: ${blocked.err} ${blocked.out}`);
     if (process.platform === 'linux') {
       scenario = 'script'; turns = 0; receivedToolResults = 0;
       const script = await execute(['exec', '--cwd', cwd, '--settings', settings, '--auto', 'low', '--timeout-ms', '5000', '-o', 'json', 'Run the Script callback probe.']);
@@ -69,7 +78,7 @@ export async function smoke(binary, expectedVersion, { home: selectedHome } = {}
       scriptTimeout = true;
     }
     const mcp = await execute(['mcp', 'list', '--settings', settings]); assert(mcp.code === 0, 'MCP configuration command failed');
-    return { version: expectedVersion, platform: process.platform, arch: process.arch, checks: { version: true, help: true, readEditTask: true, toolCalls: result.toolCalls, turns: readEditTurns, tuiCommands: true, tuiAgentTask: true, tuiRewind: true, scriptIsolation, scriptTimeout, mcpList: true }, sha256: await hashFile(binary) };
+    return { version: expectedVersion, platform: process.platform, arch: process.arch, checks: { version: true, help: true, readEditTask: true, toolCalls: result.toolCalls, turns: readEditTurns, tuiCommands: true, tuiLinkedCatalog: true, tuiRejectedCatalog: true, tuiAgentTask: true, tuiRewind: true, scriptIsolation, scriptTimeout, mcpList: true }, sha256: await hashFile(binary) };
   } finally { await new Promise(resolve => server.close(resolve)); server.closeAllConnections(); await rm(temp, { recursive: true, force: true }); }
 }
 if (process.argv[1] && resolve(process.argv[1]) === import.meta.filename) {
