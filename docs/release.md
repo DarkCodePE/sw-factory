@@ -1,6 +1,6 @@
 # CI/CD y distribución de FAB
 
-La versión de prueba es `0.1.0-rc.4`, paquete npm `@okuanb/fab`, dist-tag `next`. No reemplaza una versión estable. El estado real de publicación se comprueba en GitHub/npm; la presencia de estos workflows por sí sola no prueba una release.
+La versión de prueba es `0.1.0-rc.5`, paquete npm `@okuanb/fab`, dist-tag `next`. No reemplaza una versión estable. El estado real de publicación se comprueba en GitHub/npm; la presencia de estos workflows por sí sola no prueba una release.
 
 ## Contrato
 
@@ -26,19 +26,19 @@ FAB_TARGETS=bun-linux-x64 sh scripts/build.sh
 node scripts/release/smoke.mjs dist/fab-linux-x64
 
 # Subir el candidato y consultar su ejecución:
-git push origin HEAD:release/0.1.0-rc.4
+git push origin HEAD:release/0.1.0-rc.5
 gh run list -R DarkCodePE/sw-factory --workflow release-candidate-preflight.yml
 # Solo tras preflight verde sobre el SHA exacto:
-git tag v0.1.0-rc.4 <SHA-verificado>
-git push origin v0.1.0-rc.4
+git tag v0.1.0-rc.5 <SHA-verificado>
+git push origin v0.1.0-rc.5
 ```
 
 Una vez publicada y verificada la RC:
 
 ```sh
-curl -fsSL https://github.com/DarkCodePE/sw-factory/releases/download/v0.1.0-rc.4/install.sh |
-  sh -s -- --version v0.1.0-rc.4
-npm install -g @okuanb/fab@0.1.0-rc.4
+curl -fsSL https://github.com/DarkCodePE/sw-factory/releases/download/v0.1.0-rc.5/install.sh |
+  sh -s -- --version v0.1.0-rc.5
+npm install -g @okuanb/fab@0.1.0-rc.5
 fab --version
 fab tui
 ```
@@ -74,3 +74,7 @@ La RC.2 (`fb8a1464c600cc25658b1949ea5510be098f89d5`) pasó [preflight](https://g
 ## Nombre npm confirmado
 
 La cuenta autenticada por el token aportado es `okuanb`; el usuario confirmó usar `@okuanb/fab`. La RC.4 cambia el nombre del paquete y genera una candidatura/versión nuevas. Conserva intactos los assets y tags anteriores. El token se configura únicamente en el entorno protegido `release`, secret `NPM_TOKEN`; el código no incluye su valor. El reintento de la RC.3 con credencial válida devolvió E403 porque npm exige 2FA o un token granular de publicación con bypass 2FA. El nombre correcto no elimina ese requisito: el registro solo se dará por verificado tras publicar y comprobar sus cuatro instalaciones públicas.
+
+## Secret npm y cabeceras HTTP
+
+Tras actualizar el secret en GitHub, el intento 3 de la RC.4 falló con `is not a legal HTTP header value`. La RC.5 normaliza únicamente espacios/CR/LF exteriores antes de crear NODE_AUTH_TOKEN y rechaza controles internos o caracteres no ASCII imprimibles con un error que no incluye la credencial. La forma normalizada también se registra en el enmascarado de GitHub. El valor original no se pasa a npm, y sin token se elimina el placeholder de setup-node para conservar OIDC. Tres pruebas reproducen la cabecera inválida y verifican normalización, rechazo sin filtraciones y fallback. El publicador Node conserva el guard de workflow protegido, SHA/tag, paquete sellado y provenance; no se publica desde la consola local ni se modifican releases anteriores. Esto no elimina requisitos de permisos o 2FA del registro.

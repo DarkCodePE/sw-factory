@@ -1,11 +1,13 @@
 import { afterEach, expect, test } from 'bun:test';
 import { createHash } from 'node:crypto';
+import { validateHeaderValue } from 'node:http';
 import { mkdtemp, mkdir, readFile, readdir, rm, writeFile } from 'node:fs/promises';
 import { join, dirname } from 'node:path';
 import { tmpdir } from 'node:os';
 import { binaryPath, ensureBinary, platformAsset, validateManifest } from '../packaging/npm/runtime.mjs';
 import { junit } from '../scripts/release/common.mjs';
 import { collectNative } from '../scripts/release/collect-native.mjs';
+import { npmPublishEnvironment } from '../scripts/release/npm-auth.mjs';
 const directories = [];
 afterEach(async () => { for (const path of directories.splice(0)) await rm(path, { recursive: true, force: true }); });
 const payload = Buffer.from('verified native fixture');
@@ -15,6 +17,28 @@ function manifest() {
   }))) };
 }
 async function home() { const path = await mkdtemp(join(tmpdir(), 'fab-npm-test-')); directories.push(path); return path; }
+
+test('npm publication trims pasted exterior CR/LF before constructing an HTTP authorization header', () => {
+  const source = { NPM_TOKEN: ' \r\nnpm_fixture_valid\r\n\t', NODE_AUTH_TOKEN: 'setup-node-placeholder', PATH: '/fixture/bin' };
+  expect(() => validateHeaderValue('authorization', 'Bearer ' + source.NPM_TOKEN)).toThrow();
+  const env = npmPublishEnvironment(source);
+  expect(env.NODE_AUTH_TOKEN).toBe('npm_fixture_valid');
+  expect(() => validateHeaderValue('authorization', 'Bearer ' + env.NODE_AUTH_TOKEN)).not.toThrow();
+  expect(env.NPM_TOKEN).toBeUndefined(); expect(env.PATH).toBe(source.PATH);
+  expect(source.NPM_TOKEN).toBe(' \r\nnpm_fixture_valid\r\n\t');
+});
+test('npm publication rejects internal controls without disclosing the credential', () => {
+  for (const token of ['npm_fixture\nrest', 'npm_fixture\rrest', 'npm_fixture rest', 'npm_fixture\0rest', 'npm_fixtureé']) {
+    try { npmPublishEnvironment({ NPM_TOKEN: token }); throw new Error('Expected invalid token rejection'); }
+    catch (error) { expect(error.message).toContain('NPM_TOKEN contains internal'); expect(error.message).not.toContain('npm_fixture'); }
+  }
+});
+test('npm publication keeps OIDC available when the bootstrap token is absent or only whitespace', () => {
+  for (const token of [undefined, '', ' \r\n\t']) {
+    const env = npmPublishEnvironment({ NPM_TOKEN: token, NODE_AUTH_TOKEN: 'setup-node-placeholder', PATH: '/fixture/bin' });
+    expect(env.NPM_TOKEN).toBeUndefined(); expect(env.NODE_AUTH_TOKEN).toBeUndefined(); expect(env.PATH).toBe('/fixture/bin');
+  }
+});
 
 test('npm distribution rejects unsupported platforms and malformed release identity', () => {
   expect(() => platformAsset('win32', 'x64')).toThrow('WSL'); expect(() => platformAsset('linux', 'riscv64')).toThrow();
