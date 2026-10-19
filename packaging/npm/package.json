@@ -1,5 +1,5 @@
 {
-  "name": "@darkcodepe/fab",
+  "name": "@okuanb/fab",
   "version": "0.0.0",
   "type": "module",
   "description": "FAB: agente y fábrica de software con runtime propio",

@@ -3,7 +3,7 @@
 Agente y fábrica de software con runtime propio. Node instala y lanza el binario de la misma release; no hace falta instalar Bun.
 
 ```sh
-npm install -g @darkcodepe/fab@next
+npm install -g @okuanb/fab@next
 fab --version
 fab tui
 ```

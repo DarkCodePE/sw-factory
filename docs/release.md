@@ -1,6 +1,6 @@
 # CI/CD y distribución de FAB
 
-La versión de prueba es `0.1.0-rc.3`, paquete npm `@darkcodepe/fab`, dist-tag `next`. No reemplaza una versión estable. El estado real de publicación se comprueba en GitHub/npm; la presencia de estos workflows por sí sola no prueba una release.
+La versión de prueba es `0.1.0-rc.4`, paquete npm `@okuanb/fab`, dist-tag `next`. No reemplaza una versión estable. El estado real de publicación se comprueba en GitHub/npm; la presencia de estos workflows por sí sola no prueba una release.
 
 ## Contrato
 
@@ -26,26 +26,26 @@ FAB_TARGETS=bun-linux-x64 sh scripts/build.sh
 node scripts/release/smoke.mjs dist/fab-linux-x64
 
 # Subir el candidato y consultar su ejecución:
-git push origin HEAD:release/0.1.0-rc.3
+git push origin HEAD:release/0.1.0-rc.4
 gh run list -R DarkCodePE/sw-factory --workflow release-candidate-preflight.yml
 # Solo tras preflight verde sobre el SHA exacto:
-git tag v0.1.0-rc.3 <SHA-verificado>
-git push origin v0.1.0-rc.3
+git tag v0.1.0-rc.4 <SHA-verificado>
+git push origin v0.1.0-rc.4
 ```
 
 Una vez publicada y verificada la RC:
 
 ```sh
-curl -fsSL https://github.com/DarkCodePE/sw-factory/releases/download/v0.1.0-rc.3/install.sh |
-  sh -s -- --version v0.1.0-rc.3
-npm install -g @darkcodepe/fab@0.1.0-rc.3
+curl -fsSL https://github.com/DarkCodePE/sw-factory/releases/download/v0.1.0-rc.4/install.sh |
+  sh -s -- --version v0.1.0-rc.4
+npm install -g @okuanb/fab@0.1.0-rc.4
 fab --version
 fab tui
 ```
 
 GitHub `latest` y npm `latest` son canales estables; para una RC se usa la versión explícita o npm `next`. Una release estable exige que el SHA publicado sea exactamente `main`. No se fuerza un tag ni se modifica una versión npm publicada; una corrección posterior usa otra versión.
 
-Para OIDC se configura el paquete npm con owner `DarkCodePE`, repositorio `sw-factory`, workflow `protected-release.yml` y entorno `release`. npm requiere CLI >=11.5.1 y Node >=22.14 para trusted publishing ([documentación oficial](https://docs.npmjs.com/trusted-publishers/)). El primer paquete/scope necesita una identidad con permisos; las credenciales no se incluyen en el repositorio. `NPM_TOKEN`, si se utiliza para bootstrap, vive solo en GitHub Secrets y se entrega únicamente al paso de publicación.
+Para OIDC se configura el paquete npm con owner de GitHub `DarkCodePE`, repositorio `sw-factory`, workflow `protected-release.yml` y entorno `release`. npm requiere CLI >=11.5.1 y Node >=22.14 para trusted publishing ([documentación oficial](https://docs.npmjs.com/trusted-publishers/)). El primer paquete/scope necesita una identidad con permisos; las credenciales no se incluyen en el repositorio. `NPM_TOKEN`, si se utiliza para bootstrap, vive solo en GitHub Secrets y se entrega únicamente al paso de publicación.
 
 ## Referencias examinadas con Graft
 
@@ -70,3 +70,7 @@ El [preflight inicial](https://github.com/DarkCodePE/sw-factory/actions/runs/391
 El [preflight corregido](https://github.com/DarkCodePE/sw-factory/actions/runs/39153001782), SHA `17bd9441c6e227527ce50e3277998a6e806a7eb6`, pasó 202 pruebas sin omisiones y las cuatro plataformas. El [primer publicador](https://github.com/DarkCodePE/sw-factory/actions/runs/39153199668) se detuvo al extraer recibos duplicados de los artefactos nativos; no creó una release. La recolección ahora descarga cada artefacto en un directorio independiente y copia únicamente el binario, después de compararlo con el manifest sellado. Una regresión comprueba que los recibos no se sobrescriben. Se conserva el tag anterior `v0.1.0-rc.1`; el siguiente candidato usa versión/tag nuevos `0.1.0-rc.2`.
 
 La RC.2 (`fb8a1464c600cc25658b1949ea5510be098f89d5`) pasó [preflight](https://github.com/DarkCodePE/sw-factory/actions/runs/39153347517) con 203 pruebas y fue [publicada en GitHub](https://github.com/DarkCodePE/sw-factory/actions/runs/39153532536); las cuatro instalaciones públicas Read/Edit/TUI/rewind pasaron. npm rechazó PUT con E404 y el paquete no quedó publicado. Una comprobación adicional del binario instalado bajo `/tmp` detectó que el tmpfs privado ocultaba el ejecutable al relanzar Script. La RC.3 restaura exclusivamente ese archivo mediante un bind de solo lectura. Las instalaciones npm precargadas y públicas Linux ahora deben ejecutar también el callback Script aislado y su timeout; el sello rechaza recibos sin esas pruebas. No se reutiliza el tag/artefacto público anterior.
+
+## Nombre npm confirmado
+
+La cuenta autenticada por el token aportado es `okuanb`; el usuario confirmó usar `@okuanb/fab`. La RC.4 cambia el nombre del paquete y genera una candidatura/versión nuevas. Conserva intactos los assets y tags anteriores. El token se configura únicamente en el entorno protegido `release`, secret `NPM_TOKEN`; el código no incluye su valor. El reintento de la RC.3 con credencial válida devolvió E403 porque npm exige 2FA o un token granular de publicación con bypass 2FA. El nombre correcto no elimina ese requisito: el registro solo se dará por verificado tras publicar y comprobar sus cuatro instalaciones públicas.
