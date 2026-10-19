@@ -29,6 +29,17 @@ export async function ensureWorktree(repo: string, stateDir: string, changeId: s
   return { path, branch };
 }
 
+/**
+ * Commit everything the agent left in the worktree, on behalf of an agent that cannot write Git
+ * metadata. Returns false when there was nothing to commit.
+ */
+export async function commitWorktree(worktree: string, message: string): Promise<boolean> {
+  if (!(await git(worktree, 'status', '--porcelain'))) return false;
+  await git(worktree, 'add', '-A');
+  await git(worktree, '-c', 'user.name=fab', '-c', 'user.email=fab@localhost', 'commit', '-q', '-m', message);
+  return true;
+}
+
 /** Commits on the change branch that are not on the repo's current HEAD. */
 export async function branchCommits(repo: string, branch: string): Promise<string[]> {
   const out = await git(resolve(repo), 'log', '--oneline', `HEAD..${branch}`);

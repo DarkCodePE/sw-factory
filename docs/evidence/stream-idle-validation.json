@@ -1,0 +1,178 @@
+{
+  "task": "task-codex-tui-gaps.md: hallazgo del stream detenido 455 s",
+  "date": "2026-10-18",
+  "worktree": "/home/orlando/Desktop/factory/sw-factory-tui",
+  "baseCommit": "cf72efc7fbfc7b7d46584e3ebc0dbee3da11a120",
+  "branch": "feat/droid-tui",
+  "sourceSnapshotSHA256": "57d782540f3cef3e373dc3e61a84440b86d9892b0a6d360d8f4bb775d2ae93ad",
+  "sourceFiles": [
+    {"path":"scripts/agent-loop-fixture.ts","sha256":"ab8b557c36aeaa8ced6162d2cc31cfbdf8338437c71dda63f4b75018727b0b5b"},
+    {"path":"scripts/build.sh","sha256":"abbe9ab5b4f374bc828f41d4d70a0bb313ea5a3da8705e31bf26afef751153ca"},
+    {"path":"scripts/mcp-fixture.ts","sha256":"97f80fd7505dc823ef568d8395fe4e4183dd0f3950ab3531e8b5c08f08615235"},
+    {"path":"scripts/native-factory-smoke.ts","sha256":"1c4a1bd6a0c383ca91e28e79a035e4dbff5e8f366a5ca1371f539a46bb438d26"},
+    {"path":"scripts/native-mission-probe.ts","sha256":"676535cb5c9565b57bec670c7f492b55181ad83584a813b01881291e41498ea4"},
+    {"path":"scripts/probe-compiled-cli.ts","sha256":"63683aebf661b04c6ecbc6bf7cb11812a8d95de2cab61e795c1ed49e8614152a"},
+    {"path":"scripts/probe-exec-rpc.ts","sha256":"e0be28a78f7379c1bb634147097d2ce770cd9269e5f3c6c117f1e1e31510a7eb"},
+    {"path":"scripts/probe-tui.ts","sha256":"a6bec3c081c54170bfc932835ee08fa05e9d10272b2599eef680fcc012ace5f7"},
+    {"path":"src/agent/README.md","sha256":"25fcb89224ac4356fdba8853bac2609d5320434f196e8074181c20bf35c638a6"},
+    {"path":"src/agent/cancellation.ts","sha256":"117add29ef96a9f018cfb94b896cd99113f09312811a82f1041ec527d4044fdc"},
+    {"path":"src/agent/catalog.ts","sha256":"faf44e6ecbea4aa13b0f0b61f685ccbbbbbf1b070cc523432e86fddf2da9e9a0"},
+    {"path":"src/agent/chatgpt.ts","sha256":"c2645ee8373be3e7a0f77751dae6f558915dac302d2273d9a5a6723db2302f5e"},
+    {"path":"src/agent/engine.ts","sha256":"3f3125c3019a0f650723d7fd13a112cbd95d1c16d09a013bdf0cfdfe27e2079f"},
+    {"path":"src/agent/exec.ts","sha256":"ee82bb924334f68516897ebebf4c898567fd902aa36cd17b2813c2f502ec4c91"},
+    {"path":"src/agent/files.ts","sha256":"759c6b5497266c07232ce657af25cbdfaab5da6287ae08330f1b3c2d0142b4ca"},
+    {"path":"src/agent/index.ts","sha256":"cb9366adff72a8141adf547cebbe3226021b0707579b9ec7a6cebd2be905e73b"},
+    {"path":"src/agent/interaction.ts","sha256":"e27ebb2e379a16dd2e0391ba264cd62ae8e8068be991c3d0d2c97868b71c40c9"},
+    {"path":"src/agent/mcp-sandbox.ts","sha256":"21fb5acc1d6ca51bb40580faf44694c3433c9d75a934f9c13bd820f130609e51"},
+    {"path":"src/agent/mcp.ts","sha256":"dce9f11fdf61b5b1de60c75daaf41d0b5275131f07a9e67db0b764c03aec48d0"},
+    {"path":"src/agent/mission-contract.ts","sha256":"c9a1819265dab835107eebc8a315e29089be33a9168d0d623c723559d6b289c1"},
+    {"path":"src/agent/mission-evidence.ts","sha256":"40de7c7b4d4772c6f84fcaec473f0f910e287b4a8dfd1b6645b01b660525579f"},
+    {"path":"src/agent/mission-files.ts","sha256":"93ead795a28bbb92ee3ce48d52c7d60034ea636d92f6ec75143323b66bb25b49"},
+    {"path":"src/agent/mission.ts","sha256":"69fd062c9f6a51794fa156f905f0a5e81e3bcf20dc82d526465e399349e72094"},
+    {"path":"src/agent/process.ts","sha256":"3b82ea3cc60557bba1035bcd5da86070ce3c08c2dacb653d03b24e25c435eab8"},
+    {"path":"src/agent/provider.ts","sha256":"c34198031a789783cd58c3f0e37da191774d80a98a4cdd33f2c5c4c4248a7ac9"},
+    {"path":"src/agent/registry.ts","sha256":"3f2fe9d0f6f36f20d58b4bd20d8ea8d2d3670c94a342c9e2e620e285908775fe"},
+    {"path":"src/agent/rpc.ts","sha256":"155438a268f47ada14ab55163113e4884eb53fe013efdeb2b0ba40594c1941fd"},
+    {"path":"src/agent/scheduler.ts","sha256":"53344e4290b99e91d2641a675765376d9d2c9e90916764981a1cd5de0ba5d045"},
+    {"path":"src/agent/session.ts","sha256":"914a7f11fd713307fb6615655a37aba696579fdd0a58d1e1ee7574b212453197"},
+    {"path":"src/agent/settings.ts","sha256":"02f73c30e7b40aa6fe73d1763a4c2d6406be4c1d023c7c7b7f77c2bb4e6721f8"},
+    {"path":"src/agent/tasks.ts","sha256":"61689118bf89bf5792e9d11c0abaa93ce212acf1028ac4e76b8728430aa25a83"},
+    {"path":"src/agent/tools.ts","sha256":"32e1aa2032d01d9674ce05f29ad4360c13e3733cb013be2dd550c930c4ec8996"},
+    {"path":"src/agent/transport.ts","sha256":"93cc891d6d703e253cc4349b14574c2b2b89fde1e4cc9cdb487703461f2f96bd"},
+    {"path":"src/agent/types.ts","sha256":"108b6cf83d0d7cf1f29a4c40efd53457159b51ab4cbdddaded9c194a002f6684"},
+    {"path":"src/agents.ts","sha256":"bde5e93542392564201ee73fe786cc6618a249a2c8448a2e732a0261d526cdee"},
+    {"path":"src/chat.ts","sha256":"cdcb3ba275d3069b5442912add06ef3441417e8059a2ec90ae7161e39464653e"},
+    {"path":"src/chat/checkpoints.ts","sha256":"a6537dde5a57587d877bc354ac3eb1c4bcd267f33c0b8be31eddbd6eb3f98721"},
+    {"path":"src/chat/cli.ts","sha256":"c99a90c7b36530f3aabb55db13670879447cfbe429619614e73f1184dcc10201"},
+    {"path":"src/chat/commands.ts","sha256":"7505feace107baa1b14e0b1a381e86f7f8ce9f96ced9f497927e6f719136fa96"},
+    {"path":"src/chat/config.ts","sha256":"2f64ba079195dedbad99420cb54a8b1bd19269ed6311b4dc23d8e3070b043f4c"},
+    {"path":"src/chat/controller.ts","sha256":"9ee587a12f9ac2ba9d0a103aa0a8de04353f4f08f5949f42a53493398721a1b4"},
+    {"path":"src/chat/history.ts","sha256":"b3e159019c2c4c8bb42f909cf3ba1b39f7ab49a6301eadeb0392762b2f765347"},
+    {"path":"src/chat/paste.ts","sha256":"0c47164f7032e9f88a760a1324579b57639dd3478798fc04234ac454c0368ced"},
+    {"path":"src/chat/presentation.ts","sha256":"7f224010bc3685c3430c6b92ed9a31e544f50d055f966ed7403359223a2a3431"},
+    {"path":"src/chat/project.ts","sha256":"959a87b3d2c305acf7371ba201567d47be238396027195c2825ee29bdac51f9e"},
+    {"path":"src/chat/render.ts","sha256":"d0099bde85cb086c90382425dbf40465064564f7ddb19149a9ffc82363811a3d"},
+    {"path":"src/chat/sessions.ts","sha256":"0be6fdddc039e76721139d277abc9cac572c9df018dae6740e8fd6c150f7091d"},
+    {"path":"src/chat/terminal.ts","sha256":"a6f6f1eca367e33402f3c174ee5c0552e184bb81c615ac663c1686f937f400fc"},
+    {"path":"src/cli.ts","sha256":"1b97cb04e4c306641506945ebca57273ecf4f77b431ac4ee5b9421a39952f88f"},
+    {"path":"src/enums.ts","sha256":"f817daffc199400687ebeaf8b53808bdc8a7ab13437e32d183574968120caeb6"},
+    {"path":"src/pool.ts","sha256":"f271c5d272a4ad12600b8d572eb6fb9dca8f30d951530fc9674d1551f093554d"},
+    {"path":"src/prompts.ts","sha256":"e166bbc47db529ef42d92196afbbbc946bd389a8dde62e50124fbf7439970472"},
+    {"path":"src/sandbox/README.md","sha256":"a037637c11e55e129067ac7b53022240cf8f697290a63f7ea7b93d6ab1a1abcf"},
+    {"path":"src/sandbox/detect.ts","sha256":"c96b64f1dc67f637429610ba59d32fe7d8fcfcc197b11891bb0832e1e7b82a71"},
+    {"path":"src/sandbox/index.ts","sha256":"d7e387691dcb36021deeaec6a9b496d51100c3caf28cc99f02ccf8065f94f144"},
+    {"path":"src/sandbox/report.ts","sha256":"2eb35d1dfd08b2e6c705d96aa6b742f0ac0a071588fda43dd40155217d7c0cae"},
+    {"path":"src/sandbox/types.ts","sha256":"6918a0482b210e51f6ad081257d5f36f25b285de7952bdd581a0ff272e6bff43"},
+    {"path":"src/sandbox/wrap.ts","sha256":"c8585e5b6b588aeb188d65f2f29e4cef4f2932ad835f65d46532e3f655e1b579"},
+    {"path":"src/script-runtime/README.md","sha256":"88b4870b55237716077264d2c5b06b80a4a85f4c68494b7cf5577d93fb309d5d"},
+    {"path":"src/script-runtime/bootstrap.ts","sha256":"5b7472e6c9a97df016c63c41cb6a06ffdb690dd449309c90496d5f1dca17bfff"},
+    {"path":"src/script-runtime/index.ts","sha256":"d06c82a42be0bb50b5c7e9c615ad0ce13990fa599727d1c1628b33ce18062d05"},
+    {"path":"src/script-runtime/protocol.ts","sha256":"c39246f126a5922169906f8c2db5bc7a02dd2e18ad64c23f9390e460880a8f17"},
+    {"path":"src/script-runtime/run.ts","sha256":"3297cd31433504933650457cbeb03cb35f0d68de3306e21ef732f5244dc0905c"},
+    {"path":"src/script-runtime/types.ts","sha256":"dc58cb10072fe94a68853995f3a45951018fdf7ea46966bb4897d53c2495b334"},
+    {"path":"src/script-runtime/worker.ts","sha256":"203886c463630349d6e70b5b6de3ca188e3b71e816352b27ec15d83768eb9861"},
+    {"path":"src/search/index.ts","sha256":"a034e922c1890be9b73c5fe1104226f110c1d72a367aad2a9d0f84928e3d6778"},
+    {"path":"src/self.ts","sha256":"e3d7586c1d6237a4ccfd65e848adea0530035ef4649fe46fb3c129fbef193a70"},
+    {"path":"src/store.ts","sha256":"9c7e4f82ad0c665c89cf2352bbc47272de28f152213a1d8b48ffb680676b5046"},
+    {"path":"src/tui.ts","sha256":"dfce322b988d67c0e2f27702d9afd838b5496d21f56d0ceebf9a0602a2c6c82b"},
+    {"path":"src/worktrees.ts","sha256":"d1574d097dfccea6ab79f738fc405cf9a9a83be9e32cf6d9449bb6ccec8cdbbc"},
+    {"path":"tests/agent-chatgpt.test.ts","sha256":"b7897abb2a0ef57534b3699d49671b07c6fd18ccc4888b03c049c2da9a294360"},
+    {"path":"tests/agent-cli.test.ts","sha256":"30ddbbd732a9e6a676aa799b65e426bdd436912bc7358417b4678b05d878a847"},
+    {"path":"tests/agent-mcp.test.ts","sha256":"916b6cd92e671a03c67e5296d7b0f2db434393b4eba5d2fc263f493e8799b265"},
+    {"path":"tests/agent-mission.test.ts","sha256":"99c43626a622406061bc6389949f9c554268f565b0655b2b9134f0b4faa27092"},
+    {"path":"tests/agent-rpc.test.ts","sha256":"fb0b89bdf1f61a62632b66bc0ec4013b9dad207fa730a20df543ca8fbdfb3eb1"},
+    {"path":"tests/agent-stream-idle.test.ts","sha256":"9774d3bf4054e642eaad226b972088277107033c3b3bbfabe0d513ed5c32df69"},
+    {"path":"tests/agent-tasks.test.ts","sha256":"df33470b177d7a3627d3ee3f04036a6f527f1c38245ad912c40319c7ccaddccc"},
+    {"path":"tests/agent.test.ts","sha256":"9a05900169394785fdd11c7bdc78bc0623c16b9e4a75f900f14c47606fb25c5e"},
+    {"path":"tests/chat-cli.test.ts","sha256":"8f77dc5a416899dce97944d029040c0df6f89b3c913f56b5aef3aa6e1749b2cc"},
+    {"path":"tests/chat-input.test.ts","sha256":"6f67886d0e02b141b92f5d2e11e5074faaab8a61397f657a233f2f4d3b4533d7"},
+    {"path":"tests/chat-render.test.ts","sha256":"651935a5f56a53f0912920460cc0aa0b45b95098f53be4de044ef07cadcd4a9b"},
+    {"path":"tests/chat-rewind.test.ts","sha256":"cd0d9657f38be6ccd268f920aefa4486e9371c5ba67879817e7901c7a76228e5"},
+    {"path":"tests/chat.test.ts","sha256":"9d53728f71ff63049d4966dbc1f0c45eded96a361ff73ba8bd80f4660c9fcd2d"},
+    {"path":"tests/pool.test.ts","sha256":"31a776f21822807426bef3e727ed1b5217f6084248f36b2cf303985006b31732"},
+    {"path":"tests/sandbox.test.ts","sha256":"2c301ac06d8f70d0c66cdce96849660f25f4882cd281c52b8972c15502a55f63"},
+    {"path":"tests/script-runtime.test.ts","sha256":"a718fa2b9dc1550465c0ffed36e7193575319b5092256cc8489993cfd9db23f2"},
+    {"path":"tests/search.test.ts","sha256":"96ba59d781f1312c83fee5f00a62f73c1e6dfb1a8d571edc7291d0c4ee4df9cf"},
+    {"path":"tests/store.test.ts","sha256":"62fee48b63e3b34334dbe5f9611a61909efd80155a3178f08b0e00fdeec7156a"},
+    {"path":"tests/tui.test.ts","sha256":"32ab55d1d4d6f62750e84649f7d0f101faee5c1cd99a3f8b1efed59e7d666fef"}
+  ],
+  "binarySHA256": "0347c2f8ef44a3baf72b6cdb6288ff5cbcadfdada723d8e2e3b27535fa138587",
+  "effects": {
+    "initialCreatePreserved": true,
+    "partialCreateNotExecuted": true
+  },
+  "snapshotAlgorithm": "sorted git cached+untracked src/tests/scripts; sha256(path UTF8 + NUL + bytes + NUL)",
+  "checks": [
+    {
+      "command": "bun test",
+      "exit": 0,
+      "pass": 177,
+      "fail": 0,
+      "assertions": 773,
+      "files": 19,
+      "newOfflineCases": 14
+    },
+    {
+      "command": "bunx --no-install tsc --noEmit -p .",
+      "exit": 0
+    },
+    {
+      "command": "git diff --check",
+      "exit": 0
+    },
+    {
+      "command": "bun build --compile --no-compile-autoload-dotenv --no-compile-autoload-bunfig src/cli.ts --outfile dist/fab",
+      "exit": 0
+    },
+    {
+      "command": "bun scripts/probe-compiled-cli.ts ./dist/fab",
+      "exit": 0,
+      "callback": {
+        "exit": 0,
+        "ok": true,
+        "sandboxed": true
+      },
+      "totalTimeout": {
+        "exit": 1,
+        "ok": false,
+        "error": "timeout"
+      }
+    }
+  ],
+  "rea": {
+    "id": "ev_017339d5a53d5d2863fdaa8e5b6a2fd57a1ce0a8b108717af34cfb2879c93a08",
+    "file": "stream-idle-pty-attempt-1.json",
+    "exit": {
+      "code": 0,
+      "signal": 0,
+      "reason": "exited"
+    },
+    "truncated": false,
+    "scenario": "Required sandbox, synthetic local provider: valid Create -> stalled stream with partial Create -> bounded retry -> successful final; Ctrl+O, Markdown, status and resize",
+    "idleMs": 350
+  },
+  "configuration": {
+    "defaultMs": 120000,
+    "environment": "FABRICA_STREAM_IDLE_MS",
+    "field": "streamIdleMs",
+    "precedence": [
+      "per-model option",
+      "settings profile",
+      "environment",
+      "default"
+    ],
+    "zero": "disables idle deadline only",
+    "range": "integer 0..2147483647"
+  },
+  "policy": {
+    "soleWriter": "Codex root; earlier Claude commits preserved",
+    "commercialProvider": false,
+    "globalInstall": false,
+    "push": false,
+    "commit": "local feat/droid-tui authorized; commit ID in Git history"
+  },
+  "pending": [
+    "Optional project hooks: not enabled; sandbox capability/effect contract remains unresolved.",
+    "No claim that original commercial stream failure was reproduced; memory streams and synthetic local PTY only."
+  ]
+}

@@ -1,0 +1,204 @@
+name: FAB candidate preflight
+on:
+  push:
+    branches: ['release/**']
+  workflow_dispatch:
+permissions:
+  contents: read
+concurrency:
+  group: fab-preflight-${{ github.ref }}
+  cancel-in-progress: true
+jobs:
+  qa:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        with:
+          ref: ${{ github.sha }}
+          persist-credentials: false
+      - uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6
+        with:
+          bun-version: 1.3.14
+      - name: Linux sandbox dependencies
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y bubblewrap ripgrep
+          if sysctl kernel.apparmor_restrict_unprivileged_userns >/dev/null 2>&1; then
+            sudo sysctl -w kernel.apparmor_restrict_unprivileged_userns=0
+          fi
+      - run: bun install --frozen-lockfile
+      - run: bunx --no-install tsc --noEmit -p .
+      - name: Nonzero QA, no skips or todos
+        run: |
+          mkdir -p dist
+          bun test --reporter=junit --reporter-outfile=dist/qa.xml
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: fab-qa-${{ github.sha }}
+          path: dist/qa.xml
+          if-no-files-found: error
+  native:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - runner: ubuntu-24.04
+            os: linux
+            arch: x64
+          - runner: ubuntu-24.04-arm
+            os: linux
+            arch: arm64
+          - runner: macos-15
+            os: darwin
+            arch: arm64
+          - runner: macos-15-intel
+            os: darwin
+            arch: x64
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        with:
+          ref: ${{ github.sha }}
+          persist-credentials: false
+      - uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6
+        with:
+          bun-version: 1.3.14
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
+        with:
+          node-version: '24'
+      - name: Require native host identity
+        env:
+          EXPECTED: ${{ matrix.os }}-${{ matrix.arch }}
+        run: node -e 'if (`${process.platform}-${process.arch}` !== process.env.EXPECTED) process.exit(1)'
+      - run: bun install --frozen-lockfile
+      - name: Native directory-capability regression tests
+        run: bun test tests/agent-files.test.ts
+      - name: Linux native Script sandbox dependencies
+        if: matrix.os == 'linux'
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y bubblewrap
+          if sysctl kernel.apparmor_restrict_unprivileged_userns >/dev/null 2>&1; then
+            sudo sysctl -w kernel.apparmor_restrict_unprivileged_userns=0
+          fi
+      - name: Compile and execute the artifact
+        env:
+          FAB_TARGETS: bun-${{ matrix.os }}-${{ matrix.arch }}
+          ASSET: fab-${{ matrix.os }}-${{ matrix.arch }}
+        run: |
+          sh scripts/build.sh
+          node scripts/release/smoke.mjs "dist/$ASSET" "dist/$ASSET.receipt.json"
+      - name: Linux compiled Script isolation and timeout
+        if: matrix.os == 'linux'
+        env:
+          ASSET: fab-${{ matrix.os }}-${{ matrix.arch }}
+        run: |
+          bun scripts/probe-compiled-cli.ts "dist/$ASSET" > "dist/$ASSET.script.json"
+          node scripts/release/record-script.mjs "dist/$ASSET"
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: fab-native-${{ matrix.os }}-${{ matrix.arch }}-${{ github.sha }}
+          path: dist/fab-${{ matrix.os }}-${{ matrix.arch }}*
+          if-no-files-found: error
+          compression-level: 6
+          retention-days: 2
+  pack:
+    needs: [qa, native]
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        with:
+          ref: ${{ github.sha }}
+          persist-credentials: false
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
+        with:
+          node-version: '24'
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093
+        with:
+          pattern: fab-native-*-${{ github.sha }}
+          path: dist/candidate
+          merge-multiple: true
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093
+        with:
+          name: fab-qa-${{ github.sha }}
+          path: dist/candidate
+      - run: node scripts/release/pack.mjs dist/candidate
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: fab-candidate-${{ github.sha }}
+          path: dist/candidate
+          if-no-files-found: error
+          compression-level: 6
+          retention-days: 2
+  stranger:
+    needs: pack
+    strategy:
+      fail-fast: false
+      matrix:
+        runner: [ubuntu-24.04, ubuntu-24.04-arm, macos-15, macos-15-intel]
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        with:
+          ref: ${{ github.sha }}
+          persist-credentials: false
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
+        with:
+          node-version: '24'
+      - name: Linux installed Script sandbox dependencies
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y bubblewrap
+          if sysctl kernel.apparmor_restrict_unprivileged_userns >/dev/null 2>&1; then
+            sudo sysctl -w kernel.apparmor_restrict_unprivileged_userns=0
+          fi
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093
+        with:
+          name: fab-candidate-${{ github.sha }}
+          path: dist/candidate
+      - name: Install the packed npm artifact in a fresh home and run commands
+        run: node scripts/release/qualify.mjs dist/candidate
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: fab-qualification-${{ matrix.runner }}-${{ github.sha }}
+          path: dist/candidate/qualification-*.json
+          if-no-files-found: error
+  seal:
+    needs: stranger
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        with:
+          ref: ${{ github.sha }}
+          persist-credentials: false
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
+        with:
+          node-version: '24'
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093
+        with:
+          name: fab-candidate-${{ github.sha }}
+          path: dist/candidate
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093
+        with:
+          pattern: fab-qualification-*-${{ github.sha }}
+          path: dist/candidate
+          merge-multiple: true
+      - run: node scripts/release/seal.mjs dist/candidate
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: fab-sealed-${{ github.sha }}
+          path: |
+            dist/candidate/*.json
+            dist/candidate/*.tgz
+            dist/candidate/*.sha256
+            dist/candidate/install.sh
+            dist/candidate/qa.xml
+          if-no-files-found: error
+          compression-level: 6
+          retention-days: 30

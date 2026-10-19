@@ -3,7 +3,7 @@
 import { getAgent, runAgent } from './agents.ts';
 import { buildWorkerPrompt, parseReportStatus } from './prompts.ts';
 import type { Activity, Store } from './store.ts';
-import { branchCommits, ensureWorktree } from './worktrees.ts';
+import { branchCommits, commitWorktree, ensureWorktree } from './worktrees.ts';
 
 export interface PoolOptions {
   workstream: string;
@@ -23,7 +23,7 @@ export async function processActivity(store: Store, activity: Activity, workerId
     const { activity: a, change, history } = store.activityContext(activity.id);
     const { path, branch } = await ensureWorktree(ws.repo, opts.stateDir, change.id);
     store.setChangeBranch(change.id, branch);
-    const prompt = buildWorkerPrompt({ workstream: ws, change, activity: a, history, worktree: path, branch });
+    const prompt = buildWorkerPrompt({ workstream: ws, change, activity: a, history, worktree: path, branch }, { factoryCommits: agent.factoryCommits });
     log(`[${workerId}] ${a.kind} "${change.title}" -> ${agent.name} in ${path}`);
     const run = await runAgent(agent, prompt, path, undefined, { readOnly: a.kind === 'investigation' });
     const status = parseReportStatus(run.output);
@@ -38,6 +38,8 @@ export async function processActivity(store: Store, activity: Activity, workerId
       return;
     }
     if (a.kind === 'implementation') {
+      // The commit is attributed to the factory and only records what the agent left on disk.
+      if (agent.factoryCommits) await commitWorktree(path, `${change.title}\n\nImplemented by ${agent.name} (fab activity ${a.id.slice(0, 8)}).`);
       const commits = await branchCommits(ws.repo, branch);
       if (commits.length === 0 && agent.name !== 'fake') {
         store.failActivity(a.id, workerId, 'implementation reported done but left no commits on the branch');

@@ -1,4 +1,6 @@
-// Explicit opt-in integration probe: local Ollama + disposable repository.
+// Explicit opt-in integration probe: one harness + disposable repository.
+// SMOKE_AGENT selects the worker (native by default; claude, codex, agy use their own CLI login).
+// SMOKE_MODEL selects the native model (default local Ollama; `chatgpt:<model>` uses a Codex login).
 // Commits belong only to this fixture; never run it against an existing repository.
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { resolve, join, isAbsolute } from 'node:path';
@@ -26,7 +28,8 @@ writeFileSync(join(root,'probe-contract.json'),JSON.stringify({native_factory_fi
 const initialHead = git('rev-parse', 'HEAD');
 const stateDir = join(root, 'state'); mkdirSync(stateDir,{recursive:true});
 process.env.FABRICA_HOME = stateDir;
-process.env.FABRICA_LLM_MODEL = 'qwen3.5-32k:latest';
+const agent = process.env.SMOKE_AGENT ?? 'native';
+process.env.FABRICA_LLM_MODEL = process.env.SMOKE_MODEL ?? 'qwen3.5-32k:latest';
 process.env.FABRICA_LLM_BASE_URL = 'http://127.0.0.1:11434/v1';
 process.env.FABRICA_LLM_API_KEY = '';
 process.env.FABRICA_AGENT_TIMEOUT_MS = '180000';
@@ -34,7 +37,7 @@ process.env.FABRICA_AGENT_MAX_TURNS = '32';
 delete process.env.FABRICA_AGENT_SETTINGS;
 const store = new Store(join(stateDir, 'factory.db'));
 try {
-  const ws = resume ? store.getWorkstream('native-smoke') : store.createWorkstream({ slug: 'native-smoke', goal: 'Fix add using the native runtime', repo,
+  const ws = resume ? store.getWorkstream('native-smoke') : store.createWorkstream({ slug: 'native-smoke', goal: `Fix add using the ${agent} runtime`, repo, agent,
     requireApproval: false, requireChangeApproval: false });
   if (ws.repo !== repo) throw new Error('Fixture repository mismatch');
   if (ws.state !== 'active') store.setWorkstreamState(ws.id, 'active');
@@ -51,7 +54,7 @@ try {
   const current = store.getChange(change.id), cwd = join(stateDir, 'worktrees', change.id.slice(0, 8));
   const verification = Bun.spawnSync([process.execPath, 'test'], { cwd });
   const result = { ok: current.status === 'implemented' && verification.exitCode === 0 && git('rev-parse', 'HEAD') === initialHead,
-    agent: ws.agent, change: current, commits: await branchCommits(repo, current.branch!),
+    agent: ws.agent, model: agent === 'native' ? process.env.FABRICA_LLM_MODEL : undefined, change: current, commits: await branchCommits(repo, current.branch!),
     verification: { exitCode: verification.exitCode, stdout: verification.stdout.toString(), stderr: verification.stderr.toString() } };
   writeFileSync(join(root, 'result.json'), JSON.stringify(result, null, 2));
   console.log(JSON.stringify(result)); if (!result.ok) process.exitCode = 1;

@@ -6,3 +6,5 @@ node_modules/
 .serena/
 graft/
 .ignore
+/dist/
+/src/agent/native/*.node

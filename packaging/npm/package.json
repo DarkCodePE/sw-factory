@@ -1,0 +1,14 @@
+{
+  "name": "@okuanb/fab",
+  "version": "0.0.0",
+  "type": "module",
+  "description": "FAB: agente y fábrica de software con runtime propio",
+  "bin": { "fab": "bin/fab.mjs" },
+  "scripts": { "postinstall": "node postinstall.mjs" },
+  "files": ["bin", "runtime.mjs", "postinstall.mjs", "release-manifest.json", "README.md"],
+  "engines": { "node": ">=22" },
+  "os": ["linux", "darwin"],
+  "cpu": ["x64", "arm64"],
+  "repository": { "type": "git", "url": "git+https://github.com/DarkCodePE/sw-factory.git" },
+  "publishConfig": { "access": "public", "provenance": true }
+}

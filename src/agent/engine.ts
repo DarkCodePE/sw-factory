@@ -1,6 +1,6 @@
 import { realpath, stat } from 'node:fs/promises';
 import { join } from 'node:path';
-import { ProviderError, estimatedTokens } from './provider.ts';
+import { ProviderError, estimatedTokens, validateTurn } from './provider.ts';
 import { readWorkspaceFile } from './files.ts';
 import { abortable } from './cancellation.ts';
 import { ToolRuntime } from './registry.ts';
@@ -62,7 +62,7 @@ export async function runCodingAgent(opts: AgentOptions, inherited?: AgentLineag
     timer = setTimeout(() => { timedOut = true; controller.abort(new Error('Agent total timeout exceeded')); }, timeout);
     const cwd = await realpath(opts.cwd);
     const context: ToolContext = { cwd, signal: controller.signal, autonomy: opts.autonomy ?? 'off',
-      interactionMode: opts.interactionMode ?? 'auto', sandbox: opts.sandbox ?? 'required' };
+      interactionMode: opts.interactionMode ?? 'auto', sandbox: opts.sandbox ?? 'required', fileJournal: inherited ? undefined : opts.fileJournal };
     if (!['off', 'low', 'medium', 'high'].includes(context.autonomy) || !['auto', 'spec', 'mission'].includes(context.interactionMode)) {
       throw new Error('Invalid agent autonomy or interaction mode');
     }
@@ -112,9 +112,11 @@ export async function runCodingAgent(opts: AgentOptions, inherited?: AgentLineag
           if (response.usage) for (const key of ['inputTokens', 'outputTokens'] as const) {
             const n = response.usage[key]; if (Number.isSafeInteger(n) && n >= 0) usage[key] += n;
           }
+          emit('usage', { usage: { ...usage }, contextTokens: estimatedTokens(messages, withTools ? schemas : []), maxContextTokens: maxContext });
           return response;
         } catch (e) {
-          if (!(e instanceof ProviderError) || !e.retryable || attempt >= 2) throw e;
+          if (!(e instanceof ProviderError) || !e.retryable || attempt >= Math.min(2, maxRecovery)) throw e;
+          emit('provider_retry', { attempt: attempt + 2, maxAttempts: Math.min(2, maxRecovery) + 1, message: textError(e) });
           await abortable(Bun.sleep(50 * 2 ** attempt), context.signal);
         }
       }
@@ -167,7 +169,8 @@ export async function runCodingAgent(opts: AgentOptions, inherited?: AgentLineag
       for (const message of opts.receiveMessages?.() ?? []) state.messages.push({ role: 'user', content: 'Message from supervising agent:\n' + message });
       if (estimatedTokens(state.messages, schemas) + maxOutput > maxContext) await compact();
       let response: ModelTurn;
-      try { response = await complete(state.messages); }
+      // Every provider's turn is checked here, before it is persisted or any tool is dispatched.
+      try { response = validateTurn(await complete(state.messages)); }
       catch (e) { if (e instanceof ProviderError && e.contextLimit) { await compact(); continue; } throw e; }
       turns++; state.turns++;
       state.messages.push({ role: 'assistant', content: response.text || (response.toolCalls.length ? null : ''),

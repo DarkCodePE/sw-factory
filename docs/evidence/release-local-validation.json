@@ -1,0 +1,123 @@
+{
+  "task": "CI/CD y primera release de prueba FAB",
+  "phase": "local preflight; publication not yet performed",
+  "utc": "2026-10-18T17:50:00.056263+00:00",
+  "authority": "Usuario autoriza CI/CD, npm, release de prueba, instalación y tareas de validación; scope npm confirmado @darkcodepe/fab",
+  "policyDecision": "allow candidate branch/CI push; tag/publication only after exact-SHA preflight success",
+  "baselineHead": "e9c32e0a1b292df41e4945bb32768a6c9d65bace",
+  "version": "0.1.0-rc.1",
+  "checks": {
+    "bunTest": {
+      "pass": 195,
+      "fail": 0,
+      "skipped": 0,
+      "assertions": 958,
+      "files": 22,
+      "junit": "dist/local-release-qa.xml"
+    },
+    "typecheckExit": 0,
+    "syntax": "Node --check and workflow YAML parse passed",
+    "linuxNativeTask": "Read -> Edit -> final, actual effect; TUI commands; MCP list",
+    "linuxScriptProbe": "sandboxed callback exit0 and timeout exit1 observed"
+  },
+  "sourceFiles": [
+    {
+      "path": ".github/workflows/ci.yml",
+      "sha256": "fb65dee41fabb9d23dcee32931b05d6770989a444a2187e5e43429a5601ef7eb"
+    },
+    {
+      "path": ".github/workflows/protected-release.yml",
+      "sha256": "7cfd3a4e5ebb66ac6e4cb3e6708fad47c9473ce49ce1788408feeb59b1940aa8"
+    },
+    {
+      "path": ".github/workflows/release-candidate-preflight.yml",
+      "sha256": "ebb280f9b3d94d891cea1105b182c802df17f33770b71e4c5c5750e2528c18a7"
+    },
+    {
+      "path": "README.md",
+      "sha256": "9483abc476aeb2e934c880a2157facb029f508ca6db7f8c1f6308e1db43a2195"
+    },
+    {
+      "path": "docs/release.md",
+      "sha256": "3f55cdcb12422579e8aa2fd480cb478086f3a300afbca1a8503b702c76ace78e"
+    },
+    {
+      "path": "package.json",
+      "sha256": "307e197455d37bbd5ec7e62530eebc705693d750a4930c2419c423e57daf12a5"
+    },
+    {
+      "path": "packaging/npm/README.md",
+      "sha256": "99e1043ee078ca2a45f5e7f695b304f9d5ef6887f017e321309cea1de83398a8"
+    },
+    {
+      "path": "packaging/npm/bin/fab.mjs",
+      "sha256": "fb6a4d740a4168d2626d58da8a411ddf29de2dbde80c584c97f600f5ee6b5407"
+    },
+    {
+      "path": "packaging/npm/package.json",
+      "sha256": "0318493411fb5d490db2ce6a7184dad7c8721c584ca2750baf1f1f997590114a"
+    },
+    {
+      "path": "packaging/npm/postinstall.mjs",
+      "sha256": "38a07f6a9dd6a2c167b95ec7c734e1121482b5d1beaac39404a4b16b5a0d810d"
+    },
+    {
+      "path": "packaging/npm/runtime.mjs",
+      "sha256": "385bf21bc390586baba801aebb18b6281642a939a05e4d75d289854485f546e5"
+    },
+    {
+      "path": "scripts/build.sh",
+      "sha256": "a6eefa8b8a92a88e72bb4fb361c7b2283e82ae796e4d465f6786ede286296939"
+    },
+    {
+      "path": "scripts/release/common.mjs",
+      "sha256": "8ae0a1aed7569756dbb4e95f719216ae87107f257badb2384514baac2797cae6"
+    },
+    {
+      "path": "scripts/release/find-candidate.mjs",
+      "sha256": "5d006020e7f8b0aadc95cae8967440b032dae89b5f9d985319294d898c2f7479"
+    },
+    {
+      "path": "scripts/release/pack.mjs",
+      "sha256": "319b4a1b359ebc0a15a1c185f6ababec5b012e9ae0b41e564a22160486fa34ed"
+    },
+    {
+      "path": "scripts/release/public-install.mjs",
+      "sha256": "c47d377a06abe4b54594e37ad9b6a3864c2b3c497cd5bb5fd8e9332821f99643"
+    },
+    {
+      "path": "scripts/release/publish-github.mjs",
+      "sha256": "b4fceef1fb26e97efd95988bb509394a686a6eec433f1246b1ad06a6c2bfb7f6"
+    },
+    {
+      "path": "scripts/release/qualify.mjs",
+      "sha256": "d0086f312d21bd27df54015960b7ed1af1fda7ab9e4ac202be2a5ed29e8edc27"
+    },
+    {
+      "path": "scripts/release/record-script.mjs",
+      "sha256": "d6e094d740ba7b22a28260f74d983e84188f433b20c33291036a4fdb6ccda0a4"
+    },
+    {
+      "path": "scripts/release/seal.mjs",
+      "sha256": "32474ee4ac86fb38d3c0f9398a8feebbb34c2f367a14f04fe769459ec770fe53"
+    },
+    {
+      "path": "scripts/release/smoke.mjs",
+      "sha256": "c3dc96fb35c82e7c719010a58bb0dfd241b5a21c8146c595215a660ceeca8273"
+    },
+    {
+      "path": "tests/release-distribution.test.js",
+      "sha256": "0cdb2817b2f6cb13b3cf9c3309235d568fb3958b398fed4c726c5a1e49569900"
+    }
+  ],
+  "limitations": [
+    "No CI-host result yet",
+    "No public release/npm package yet",
+    "No npm authentication found; user referred to portfolio-starteria and exact path clarification is pending",
+    "Mac and ARM hosts not executed locally"
+  ],
+  "delegation": {
+    "herdr": "agy-ollama w6:p4 reviewed reference release pipelines read-only",
+    "internalReviewer": "installer_review, no blockers in bounded source review; not evidence of real publication"
+  }
+}

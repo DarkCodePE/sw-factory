@@ -4,7 +4,7 @@ import { dirname, isAbsolute, relative, resolve, sep } from 'node:path';
 import { wrapCommand } from '../sandbox/index.ts';
 import { runScript } from '../script-runtime/index.ts';
 import { runProcess } from './process.ts';
-import type { AgentTool, ToolContext } from './types.ts';
+import type { AgentTool, FileMutation, ToolContext } from './types.ts';
 
 export function inputObject(input: unknown): Record<string, unknown> {
   if (!input || typeof input !== 'object' || Array.isArray(input)) throw new Error('Tool input must be an object');
@@ -50,6 +50,10 @@ export function tool(name: string, effect: AgentTool['effect'], properties: Reco
 }
 const str = { type: 'string' };
 const limitText = (s: string, max = 64 * 1024) => Buffer.byteLength(s) <= max ? s : Buffer.from(s).subarray(0, max).toString('utf8') + '\n[output truncated]';
+async function prepareWrite(c: ToolContext, root: string, change: FileMutation) {
+  if (root !== c.cwd) { await c.fileJournal?.barrier('mission metadata', c); return; }
+  return c.fileJournal?.prepare(change, c);
+}
 
 export function parseCommand(command: string): string[] | null {
   if (/[;&|$`<>\n\r]/.test(command)) return null;
@@ -165,7 +169,14 @@ export function builtinTools(): AgentTool[] {
     tool('Create', 'write', { file_path: str, content: str }, ['file_path', 'content'], async (input, c) => {
       const args = inputObject(input), path = stringArg(args, 'file_path'), content = stringArg(args, 'content');
       return withWorkspaceFile(fileRoot(c, path, true), path, true, async (parent, name, absolute) => {
-        await atomicReplace(parent, name, content.endsWith('\n') ? content : content + '\n', c.signal, 0o666);
+        const after = Buffer.from(content.endsWith('\n') ? content : content + '\n');
+        let before;
+        if (c.fileJournal) {
+          try { before = await readAnchored(parent, name); } catch (e: any) { if (e.code !== 'ENOENT') throw e; }
+        }
+        const applied = await prepareWrite(c, fileRoot(c, path, true), { path: absolute, before, after, mode: 0o666 });
+        await atomicReplace(parent, name, after, c.signal, 0o666);
+        if (applied) await applied(await readAnchored(parent, name));
         return { success: true, file_path: absolute };
       });
     }, 'Write a workspace file, creating parent directories and replacing existing content atomically.'),
@@ -173,12 +184,14 @@ export function builtinTools(): AgentTool[] {
       ['file_path', 'old_str', 'new_str'], async (input, c) => {
         const args = inputObject(input), path = stringArg(args, 'file_path');
         return withWorkspaceFile(fileRoot(c, path, true), path, false, async (parent, name, absolute) => {
-          const { text: before, mode } = await readAnchored(parent, name);
+          const snapshot = await readAnchored(parent, name), { text: before, mode } = snapshot;
           const old = stringArg(args, 'old_str'), replacement = stringArg(args, 'new_str');
           if (!old || !before.includes(old)) throw new Error('Edit search text not found');
           if (!args.change_all && before.indexOf(old) !== before.lastIndexOf(old)) throw new Error('Edit search text is ambiguous');
           const after = args.change_all ? before.split(old).join(replacement) : before.replace(old, () => replacement);
+          const applied = await prepareWrite(c, fileRoot(c, path, true), { path: absolute, before: snapshot, after: Buffer.from(after), mode });
           await atomicReplace(parent, name, after, c.signal, mode);
+          if (applied) await applied(await readAnchored(parent, name));
           return { success: true, file_path: absolute };
         });
       }, 'Replace exact text in a workspace file; ambiguous edits require change_all.'),

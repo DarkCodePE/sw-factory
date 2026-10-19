@@ -2,6 +2,7 @@
 // Plain ANSI escapes, no dependencies. The pool runs separately (`fab run <ws>`); this view only
 // reads the store and records human decisions.
 import type { Activity, Change, Store } from './store.ts';
+import { chatMain } from './chat.ts';
 
 const ESC = '\x1b[';
 const c = {
@@ -121,8 +122,8 @@ function detailLines(store: Store, row: Row): string[] {
 }
 
 const HELP: Record<Mode, string> = {
-  list: '↑↓ mover · enter detalle · a aprobar · c comentar · d rechazar · r reintentar · q salir',
-  detail: '↑↓ desplazar · a aprobar · c comentar · d rechazar · esc volver · q salir',
+  list: '↑↓ mover · enter detalle · a aprobar · c comentar · d rechazar · r reintentar · g agente · q salir',
+  detail: '↑↓ desplazar · a aprobar · c comentar · d rechazar · g agente · esc volver · q salir',
   comment: 'escribe y enter para enviar · esc cancelar',
 };
 
@@ -215,23 +216,33 @@ export async function runTui(store: Store, workstream: string): Promise<void> {
   const state = newTuiState();
   const out = process.stdout;
   const draw = () => out.write(`${ESC}H${render(store, workstream, state, out.columns || 100, out.rows || 30).join('\n')}${ESC}J`);
-  out.write(`${ESC}?1049h${ESC}?25l`);
-  process.stdin.setRawMode?.(true);
-  process.stdin.resume();
-  draw();
-  const timer = setInterval(draw, 2000);
-  out.on('resize', draw);
-  await new Promise<void>((resolve) => {
-    process.stdin.on('data', (buf: Buffer) => {
-      if (handleKey(store, workstream, state, buf.toString('utf8'))) {
-        draw();
-        return;
-      }
-      clearInterval(timer);
-      out.write(`${ESC}?25h${ESC}?1049l`);
-      process.stdin.setRawMode?.(false);
-      process.stdin.pause();
-      resolve();
-    });
-  });
+  for (;;) {
+    out.write(`${ESC}?1049h${ESC}?25l`);
+    process.stdin.setRawMode?.(true);
+    let timer: ReturnType<typeof setInterval> | undefined;
+    let input: ((buf: Buffer) => void) | undefined;
+    let closed: (() => void) | undefined;
+    let action: 'quit' | 'agent';
+    try {
+      draw(); timer = setInterval(draw, 2000); out.on('resize', draw);
+      action = await new Promise<'quit' | 'agent'>(resolve => {
+        input = buf => {
+          const key = buf.toString('utf8');
+          if (key === 'g' && state.mode !== 'comment') { resolve('agent'); return; }
+          if (handleKey(store, workstream, state, key)) draw(); else resolve('quit');
+        };
+        closed = () => resolve('quit');
+        process.stdin.on('data', input); process.stdin.on('end', closed); process.once('SIGTERM', closed);
+        process.stdin.resume();
+      });
+    } finally {
+      if (timer) clearInterval(timer);
+      out.removeListener('resize', draw);
+      if (input) process.stdin.removeListener('data', input);
+      if (closed) { process.stdin.removeListener('end', closed); process.removeListener('SIGTERM', closed); }
+      out.write(`${ESC}?25h${ESC}?1049l`); process.stdin.setRawMode?.(false); process.stdin.pause();
+    }
+    if (action === 'quit') return;
+    await chatMain(['--cwd', store.getWorkstream(workstream).repo]);
+  }
 }

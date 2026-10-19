@@ -1,0 +1,100 @@
+{
+  "task": "Instalador por sistema operativo desde GitHub",
+  "createdUtc": "2026-10-18T15:36:58.752310+00:00",
+  "policyDecision": {
+    "decision": "allow",
+    "authority": "Solicitud del usuario de instalador curl desde GitHub; cambios reversibles en worktree",
+    "scope": "Script, documentación y pruebas locales; sin publicación ni instalación global"
+  },
+  "baselineHead": "10e5a7c555a57985dc9ccd8c7941d727974291ab",
+  "changes": [
+    {
+      "path": "scripts/install.sh",
+      "sha256": "140eb00742bd102ba965b315bf6f55f54096ed75e26df3063c490a2b29927502"
+    },
+    {
+      "path": "tests/installer.test.ts",
+      "sha256": "25d57966bfeeac9eed1b93788885941e34d17ce708887c143a2c65d3053c35fb"
+    },
+    {
+      "path": "README.md",
+      "sha256": "c4ea5f4d5117a812f4c7daced7f06979e2ab8377c834418dc33cad28202b7fa6"
+    }
+  ],
+  "releaseContract": {
+    "repository": "DarkCodePE/sw-factory",
+    "defaultBranch": "main",
+    "publishedReleasesObserved": 0,
+    "observationCommand": "gh api repos/DarkCodePE/sw-factory/releases",
+    "assets": [
+      "fab-linux-x64",
+      "fab-linux-arm64",
+      "fab-darwin-x64",
+      "fab-darwin-arm64"
+    ],
+    "checksumPerAsset": ".sha256",
+    "installDirectory": "~/.local/bin",
+    "sudo": false,
+    "shellProfilesChanged": false
+  },
+  "checks": [
+    {
+      "command": "bun test tests/installer.test.ts",
+      "exit": 0,
+      "pass": 7,
+      "fail": 0,
+      "assertions": 57
+    },
+    {
+      "command": "bun test",
+      "exit": 0,
+      "pass": 190,
+      "fail": 0,
+      "assertions": 923,
+      "files": 21,
+      "durationSeconds": 19.62
+    },
+    {
+      "command": "bunx --no-install tsc --noEmit -p .",
+      "exit": 0
+    },
+    {
+      "command": "sh -n scripts/install.sh",
+      "exit": 0
+    },
+    {
+      "command": "git diff --check",
+      "exit": 0
+    }
+  ],
+  "nativeArtifactProbe": {
+    "platform": "Linux x64",
+    "inputMode": "sh -s -- --version v0.1.0 through stdin",
+    "exit": 0,
+    "installedVersion": "fab 0.1.0",
+    "sha256": "867f5bceef0dc41992874836998400075d971cd1765ca3a50f273f16f639bcc8",
+    "transport": "offline curl substitute copying the actual compiled Linux binary and checksum",
+    "temporaryInstallationRemoved": true,
+    "globalInstallationChanged": false
+  },
+  "review": {
+    "mode": "read-only second agent",
+    "blockingFindings": 0,
+    "suggestionsResolved": [
+      "stdin mode tested",
+      "shasum fallback tested with sha256sum absent from PATH"
+    ]
+  },
+  "limitations": [
+    "Script and assets not published; documented curl URL becomes usable after publication.",
+    "OS/architecture selection and shasum fallback simulated offline; only Linux x64 executable tested natively.",
+    "Windows native and Linux musl unsupported; WSL uses the Linux branch.",
+    "Runtime sandbox remains Linux bubblewrap; no macOS sandbox equivalence claimed.",
+    "Checksum comes from same release; not an independent authenticity signature.",
+    "No new runtime binary required: application source unchanged; previous exact artifact used only as local installer payload."
+  ],
+  "references": [
+    "https://bun.sh/docs/bundler/executables",
+    "https://docs.github.com/en/rest/releases/releases#get-the-latest-release"
+  ]
+}

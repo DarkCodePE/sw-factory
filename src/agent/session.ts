@@ -12,6 +12,11 @@ export interface SessionState {
   status: 'running' | 'completed' | 'failed';
   turns: number;
   tags: string[];
+  title?: string;
+  archived?: boolean;
+  pinned?: boolean;
+  parentSessionId?: string;
+  updatedAt?: number;
   todos?: string | unknown[];
   mission?: import('./mission-contract.ts').MissionState;
 }
@@ -35,7 +40,8 @@ export class SessionStore {
       throw new Error('Agent session is locked; reconcile its interrupted owner before resuming');
     });
   }
-  async load(id: string): Promise<SessionState> {
+  /** Read metadata/history for local browsing. This does NOT authorize resuming effects. */
+  async inspect(id: string): Promise<SessionState> {
     if (!this.dir) throw new Error('Session persistence must be configured to resume');
     const file = this.path(id);
     if (await realpath(file) !== file) throw new Error('Session symlinks are not accepted');
@@ -43,9 +49,13 @@ export class SessionStore {
     if (stat.size > 32 * 1024 * 1024) throw new Error('Agent session exceeds size limit');
     let s: SessionState;
     try { s = JSON.parse(await readFile(file, 'utf8')); } catch { throw new Error('Invalid agent session JSON'); }
-    if (s.version !== 1 || s.id !== id || typeof s.cwd !== 'string' || typeof s.provider !== 'string' ||
+    if (!s || s.version !== 1 || s.id !== id || typeof s.cwd !== 'string' || typeof s.provider !== 'string' ||
         !Array.isArray(s.messages) || !Array.isArray(s.pending) || !Array.isArray(s.tags) ||
         !Number.isSafeInteger(s.turns) || s.turns < 0) throw new Error('Invalid agent session schema');
+    return s;
+  }
+  async load(id: string): Promise<SessionState> {
+    const s = await this.inspect(id);
     const waiting = new Set<string>();
     for (const m of s.messages) {
       if (!m || !['system', 'user', 'assistant', 'tool'].includes(m.role) ||
@@ -66,6 +76,7 @@ export class SessionStore {
   }
   async save(state: SessionState, createOnly = false) {
     if (!this.dir) return;
+    state.updatedAt = Date.now();
     const target = this.path(state.id), temp = target + '.' + crypto.randomUUID() + '.tmp';
     const data = JSON.stringify(state);
     if (Buffer.byteLength(data) > 32 * 1024 * 1024) throw new Error('Agent session exceeds size limit');
