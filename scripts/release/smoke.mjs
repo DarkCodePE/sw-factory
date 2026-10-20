@@ -46,6 +46,7 @@ export async function smoke(binary, expectedVersion, { home: selectedHome } = {}
   try {
     const actual = await execute(['--version']); assert(actual.code === 0 && actual.out.trim() === `fab ${expectedVersion}`, 'Executable version mismatch');
     const help = await execute(['--help']); assert(help.code === 0 && ['fab tui', 'fab exec', 'fab mcp'].every(text => help.out.includes(text)), 'CLI help missing commands');
+    const update = await execute(['update', '--help']); assert(update.code === 0 && update.out.includes('--channel') && update.out.includes('--check'), 'Compiled updater help is unavailable');
     const settings = join(temp, 'settings.json');
     await writeFile(settings, JSON.stringify({ modelId: 'custom:probe', customModels: [{ id: 'custom:probe', model: 'probe', provider: 'generic-chat-completion-api', baseUrl: `http://127.0.0.1:${server.address().port}/v1` }] }));
     const task = await execute(['exec', '--cwd', cwd, '--settings', settings, '--auto', 'low', '--timeout-ms', '15000', '-o', 'json', 'Read calc.txt and replace subtraction with addition.']);
@@ -78,7 +79,7 @@ export async function smoke(binary, expectedVersion, { home: selectedHome } = {}
       scriptTimeout = true;
     }
     const mcp = await execute(['mcp', 'list', '--settings', settings]); assert(mcp.code === 0, 'MCP configuration command failed');
-    return { version: expectedVersion, platform: process.platform, arch: process.arch, checks: { version: true, help: true, readEditTask: true, toolCalls: result.toolCalls, turns: readEditTurns, tuiCommands: true, tuiLinkedCatalog: true, tuiRejectedCatalog: true, tuiAgentTask: true, tuiRewind: true, scriptIsolation, scriptTimeout, mcpList: true }, sha256: await hashFile(binary) };
+    return { version: expectedVersion, platform: process.platform, arch: process.arch, checks: { version: true, help: true, selfUpdateHelp: true, readEditTask: true, toolCalls: result.toolCalls, turns: readEditTurns, tuiCommands: true, tuiLinkedCatalog: true, tuiRejectedCatalog: true, tuiAgentTask: true, tuiRewind: true, scriptIsolation, scriptTimeout, mcpList: true }, sha256: await hashFile(binary) };
   } finally { await new Promise(resolve => server.close(resolve)); server.closeAllConnections(); await rm(temp, { recursive: true, force: true }); }
 }
 if (process.argv[1] && resolve(process.argv[1]) === import.meta.filename) {

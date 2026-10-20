@@ -19,30 +19,39 @@ signal ──triage──▶ change ──▶ [revisión del change] ──▶ i
 
 ## Instalación desde GitHub
 
-Cada GitHub Release incluye su instalador, binarios y checksums. Las versiones de prueba se instalan con su versión explícita; consulta el estado publicado en [Releases](https://github.com/DarkCodePE/sw-factory/releases). Para la RC, una vez publicada:
+El bootstrap instala la última versión completa del canal elegido, sin escribir una versión.
+Mientras FAB esté en RC, utiliza el canal de prueba:
 
 ```bash
-curl -fsSL https://github.com/DarkCodePE/sw-factory/releases/download/v0.1.0-rc.5/install.sh |
-  sh -s -- --version v0.1.0-rc.5
+curl -fsSL https://raw.githubusercontent.com/DarkCodePE/sw-factory/main/scripts/install.sh |
+  sh -s -- --channel prerelease
 ```
 
-Detecta Linux con glibc o macOS y arquitectura x64/arm64. Descarga `fab-<sistema>-<arquitectura>` y su `.sha256`, verifica SHA-256 y `fab --version`, e instala en `~/.local/bin/fab`. No requiere Bun ni sudo, no cambia perfiles de shell y conserva la instalación anterior si falla la descarga/verificación. Añade `~/.local/bin` a tu PATH si aún no está incluido. Windows: usar este instalador dentro de WSL; Windows nativo y Alpine/musl todavía no están soportados.
+Para la última estable, omite `--channel prerelease`. Si todavía no hay una estable,
+el instalador lo indica y permite elegir el canal de prueba explícitamente.
+
+Detecta Linux con glibc o macOS, x64/ARM64. Verifica SHA-256 y la versión antes de
+instalar en `~/.local/bin/fab`. Requiere curl y Python 3.8+, sin Bun ni sudo.
+Añade `~/.local/bin` al PATH si aún no está incluido. Windows utiliza WSL;
+Windows nativo y Alpine/musl todavía no están soportados.
 
 ```bash
 fab --version
 fab tui                    # abre el agente interactivo
-# También funciona sin modificar PATH:
-~/.local/bin/fab tui
+fab update --check         # consulta sin instalar
+fab update                 # actualiza la instalación existente
 ```
 
-Repetir el instalador sin fijar versión actualiza a la última release estable sin cambiar sesiones o configuración; una RC siempre usa `--version`. Para una versión publicada concreta o una carpeta diferente:
-
-```bash
-curl -fsSL https://github.com/DarkCodePE/sw-factory/releases/download/v0.1.0-rc.5/install.sh |
-  sh -s -- --version v0.1.0-rc.5 --install-dir "$HOME/.local/bin"
-```
-
-También puedes descargar el script, revisarlo y ejecutarlo con `sh install.sh`. Una versión fijada exige que la release y `fab --version` coincidan. El checksum comprueba integridad frente al archivo publicado en la misma release; no es una firma independiente.
+También puedes instalar con npm: `npm install -g @okuanb/fab@next` para RC,
+o `npm install -g @okuanb/fab@latest` para estables. El tag npm `latest` heredado
+contiene una RC; hasta publicar una final, utiliza `next` explícitamente.
+`fab update` conserva el método y prefix de instalación e infiere el canal de la
+versión instalada. Una versión fija sigue disponible con `--version`.
+Los scripts `install.sh` incluidos en cada release quedan fijados a esa release;
+`latest.sh` y `prerelease.sh` buscan sus respectivos canales.
+Consulta [instalación y actualización](docs/install-update.md) para precedencias,
+rollback y límites. El checksum prueba integridad respecto al archivo publicado;
+no es una firma independiente.
 
 Para preparar un artefacto se dispone de `scripts/build.sh`: produce `fab-<sistema>-<arquitectura>` y su `.sha256` en el host nativo. El CI reúne Linux x64/ARM64 y macOS Intel/ARM64; no se permite compilar el módulo nativo para otro host. Cada binario debe probarse en su sistema antes de publicarlo. Actualmente el aislamiento del runtime depende de bubblewrap en Linux; no se promete aislamiento equivalente en macOS. El instalador no instala git, bubblewrap ni configura el proveedor del modelo.
 

@@ -19,6 +19,7 @@ import { localCommandMain } from './chat/cli.ts';
 import { runScriptWorker } from './script-runtime/worker.ts';
 import { SCRIPT_WORKER_COMMAND } from './script-runtime/run.ts';
 import pkg from '../package.json' with { type: 'json' };
+import { updateMain } from './update/index.ts';
 
 const STATE_DIR = resolve(process.env.FABRICA_HOME ?? resolve(process.env.HOME ?? '.', '.fabrica'));
 
@@ -32,6 +33,7 @@ const HELP = `fab — agente de código y fábrica de software local
   fab mcp list --settings f    listar servidores configurados
   fab --cwd <path> [prompt]     conversación, --use-spec o --mission --auto high
   fab --version
+  fab update [--channel stable|prerelease] [--check]
 
   fab ws create <slug> --repo <path> --goal <text> [--agent ${AGENT_NAMES.join('|')}]
                 [--concurrency N] [--task-limit N] [--no-change-approval] [--no-spec-approval]
@@ -79,8 +81,9 @@ function allChanges(store: Store) {
 
 async function main(argv: string[]): Promise<number> {
   if (argv[0] === 'exec') return execMain(argv.slice(1));
+  if (argv[0] === 'update') return updateMain(argv.slice(1));
   if (argv[0] === '--version' || argv[0] === '-v') { console.log(`fab ${pkg.version}`); return 0; }
-  if (['daemon', 'update', 'plugin', 'computer'].includes(argv[0] ?? '')) {
+  if (['daemon', 'plugin', 'computer'].includes(argv[0] ?? '')) {
     console.error(`fab ${argv[0]}: falta un backend propio; no se invoca Droid ni se envía este comando al modelo.`);
     return 1;
   }

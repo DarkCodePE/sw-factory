@@ -11,7 +11,7 @@ if (!prerelease) {
   const main = JSON.parse(run('gh', ['api', `repos/${repository}/branches/main`]));
   assert(main.commit.sha === receipt.sourceSha, 'Stable publication requires exact main SHA');
 }
-const files = [...assets.flatMap(name => [name, name + '.sha256']), 'install.sh', 'release-manifest.json', 'candidate-receipt.json', receipt.package.filename, receipt.package.filename + '.sha256'];
+const files = [...assets.flatMap(name => [name, name + '.sha256']), 'install.sh', 'latest.sh', 'prerelease.sh', 'release-manifest.json', 'candidate-receipt.json', receipt.package.filename, receipt.package.filename + '.sha256'];
 let existing;
 try { existing = JSON.parse(run('gh', ['release', 'view', receipt.tag, '--repo', repository, '--json', 'targetCommitish,isDraft,assets'])); }
 catch (error) { assert(error.status === 1 && /(?:not found|HTTP 404)/i.test(String(error.stderr)), 'Failed to inspect existing release'); }

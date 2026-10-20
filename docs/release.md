@@ -1,6 +1,6 @@
 # CI/CD y distribución de FAB
 
-La versión de prueba es `0.1.0-rc.5`, paquete npm `@okuanb/fab`, dist-tag `next`. No reemplaza una versión estable. El estado real de publicación se comprueba en GitHub/npm; la presencia de estos workflows por sí sola no prueba una release.
+El candidato de esta entrega es `0.1.0-rc.7`, paquete npm `@okuanb/fab`, dist-tag `next`. No reemplaza una versión estable. El estado real de publicación se comprueba en GitHub/npm; la presencia de estos workflows por sí sola no prueba una release.
 
 ## Contrato
 
@@ -23,27 +23,28 @@ bun install --frozen-lockfile
 bun test
 bunx --no-install tsc --noEmit -p .
 FAB_TARGETS=bun-linux-x64 sh scripts/build.sh
-node scripts/release/smoke.mjs dist/fab-linux-x64
+node scripts/release/smoke.mjs dist/fab-linux-x64 dist/fab-linux-x64.receipt.json
+node scripts/release/probe-update.mjs dist/fab-linux-x64 dist/fab-linux-x64.receipt.json
 
 # Subir el candidato y consultar su ejecución:
-git push origin HEAD:release/0.1.0-rc.5
+git push origin HEAD:release/0.1.0-rc.7
 gh run list -R DarkCodePE/sw-factory --workflow release-candidate-preflight.yml
 # Solo tras preflight verde sobre el SHA exacto:
-git tag v0.1.0-rc.5 <SHA-verificado>
-git push origin v0.1.0-rc.5
+git tag v0.1.0-rc.7 <SHA-verificado>
+git push origin v0.1.0-rc.7
 ```
 
 Una vez publicada y verificada la RC:
 
 ```sh
-curl -fsSL https://github.com/DarkCodePE/sw-factory/releases/download/v0.1.0-rc.5/install.sh |
-  sh -s -- --version v0.1.0-rc.5
-npm install -g @okuanb/fab@0.1.0-rc.5
+curl -fsSL https://github.com/DarkCodePE/sw-factory/releases/download/v0.1.0-rc.7/install.sh |
+  sh -s -- --version v0.1.0-rc.7
+npm install -g @okuanb/fab@0.1.0-rc.7
 fab --version
 fab tui
 ```
 
-GitHub `latest` y npm `latest` son canales estables; para una RC se usa la versión explícita o npm `next`. Una release estable exige que el SHA publicado sea exactamente `main`. No se fuerza un tag ni se modifica una versión npm publicada; una corrección posterior usa otra versión.
+GitHub `latest` excluye prereleases; npm `latest` se reserva para estables, aunque el tag heredado de FAB aún contiene una RC. El actualizador rechaza esa RC como estable; para una RC se utiliza el bootstrap con `--channel prerelease`, una versión explícita o npm `next`. El instalador de cada release queda fijado a esa versión y se publican también `latest.sh` y `prerelease.sh`, con hashes ligados al sello. `fab update` identifica el método de instalación y el canal de la versión instalada. Véase [instalación y actualización por canales](install-update.md). Una release estable exige que el SHA publicado sea exactamente `main`. No se fuerza un tag ni se modifica una versión npm publicada; una corrección posterior usa otra versión.
 
 Para OIDC se configura el paquete npm con owner de GitHub `DarkCodePE`, repositorio `sw-factory`, workflow `protected-release.yml` y entorno `release`. npm requiere CLI >=11.5.1 y Node >=22.14 para trusted publishing ([documentación oficial](https://docs.npmjs.com/trusted-publishers/)). El primer paquete/scope necesita una identidad con permisos; las credenciales no se incluyen en el repositorio. `NPM_TOKEN`, si se utiliza para bootstrap, vive solo en GitHub Secrets y se entrega únicamente al paso de publicación.
 

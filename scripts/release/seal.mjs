@@ -11,6 +11,8 @@ export async function verifyCandidate(directory, { metadataOnly = false } = {}) 
   assert(await hashFile(join(directory, receipt.package.filename)) === receipt.package.sha256, 'Packed npm bytes differ from seal');
   assert(await hashFile(join(directory, 'release-manifest.json')) === receipt.manifestSha256, 'Release manifest differs from seal');
   assert(await hashFile(join(directory, 'install.sh')) === receipt.installerSha256, 'Installer differs from seal');
+  for (const name of ['latest.sh', 'prerelease.sh'])
+    assert(receipt.channelInstallerSha256?.[name] === await hashFile(join(directory, name)), `Channel installer differs from seal: ${name}`);
   for (const name of assets) {
     const path = join(directory, name);
     if (!metadataOnly) assert(await hashFile(path) === manifest.assets[name].sha256 && (await stat(path)).size === manifest.assets[name].bytes, `Sealed asset differs: ${name}`);
@@ -34,10 +36,12 @@ if (process.argv[1] && resolve(process.argv[1]) === import.meta.filename) {
     const packageSha256 = await hashFile(join(directory, names[0])), qualifications = [];
     for (const name of assets) {
       const native = await readJson(join(directory, name + '.receipt.json'));
+      assert(native.checks.standaloneUpdate && native.standaloneUpdate?.corruptPreservesOriginal
+        && native.standaloneUpdate?.checkPreservesOriginal && native.standaloneUpdate?.replacesExecutable, `Compiled updater qualification missing: ${name}`);
       if (native.platform === 'linux') assert(native.scriptIsolation === true && native.scriptReceiptSha256 === await hashFile(join(directory, name + '.script.json')), `Linux Script qualification missing: ${name}`);
       const qualified = await readJson(join(directory, name.replace('fab-', 'qualification-') + '.json'));
       for (const report of [native, qualified]) {
-        assert(report.sourceSha === sha && report.version === manifest.version && report.checks.version && report.checks.help
+        assert(report.sourceSha === sha && report.version === manifest.version && report.checks.version && report.checks.help && report.checks.selfUpdateHelp
           && report.checks.readEditTask && report.checks.toolCalls === 2 && report.checks.turns === 3 && report.checks.tuiCommands
           && report.checks.tuiLinkedCatalog && report.checks.tuiRejectedCatalog
           && report.checks.tuiAgentTask && report.checks.tuiRewind && report.checks.mcpList, `Qualification failed: ${name}`);
@@ -49,7 +53,8 @@ if (process.argv[1] && resolve(process.argv[1]) === import.meta.filename) {
     const qa = junit(await readFile(join(directory, 'qa.xml'), 'utf8'));
     const receipt = { schemaVersion: 1, sourceSha: sha, version: manifest.version, tag: manifest.tag,
       package: { filename: names[0], name: (await readJson(resolve('packaging/npm/package.json'))).name, sha256: packageSha256 },
-      manifestSha256: await hashFile(join(directory, 'release-manifest.json')), installerSha256: await hashFile(join(directory, 'install.sh')), qa, qualifications,
+      manifestSha256: await hashFile(join(directory, 'release-manifest.json')), installerSha256: await hashFile(join(directory, 'install.sh')),
+      channelInstallerSha256: { 'latest.sh': await hashFile(join(directory, 'latest.sh')), 'prerelease.sh': await hashFile(join(directory, 'prerelease.sh')) }, qa, qualifications,
       run: { id: process.env.GITHUB_RUN_ID ?? null, attempt: process.env.GITHUB_RUN_ATTEMPT ?? null }, createdUtc: new Date().toISOString() };
     await writeJson(join(directory, 'candidate-receipt.json'), receipt); await verifyCandidate(directory); console.log(JSON.stringify(receipt));
   }

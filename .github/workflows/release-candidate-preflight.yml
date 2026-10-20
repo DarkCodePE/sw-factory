@@ -90,6 +90,7 @@ jobs:
         run: |
           sh scripts/build.sh
           node scripts/release/smoke.mjs "dist/$ASSET" "dist/$ASSET.receipt.json"
+          node scripts/release/probe-update.mjs "dist/$ASSET" "dist/$ASSET.receipt.json"
       - name: Linux compiled Script isolation and timeout
         if: matrix.os == 'linux'
         env:
@@ -198,6 +199,8 @@ jobs:
             dist/candidate/*.tgz
             dist/candidate/*.sha256
             dist/candidate/install.sh
+            dist/candidate/latest.sh
+            dist/candidate/prerelease.sh
             dist/candidate/qa.xml
           if-no-files-found: error
           compression-level: 6

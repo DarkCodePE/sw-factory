@@ -1,6 +1,7 @@
 import { chmod, cp, mkdir, rm, stat, writeFile } from 'node:fs/promises';
 import { join, resolve } from 'node:path';
 import { assets, assert, hashFile, readJson, root, run, sourceSha, version, writeJson } from './common.mjs';
+import { buildInstallers } from './installers.mjs';
 
 const directory = resolve(process.argv[2] ?? 'dist/candidate'), staging = resolve('dist/npm-stage');
 const currentVersion = await version(), sha = sourceSha();
@@ -23,6 +24,6 @@ const [packed] = JSON.parse(run('npm', ['pack', '--json', '--ignore-scripts', '-
 const inventory = ['README.md', 'package.json', 'bin/fab.mjs', 'runtime.mjs', 'postinstall.mjs', 'release-manifest.json'];
 assert(packed.files.length === inventory.length && packed.files.every(file => inventory.includes(file.path)), 'Unexpected npm package payload');
 await writeJson(join(directory, 'release-manifest.json'), manifest);
-await cp(join(root, 'scripts/install.sh'), join(directory, 'install.sh'));
+await buildInstallers(directory, currentVersion);
 await writeFile(join(directory, packed.filename + '.sha256'), `${await hashFile(join(directory, packed.filename))}  ${packed.filename}\n`);
 console.log(JSON.stringify({ package: packed.filename, version: currentVersion, sourceSha: sha, sha256: await hashFile(join(directory, packed.filename)) }));
