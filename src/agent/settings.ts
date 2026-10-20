@@ -3,8 +3,10 @@ import { createChatGPTProvider } from './chatgpt.ts';
 import { createOpenAICompatibleProvider } from './provider.ts';
 import type { McpConfig } from './mcp.ts';
 import type { ModelProvider } from './types.ts';
+import { networkPolicy, type NetworkPolicy } from './network-policy.ts';
 
 export interface ExecSettings {
+  sandboxNetwork?: NetworkPolicy;
   modelId?: string;
   streamIdleMs?: number;
   customModels?: Array<{ id: string; model: string; provider: 'generic-chat-completion-api' | 'openai' | 'chatgpt';
@@ -37,7 +39,8 @@ export async function loadExecSettings(path?: string): Promise<ExecSettings> {
       raw.streamIdleMs !== undefined && (!Number.isSafeInteger(raw.streamIdleMs) || raw.streamIdleMs < 0 || raw.streamIdleMs > 2147483647) ||
       raw.customModels !== undefined && (!Array.isArray(raw.customModels) || raw.customModels.length > 32) ||
       raw.mcpServers !== undefined && !object(raw.mcpServers)) throw new Error('Invalid settings schema');
-  for (const key of Object.keys(raw)) if (!['modelId', 'customModels', 'mcpServers', 'streamIdleMs'].includes(key)) throw new Error(`Unsupported settings field: ${key}`);
+  for (const key of Object.keys(raw)) if (!['modelId', 'customModels', 'mcpServers', 'streamIdleMs', 'sandboxNetwork'].includes(key)) throw new Error(`Unsupported settings field: ${key}`);
+  if (raw.sandboxNetwork !== undefined) networkPolicy(raw.sandboxNetwork);
   const settings = raw as ExecSettings;
   const ids = new Set<string>();
   for (const model of settings.customModels ?? []) {

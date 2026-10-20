@@ -7,6 +7,7 @@ import { serveExecRpc } from './rpc.ts';
 import { describeTool, selectToolNames } from './catalog.ts';
 import type { Autonomy } from './types.ts';
 import { validateReportStatus } from '../prompts.ts';
+import { networkPolicy } from './network-policy.ts';
 
 const HELP = `fab exec — independent coding-agent runtime
   fab exec [prompt] [-f file] [--cwd path] [-m model] [--base-url url]
@@ -17,7 +18,9 @@ const HELP = `fab exec — independent coding-agent runtime
     [--only-tools names] [--remove-tools names] [--tag name]
     [--append-system-prompt text|--append-system-prompt-file path]
     [--timeout-ms N] [--max-turns N] [--max-context-tokens N]
-    [--sandbox required|best-effort] [--settings file] [--list-tools] [--require-status]
+    [--sandbox required|best-effort] [--sandbox-network auto|ask|deny]
+    [--settings file] [--list-tools] [--require-status]
+Network auto: Execute requests are approved automatically only at --auto high; otherwise approval is required.
 Model settings: FABRICA_LLM_MODEL, FABRICA_LLM_BASE_URL, FABRICA_LLM_API_KEY.
 Unsupported Droid flags fail explicitly; the native runtime never invokes Droid.
 `;
@@ -35,7 +38,7 @@ export async function execMain(argv: string[]): Promise<number> {
       tag: { type: 'string', multiple: true }, 'append-system-prompt': { type: 'string' },
       'append-system-prompt-file': { type: 'string' }, 'timeout-ms': { type: 'string' },
       'max-turns': { type: 'string' }, 'max-context-tokens': { type: 'string' },
-      sandbox: { type: 'string' }, 'list-tools': { type: 'boolean' }, help: { type: 'boolean', short: 'h' },
+      sandbox: { type: 'string' }, 'sandbox-network': { type: 'string' }, 'list-tools': { type: 'boolean' }, help: { type: 'boolean', short: 'h' },
       'require-status': { type: 'boolean' },
     } });
     if (v.help) { console.log(HELP); return 0; }
@@ -49,6 +52,7 @@ export async function execMain(argv: string[]): Promise<number> {
     if (v.sandbox && !['required', 'best-effort'].includes(v.sandbox)) throw new Error('Invalid sandbox mode');
     const selected = (s?: string) => selectToolNames(s?.split(',').map(x => x.trim()).filter(Boolean));
     const settings = await loadExecSettings(v.settings);
+    const executionNetwork = networkPolicy(v['sandbox-network'] ?? settings.sandboxNetwork);
     if (v.model) settings.modelId = v.model;
     const configured = configuredProviders(settings, { model: process.env.FABRICA_LLM_MODEL ?? 'qwen3.5-32k',
       baseUrl: v['base-url'] ?? process.env.FABRICA_LLM_BASE_URL, apiKey: process.env.FABRICA_LLM_API_KEY, reasoningEffort: v['reasoning-effort'] });
@@ -67,7 +71,7 @@ export async function execMain(argv: string[]): Promise<number> {
         await serveExecRpc(Bun.stdin.stream(), line => { process.stdout.write(line); }, {
           cwd: resolve(v.cwd ?? process.cwd()), sessionDir: resolve(v['session-dir'] ?? resolve(process.env.FABRICA_HOME ?? resolve(process.env.HOME ?? '.', '.fabrica'), 'agent-sessions')),
           defaultModelId: configured.defaultModelId, providers: configured.providers, signal: controller.signal,
-          agent: { mcpServers: settings.mcpServers, sandbox: v.sandbox as 'required' | 'best-effort' | undefined,
+          agent: { mcpServers: settings.mcpServers, sandbox: v.sandbox as 'required' | 'best-effort' | undefined, networkPolicy: executionNetwork,
             timeoutMs: v['timeout-ms'] ? Number(v['timeout-ms']) : undefined, maxTurns: v['max-turns'] ? Number(v['max-turns']) : undefined,
             maxContextTokens: v['max-context-tokens'] ? Number(v['max-context-tokens']) : undefined },
         });
@@ -91,7 +95,7 @@ export async function execMain(argv: string[]): Promise<number> {
     try {
       const result = await runCodingAgent({ prompt, mcpServers: settings.mcpServers, cwd: resolve(v.cwd ?? process.cwd()), provider,
         autonomy: (v.auto ?? 'off') as Autonomy, interactionMode: v.mission ? 'mission' : v['use-spec'] ? 'spec' : 'auto', mission,
-        sandbox: v.sandbox as 'required' | 'best-effort' | undefined,
+        sandbox: v.sandbox as 'required' | 'best-effort' | undefined, networkPolicy: executionNetwork,
         timeoutMs: v['timeout-ms'] ? Number(v['timeout-ms']) : undefined,
         maxTurns: v['max-turns'] ? Number(v['max-turns']) : undefined,
         maxContextTokens: v['max-context-tokens'] ? Number(v['max-context-tokens']) : undefined,

@@ -4,6 +4,7 @@ import { dirname, isAbsolute, relative, resolve, sep } from 'node:path';
 import { wrapCommand } from '../sandbox/index.ts';
 import { runScript } from '../script-runtime/index.ts';
 import { runProcess } from './process.ts';
+import { requestsNetwork } from './network-policy.ts';
 import type { AgentTool, FileMutation, ToolContext } from './types.ts';
 
 export function inputObject(input: unknown): Record<string, unknown> {
@@ -103,20 +104,24 @@ export const executeAllowed = (input: unknown, context: ToolContext) => {
 };
 export const COMMAND_POLICY_HINT = 'Tool requires higher autonomy or explicit permission. At medium, use simple commands or && sequences; omit pipelines, redirections and ||. stdout and stderr are already captured. cwd is already the workspace.';
 async function execute(input: unknown, context: ToolContext) {
+  const network = requestsNetwork(input);
   const parts = commandSequence(input, context);
-  if (!parts || parts.length === 1) return executeOne(parts ? { command: parts[0] } : input, context);
+  if (!parts || parts.length === 1) return executeOne(parts ? { command: parts[0], network } : input, context);
   if (!executeAllowed(input, context)) throw new Error(COMMAND_POLICY_HINT);
   let stdout = '', stderr = '', exitCode = 0, sandboxed = true, sandboxReason = '';
   for (const command of parts) {
     context.signal.throwIfAborted();
-    const r = await executeOne({ command }, context);
+    const r = await executeOne({ command, network }, context);
     stdout += r.stdout; stderr += r.stderr; exitCode = r.exitCode; sandboxed &&= r.sandboxed; sandboxReason = r.sandboxReason;
     if (Buffer.byteLength(stdout) + Buffer.byteLength(stderr) > 256 * 1024) throw new Error('Command sequence output exceeds 256 KiB');
     if (exitCode !== 0) break;
   }
-  return { stdout, stderr, exitCode, sandboxed, sandboxReason };
+  return { stdout, stderr, exitCode, sandboxed, sandboxReason, network: { requested: network, enabled: network } };
 }
 async function executeOne(input: unknown, context: ToolContext) {
+  const network = requestsNetwork(input);
+  if (network && !context.networkAccess) throw new Error('Execute network access requires a runtime grant');
+  if (network && (context.networkPolicy === 'deny' || context.interactionMode === 'spec')) throw new Error('Execute network access denied by policy or spec mode');
   const { argv, command, readGit, allowed } = commandPolicy(input, context);
   if (!allowed) {
     throw new Error(COMMAND_POLICY_HINT);
@@ -141,12 +146,14 @@ async function executeOne(input: unknown, context: ToolContext) {
     catch (e: any) { if (e.code !== 'ENOENT') throw e; }
   }
   const wrapped = await wrapCommand(commandArgv, {
-    workdir: context.cwd, mode: readGit || context.interactionMode === 'spec' ? 'required' : context.sandbox, allowNetwork: false,
+    // An unwrapped best-effort fallback cannot enforce either an offline policy
+    // or a network grant that preserves filesystem isolation. Execute fails closed.
+    workdir: context.cwd, mode: 'required', allowNetwork: network,
     writablePaths: gitWritable, readOnlyPaths: [...(readGit || context.interactionMode === 'spec' ? [context.cwd] : []), ...missionReadOnly],
     env: { PATH: process.env.PATH ?? '', HOME: context.cwd, GIT_OPTIONAL_LOCKS: '0', GIT_CONFIG_NOSYSTEM: '1', GIT_CONFIG_GLOBAL: '/dev/null' },
   });
   const result = await runProcess(wrapped.argv, context.cwd, wrapped.env, context.signal);
-  return { ...result, sandboxed: !wrapped.degraded, sandboxReason: wrapped.reason };
+  return { ...result, sandboxed: !wrapped.degraded, sandboxReason: wrapped.reason, network: { requested: network, enabled: network } };
 }
 
 /** Built-in names/schema are original implementations of the observed functional contracts. */
@@ -219,8 +226,8 @@ export function builtinTools(): AgentTool[] {
       if (result.exitCode > 1) throw new Error(limitText(result.stderr, 2000));
       return limitText(result.stdout);
     }, 'Search workspace text with ripgrep; return bounded matching lines.'),
-    tool('Execute', 'execute', { command: str, riskLevel: str, summary: str }, ['command'], execute,
-      'Run in workspace cwd; stdout/stderr are captured. Medium accepts simple development commands and && sequences, including an optional cd <workspace> prefix. Omit pipelines, redirections and || at medium. Each command is checked independently; the sequence stops on failure. riskLevel is advisory.'),
+    tool('Execute', 'execute', { command: str, riskLevel: str, summary: str, network: { type: 'boolean', description: 'Request host network for this invocation; requires caller policy or explicit approval.' } }, ['command'], execute,
+      'Run in workspace cwd with captured stdout/stderr. Network is blocked by default: set network:true when the command needs a remote service such as Jira, curl or package downloads. This requests permission; it does not grant it. A failed offline command is never replayed automatically. Medium accepts simple development commands and && sequences, including an optional cd <workspace> prefix. Omit pipelines, redirections and || at medium. Each command is checked independently; the sequence stops on failure. riskLevel is advisory.'),
   ];
 }
 

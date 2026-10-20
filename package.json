@@ -1,6 +1,6 @@
 {
   "name": "fabrica",
-  "version": "0.1.0-rc.7",
+  "version": "0.1.0-rc.8",
   "private": true,
   "type": "module",
   "description": "Software factory local: workstream -> signal -> change -> activity, con agentes headless como workers",

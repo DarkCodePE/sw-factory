@@ -20,7 +20,7 @@ export interface RpcOptions {
   sessionDir: string;
   defaultModelId: string;
   providers: Record<string, ModelProvider>;
-  agent?: Pick<AgentOptions, 'sandbox' | 'timeoutMs' | 'maxTurns' | 'maxContextTokens' | 'tools' | 'beforeTool' | 'afterTool' | 'permissionHandler' | 'askUserHandler' | 'mcpServers'>;
+  agent?: Pick<AgentOptions, 'sandbox' | 'networkPolicy' | 'timeoutMs' | 'maxTurns' | 'maxContextTokens' | 'tools' | 'beforeTool' | 'afterTool' | 'permissionHandler' | 'askUserHandler' | 'mcpServers'>;
   signal?: AbortSignal;
 }
 
@@ -57,13 +57,15 @@ export class ExecRpc {
     return { modelId: this.modelId, reasoningEffort: 'none', autonomyMode: this.mode === 'spec' ? 'spec' : this.autonomy === 'off' ? 'normal' : `auto-${this.autonomy}`,
       autonomyLevel: this.autonomy, interactionMode: this.mode, availableAutonomyLevels: ['off', 'low', 'medium', 'high'],
       additionalToolIds: [], enabledToolIds: [], disabledToolIds: this.removed ?? [], restrictToolIds: this.only ?? [],
-      toolExecutionMode: 'direct_only', allowSubagentsInScripts: false, compactionThresholdCheckEnabled: true, migrationActive: false };
+      toolExecutionMode: 'direct_only', allowSubagentsInScripts: false, compactionThresholdCheckEnabled: true, migrationActive: false,
+      networkPolicy: this.options.agent?.networkPolicy ?? 'auto' };
   }
   private models() {
     return Object.keys(this.options.providers).map(id => ({ id, displayName: id, shortDisplayName: id,
       modelProvider: 'generic-chat-completion-api', supportedReasoningEfforts: ['none'], defaultReasoningEffort: 'none', isCustom: true }));
   }
   private update(p: Record<string, any>) {
+    if (p.networkPolicy !== undefined) throw new RpcError(-32602, 'Network policy is configured by the host, not session requests');
     const modelId = p.modelId ?? this.modelId, autonomy = p.autonomyLevel ?? this.autonomy, mode = p.interactionMode ?? this.mode;
     if (!Object.hasOwn(this.options.providers, modelId)) throw new RpcError(-32602, 'Unknown configured model');
     if (!['off', 'low', 'medium', 'high'].includes(autonomy) || !['auto', 'spec'].includes(mode)) throw new RpcError(-32602, 'Unsupported autonomy/interaction mode');
@@ -132,6 +134,7 @@ export class ExecRpc {
     } else if (event.type === 'tool_result') {
       this.notify({ type: 'tool_result', toolUseId: event.id, messageId: crypto.randomUUID(), isError: event.isError, content: typeof event.value === 'string' ? event.value : JSON.stringify(event.value) });
     } else if (event.type === 'compaction') this.notify({ type: 'context_compacted', estimatedTokens: event.estimatedTokens });
+    else if (event.type === 'network_permission') this.notify({ type: 'fab_network_permission', toolUseId: event.toolUseId, policy: event.policy, decision: event.decision, access: event.access, scope: event.scope });
     else if (event.type.startsWith('mission_')) { const { sessionId, ...notification } = event; this.notify(notification); }
   };
   async accept(value: unknown): Promise<void> {

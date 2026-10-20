@@ -4,10 +4,11 @@ import { join, resolve } from 'node:path';
 import { defaultAuthFile } from '../agent/chatgpt.ts';
 import type { ExecSettings } from '../agent/settings.ts';
 import type { Autonomy, InteractionMode } from '../agent/types.ts';
+import { NETWORK_POLICIES, type NetworkPolicy } from '../agent/network-policy.ts';
 
 export const AUTONOMIES: Autonomy[] = ['off', 'low', 'medium', 'high'];
 export const REASONING = ['low', 'medium', 'high'] as const;
-export interface ChatConfig { model: string; autonomy: Autonomy; mode: InteractionMode; theme: 'color' | 'plain'; reasoning?: typeof REASONING[number] }
+export interface ChatConfig { model: string; autonomy: Autonomy; mode: InteractionMode; theme: 'color' | 'plain'; reasoning?: typeof REASONING[number]; networkPolicy?: NetworkPolicy }
 export const chatHome = () => resolve(process.env.FABRICA_HOME ?? join(homedir(), '.fabrica'));
 export function loadChatConfig(settings: ExecSettings = {}, home = chatHome()): ChatConfig {
   let saved: Record<string, unknown> = {};
@@ -25,13 +26,14 @@ export function loadChatConfig(settings: ExecSettings = {}, home = chatHome()): 
     ?? (typeof saved.model === 'string' && saved.model.trim() ? saved.model : undefined)
     ?? (existsSync(defaultAuthFile()) ? 'chatgpt:gpt-6-luna' : 'qwen3.5-32k:latest');
   const autonomy = AUTONOMIES.includes(saved.autonomy as Autonomy) ? saved.autonomy as Autonomy : 'off';
+  const network = settings.sandboxNetwork ?? (saved.networkPolicy === undefined ? 'auto' : NETWORK_POLICIES.includes(saved.networkPolicy as NetworkPolicy) ? saved.networkPolicy as NetworkPolicy : 'deny');
   // Mission authority is deliberately invocation-local, never restored from preferences.
-  return { model, autonomy, mode: 'auto', theme: saved.theme === 'plain' ? 'plain' : 'color', ...(REASONING.includes(saved.reasoning as any) ? { reasoning: saved.reasoning as ChatConfig['reasoning'] } : {}) };
+  return { model, autonomy, mode: 'auto', networkPolicy: network, theme: saved.theme === 'plain' ? 'plain' : 'color', ...(REASONING.includes(saved.reasoning as any) ? { reasoning: saved.reasoning as ChatConfig['reasoning'] } : {}) };
 }
 export function saveChatConfig(config: ChatConfig, home = chatHome()) {
   mkdirSync(home, { recursive: true, mode: 0o700 });
   const file = join(home, 'chat.json'), temp = file + '.' + crypto.randomUUID() + '.tmp';
-  writeFileSync(temp, JSON.stringify({ model: config.model, autonomy: config.autonomy, theme: config.theme, reasoning: config.reasoning }, null, 2) + '\n', { mode: 0o600 });
+  writeFileSync(temp, JSON.stringify({ model: config.model, autonomy: config.autonomy, theme: config.theme, reasoning: config.reasoning, networkPolicy: config.networkPolicy }, null, 2) + '\n', { mode: 0o600 });
   renameSync(temp, file);
 }
 

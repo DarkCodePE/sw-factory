@@ -38,6 +38,9 @@ export interface ToolContext {
   autonomy: Autonomy;
   interactionMode: InteractionMode;
   sandbox: 'required' | 'best-effort';
+  networkPolicy?: import('./network-policy.ts').NetworkPolicy;
+  /** Runtime-issued, invocation-local Execute grant. Never constructed from model input. */
+  networkAccess?: boolean;
   toolUseId?: string;
   missionDir?: string;
   missionReadOnly?: boolean;
@@ -58,7 +61,7 @@ export interface AgentTool {
 }
 export interface AgentEvent {
   type: 'init' | 'usage' | 'provider_retry' | 'assistant_delta' | 'assistant' | 'tool_call' | 'tool_result' | 'compaction' | 'result' | 'error' |
-    'mission_state_changed' | 'mission_worker_started' | 'mission_worker_completed';
+    'mission_state_changed' | 'mission_worker_started' | 'mission_worker_completed' | 'network_permission';
   sessionId: string;
   [key: string]: unknown;
 }
@@ -69,6 +72,7 @@ export interface AgentOptions {
   autonomy?: Autonomy;
   interactionMode?: InteractionMode;
   sandbox?: 'required' | 'best-effort';
+  networkPolicy?: import('./network-policy.ts').NetworkPolicy;
   timeoutMs?: number;
   signal?: AbortSignal;
   maxTurns?: number;

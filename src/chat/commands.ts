@@ -5,8 +5,9 @@ export const CHAT_COMMANDS: ChatCommand[] = [
   { name: 'model', group: 'Configuración', help: 'Seleccionar modelo configurado o introducir su ID' },
   { name: 'reasoning', group: 'Configuración', help: 'Esfuerzo low, medium, high o default; Tab lo alterna' },
   { name: 'auto', group: 'Configuración', help: 'Autonomía off, low, medium o high' },
+  { name: 'network', group: 'Configuración', help: 'Red de Execute: auto (automática solo en high), ask o deny' },
   { name: 'mode', group: 'Configuración', help: 'Modo auto, spec o mission (requiere high)' },
-  { name: 'settings', group: 'Configuración', help: 'Ver ajustes o cambiar model/auto/mode/theme/reasoning' },
+  { name: 'settings', group: 'Configuración', help: 'Ver ajustes o cambiar model/auto/mode/theme/reasoning/network' },
   { name: 'themes', group: 'Configuración', help: 'Elegir color o plain' },
   { name: 'cwd', aliases: ['cd'], group: 'Configuración', help: 'Ver o cambiar carpeta; abre conversación nueva' },
   { name: 'mcp', group: 'Capacidades', help: 'Servidores configurados y exclusión local por sesión' },
@@ -64,6 +65,7 @@ export function parseInput(line: string): SlashResult {
 }
 export function completions(line: string, models: string[] = [], custom: string[] = []): [string[], string] {
   const options = line.startsWith('/model ') ? models.map(m => '/model ' + m)
+    : line.startsWith('/network ') ? ['auto', 'ask', 'deny'].map(n => '/network ' + n)
     : line.startsWith('/reasoning ') ? ['default', 'low', 'medium', 'high'].map(r => '/reasoning ' + r)
     : line.startsWith('/auto ') ? ['off', 'low', 'medium', 'high'].map(a => '/auto ' + a)
     : line.startsWith('/mode ') ? ['auto', 'spec', 'mission'].map(m => '/mode ' + m)

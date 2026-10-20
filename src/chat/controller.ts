@@ -5,6 +5,7 @@ import { estimatedTokens } from '../agent/provider.ts';
 import { configuredProviders, type ExecSettings } from '../agent/settings.ts';
 import type { AgentEvent, AgentOptions, AgentResult, ModelProvider, PermissionRequest, ToolContext, UserAnswers } from '../agent/types.ts';
 import { detectSandbox } from '../sandbox/index.ts';
+import { NETWORK_POLICIES, networkPolicy } from '../agent/network-policy.ts';
 import { AUTONOMIES, REASONING, loadChatConfig, saveChatConfig, terminalText, type ChatConfig } from './config.ts';
 import { CHAT_COMMANDS, commandFor, commandHelp, parseInput } from './commands.ts';
 import { compressSession, editSession, forkSession, listSessions } from './sessions.ts';
@@ -66,7 +67,7 @@ export class ChatController {
   get palette() { return paletteCatalog(this.projectResources); }
   get mcpServers() { return Object.fromEntries(Object.entries(this.settings.mcpServers ?? {}).filter(([name]) => !this.disabledMcp.has(name))); }
   print(value: unknown) { this.io.write(terminalText(value) + '\n'); }
-  status() { return `${this.config.model} (${this.config.reasoning ?? 'predeterminado'}) · ${this.config.mode} · auto ${this.config.autonomy} · ${this.cwd} · sesión ${this.sessionId ?? '(nueva)'}`; }
+  status() { return `${this.config.model} (${this.config.reasoning ?? 'predeterminado'}) · ${this.config.mode} · auto ${this.config.autonomy} · red ${this.config.networkPolicy ?? 'auto'} · ${this.cwd} · sesión ${this.sessionId ?? '(nueva)'}`; }
   get statusState(): StatusState { return { model: this.config.model, mode: this.config.mode, autonomy: this.config.autonomy,
     inputTokens: this.tokens.inputTokens + this.turnUsage.inputTokens, outputTokens: this.tokens.outputTokens + this.turnUsage.outputTokens,
     contextTokens: this.contextTokens, maxContextTokens: this.options.agent?.maxContextTokens ?? 32000, reasoning: this.config.reasoning, modelLabel: this.modelLabel, resources: { ...this.resources, mcpConfigured: Object.keys(this.mcpServers).length } }; }
@@ -129,7 +130,10 @@ export class ChatController {
   }
   private permission = async (request: PermissionRequest, context: ToolContext): Promise<'proceed_once' | 'cancel'> => {
     this.print('Permiso para esta llamada (sin autorización permanente):');
-    for (const use of request.toolUses) this.print(`${use.toolUse.name}\n${JSON.stringify(use.toolUse.input, null, 2)}`);
+    for (const use of request.toolUses) {
+      this.print(`${use.toolUse.name}\n${JSON.stringify(use.toolUse.input, null, 2)}`);
+      if (use.details.network) this.print(`Acceso de red del equipo para este comando y sus descendientes, solo durante esta llamada.\nCarpeta: ${context.cwd}\nEl aislamiento de archivos se conserva. No se limita la conexión a un dominio concreto.`);
+    }
     const answer = (await this.io.question('¿Permitir una vez? [s/N] ', context.signal, { fresh: true })).trim().toLowerCase();
     return ['s', 'si', 'sí', 'y'].includes(answer) ? 'proceed_once' : 'cancel';
   };
@@ -179,12 +183,14 @@ export class ChatController {
         this.io.update?.(this.statusState);
       }
       else if (event.type === 'compaction') this.print('(contexto compactado)');
+      else if (event.type === 'network_permission' && event.decision === 'allowed_automatically') this.print('Red autorizada automáticamente para esta llamada (auto high).');
       else if (event.type.startsWith('mission_')) this.print(JSON.stringify(event));
     };
     try {
     const result = await (this.options.run ?? runCodingAgent)({ ...this.options.agent,
       prompt, cwd: this.cwd, provider: this.provider(), autonomy: side ? 'off' : this.config.autonomy,
       interactionMode: side ? 'spec' : this.config.mode, mcpServers: this.mcpServers,
+      networkPolicy: networkPolicy(this.config.networkPolicy),
       sessionDir: side ? undefined : this.sessionDir, sessionId: side ? undefined : this.sessionId,
       onlyTools: this.only, removeTools: this.removed, signal: this.active?.signal, onEvent,
       permissionHandler: side ? undefined : this.permission, askUserHandler: this.askUser,
@@ -257,13 +263,18 @@ export class ChatController {
           if (this.config.mode === 'mission' && this.config.autonomy !== 'high') this.config.mode = 'auto';
           this.persist(); this.print(this.status()); break;
         }
+        case 'network': {
+          const selected = arg || NETWORK_POLICIES[(await this.io.select('Red de Execute (auto: automática solo en high)', [...NETWORK_POLICIES], this.active.signal)) ?? -1];
+          if (selected === undefined) { this.print(`Red de Execute: ${this.config.networkPolicy ?? 'auto'}`); break; }
+          this.config.networkPolicy = networkPolicy(selected); this.persist(); this.print(this.status()); break;
+        }
         case 'mode': {
           const modes = ['auto', 'spec', 'mission'];
           const n = arg ? modes.indexOf(arg) : await this.io.select('Modo', modes, this.active.signal);
           if (n !== undefined) this.setMode(modes[n] ?? ''); break;
         }
         case 'settings':
-          if (arg) { const [key, ...value] = arg.split(/\s+/); if (!['model', 'auto', 'mode', 'theme', 'reasoning'].includes(key!)) throw new Error('Ajuste: model, auto, mode, theme o reasoning');
+          if (arg) { const [key, ...value] = arg.split(/\s+/); if (!['model', 'auto', 'mode', 'theme', 'reasoning', 'network'].includes(key!)) throw new Error('Ajuste: model, auto, mode, theme, reasoning o network');
             const nested = key === 'theme' ? 'themes' : key; this.active = undefined; return await this.submit(`/${nested} ${value.join(' ')}`); }
           this.print(JSON.stringify({ ...this.config, settingsModel: this.settings.modelId, mcp: Object.keys(this.mcpServers),
             maxTurns: this.options.agent?.maxTurns ?? 128, timeoutMs: this.options.agent?.timeoutMs ?? 1200000, only: this.only, removed: this.removed }, null, 2)); break;
@@ -331,7 +342,7 @@ export class ChatController {
         case 'droids': this.print('Subagentes propios: Task/SpawnAgent, ListAgents, MessageAgent, InterruptAgent, TaskOutput/TaskStop. Profundidad 2, máximo 8 agentes y 256 llamadas compartidas. No existe un gestor de custom Droids.'); break;
         case 'limits': this.print(JSON.stringify({ timeoutMs: this.options.agent?.timeoutMs ?? 1200000, maxTurns: this.options.agent?.maxTurns ?? 128,
           maxContextTokens: this.options.agent?.maxContextTokens ?? 32000, lastUsage: this.lastResult?.usage, billing: 'Sin límites de crédito de Factory' }, null, 2)); break;
-        case 'diagnostics': { const sandbox = await detectSandbox(); this.print(JSON.stringify({ sandbox, cwd: this.cwd, configuredModels: this.modelIds, mcpConfigured: Object.keys(this.mcpServers) }, null, 2)); break; }
+        case 'diagnostics': { const sandbox = await detectSandbox(); this.print(JSON.stringify({ sandbox, networkPolicy: this.config.networkPolicy ?? 'auto', cwd: this.cwd, configuredModels: this.modelIds, mcpConfigured: Object.keys(this.mcpServers) }, null, 2)); break; }
         case 'terminal-setup': this.print('/: paleta con descripción y origen · ↑↓: sugerencias o historial · Tab: completar /comando; fuera de / cambia razonamiento · Enter sobre sugerencia elegida: rellenar · Esc: cerrar paleta · Shift+Tab: auto/spec (mission solo con high) · Ctrl+N: siguiente modelo · Ctrl+L: autonomía · Ctrl+O: ampliar diff · Ctrl+C: cancelar · Ctrl+D: salir'); break;
         case 'init': await this.runPrompt('Inspect this repository and prepare contributor guidance in AGENTS.md. Preserve existing guidance; ask before replacing unrelated content. ' + arg); break;
         default:

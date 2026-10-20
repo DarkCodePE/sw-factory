@@ -7,6 +7,7 @@ import { AUTONOMIES, chatHome, loadChatConfig, terminalText } from './chat/confi
 import { ChatController } from './chat/controller.ts';
 import { TerminalInput } from './chat/terminal.ts';
 import { commandHelp } from './chat/commands.ts';
+import { networkPolicy } from './agent/network-policy.ts';
 
 export { loadChatConfig } from './chat/config.ts';
 export { parseInput } from './chat/commands.ts';
@@ -24,10 +25,10 @@ export async function chatMain(argv: string[]): Promise<number> {
       last: { type: 'boolean' }, fork: { type: 'string' }, 'session-id': { type: 'string' },
       'append-system-prompt': { type: 'string' }, 'append-system-prompt-file': { type: 'string' },
       'timeout-ms': { type: 'string' }, 'max-turns': { type: 'string' }, 'max-context-tokens': { type: 'string' },
-      'only-tools': { type: 'string' }, 'remove-tools': { type: 'string' }, sandbox: { type: 'string' },
+      'only-tools': { type: 'string' }, 'remove-tools': { type: 'string' }, sandbox: { type: 'string' }, 'sandbox-network': { type: 'string' },
       help: { type: 'boolean', short: 'h' },
     } });
-    if (v.help) { console.log('fab [prompt] | fab chat [carpeta] [--cwd path] [--settings file] [-m id] [--auto off|low|medium|high]\n  --resume [id] --last --fork id --use-spec --mission\n\n' + commandHelp()); return 0; }
+    if (v.help) { console.log('fab [prompt] | fab chat [carpeta] [--cwd path] [--settings file] [-m id] [--auto off|low|medium|high]\n  --resume [id] --last --fork id --use-spec --mission\n  --sandbox-network auto|ask|deny (auto: red automática solo en high)\n\n' + commandHelp()); return 0; }
     if (v.fork && (v.resume !== undefined || v['session-id'] || v.last)) throw new Error('--fork no se combina con --resume/--last/--session-id');
     if (v['use-spec'] && v.mission) throw new Error('--use-spec y --mission son excluyentes');
     const folder = !v.cwd && positionals.length === 1 && existsSync(positionals[0]!) && statSync(positionals[0]!).isDirectory() ? positionals.pop() : undefined;
@@ -35,6 +36,7 @@ export async function chatMain(argv: string[]): Promise<number> {
     if (!statSync(cwd).isDirectory()) throw new Error('--cwd requiere un directorio');
     const settings = await loadExecSettings(v.settings ?? process.env.FABRICA_AGENT_SETTINGS);
     const home = chatHome(), config = loadChatConfig(settings, home);
+    if (v['sandbox-network'] !== undefined) config.networkPolicy = networkPolicy(v['sandbox-network']);
     if (v.model) config.model = v.model;
     if (v.auto) { if (!AUTONOMIES.includes(v.auto as any)) throw new Error('Autonomía inválida'); config.autonomy = v.auto as typeof config.autonomy; }
     if (v['use-spec']) config.mode = 'spec'; if (v.mission) config.mode = 'mission';

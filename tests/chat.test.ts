@@ -106,6 +106,33 @@ test('MCP config and filters reach AgentOptions without revealing keys in settin
   await app.submit('/settings'); expect(f.io.output).not.toContain('synthetic-secret');
 });
 
+test('network settings persist policy without grants and the TUI displays the real scope before approval', async () => {
+  const f = await fixture([call('net', 'Execute', { command: 'pwd', network: true }), final()]);
+  await f.app.submit('/network ask'); expect(f.app.config.networkPolicy).toBe('ask');
+  expect(loadChatConfig({}, f.home).networkPolicy).toBe('ask');
+  f.io.answers = ['s']; await f.app.submit('command with network');
+  expect(f.io.output).toContain('Acceso de red del equipo');
+  expect(f.io.output).toContain('No se limita la conexión a un dominio concreto');
+  expect(f.io.output).toContain(f.cwd); expect(f.io.output).toContain('sin autorización permanente');
+  const saved = JSON.parse(await readFile(join(f.home, 'chat.json'), 'utf8'));
+  expect(saved.networkPolicy).toBe('ask'); expect(saved.networkAccess).toBeUndefined();
+  await f.app.submit('/settings network deny'); expect(f.app.config.networkPolicy).toBe('deny');
+  expect(completions('/network a')[0]).toEqual(['/network auto', '/network ask']);
+  await expect(f.app.submit('/network allow')).rejects.toThrow('Network policy');
+  await writeFile(join(f.home, 'chat.json'), JSON.stringify({ networkPolicy: 'invalid' }));
+  expect(loadChatConfig({}, f.home).networkPolicy).toBe('deny');
+  expect(loadChatConfig({ sandboxNetwork: 'ask' }, f.home).networkPolicy).toBe('ask');
+});
+
+test('TUI network auto at high is visible and does not ask for confirmation', async () => {
+  const f = await fixture([call('net-auto', 'Execute', { command: 'pwd', network: true }), final()]);
+  f.app.config.autonomy = 'high';
+  f.io.question = async () => { throw new Error('Automatic high network must not prompt'); };
+  await f.app.submit('command with network');
+  expect(f.io.output).toContain('Red autorizada automáticamente');
+  expect(f.requests.at(-1).messages.some((m: any) => m.role === 'tool' && JSON.parse(m.content).network.enabled === true)).toBe(true);
+});
+
 test('Ctrl+C during approval conserves blocked snapshot but next prompt gets a new session', async () => {
   const f = await fixture([call('a', 'Create', { file_path: 'never.txt', content: 'no' }), final()]);
   let started!: () => void; const waiting = new Promise<void>(resolve => { started = resolve; });

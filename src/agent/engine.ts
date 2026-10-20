@@ -5,6 +5,7 @@ import { readWorkspaceFile } from './files.ts';
 import { abortable } from './cancellation.ts';
 import { ToolRuntime } from './registry.ts';
 import { McpManager } from './mcp.ts';
+import { networkPolicy } from './network-policy.ts';
 import { AgentBudget, type AgentLineage } from './tasks.ts';
 import { SessionStore, type SessionState } from './session.ts';
 import type { AgentOptions, AgentResult, AgentTool, Message, ModelTurn, ToolCall, ToolContext } from './types.ts';
@@ -62,7 +63,7 @@ export async function runCodingAgent(opts: AgentOptions, inherited?: AgentLineag
     timer = setTimeout(() => { timedOut = true; controller.abort(new Error('Agent total timeout exceeded')); }, timeout);
     const cwd = await realpath(opts.cwd);
     const context: ToolContext = { cwd, signal: controller.signal, autonomy: opts.autonomy ?? 'off',
-      interactionMode: opts.interactionMode ?? 'auto', sandbox: opts.sandbox ?? 'required', fileJournal: inherited ? undefined : opts.fileJournal };
+      interactionMode: opts.interactionMode ?? 'auto', sandbox: opts.sandbox ?? 'required', networkPolicy: networkPolicy(opts.networkPolicy), fileJournal: inherited ? undefined : opts.fileJournal };
     if (!['off', 'low', 'medium', 'high'].includes(context.autonomy) || !['auto', 'spec', 'mission'].includes(context.interactionMode)) {
       throw new Error('Invalid agent autonomy or interaction mode');
     }

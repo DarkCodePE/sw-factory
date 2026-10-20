@@ -2,6 +2,7 @@ import { abortable } from './cancellation.ts';
 import { readWorkspaceFile } from './files.ts';
 import { formatAnswers, parseQuestionnaire, permissionRequest } from './interaction.ts';
 import { ToolScheduler } from './scheduler.ts';
+import { networkDecision, networkPolicy, requestsNetwork } from './network-policy.ts';
 import { TaskManager, type AgentLineage, type CallReservation } from './tasks.ts';
 import { featureHandoffTool, MissionManager } from './mission.ts';
 import type { SessionState } from './session.ts';
@@ -56,27 +57,40 @@ export class ToolRuntime {
       const signal = scopedSignal ? AbortSignal.any([context.signal, scopedSignal]) : context.signal;
       signal.throwIfAborted();
       const t = registry.get(name); if (!t) throw new Error(`Unknown tool: ${name}`);
+      // Bind approval to the command and network request shown to the caller.
+      if (name === 'Execute') input = Object.freeze({ ...inputObject(input) });
       const actual = call ?? { id: crypto.randomUUID(), type: 'function' as const, function: { name, arguments: JSON.stringify(input) } };
       if (opts.onlyTools && !opts.onlyTools.includes(name) || opts.removeTools?.includes(name)) throw new Error(`Tool disabled: ${name}`);
       if (context.interactionMode === 'spec' && t.effect === 'write') throw new Error('Spec mode denies workspace mutations');
       if (context.interactionMode === 'spec' && t.effect === 'execute' && !['Script', 'Execute', 'Task', 'SpawnAgent'].includes(name)) throw new Error('Spec mode denies unrestricted execution tools');
       if (opts.beforeTool && !await abortable(opts.beforeTool(actual), context.signal)) throw new Error('Tool denied by caller policy');
-      const needsApproval = t.effect === 'write' && context.autonomy === 'off' ||
+      const requested = name === 'Execute' && requestsNetwork(input);
+      const policy = networkPolicy(context.networkPolicy);
+      const network = networkDecision(requested, policy, context.autonomy, context.interactionMode);
+      const networkEvent = (decision: string) => { if (requested) opts.onEvent?.({ type: 'network_permission', sessionId: state.id ?? '', toolUseId: actual.id, policy, decision, access: 'host', scope: 'this_call' }); };
+      if (network === 'deny') { networkEvent('denied'); throw new Error('Execute network access denied by policy or spec mode'); }
+      const allowedCommand = name !== 'Execute' || executeAllowed(input, context);
+      const needsApproval = network === 'ask' || t.effect === 'write' && context.autonomy === 'off' ||
         t.effect === 'execute' && !['Execute', 'Script'].includes(name) && !['medium', 'high'].includes(context.autonomy) ||
-        name === 'Execute' && !executeAllowed(input, context);
+        !allowedCommand;
       let granted = false;
       if (needsApproval) {
         if (context.interactionMode === 'spec' && name === 'Execute') throw new Error('Spec mode denies this command');
-        if (!opts.permissionHandler) throw new Error(name === 'Execute' ? COMMAND_POLICY_HINT : 'Tool requires higher autonomy or explicit permission');
+        if (!opts.permissionHandler) {
+          networkEvent('denied');
+          throw new Error(network === 'ask' ? 'Execute network approval required; use the interactive TUI/RPC or auto high with network policy auto' : name === 'Execute' ? COMMAND_POLICY_HINT : 'Tool requires higher autonomy or explicit permission');
+        }
         const outcome = await abortable(opts.permissionHandler(permissionRequest(actual, input, context), { ...context, signal }), signal);
         signal.throwIfAborted();
-        if (outcome !== 'proceed_once') throw new Error('Tool execution cancelled by caller');
+        if (outcome !== 'proceed_once') { networkEvent('denied'); throw new Error('Tool execution cancelled by caller'); }
         granted = true;
       }
+      signal.throwIfAborted();
+      networkEvent(network === 'allow' && !needsApproval ? 'allowed_automatically' : 'allowed_once');
       const run = async () => {
         if (opts.missionWorker?.sealed() && ['write', 'execute'].includes(t.effect)) throw new Error('Worker workspace mutation is closed after EndFeatureRun');
         if (t.effect !== 'read' && !['Edit', 'Create', 'Script'].includes(name)) await context.fileJournal?.barrier(name, context);
-        return t.run(input, { ...context, signal, toolUseId: actual.id, ...(granted ? { autonomy: 'high' as const } : {}) });
+        return t.run(input, { ...context, signal, toolUseId: actual.id, networkAccess: requested, ...(granted ? { autonomy: 'high' as const } : {}) });
       };
       const work = ['Script', 'TaskOutput', 'TaskStop', 'InterruptAgent'].includes(name) ? run() : scheduler.run(t.effect === 'read', signal, run);
       owned.add(work);

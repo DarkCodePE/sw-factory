@@ -1,8 +1,15 @@
 # CI/CD y distribución de FAB
 
-El candidato de esta entrega es `0.1.0-rc.7`, paquete npm `@okuanb/fab`, dist-tag `next`. No reemplaza una versión estable. El estado real de publicación se comprueba en GitHub/npm; la presencia de estos workflows por sí sola no prueba una release.
+El candidato de esta entrega es `0.1.0-rc.8`, paquete npm `@okuanb/fab`, dist-tag `next`. No reemplaza una versión estable. El estado real de publicación se comprueba en GitHub/npm; la presencia de estos workflows por sí sola no prueba una release.
 
 ## Contrato
+
+La RC.8 añade permisos de red por llamada de Execute. Con la política auto,
+high concede red cuando la herramienta la solicita; off/low/medium requieren
+aprobación en TUI/RPC. `/network` y `--sandbox-network auto|ask|deny` permiten
+configurar la política. El aislamiento de archivos se conserva; deny prevalece.
+Véase [contrato y pruebas de red](design-execute-network-permissions.md).
+YOLO no forma parte de esta entrega.
 
 1. `release-candidate-preflight.yml` se ejecuta al subir una rama `release/**`. Todos los jobs usan el mismo SHA explícito, sin credenciales Git persistidas. Linux ejecuta TypeScript y la suite completa con JUnit; se rechazan cero pruebas, fallos y omisiones.
 2. Cuatro hosts compilan y ejecutan sus binarios nativos: Linux x64/ARM64 y macOS Intel/ARM64. Cada uno verifica versión, ayuda, tarea Read → Edit → respuesta final con proveedor sintético local, respuestas de ambas herramientas, efecto real en archivo, tarea TUI seguida de `/rewind`, comandos TUI por pipe y listado MCP. Linux añade Script compilado, callback padre, sandbox requerido y timeout, tanto en el build como en el binario instalado por el wrapper npm o el instalador público. No se presenta macOS como equivalente al sandbox Linux.
@@ -27,19 +34,19 @@ node scripts/release/smoke.mjs dist/fab-linux-x64 dist/fab-linux-x64.receipt.jso
 node scripts/release/probe-update.mjs dist/fab-linux-x64 dist/fab-linux-x64.receipt.json
 
 # Subir el candidato y consultar su ejecución:
-git push origin HEAD:release/0.1.0-rc.7
+git push origin HEAD:release/0.1.0-rc.8
 gh run list -R DarkCodePE/sw-factory --workflow release-candidate-preflight.yml
 # Solo tras preflight verde sobre el SHA exacto:
-git tag v0.1.0-rc.7 <SHA-verificado>
-git push origin v0.1.0-rc.7
+git tag v0.1.0-rc.8 <SHA-verificado>
+git push origin v0.1.0-rc.8
 ```
 
 Una vez publicada y verificada la RC:
 
 ```sh
-curl -fsSL https://github.com/DarkCodePE/sw-factory/releases/download/v0.1.0-rc.7/install.sh |
-  sh -s -- --version v0.1.0-rc.7
-npm install -g @okuanb/fab@0.1.0-rc.7
+curl -fsSL https://github.com/DarkCodePE/sw-factory/releases/download/v0.1.0-rc.8/install.sh |
+  sh -s -- --version v0.1.0-rc.8
+npm install -g @okuanb/fab@0.1.0-rc.8
 fab --version
 fab tui
 ```

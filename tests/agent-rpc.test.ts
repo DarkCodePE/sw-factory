@@ -146,3 +146,27 @@ test('malformed tool arguments remain a recoverable RPC result', async () => {
   expect(h.frames.find(f => f.params?.notification?.type === 'agent_turn_completed').params.notification.reason).toBe('completed');
   await h.rpc.shutdown();
 });
+
+test('RPC requests network confirmation with scope, honors rejection and does not let session settings raise host policy', async () => {
+  let n = 0;
+  const h = await harness({ id: 'fixture', async complete() {
+    if (n >= 2) return done('done');
+    return { text: '', finishReason: 'tool_calls', toolCalls: [{ id: `network-${++n}`, type: 'function', function: { name: 'Execute', arguments: JSON.stringify({ command: 'pwd', network: true }) } }] };
+  } });
+  await h.init(); expect(h.frames.find(f => f.id === 'init').result.settings.networkPolicy).toBe('auto');
+  await h.rpc.accept(request('bad-policy', 'update_session_settings', { networkPolicy: 'auto' }));
+  expect(h.frames.at(-1).error.message).toContain('configured by the host');
+  await h.rpc.accept(request('network-message', 'add_user_message', { text: 'network requests' }));
+  for (const selectedOption of ['proceed_once', 'cancel']) {
+    await until(() => h.frames.some(f => f.method === 'droid.request_permission' && !f.answered));
+    const req = h.frames.find(f => f.method === 'droid.request_permission' && !f.answered); req.answered = true;
+    expect(req.params.toolUses[0].details.network).toMatchObject({ requested: true, access: 'host', scope: 'this_call' });
+    expect(req.params.toolUses[0].details.cwd).toBe(h.cwd);
+    await h.rpc.accept({ jsonrpc: '2.0', type: 'response', id: req.id, result: { selectedOption } });
+  }
+  await until(() => h.frames.some(f => f.params?.notification?.type === 'agent_turn_completed'));
+  const results = h.frames.filter(f => f.params?.notification?.type === 'tool_result').map(f => f.params.notification);
+  expect(JSON.parse(results[0].content).network.enabled).toBe(true); expect(results[1].isError).toBe(true);
+  expect(h.frames.some(f => f.params?.notification?.type === 'fab_network_permission' && f.params.notification.decision === 'denied')).toBe(true);
+  await h.rpc.shutdown();
+});
