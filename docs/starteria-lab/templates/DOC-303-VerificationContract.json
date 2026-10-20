@@ -1,0 +1,29 @@
+{
+  "$schema": "https://raw.githubusercontent.com/DarkCodePE/sw-factory/main/schemas/mission-features.json",
+  "version": "1.0",
+  "workstream": "nombre-proyecto-lab",
+  "features": [
+    {
+      "id": "feature-conciliacion-core",
+      "description": "Implementar el servicio de conciliación de pedidos y detección de discrepancias",
+      "skillName": "typescript-service",
+      "milestone": "milestone-1-core",
+      "expectedBehavior": [
+        "Concilia órdenes y facturas coincidentes marcándolas con status MATCH",
+        "Calcula diferencias numéricas exactas ante montos dispares con status DISCREPANCY",
+        "Retorna MISSING_INVOICE si una orden no cuenta con factura asociada",
+        "Retorna un array vacío si la lista de entrada está vacía sin arrojar excepciones"
+      ],
+      "verificationCommands": [
+        "bun test tests/services/reconciliation.test.ts",
+        "bunx tsc --noEmit"
+      ],
+      "protectedPaths": [
+        "tests/services/reconciliation.test.ts",
+        "fixtures/orders.json",
+        "fixtures/invoices.json"
+      ],
+      "status": "pending"
+    }
+  ]
+}
