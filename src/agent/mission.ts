@@ -1,3 +1,4 @@
+import { scopedExecutionOptions, resolveExecutionPolicy } from './execution-policy.ts';
 import { resolve, join } from 'node:path';
 import { readWorkspaceFile } from './files.ts';
 import { handoffSchema, handoffSucceeded, parseFeatures, parseHandoff, type FeatureHandoff, type MissionAttempt, type MissionFeature, type MissionState } from './mission-contract.ts';
@@ -115,7 +116,7 @@ export class MissionManager {
     let sealed = false;
     try {
       await this.sync(); await this.log('worker_started', { workerSessionId, featureId: feature.id, role });
-      this.emit('mission_worker_started', { workerSessionId, featureId: feature.id, role });
+      this.emit('mission_worker_started', { workerSessionId, featureId: feature.id, role, executionPolicy: resolveExecutionPolicy(scopedExecutionOptions(this.context, role !== 'worker')) });
       const submit = async (input: unknown) => {
         if (sealed) throw new Error('A handoff has already been submitted for this attempt');
         const handoff = parseHandoff(input, feature.id); sealed = true;
@@ -135,7 +136,7 @@ export class MissionManager {
       const prompt = `Assigned mission feature ${feature.id}; role ${role}.\n${feature.description}\nPreconditions: ${JSON.stringify(feature.preconditions)}\nExpected behavior: ${JSON.stringify(feature.expectedBehavior)}\nAssertion IDs: ${JSON.stringify(feature.fulfills)}\n\n${skill}\n\n${message ?? ''}\n${validation ? 'Independently verify the current code and tests. The workspace is read-only. Report observed evidence, failures and unfinished work.' : 'Implement this feature and verify it with the available tools.'}\nSubmit exactly one truthful EndFeatureRun handoff. A final text response without a valid handoff does not complete the feature. After submission, workspace mutation is closed.`;
       const result = await this.runChild({ ...this.opts, prompt, cwd: this.context.cwd,
         provider: validation ? this.opts.mission?.validatorProvider ?? this.opts.provider : this.opts.mission?.workerProvider ?? this.opts.provider,
-        interactionMode: validation ? 'spec' : 'auto', autonomy: this.context.autonomy, sandbox: 'required',
+        ...scopedExecutionOptions(this.context, validation),
         signal: this.execution.signal, sessionDir: this.opts.sessionDir ?? join(this.directory, 'sessions'),
         newSessionId: resume ? undefined : workerSessionId, sessionId: resume, fork: false,
         tools: [], images: undefined, validateFinal: undefined, receiveMessages: undefined, onEvent: undefined,

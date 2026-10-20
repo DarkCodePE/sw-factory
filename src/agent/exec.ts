@@ -1,3 +1,4 @@
+import { resolveExecutionPolicy, YOLO_NOTICE } from './execution-policy.ts';
 import { readFile } from 'node:fs/promises';
 import { resolve } from 'node:path';
 import { parseArgs } from 'node:util';
@@ -11,7 +12,7 @@ import { networkPolicy } from './network-policy.ts';
 
 const HELP = `fab exec — independent coding-agent runtime
   fab exec [prompt] [-f file] [--cwd path] [-m model] [--base-url url]
-    [--auto off|low|medium|high] [--use-spec|--mission] [-r effort]
+    [--yolo] [--auto off|low|medium|high] [--use-spec|--mission] [-r effort]
     [--worker-model id] [--validator-model id]
     [-o text|json|stream-json|stream-jsonrpc] [--input-format stream-jsonrpc]
     [--session-id id|--fork id] [--session-dir path]
@@ -20,6 +21,7 @@ const HELP = `fab exec — independent coding-agent runtime
     [--timeout-ms N] [--max-turns N] [--max-context-tokens N]
     [--sandbox required|best-effort] [--sandbox-network auto|ask|deny]
     [--settings file] [--list-tools] [--require-status]
+YOLO: no approvals, host execution and network; invocation-only.
 Network auto: Execute requests are approved automatically only at --auto high; otherwise approval is required.
 Model settings: FABRICA_LLM_MODEL, FABRICA_LLM_BASE_URL, FABRICA_LLM_API_KEY.
 Unsupported Droid flags fail explicitly; the native runtime never invokes Droid.
@@ -29,7 +31,7 @@ export async function execMain(argv: string[]): Promise<number> {
   try {
     const { positionals, values: v } = parseArgs({ args: argv, allowPositionals: true, options: {
       cwd: { type: 'string' }, model: { type: 'string', short: 'm' }, 'base-url': { type: 'string' },
-      auto: { type: 'string' }, 'use-spec': { type: 'boolean' }, 'reasoning-effort': { type: 'string', short: 'r' },
+      yolo: { type: 'boolean' }, auto: { type: 'string' }, 'use-spec': { type: 'boolean' }, 'reasoning-effort': { type: 'string', short: 'r' },
       mission: { type: 'boolean' }, 'worker-model': { type: 'string' }, 'validator-model': { type: 'string' },
       'output-format': { type: 'string', short: 'o' }, file: { type: 'string', short: 'f' },
       'input-format': { type: 'string' }, settings: { type: 'string' },
@@ -53,6 +55,11 @@ export async function execMain(argv: string[]): Promise<number> {
     const selected = (s?: string) => selectToolNames(s?.split(',').map(x => x.trim()).filter(Boolean));
     const settings = await loadExecSettings(v.settings);
     const executionNetwork = networkPolicy(v['sandbox-network'] ?? settings.sandboxNetwork);
+    const execution = { permissionMode: v.yolo ? 'yolo' as const : 'standard' as const, autonomy: v.auto as Autonomy | undefined,
+      interactionMode: v.mission ? 'mission' as const : v['use-spec'] ? 'spec' as const : 'auto' as const,
+      sandbox: v.sandbox as 'required' | 'best-effort' | undefined, networkPolicy: executionNetwork };
+    const policy = resolveExecutionPolicy(execution);
+    if (v.yolo) console.error(YOLO_NOTICE);
     if (v.model) settings.modelId = v.model;
     const configured = configuredProviders(settings, { model: process.env.FABRICA_LLM_MODEL ?? 'qwen3.5-32k',
       baseUrl: v['base-url'] ?? process.env.FABRICA_LLM_BASE_URL, apiKey: process.env.FABRICA_LLM_API_KEY, reasoningEffort: v['reasoning-effort'] });
@@ -71,7 +78,7 @@ export async function execMain(argv: string[]): Promise<number> {
         await serveExecRpc(Bun.stdin.stream(), line => { process.stdout.write(line); }, {
           cwd: resolve(v.cwd ?? process.cwd()), sessionDir: resolve(v['session-dir'] ?? resolve(process.env.FABRICA_HOME ?? resolve(process.env.HOME ?? '.', '.fabrica'), 'agent-sessions')),
           defaultModelId: configured.defaultModelId, providers: configured.providers, signal: controller.signal,
-          agent: { mcpServers: settings.mcpServers, sandbox: v.sandbox as 'required' | 'best-effort' | undefined, networkPolicy: executionNetwork,
+          agent: { permissionMode: execution.permissionMode, mcpServers: settings.mcpServers, sandbox: v.sandbox as 'required' | 'best-effort' | undefined, networkPolicy: executionNetwork,
             timeoutMs: v['timeout-ms'] ? Number(v['timeout-ms']) : undefined, maxTurns: v['max-turns'] ? Number(v['max-turns']) : undefined,
             maxContextTokens: v['max-context-tokens'] ? Number(v['max-context-tokens']) : undefined },
         });
@@ -79,8 +86,8 @@ export async function execMain(argv: string[]): Promise<number> {
       return controller.signal.aborted ? 130 : 0;
     }
     if (v['list-tools']) {
-      const tools = (await listConfiguredToolCatalog({ prompt: '', cwd: resolve(v.cwd ?? process.cwd()), provider,
-        mcpServers: settings.mcpServers, interactionMode: v.mission ? 'mission' : v['use-spec'] ? 'spec' : 'auto' })).map(t => describeTool(t, (v.auto ?? 'off') as Autonomy, v.mission ? 'mission' : v['use-spec'] ? 'spec' : 'auto', selected(v['only-tools']), selected(v['remove-tools'])));
+      const tools = (await listConfiguredToolCatalog({ ...execution, prompt: '', cwd: resolve(v.cwd ?? process.cwd()), provider,
+        mcpServers: settings.mcpServers, interactionMode: v.mission ? 'mission' : v['use-spec'] ? 'spec' : 'auto' })).map(t => describeTool(t, policy.effectiveAutonomy, v.mission ? 'mission' : v['use-spec'] ? 'spec' : 'auto', selected(v['only-tools']), selected(v['remove-tools']), policy));
       if (format === 'text') console.log(tools.map(t => `${t.id}\t${t.category}`).join('\n'));
       else console.log(JSON.stringify(tools));
       return 0;
@@ -93,8 +100,8 @@ export async function execMain(argv: string[]): Promise<number> {
     const stop = () => controller.abort(new Error('Interrupted by user'));
     process.once('SIGINT', stop); process.once('SIGTERM', stop);
     try {
-      const result = await runCodingAgent({ prompt, mcpServers: settings.mcpServers, cwd: resolve(v.cwd ?? process.cwd()), provider,
-        autonomy: (v.auto ?? 'off') as Autonomy, interactionMode: v.mission ? 'mission' : v['use-spec'] ? 'spec' : 'auto', mission,
+      const result = await runCodingAgent({ ...execution, prompt, mcpServers: settings.mcpServers, cwd: resolve(v.cwd ?? process.cwd()), provider,
+        autonomy: execution.autonomy, interactionMode: v.mission ? 'mission' : v['use-spec'] ? 'spec' : 'auto', mission,
         sandbox: v.sandbox as 'required' | 'best-effort' | undefined, networkPolicy: executionNetwork,
         timeoutMs: v['timeout-ms'] ? Number(v['timeout-ms']) : undefined,
         maxTurns: v['max-turns'] ? Number(v['max-turns']) : undefined,

@@ -459,3 +459,40 @@ test('H-04: a verification run inside Script is observed like a direct Execute',
   }
   expect(mission?.state).toBe('completed');
 });
+
+test('YOLO mission workers use host policy but validators remain sandboxed and offline', async () => {
+  const paths = await workspace(), turns = new Map<string, number>(), observed: string[] = [];
+  const fixture = scenario(paths.cwd, [feature()], (r, id, assigned) => {
+    const n = turns.get(assigned) ?? 0; turns.set(assigned, n + 1);
+    if (!n) {
+      if (assigned === 'worker') return calls(['Execute', { command: "printf worker | tr a-z A-Z" }]);
+      return calls(['Execute', { command: 'pwd', network: true }], ['Execute', { command: 'pwd' }]);
+    }
+    if (n === 1) {
+      const results = r.messages.filter(m => m.role === 'tool');
+      observed.push(assigned);
+      if (assigned === 'worker') {
+        expect(JSON.parse(results[0]!.content as string)).toMatchObject({ permissionMode: 'yolo', sandboxed: false, stdout: 'WORKER' });
+      } else {
+        expect(results[0]!.content).toContain('denied');
+        expect(JSON.parse(results[1]!.content as string)).toMatchObject({ sandboxed: true, network: { enabled: false } });
+      }
+      return calls(['EndFeatureRun', handoff(id)]);
+    }
+    return done();
+  });
+  // A passing contract independent of the deliberately unchanged arithmetic.
+  const original = fixture.provider.complete;
+  fixture.provider.complete = async (...args) => {
+    const response = await original(...args);
+    for (const c of response.toolCalls) if (c.function.name === 'Create') {
+      const input = JSON.parse(c.function.arguments);
+      if (input.file_path.endsWith('features.json')) {
+        const f = feature(); f.verificationCommands = ['pwd']; input.content = JSON.stringify({ features: [f] }); c.function.arguments = JSON.stringify(input);
+      }
+    }
+    return response;
+  };
+  const result = await runAgent({ ...paths, prompt: 'mission', provider: fixture.provider, permissionMode: 'yolo', interactionMode: 'mission', timeoutMs: 4000 });
+  expect(result.ok).toBe(true); expect(observed).toContain('worker'); expect(observed).toContain('scrutiny'); expect(observed).toContain('user-testing');
+});

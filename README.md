@@ -38,9 +38,14 @@ Windows nativo y Alpine/musl todavía no están soportados.
 ```bash
 fab --version
 fab tui                    # abre el agente interactivo
+fab --yolo                 # sin aprobaciones; comandos y red del host
 fab update --check         # consulta sin instalar
 fab update                 # actualiza la instalación existente
 ```
+
+`--yolo` dura solo esta invocación y no se guarda al reanudar. `/yolo` muestra
+el estado; spec/btw/explore/validadores conservan restricciones. Consulte el
+[contrato y límites de YOLO](docs/design-yolo-mode.md).
 
 También puedes instalar con npm: `npm install -g @okuanb/fab@next` para RC,
 o `npm install -g @okuanb/fab@latest` para estables. El tag npm `latest` heredado

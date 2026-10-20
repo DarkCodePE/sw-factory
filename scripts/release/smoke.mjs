@@ -1,3 +1,4 @@
+import { smokeYolo } from './smoke-yolo.mjs';
 // Native executable and actual agent loop, driven by an offline provider.
 import { spawn } from 'node:child_process';
 import { createServer } from 'node:http';
@@ -79,7 +80,8 @@ export async function smoke(binary, expectedVersion, { home: selectedHome } = {}
       scriptTimeout = true;
     }
     const mcp = await execute(['mcp', 'list', '--settings', settings]); assert(mcp.code === 0, 'MCP configuration command failed');
-    return { version: expectedVersion, platform: process.platform, arch: process.arch, checks: { version: true, help: true, selfUpdateHelp: true, readEditTask: true, toolCalls: result.toolCalls, turns: readEditTurns, tuiCommands: true, tuiLinkedCatalog: true, tuiRejectedCatalog: true, tuiAgentTask: true, tuiRewind: true, scriptIsolation, scriptTimeout, mcpList: true }, sha256: await hashFile(binary) };
+    const yolo = await smokeYolo(execute, cwd, temp);
+    return { version: expectedVersion, platform: process.platform, arch: process.arch, checks: { ...yolo, version: true, help: true, selfUpdateHelp: true, readEditTask: true, toolCalls: result.toolCalls, turns: readEditTurns, tuiCommands: true, tuiLinkedCatalog: true, tuiRejectedCatalog: true, tuiAgentTask: true, tuiRewind: true, scriptIsolation, scriptTimeout, mcpList: true }, sha256: await hashFile(binary) };
   } finally { await new Promise(resolve => server.close(resolve)); server.closeAllConnections(); await rm(temp, { recursive: true, force: true }); }
 }
 if (process.argv[1] && resolve(process.argv[1]) === import.meta.filename) {

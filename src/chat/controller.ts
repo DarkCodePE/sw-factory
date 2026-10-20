@@ -1,3 +1,4 @@
+import { resolveExecutionPolicy, scopedExecutionOptions, YOLO_NOTICE, type ExecutionPolicy } from '../agent/execution-policy.ts';
 import { realpath, stat } from 'node:fs/promises';
 import { join, resolve } from 'node:path';
 import { listConfiguredToolCatalog, runCodingAgent } from '../agent/engine.ts';
@@ -31,7 +32,7 @@ export interface ChatIO {
 }
 export interface ChatOptions {
   cwd: string; home: string; settings?: ExecSettings; config?: ChatConfig;
-  agent?: Pick<AgentOptions, 'timeoutMs' | 'maxTurns' | 'maxContextTokens' | 'sandbox' | 'appendSystemPrompt' | 'onlyTools' | 'removeTools'>;
+  agent?: Pick<AgentOptions, 'permissionMode' | 'timeoutMs' | 'maxTurns' | 'maxContextTokens' | 'sandbox' | 'appendSystemPrompt' | 'onlyTools' | 'removeTools'>;
   providerFor?: (model: string, reasoning?: string) => ModelProvider;
   run?: typeof runCodingAgent;
 }
@@ -45,6 +46,7 @@ export class ChatController {
   private disabledMcp = new Set<string>();
   private only?: string[];
   private removed?: string[];
+  private readonly startupPolicy: ExecutionPolicy;
   private defaults: ChatConfig;
   private settings: ExecSettings;
   private lastResult?: AgentResult;
@@ -57,8 +59,18 @@ export class ChatController {
   constructor(readonly options: ChatOptions, readonly io: ChatIO) {
     this.cwd = options.cwd; this.settings = options.settings ?? {};
     this.config = options.config ?? loadChatConfig(this.settings, options.home);
+    this.startupPolicy = resolveExecutionPolicy({ ...options.agent, networkPolicy: this.config.networkPolicy,
+      autonomy: options.agent?.permissionMode === 'yolo' ? undefined : this.config.autonomy, interactionMode: this.config.mode });
     this.defaults = { ...this.config }; this.only = options.agent?.onlyTools; this.removed = options.agent?.removeTools;
   }
+  get yoloAuthorized() { return this.startupPolicy.permissionMode === 'yolo'; }
+  executionOptions(side = false) {
+    const scope = scopedExecutionOptions({ executionPolicy: this.startupPolicy, autonomy: side ? 'off' : this.yoloAuthorized ? 'high' : this.config.autonomy,
+      sandbox: this.options.agent?.sandbox ?? 'required', networkPolicy: networkPolicy(this.config.networkPolicy) }, side || this.config.mode === 'spec');
+    return { ...scope, interactionMode: side ? 'spec' as const : this.config.mode };
+  }
+  get executionPolicy() { return resolveExecutionPolicy(this.executionOptions()); }
+  get permissionLabel() { return this.executionPolicy.permissionMode === 'yolo' ? 'YOLO' : this.yoloAuthorized ? 'YOLO suspendido' : this.config.autonomy; }
   get sessionDir() { return join(this.options.home, 'agent-sessions'); }
   get busy() { return !!this.active; }
   get modelIds() { return [...new Set([this.config.model, ...this.settings.customModels?.map(m => m.id) ?? []])]; }
@@ -67,8 +79,8 @@ export class ChatController {
   get palette() { return paletteCatalog(this.projectResources); }
   get mcpServers() { return Object.fromEntries(Object.entries(this.settings.mcpServers ?? {}).filter(([name]) => !this.disabledMcp.has(name))); }
   print(value: unknown) { this.io.write(terminalText(value) + '\n'); }
-  status() { return `${this.config.model} (${this.config.reasoning ?? 'predeterminado'}) · ${this.config.mode} · auto ${this.config.autonomy} · red ${this.config.networkPolicy ?? 'auto'} · ${this.cwd} · sesión ${this.sessionId ?? '(nueva)'}`; }
-  get statusState(): StatusState { return { model: this.config.model, mode: this.config.mode, autonomy: this.config.autonomy,
+  status() { return `${this.yoloAuthorized ? this.config.mode === 'spec' ? 'YOLO suspendido · sandbox requerido · sin red · ' : YOLO_NOTICE + ' · ' : ''}${this.config.model} (${this.config.reasoning ?? 'predeterminado'}) · ${this.config.mode} · auto ${this.executionPolicy.effectiveAutonomy} · red ${this.executionOptions().networkPolicy ?? 'auto'} · ${this.cwd} · sesión ${this.sessionId ?? '(nueva)'}`; }
+  get statusState(): StatusState { return { model: this.config.model, mode: this.config.mode, autonomy: this.executionPolicy.effectiveAutonomy, permissionMode: this.executionPolicy.permissionMode, yoloSuspended: this.yoloAuthorized && this.config.mode === 'spec',
     inputTokens: this.tokens.inputTokens + this.turnUsage.inputTokens, outputTokens: this.tokens.outputTokens + this.turnUsage.outputTokens,
     contextTokens: this.contextTokens, maxContextTokens: this.options.agent?.maxContextTokens ?? 32000, reasoning: this.config.reasoning, modelLabel: this.modelLabel, resources: { ...this.resources, mcpConfigured: Object.keys(this.mcpServers).length } }; }
   cycleReasoning() { this.config.reasoning = REASONING[(REASONING.indexOf(this.config.reasoning as any) + 1) % REASONING.length]; this.persist(); this.io.update?.(this.statusState); }
@@ -99,11 +111,11 @@ export class ChatController {
   private persist() { saveChatConfig(this.config, this.options.home); }
   setMode(value: string) {
     if (!['auto', 'spec', 'mission'].includes(value)) throw new Error('Modo: auto, spec o mission');
-    if (value === 'mission' && this.config.autonomy !== 'high') throw new Error('Mission exige /auto high explícito');
+    if (value === 'mission' && this.executionPolicy.effectiveAutonomy !== 'high') throw new Error('Mission exige /auto high explícito');
     this.config.mode = value as ChatConfig['mode']; this.print(this.status());
   }
   cycleMode() {
-    const modes = this.config.autonomy === 'high' ? ['auto', 'spec', 'mission'] : ['auto', 'spec'];
+    const modes = this.executionPolicy.effectiveAutonomy === 'high' ? ['auto', 'spec', 'mission'] : ['auto', 'spec'];
     this.setMode(modes[(modes.indexOf(this.config.mode) + 1) % modes.length]!);
   }
   async changeModel(id?: string) {
@@ -183,14 +195,12 @@ export class ChatController {
         this.io.update?.(this.statusState);
       }
       else if (event.type === 'compaction') this.print('(contexto compactado)');
-      else if (event.type === 'network_permission' && event.decision === 'allowed_automatically') this.print('Red autorizada automáticamente para esta llamada (auto high).');
+      else if (event.type === 'network_permission' && event.decision === 'allowed_automatically' && !this.yoloAuthorized) this.print('Red autorizada automáticamente para esta llamada (auto high).');
       else if (event.type.startsWith('mission_')) this.print(JSON.stringify(event));
     };
     try {
     const result = await (this.options.run ?? runCodingAgent)({ ...this.options.agent,
-      prompt, cwd: this.cwd, provider: this.provider(), autonomy: side ? 'off' : this.config.autonomy,
-      interactionMode: side ? 'spec' : this.config.mode, mcpServers: this.mcpServers,
-      networkPolicy: networkPolicy(this.config.networkPolicy),
+      prompt, cwd: this.cwd, provider: this.provider(), ...this.executionOptions(side), mcpServers: this.mcpServers,
       sessionDir: side ? undefined : this.sessionDir, sessionId: side ? undefined : this.sessionId,
       onlyTools: this.only, removeTools: this.removed, signal: this.active?.signal, onEvent,
       permissionHandler: side ? undefined : this.permission, askUserHandler: this.askUser,
@@ -247,6 +257,7 @@ export class ChatController {
           else { const restored = await journal.rewind(arg || undefined, this.active.signal); this.print(`Checkpoint ${restored.id}: ${restored.files} archivos restaurados. El contexto conserva el turno; comunica el rewind al agente.`); }
           break;
         }
+        case 'yolo': if (arg) throw new Error('/yolo solo muestra el estado; usa --yolo al arrancar'); this.print(this.yoloAuthorized ? this.status() : 'YOLO desactivado; se activa únicamente con --yolo al arrancar'); break;
         case 'status': this.print(this.status()); break;
         case 'model': await this.changeModel(arg || undefined); break;
         case 'reasoning': {
@@ -259,6 +270,7 @@ export class ChatController {
           const n = arg ? AUTONOMIES.indexOf(arg as any) : await this.io.select('Autonomía', AUTONOMIES, this.active.signal);
           if (n === undefined) break;
           if (n < 0) throw new Error('Autonomía: off, low, medium o high');
+          if (this.yoloAuthorized) { if (AUTONOMIES[n] !== 'high') throw new Error('YOLO exige high; reinicia sin --yolo para cambiar autonomía'); this.print(this.status()); break; }
           this.config.autonomy = AUTONOMIES[n]!;
           if (this.config.mode === 'mission' && this.config.autonomy !== 'high') this.config.mode = 'auto';
           this.persist(); this.print(this.status()); break;
@@ -266,6 +278,10 @@ export class ChatController {
         case 'network': {
           const selected = arg || NETWORK_POLICIES[(await this.io.select('Red de Execute (auto: automática solo en high)', [...NETWORK_POLICIES], this.active.signal)) ?? -1];
           if (selected === undefined) { this.print(`Red de Execute: ${this.config.networkPolicy ?? 'auto'}`); break; }
+          if (this.yoloAuthorized) {
+            if (selected !== 'auto') throw new Error('YOLO exige red auto; reinicia sin --yolo para limitar la red');
+            this.print(this.status()); break;
+          }
           this.config.networkPolicy = networkPolicy(selected); this.persist(); this.print(this.status()); break;
         }
         case 'mode': {
@@ -276,7 +292,7 @@ export class ChatController {
         case 'settings':
           if (arg) { const [key, ...value] = arg.split(/\s+/); if (!['model', 'auto', 'mode', 'theme', 'reasoning', 'network'].includes(key!)) throw new Error('Ajuste: model, auto, mode, theme, reasoning o network');
             const nested = key === 'theme' ? 'themes' : key; this.active = undefined; return await this.submit(`/${nested} ${value.join(' ')}`); }
-          this.print(JSON.stringify({ ...this.config, settingsModel: this.settings.modelId, mcp: Object.keys(this.mcpServers),
+          this.print(JSON.stringify({ ...this.config, executionPolicy: this.executionPolicy, settingsModel: this.settings.modelId, mcp: Object.keys(this.mcpServers),
             maxTurns: this.options.agent?.maxTurns ?? 128, timeoutMs: this.options.agent?.timeoutMs ?? 1200000, only: this.only, removed: this.removed }, null, 2)); break;
         case 'themes': {
           const choices = ['color', 'plain']; const n = arg ? choices.indexOf(arg) : await this.io.select('Tema', choices, this.active.signal);
@@ -329,12 +345,12 @@ export class ChatController {
           if (action === 'reset') { this.only = undefined; this.removed = undefined; }
           else if (action === 'only' || action === 'remove') {
             if (!names.length) throw new Error('/tools only|remove <nombres separados por coma>');
-            const catalog = await listConfiguredToolCatalog({ prompt: '', cwd: this.cwd, provider: this.provider(), mcpServers: this.mcpServers, interactionMode: this.config.mode }, this.active.signal);
+            const catalog = await listConfiguredToolCatalog({ prompt: '', cwd: this.cwd, provider: this.provider(), mcpServers: this.mcpServers, ...this.executionOptions() }, this.active.signal);
             for (const n of names) if (!catalog.some(t => t.schema.function.name === n)) throw new Error(`Tool desconocida: ${n}`);
             if (action === 'only') this.only = names; else this.removed = names;
           } else if (action && action !== 'list') throw new Error('/tools [list|only <nombres>|remove <nombres>|reset]');
           const catalog = await listConfiguredToolCatalog({ prompt: '', cwd: this.cwd, provider: this.provider(), mcpServers: this.mcpServers,
-            autonomy: this.config.autonomy, interactionMode: this.config.mode, onlyTools: this.only, removeTools: this.removed }, this.active.signal);
+            ...this.executionOptions(), onlyTools: this.only, removeTools: this.removed }, this.active.signal);
           this.print(catalog.map(t => `${t.schema.function.name} [${t.effect}]`).join('\n')); break;
         }
         case 'skills': if (arg) this.print(await projectPrompt(this.cwd, 'skills', arg)); else this.print((await projectItems(this.cwd, 'skills')).join('\n') || 'Sin skills en .agents/skills'); break;
@@ -342,7 +358,7 @@ export class ChatController {
         case 'droids': this.print('Subagentes propios: Task/SpawnAgent, ListAgents, MessageAgent, InterruptAgent, TaskOutput/TaskStop. Profundidad 2, máximo 8 agentes y 256 llamadas compartidas. No existe un gestor de custom Droids.'); break;
         case 'limits': this.print(JSON.stringify({ timeoutMs: this.options.agent?.timeoutMs ?? 1200000, maxTurns: this.options.agent?.maxTurns ?? 128,
           maxContextTokens: this.options.agent?.maxContextTokens ?? 32000, lastUsage: this.lastResult?.usage, billing: 'Sin límites de crédito de Factory' }, null, 2)); break;
-        case 'diagnostics': { const sandbox = await detectSandbox(); this.print(JSON.stringify({ sandbox, networkPolicy: this.config.networkPolicy ?? 'auto', cwd: this.cwd, configuredModels: this.modelIds, mcpConfigured: Object.keys(this.mcpServers) }, null, 2)); break; }
+        case 'diagnostics': { const sandbox = await detectSandbox(); this.print(JSON.stringify({ sandbox, executionPolicy: this.executionPolicy, networkPolicy: this.config.networkPolicy ?? 'auto', cwd: this.cwd, configuredModels: this.modelIds, mcpConfigured: Object.keys(this.mcpServers) }, null, 2)); break; }
         case 'terminal-setup': this.print('/: paleta con descripción y origen · ↑↓: sugerencias o historial · Tab: completar /comando; fuera de / cambia razonamiento · Enter sobre sugerencia elegida: rellenar · Esc: cerrar paleta · Shift+Tab: auto/spec (mission solo con high) · Ctrl+N: siguiente modelo · Ctrl+L: autonomía · Ctrl+O: ampliar diff · Ctrl+C: cancelar · Ctrl+D: salir'); break;
         case 'init': await this.runPrompt('Inspect this repository and prepare contributor guidance in AGENTS.md. Preserve existing guidance; ask before replacing unrelated content. ' + arg); break;
         default:

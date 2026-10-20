@@ -5,6 +5,7 @@ export const CHAT_COMMANDS: ChatCommand[] = [
   { name: 'model', group: 'Configuración', help: 'Seleccionar modelo configurado o introducir su ID' },
   { name: 'reasoning', group: 'Configuración', help: 'Esfuerzo low, medium, high o default; Tab lo alterna' },
   { name: 'auto', group: 'Configuración', help: 'Autonomía off, low, medium o high' },
+  { name: 'yolo', group: 'Configuración', help: 'Ver YOLO; solo se activa con --yolo al arrancar' },
   { name: 'network', group: 'Configuración', help: 'Red de Execute: auto (automática solo en high), ask o deny' },
   { name: 'mode', group: 'Configuración', help: 'Modo auto, spec o mission (requiere high)' },
   { name: 'settings', group: 'Configuración', help: 'Ver ajustes o cambiar model/auto/mode/theme/reasoning/network' },

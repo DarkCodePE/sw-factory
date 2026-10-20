@@ -1,3 +1,4 @@
+import { scopedExecutionOptions, resolveExecutionPolicy, type ExecutionPolicy, type PermissionMode } from './execution-policy.ts';
 import { mkdtemp, symlink } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -39,8 +40,9 @@ export class AgentBudget {
   releaseAgent() { this.running--; }
 }
 export interface CallReservation { remaining: number; release(): void }
-export interface AgentLineage { depth: number; budget: AgentBudget; reservation?: CallReservation }
+export interface AgentLineage { permissionMode?: PermissionMode; depth: number; budget: AgentBudget; reservation?: CallReservation }
 interface TaskRecord {
+  executionPolicy?: ExecutionPolicy;
   id: string;
   description: string;
   status: 'queued' | 'running' | 'completed' | 'failed' | 'cancelled';
@@ -120,7 +122,7 @@ export class TaskManager {
 
   private get(id: string) { const task = this.tasks.get(id); if (!task) throw new Error('Unknown task ID'); return task; }
   private view(t: TaskRecord) {
-    return { task_id: t.id, agentId: t.id, description: t.description, status: t.status, cwd: t.cwd,
+    return { executionPolicy: t.executionPolicy, task_id: t.id, agentId: t.id, description: t.description, status: t.status, cwd: t.cwd,
       ...(t.result ? { result: t.result } : {}), ...(t.error ? { error: t.error } : {}),
       ...(t.diff ? { diff: t.diff } : {}), mailbox: [...t.mailbox] };
   }
@@ -142,6 +144,9 @@ export class TaskManager {
         const snapshot = await snapshotWorkspace(this.context.cwd, signal);
         task.cwd = snapshot.cwd; signal.throwIfAborted(); task.status = 'running'; ready();
         const readonly = p.subagent_type === 'explore' || this.context.interactionMode === 'spec';
+        const execution = scopedExecutionOptions(this.context, readonly);
+        task.executionPolicy = resolveExecutionPolicy(execution);
+        this.parent.onEvent?.({ type: 'agent_spawn', sessionId: this.parent.sessionId ?? '', agentId: id, executionPolicy: task.executionPolicy });
         task.result = await this.runChild({ ...this.parent, cwd: task.cwd, prompt, signal,
           sessionId: undefined, newSessionId: undefined, fork: false,
           // A separate child lock/session and no closure-based host capabilities.
@@ -150,8 +155,7 @@ export class TaskManager {
           onlyTools: this.parent.onlyTools?.filter(n => !['ProposeMission', 'StartMissionRun', 'EndFeatureRun', 'DismissHandoffItems'].includes(n)),
           removeTools: this.parent.removeTools?.filter(n => !['ProposeMission', 'StartMissionRun', 'EndFeatureRun', 'DismissHandoffItems'].includes(n)),
           receiveMessages: () => task.mailbox.splice(0),
-          interactionMode: readonly ? 'spec' : 'auto', autonomy: this.context.autonomy,
-          sandbox: 'required', sessionDir: join(task.cwd, '.git', 'fab-sessions') });
+          ...execution, sessionDir: join(task.cwd, '.git', 'fab-sessions') });
         task.status = signal.aborted ? 'cancelled' : task.result.ok ? 'completed' : 'failed';
         if (task.status === 'completed') {
           const { lstat, realpath } = await import('node:fs/promises');

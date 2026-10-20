@@ -8,13 +8,13 @@ const IDS: Record<string, string> = { Read: 'read-cli', LS: 'ls-cli', Grep: 'gre
 export const toolId = (name: string) => IDS[name] ?? name;
 export const toolName = (selector: string) => Object.entries(IDS).find(([, id]) => id === selector)?.[0] ?? selector;
 export const selectToolNames = (selectors?: string[]) => selectors?.map(toolName);
-export function describeTool(t: Pick<AgentTool, 'schema' | 'effect'>, autonomy: Autonomy = 'off', mode: InteractionMode = 'auto', only?: string[], removed?: string[]) {
+export function describeTool(t: Pick<AgentTool, 'schema' | 'effect'>, autonomy: Autonomy = 'off', mode: InteractionMode = 'auto', only?: string[], removed?: string[], policy?: import('./execution-policy.ts').ExecutionPolicy) {
   const name = t.schema.function.name;
-  const conditional = ['Script', 'Execute'].includes(name);
+  const conditional = policy?.permissionMode !== 'yolo' && ['Script', 'Execute'].includes(name);
   const boundedChild = ['Task', 'SpawnAgent'].includes(name);
-  const permitted = t.effect === 'read' || conditional || (mode !== 'spec' || boundedChild) &&
+  const permitted = policy?.permissionMode === 'yolo' || t.effect === 'read' || conditional || (mode !== 'spec' || boundedChild) &&
     (t.effect === 'write' ? autonomy !== 'off' : ['medium', 'high'].includes(autonomy));
-  return { id: toolId(name), llmId: name, displayName: name, description: t.schema.function.description,
+  return { executionPolicy: policy, id: toolId(name), llmId: name, displayName: name, description: t.schema.function.description,
     category: t.effect === 'write' ? 'edit' : t.effect, defaultAllowed: t.effect === 'read',
     currentlyAllowed: permitted && (!only || only.includes(name)) && !removed?.includes(name), conditional, schema: t.schema };
 }

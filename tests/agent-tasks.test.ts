@@ -92,3 +92,25 @@ test('child-controlled Git filters cannot write outside the sandbox during diff 
   if (childCwd) roots.push(dirname(childCwd));
   expect(await Bun.file(join(outside, 'escape')).exists()).toBe(false);
 });
+
+test('YOLO writer inherits host execution; explore child explicitly reduces policy', async () => {
+  for (const explore of [false, true]) {
+    const { cwd } = await repo(); let parentTurns = 0, childTurns = 0, childCwd = ''; let task: any;
+    const provider: ModelProvider = { id: 'fixture', async complete(request) {
+      const workspace = /^Workspace: (.+)$/m.exec(request.messages[1]!.content as string)![1]!;
+      if (workspace === cwd) {
+        if (!parentTurns++) return calls(['Task', { prompt: 'probe', ...(explore ? { subagent_type: 'explore', permissionMode: 'yolo' } : {}) }]);
+        task = JSON.parse(request.messages.at(-1)!.content as string); return done();
+      }
+      childCwd = workspace;
+      if (!childTurns++) return calls(['Execute', { command: "printf child | tr a-z A-Z > child-proof", network: true }]);
+      const result = request.messages.at(-1)!.content as string;
+      if (explore) expect(result).toContain('denied'); else expect(JSON.parse(result)).toMatchObject({ sandboxed: false, permissionMode: 'yolo', exitCode: 0 });
+      return done();
+    } };
+    const result = await runCodingAgent({ prompt: 'delegate', cwd, provider, permissionMode: 'yolo', timeoutMs: 4000 });
+    if (childCwd) roots.push(dirname(childCwd));
+    expect(result.ok).toBe(true); expect(task.executionPolicy.permissionMode).toBe(explore ? 'standard' : 'yolo');
+    expect(await Bun.file(join(childCwd, 'child-proof')).exists()).toBe(!explore);
+  }
+});

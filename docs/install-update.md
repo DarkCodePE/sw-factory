@@ -100,3 +100,20 @@ sintética offline. El sello exige esos resultados en las cuatro plataformas.
 La referencia de comportamiento es Whip, commit
 `1c5da05987d2869687dfc95fc9128ad2ad68e0f0`: `install.sh` e
 `internal/update/releases.go`. FAB implementa su propio instalador y actualizador.
+
+## YOLO (desde 0.1.0-rc.9)
+
+Actualiza el canal actual sin indicar versión con `fab update`. Luego:
+
+```sh
+fab --yolo
+fab tui --yolo
+fab exec --yolo "Implementa y verifica la tarea"
+```
+
+La activación es por invocación: comandos en el host, con su red y sin
+aprobaciones de FAB. No se guarda en preferencias ni al reanudar una sesión.
+`/yolo` muestra el estado; para volver al modo normal, inicia FAB sin el flag.
+Si configuraste red `ask` o `deny`, el arranque exige una decisión explícita:
+`fab --yolo --sandbox-network auto`. No combines YOLO con `--sandbox`,
+`--use-spec` ni `--auto off|low|medium`. AskUser sigue preguntando por información.

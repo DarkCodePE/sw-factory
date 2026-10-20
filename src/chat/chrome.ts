@@ -8,8 +8,8 @@ export function resourceLine(r: Resources) {
   return `Skills (${r.skills}) ${r.skills ? '✓' : '✗'} · MCPs (${r.mcpConfigured}) ${r.mcpConfigured ? 'configurados, sin verificar' : '✗'} · Connectors: no disponible · AGENTS.md ${r.agents ? '✓' : '✗'}${r.warnings ? ` · ${r.warnings} recursos omitidos` : ''}`;
 }
 export const autonomyLabel = (value: string) => ({ off: 'cada acción requiere aprobación', low: 'ediciones permitidas; ejecución limitada', medium: 'ediciones y comandos de desarrollo', high: 'acciones automáticas bajo las políticas del runtime' }[value] ?? value);
-export function modeLine(c: { model: string; mode: string; autonomy: string; reasoning?: string }, width: number) {
-  const right = `${c.model} (${c.reasoning ?? 'predeterminado'})`, left = `${c.mode === 'spec' ? 'Spec' : c.mode === 'mission' ? 'Mission' : 'Auto'} (${c.autonomy}) · ${c.mode === 'spec' ? 'investigación y planificación; sin escrituras' : autonomyLabel(c.autonomy)}`;
+export function modeLine(c: { model: string; mode: string; autonomy: string; reasoning?: string; permissionMode?: string; yoloSuspended?: boolean }, width: number) {
+  const right = `${c.model} (${c.reasoning ?? 'predeterminado'})`, left = c.yoloSuspended ? 'YOLO suspendido · spec · sandbox requerido · sin red' : c.permissionMode === 'yolo' ? 'YOLO · sin aprobaciones · ejecución en host · red del equipo' : `${c.mode === 'spec' ? 'Spec' : c.mode === 'mission' ? 'Mission' : 'Auto'} (${c.autonomy}) · ${c.mode === 'spec' ? 'investigación y planificación; sin escrituras' : autonomyLabel(c.autonomy)}`;
   if (cellWidth(left) + cellWidth(right) + 3 < width) return left + ' '.repeat(width - cellWidth(left) - cellWidth(right) - 1) + right;
   return fit(left, Math.max(1, Math.floor(width / 2) - 2)) + ' · ' + fit(right, Math.max(1, Math.ceil(width / 2) - 2));
 }

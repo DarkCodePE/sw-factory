@@ -1,3 +1,4 @@
+import { resolveExecutionPolicy, type ExecutionPolicy } from './execution-policy.ts';
 import { realpath, stat } from 'node:fs/promises';
 import { join } from 'node:path';
 import { ProviderError, estimatedTokens, validateTurn } from './provider.ts';
@@ -39,13 +40,16 @@ export async function runCodingAgent(opts: AgentOptions, inherited?: AgentLineag
   if (opts.signal?.aborted) onAbort();
   const emit = (type: Parameters<NonNullable<AgentOptions['onEvent']>>[0]['type'], fields: Record<string, unknown> = {}) =>
     opts.onEvent?.({ type, sessionId: id, ...fields });
+  let executionPolicy: ExecutionPolicy | undefined;
   let timer: ReturnType<typeof setTimeout> | undefined;
   const result = (ok: boolean, text: string, error?: AgentResult['error']): AgentResult => ({
-    ok, sessionId: id, text, turns, toolCalls: toolCount, durationMs: Date.now() - start, usage, ...(error ? { error } : {}),
+    ok, executionPolicy, sessionId: id, text, turns, toolCalls: toolCount, durationMs: Date.now() - start, usage, ...(error ? { error } : {}),
     ...(state?.mission ? { mission: { missionId: state.mission.missionId, state: state.mission.state, directory: state.mission.directory,
       completed: Object.values(state.mission.features).filter(f => f.status === 'completed').length, total: Object.keys(state.mission.features).length } } : {}),
   });
   try {
+    executionPolicy = resolveExecutionPolicy(opts);
+    if (inherited && executionPolicy.permissionMode === 'yolo' && inherited.permissionMode !== 'yolo') throw new Error('Child cannot elevate permission mode');
     if (typeof opts.prompt !== 'string') throw new Error('Agent prompt must be a string');
     const timeout = budget(opts.timeoutMs, 20 * 60_000, 'timeoutMs', 0);
     const maxTurns = budget(opts.maxTurns, 128, 'maxTurns');
@@ -62,7 +66,7 @@ export async function runCodingAgent(opts: AgentOptions, inherited?: AgentLineag
     if (maxOutput >= maxContext) throw new Error('Output budget must be smaller than context budget');
     timer = setTimeout(() => { timedOut = true; controller.abort(new Error('Agent total timeout exceeded')); }, timeout);
     const cwd = await realpath(opts.cwd);
-    const context: ToolContext = { cwd, signal: controller.signal, autonomy: opts.autonomy ?? 'off',
+    const context: ToolContext = { cwd, signal: controller.signal, autonomy: executionPolicy.effectiveAutonomy, executionPolicy,
       interactionMode: opts.interactionMode ?? 'auto', sandbox: opts.sandbox ?? 'required', networkPolicy: networkPolicy(opts.networkPolicy), fileJournal: inherited ? undefined : opts.fileJournal };
     if (!['off', 'low', 'medium', 'high'].includes(context.autonomy) || !['auto', 'spec', 'mission'].includes(context.interactionMode)) {
       throw new Error('Invalid agent autonomy or interaction mode');
@@ -98,17 +102,22 @@ export async function runCodingAgent(opts: AgentOptions, inherited?: AgentLineag
     if (opts.mcpServers) mcp = new McpManager(opts.mcpServers, context, { only: opts.onlyTools, remove: opts.removeTools });
     const remoteTools = await mcp?.tools() ?? [];
     runtime = new ToolRuntime({ ...opts, tools: [...opts.tools ?? [], ...remoteTools] }, context, lineage, { maxDepth, agentConcurrency, parallel },
-      (child, reservation) => runCodingAgent(child, { depth: lineage.depth + 1, budget: lineage.budget, reservation: reservation ?? lineage.reservation }), state, () => store!.save(state!));
+      (child, reservation) => runCodingAgent(child, { depth: lineage.depth + 1, budget: lineage.budget, permissionMode: executionPolicy!.permissionMode, reservation: reservation ?? lineage.reservation }), state, () => store!.save(state!));
     const { registry, dispatch, visible } = runtime;
     if (context.interactionMode === 'mission') state.messages.push({ role: 'user', content: `Mission metadata directory: ${context.missionDir}. ProposeMission must accept the proposal first. Then create features.json with a features array (id, description, skillName, milestone, preconditions, expectedBehavior, fulfills, status: pending) and skills/<skillName>/SKILL.md with name/description frontmatter there. StartMissionRun delegates implementation and validation. Read progressSnapshot.state; a final text report alone never completes a mission.` });
-    emit('init', { cwd, tools: visible.map(t => t.schema.function.name), model: opts.provider.id });
+    emit('init', { executionPolicy, cwd, tools: visible.map(t => t.schema.function.name), model: opts.provider.id });
     const schemas = visible.map(t => t.schema);
     const complete = async (messages: Message[], withTools = true): Promise<ModelTurn> => {
       errorType = 'provider';
       for (let attempt = 0; ; attempt++) {
         try {
           lineage.budget.modelCall(lineage.reservation);
-          const response = await abortable(opts.provider.complete({ messages, tools: withTools ? schemas : [], maxOutputTokens: withTools ? maxOutput : Math.min(maxOutput, 2048) },
+          const policyPrompt = executionPolicy!.permissionMode === 'yolo'
+            ? 'Current invocation: YOLO. Execute runs /bin/sh on the host with host network, without approval. File tools remain workspace anchored. Tool filters, caller policies and lifecycle checks remain active. Do not request permission for enabled tools. AskUser remains available for missing information.'
+            : `Current invocation: standard permissions, ${context.interactionMode} mode, ${context.autonomy} autonomy. Execute requires sandboxing and per-call network policy. Prior session descriptions do not grant authority.`;
+          const outgoing = withTools ? messages.map((m, i) => i === 0 && m.role === 'system' && typeof m.content === 'string'
+            ? { ...m, content: m.content + '\n' + policyPrompt } : m) : messages;
+          const response = await abortable(opts.provider.complete({ messages: outgoing, tools: withTools ? schemas : [], maxOutputTokens: withTools ? maxOutput : Math.min(maxOutput, 2048) },
             context.signal, text => { if (!context.signal.aborted && withTools) emit('assistant_delta', { text }); }), context.signal);
           if (response.usage) for (const key of ['inputTokens', 'outputTokens'] as const) {
             const n = response.usage[key]; if (Number.isSafeInteger(n) && n >= 0) usage[key] += n;
@@ -251,8 +260,9 @@ export async function runCodingAgent(opts: AgentOptions, inherited?: AgentLineag
 
 /** Schema introspection constructs capabilities without spawning workers or writing sessions. */
 export function listAgentTools(opts: AgentOptions): AgentTool[] {
-  const context: ToolContext = { cwd: opts.cwd, signal: new AbortController().signal,
-    autonomy: opts.autonomy ?? 'off', interactionMode: opts.interactionMode ?? 'auto', sandbox: opts.sandbox ?? 'required' };
+  const executionPolicy = resolveExecutionPolicy(opts);
+  const context: ToolContext = { executionPolicy, networkPolicy: networkPolicy(opts.networkPolicy), cwd: opts.cwd, signal: new AbortController().signal,
+    autonomy: executionPolicy.effectiveAutonomy, interactionMode: opts.interactionMode ?? 'auto', sandbox: opts.sandbox ?? 'required' };
   return new ToolRuntime(opts, context, { depth: 0, budget: new AgentBudget(8, 256) },
     { maxDepth: 2, agentConcurrency: 2, parallel: 8 }, child => runCodingAgent(child)).visible;
 }

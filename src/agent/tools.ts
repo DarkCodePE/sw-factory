@@ -1,3 +1,4 @@
+import { executeHost, hostCommand } from './execute-host.ts';
 import { realpath } from 'node:fs/promises';
 import { atomicReplace, readAnchored, readWorkspaceFile, withWorkspaceFile } from './files.ts';
 import { dirname, isAbsolute, relative, resolve, sep } from 'node:path';
@@ -99,11 +100,13 @@ function commandSequence(input: unknown, context: ToolContext): string[] | null 
   return parts.every(p => parseCommand(p)) ? parts : null;
 }
 export const executeAllowed = (input: unknown, context: ToolContext) => {
+  if (context.executionPolicy?.permissionMode === 'yolo') { hostCommand(input); return true; }
   const parts = commandSequence(input, context);
   return parts ? parts.every(command => commandPolicy({ command }, context).allowed) : commandPolicy(input, context).allowed;
 };
 export const COMMAND_POLICY_HINT = 'Tool requires higher autonomy or explicit permission. At medium, use simple commands or && sequences; omit pipelines, redirections and ||. stdout and stderr are already captured. cwd is already the workspace.';
 async function execute(input: unknown, context: ToolContext) {
+  if (context.executionPolicy?.permissionMode === 'yolo') return executeHost(input, context);
   const network = requestsNetwork(input);
   const parts = commandSequence(input, context);
   if (!parts || parts.length === 1) return executeOne(parts ? { command: parts[0], network } : input, context);
@@ -157,7 +160,7 @@ async function executeOne(input: unknown, context: ToolContext) {
 }
 
 /** Built-in names/schema are original implementations of the observed functional contracts. */
-export function builtinTools(): AgentTool[] {
+export function builtinTools(permissionMode: 'standard' | 'yolo' = 'standard'): AgentTool[] {
   return [
     tool('Read', 'read', { file_path: str, offset: { type: 'integer' }, limit: { type: 'integer' } }, ['file_path'], async (input, c) => {
       const args = inputObject(input), path = stringArg(args, 'file_path');
@@ -226,8 +229,8 @@ export function builtinTools(): AgentTool[] {
       if (result.exitCode > 1) throw new Error(limitText(result.stderr, 2000));
       return limitText(result.stdout);
     }, 'Search workspace text with ripgrep; return bounded matching lines.'),
-    tool('Execute', 'execute', { command: str, riskLevel: str, summary: str, network: { type: 'boolean', description: 'Request host network for this invocation; requires caller policy or explicit approval.' } }, ['command'], execute,
-      'Run in workspace cwd with captured stdout/stderr. Network is blocked by default: set network:true when the command needs a remote service such as Jira, curl or package downloads. This requests permission; it does not grant it. A failed offline command is never replayed automatically. Medium accepts simple development commands and && sequences, including an optional cd <workspace> prefix. Omit pipelines, redirections and || at medium. Each command is checked independently; the sequence stops on failure. riskLevel is advisory.'),
+    tool('Execute', 'execute', { command: str, riskLevel: str, summary: str, network: { type: 'boolean', description: permissionMode === 'yolo' ? 'Advisory in YOLO: host network remains available even when false or omitted.' : 'Request host network for this invocation; requires caller policy or explicit approval.' } }, ['command'], execute,
+      permissionMode === 'yolo' ? 'Run /bin/sh -c on the host, with shell pipelines, redirections and host network, without approvals. network is advisory: false does not disable host networking. File access has the user account permissions. Output and runtime remain bounded.' : 'Run in workspace cwd with captured stdout/stderr. Network is blocked by default: set network:true when the command needs a remote service such as Jira, curl or package downloads. This requests permission; it does not grant it. A failed offline command is never replayed automatically. Medium accepts simple development commands and && sequences, including an optional cd <workspace> prefix. Omit pipelines, redirections and || at medium. Each command is checked independently; the sequence stops on failure. riskLevel is advisory.'),
   ];
 }
 

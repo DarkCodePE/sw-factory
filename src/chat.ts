@@ -1,3 +1,4 @@
+import { resolveExecutionPolicy } from './agent/execution-policy.ts';
 import { existsSync, statSync } from 'node:fs';
 import { readFile, realpath } from 'node:fs/promises';
 import { resolve } from 'node:path';
@@ -21,14 +22,14 @@ export async function chatMain(argv: string[]): Promise<number> {
   try {
     const { values: v, positionals } = parseArgs({ args, allowPositionals: true, options: {
       cwd: { type: 'string' }, settings: { type: 'string' }, model: { type: 'string', short: 'm' }, auto: { type: 'string' },
-      'use-spec': { type: 'boolean' }, mission: { type: 'boolean' }, resume: { type: 'string', short: 'r' },
+      yolo: { type: 'boolean' }, 'use-spec': { type: 'boolean' }, mission: { type: 'boolean' }, resume: { type: 'string', short: 'r' },
       last: { type: 'boolean' }, fork: { type: 'string' }, 'session-id': { type: 'string' },
       'append-system-prompt': { type: 'string' }, 'append-system-prompt-file': { type: 'string' },
       'timeout-ms': { type: 'string' }, 'max-turns': { type: 'string' }, 'max-context-tokens': { type: 'string' },
       'only-tools': { type: 'string' }, 'remove-tools': { type: 'string' }, sandbox: { type: 'string' }, 'sandbox-network': { type: 'string' },
       help: { type: 'boolean', short: 'h' },
     } });
-    if (v.help) { console.log('fab [prompt] | fab chat [carpeta] [--cwd path] [--settings file] [-m id] [--auto off|low|medium|high]\n  --resume [id] --last --fork id --use-spec --mission\n  --sandbox-network auto|ask|deny (auto: red automática solo en high)\n\n' + commandHelp()); return 0; }
+    if (v.help) { console.log('fab [prompt] | fab chat [carpeta] [--cwd path] [--settings file] [-m id] [--yolo] [--auto off|low|medium|high]\n  --resume [id] --last --fork id --use-spec --mission\n  --sandbox-network auto|ask|deny (auto: red automática solo en high)\n\n' + commandHelp()); return 0; }
     if (v.fork && (v.resume !== undefined || v['session-id'] || v.last)) throw new Error('--fork no se combina con --resume/--last/--session-id');
     if (v['use-spec'] && v.mission) throw new Error('--use-spec y --mission son excluyentes');
     const folder = !v.cwd && positionals.length === 1 && existsSync(positionals[0]!) && statSync(positionals[0]!).isDirectory() ? positionals.pop() : undefined;
@@ -38,10 +39,12 @@ export async function chatMain(argv: string[]): Promise<number> {
     const home = chatHome(), config = loadChatConfig(settings, home);
     if (v['sandbox-network'] !== undefined) config.networkPolicy = networkPolicy(v['sandbox-network']);
     if (v.model) config.model = v.model;
-    if (v.auto) { if (!AUTONOMIES.includes(v.auto as any)) throw new Error('Autonomía inválida'); config.autonomy = v.auto as typeof config.autonomy; }
+    if (v.auto) { if (!AUTONOMIES.includes(v.auto as any)) throw new Error('Autonomía inválida'); if (!v.yolo) config.autonomy = v.auto as typeof config.autonomy; }
     if (v['use-spec']) config.mode = 'spec'; if (v.mission) config.mode = 'mission';
-    if (config.mode === 'mission' && config.autonomy !== 'high') throw new Error('Mission exige --auto high');
+    if (config.mode === 'mission' && config.autonomy !== 'high' && !v.yolo) throw new Error('Mission exige --auto high');
     if (v.sandbox && !['required', 'best-effort'].includes(v.sandbox)) throw new Error('Sandbox inválido');
+    resolveExecutionPolicy({ permissionMode: v.yolo ? 'yolo' : 'standard', autonomy: v.auto as typeof config.autonomy | undefined,
+      interactionMode: config.mode, sandbox: v.sandbox as 'required' | 'best-effort' | undefined, networkPolicy: config.networkPolicy });
     const number = (key: 'timeout-ms' | 'max-turns' | 'max-context-tokens') => {
       if (v[key] === undefined) return;
       const n = Number(v[key]); if (!Number.isSafeInteger(n) || n < 1 || n > 2147483647) throw new Error(`Límite inválido: ${key}`); return n;
@@ -49,6 +52,7 @@ export async function chatMain(argv: string[]): Promise<number> {
     const append = [v['append-system-prompt'], v['append-system-prompt-file'] ? await readFile(resolve(v['append-system-prompt-file']), 'utf8') : ''].filter(Boolean).join('\n');
     io = new TerminalInput(process.stdin, process.stdout, !!process.stdin.isTTY);
     const app = new ChatController({ cwd, home, settings, config, agent: {
+      permissionMode: v.yolo ? 'yolo' : 'standard',
       timeoutMs: number('timeout-ms'), maxTurns: number('max-turns'), maxContextTokens: number('max-context-tokens'),
       sandbox: v.sandbox as 'required' | 'best-effort' | undefined, appendSystemPrompt: append,
       onlyTools: v['only-tools']?.split(',').filter(Boolean), removeTools: v['remove-tools']?.split(',').filter(Boolean),
@@ -73,7 +77,7 @@ export async function chatMain(argv: string[]): Promise<number> {
         await app.refreshCommands();
         await app.syncHistory();
         let line: string;
-        try { line = await io.question(buffer ? '… ' : `fab [${app.config.mode}/${app.config.autonomy}] › `); } catch { break; }
+        try { line = await io.question(buffer ? '… ' : `fab [${app.config.mode}/${app.permissionLabel}] › `); } catch { break; }
         if (line.endsWith('\\')) { buffer += line.slice(0, -1) + '\n'; continue; }
         try { if (!await app.submit(buffer + line)) break; }
         catch (e) { app.print(e instanceof Error ? e.message : String(e)); }

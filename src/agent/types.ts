@@ -33,6 +33,7 @@ export interface ModelProvider {
   complete(request: ModelRequest, signal: AbortSignal, delta?: (text: string) => void): Promise<ModelTurn>;
 }
 export interface ToolContext {
+  readonly executionPolicy?: import('./execution-policy.ts').ExecutionPolicy;
   cwd: string;
   signal: AbortSignal;
   autonomy: Autonomy;
@@ -61,11 +62,12 @@ export interface AgentTool {
 }
 export interface AgentEvent {
   type: 'init' | 'usage' | 'provider_retry' | 'assistant_delta' | 'assistant' | 'tool_call' | 'tool_result' | 'compaction' | 'result' | 'error' |
-    'mission_state_changed' | 'mission_worker_started' | 'mission_worker_completed' | 'network_permission';
+    'mission_state_changed' | 'mission_worker_started' | 'mission_worker_completed' | 'network_permission' | 'permission_bypass' | 'agent_spawn';
   sessionId: string;
   [key: string]: unknown;
 }
 export interface AgentOptions {
+  permissionMode?: import('./execution-policy.ts').PermissionMode;
   prompt: string;
   cwd: string;
   provider: ModelProvider;
@@ -116,6 +118,7 @@ export interface PermissionRequest {
   options: Array<{ label: string; value: 'proceed_once' | 'cancel' }>;
 }
 export interface AgentResult {
+  executionPolicy?: import('./execution-policy.ts').ExecutionPolicy;
   ok: boolean;
   sessionId: string;
   text: string;

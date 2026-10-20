@@ -1,3 +1,4 @@
+import { resolveExecutionPolicy, scopedExecutionOptions, type ExecutionPolicy } from './execution-policy.ts';
 import { realpath } from 'node:fs/promises';
 import { listConfiguredToolCatalog, runCodingAgent } from './engine.ts';
 import { abortable } from './engine.ts';
@@ -20,13 +21,14 @@ export interface RpcOptions {
   sessionDir: string;
   defaultModelId: string;
   providers: Record<string, ModelProvider>;
-  agent?: Pick<AgentOptions, 'sandbox' | 'networkPolicy' | 'timeoutMs' | 'maxTurns' | 'maxContextTokens' | 'tools' | 'beforeTool' | 'afterTool' | 'permissionHandler' | 'askUserHandler' | 'mcpServers'>;
+  agent?: Pick<AgentOptions, 'permissionMode' | 'sandbox' | 'networkPolicy' | 'timeoutMs' | 'maxTurns' | 'maxContextTokens' | 'tools' | 'beforeTool' | 'afterTool' | 'permissionHandler' | 'askUserHandler' | 'mcpServers'>;
   signal?: AbortSignal;
 }
 
 /** Own implementation of the observed exec RPC envelope and session lifecycle.
  * Unsupported methods return method-not-found; this is a bounded compatibility surface. */
 export class ExecRpc {
+  private readonly startupPolicy: ExecutionPolicy;
   private sessionId?: string;
   private persisted = false;
   private cwd: string;
@@ -44,6 +46,8 @@ export class ExecRpc {
   private pending = new Map<string, { resolve(value: unknown): void; reject(error: Error): void }>();
   closed = false;
   constructor(private readonly options: RpcOptions, private readonly write: (frame: unknown) => void) {
+    this.startupPolicy = resolveExecutionPolicy(options.agent ?? {});
+    this.autonomy = this.startupPolicy.effectiveAutonomy;
     this.cwd = options.cwd; this.modelId = options.defaultModelId;
   }
   private response(id: string | null, result: unknown, error?: { code: number; message: string }) {
@@ -53,24 +57,34 @@ export class ExecRpc {
     this.write({ ...ENVELOPE, type: 'notification', method: 'droid.session_notification',
       params: { ...(this.sessionId ? { sessionId: this.sessionId } : {}), notification } });
   }
+  private executionOptions() {
+    return scopedExecutionOptions({ executionPolicy: this.startupPolicy, autonomy: this.autonomy,
+      sandbox: this.options.agent?.sandbox ?? 'required', networkPolicy: this.options.agent?.networkPolicy }, this.mode === 'spec');
+  }
+  private rejectAuthority(p: Record<string, any>) {
+    for (const key of ['permissionMode', 'yolo', 'sandbox', 'networkPolicy', 'executionPolicy', 'fab_execution_policy'])
+      if (Object.hasOwn(p, key)) throw new RpcError(-32602, `${key} is configured by the host, not session requests`);
+  }
   private settings() {
     return { modelId: this.modelId, reasoningEffort: 'none', autonomyMode: this.mode === 'spec' ? 'spec' : this.autonomy === 'off' ? 'normal' : `auto-${this.autonomy}`,
       autonomyLevel: this.autonomy, interactionMode: this.mode, availableAutonomyLevels: ['off', 'low', 'medium', 'high'],
       additionalToolIds: [], enabledToolIds: [], disabledToolIds: this.removed ?? [], restrictToolIds: this.only ?? [],
       toolExecutionMode: 'direct_only', allowSubagentsInScripts: false, compactionThresholdCheckEnabled: true, migrationActive: false,
-      networkPolicy: this.options.agent?.networkPolicy ?? 'auto' };
+      networkPolicy: this.executionOptions().networkPolicy ?? 'auto', fab_execution_policy: resolveExecutionPolicy(this.executionOptions()) };
   }
   private models() {
     return Object.keys(this.options.providers).map(id => ({ id, displayName: id, shortDisplayName: id,
       modelProvider: 'generic-chat-completion-api', supportedReasoningEfforts: ['none'], defaultReasoningEffort: 'none', isCustom: true }));
   }
   private update(p: Record<string, any>) {
-    if (p.networkPolicy !== undefined) throw new RpcError(-32602, 'Network policy is configured by the host, not session requests');
+    this.rejectAuthority(p);
+    if (this.startupPolicy.permissionMode === 'yolo' && Object.hasOwn(p, 'autonomyLevel') && p.autonomyLevel !== 'high') throw new RpcError(-32602, 'YOLO requires high autonomy');
     const modelId = p.modelId ?? this.modelId, autonomy = p.autonomyLevel ?? this.autonomy, mode = p.interactionMode ?? this.mode;
     if (!Object.hasOwn(this.options.providers, modelId)) throw new RpcError(-32602, 'Unknown configured model');
     if (!['off', 'low', 'medium', 'high'].includes(autonomy) || !['auto', 'spec'].includes(mode)) throw new RpcError(-32602, 'Unsupported autonomy/interaction mode');
     for (const key of ['restrictToolIds', 'disabledToolIds']) if (p[key] !== undefined && (!Array.isArray(p[key]) || p[key].some((x: unknown) => typeof x !== 'string'))) throw new RpcError(-32602, `Invalid ${key}`);
     if (p.reasoningEffort !== undefined && p.reasoningEffort !== 'none') throw new RpcError(-32602, 'Reasoning overrides require a configured provider');
+    this.catalog = undefined;
     this.modelId = modelId; this.autonomy = autonomy; this.mode = mode;
     if (p.restrictToolIds) this.only = p.restrictToolIds.length ? p.restrictToolIds : undefined;
     if (p.disabledToolIds) this.removed = p.disabledToolIds;
@@ -79,7 +93,7 @@ export class ExecRpc {
   private initialized() { if (!this.sessionId) throw new RpcError(-32000, 'Session is not initialized'); }
   private async toolCatalog() {
     if (!this.catalog) this.catalog = await listConfiguredToolCatalog({ ...this.options.agent, prompt: '', cwd: this.cwd,
-      provider: this.options.providers[this.modelId]!, autonomy: this.autonomy, interactionMode: this.mode }, this.options.signal);
+      provider: this.options.providers[this.modelId]!, ...this.executionOptions() }, this.options.signal);
     return this.catalog;
   }
   private async call(method: string, params: unknown, signal: AbortSignal) {
@@ -116,7 +130,9 @@ export class ExecRpc {
     this.messages.push(message); this.notify({ type: 'create_message', message, ...(requestId ? { requestId } : {}) });
   }
   private event = (event: AgentEvent) => {
-    if (event.type === 'assistant_delta') {
+    if (event.type === 'init') this.notify({ type: 'fab_execution_policy', policy: event.executionPolicy });
+    else if (event.type === 'permission_bypass') this.notify({ type: 'fab_permission_bypass', toolUseId: event.toolUseId, toolName: event.toolName, permissionMode: event.permissionMode });
+    else if (event.type === 'assistant_delta') {
       this.assistantId ??= crypto.randomUUID();
       this.notify({ type: 'assistant_text_delta', messageId: this.assistantId, blockIndex: 0, textDelta: event.text });
     } else if (event.type === 'assistant') {
@@ -168,7 +184,7 @@ export class ExecRpc {
           return;
         }
         case 'droid.list_models': this.response(id, { models: this.models() }); return;
-        case 'droid.list_tools': this.response(id, { tools: (await this.toolCatalog()).map(t => describeTool(t, this.autonomy, this.mode, selectToolNames(this.only), selectToolNames(this.removed))) }); return;
+        case 'droid.list_tools': this.response(id, { tools: (await this.toolCatalog()).map(t => describeTool(t, this.autonomy, this.mode, selectToolNames(this.only), selectToolNames(this.removed), resolveExecutionPolicy(this.executionOptions()))) }); return;
         case 'droid.update_session_settings':
           this.initialized(); this.idle(); this.update(p); this.notify({ type: 'settings_updated', requestId: id, settings: this.settings() }); this.response(id, {}); return;
         case 'droid.add_user_message': {
@@ -186,7 +202,7 @@ export class ExecRpc {
                 permissionHandler: this.options.agent?.permissionHandler ?? this.permission,
                 askUserHandler: this.options.agent?.askUserHandler ?? this.askUser,
                 sessionDir: this.options.sessionDir, ...(this.persisted ? { sessionId: this.sessionId } : { newSessionId: this.sessionId }),
-                provider: this.options.providers[this.modelId]!, autonomy: this.autonomy, interactionMode: this.mode,
+                provider: this.options.providers[this.modelId]!, ...this.executionOptions(),
                 onlyTools: selectToolNames(this.only), removeTools: selectToolNames(this.removed), signal, onEvent: this.event });
               this.persisted = true;
               this.notify({ type: 'agent_turn_completed', reason: result.ok ? 'completed' : result.error?.type === 'aborted' ? 'interrupted' : 'error',
@@ -205,7 +221,7 @@ export class ExecRpc {
           this.initialized(); this.active?.controller.abort(new Error('Session interrupted')); await this.active?.done;
           this.response(id, {}); return;
         case 'droid.load_session': {
-          this.idle(); const sessionId = required(p, 'sessionId'), store = await SessionStore.create(this.options.sessionDir);
+          this.rejectAuthority(p); this.idle(); const sessionId = required(p, 'sessionId'), store = await SessionStore.create(this.options.sessionDir);
           const state = await store.load(sessionId);
           const model = Object.entries(this.options.providers).find(([, provider]) => provider.id === state.provider)?.[0];
           if (!model) throw new RpcError(-32602, 'Saved provider is not configured');

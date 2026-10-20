@@ -18,6 +18,7 @@ export class ToolRuntime {
   constructor(opts: AgentOptions, context: ToolContext, lineage: AgentLineage,
     limits: { maxDepth: number; agentConcurrency: number; parallel: number },
     runChild: (options: AgentOptions, reservation?: CallReservation) => Promise<AgentResult>, state: Partial<SessionState> = {}, saveState: () => Promise<void> = async () => {}) {
+    const yolo = context.executionPolicy?.permissionMode === 'yolo';
     const owned = this.owned;
     const registry = new Map<string, AgentTool>();
     const add = (t: AgentTool) => {
@@ -25,7 +26,7 @@ export class ToolRuntime {
       if (!/^[\w.-]+$/.test(name) || registry.has(name)) throw new Error(`Invalid or duplicate tool ${name}`);
       registry.set(name, t);
     };
-    for (const t of builtinTools()) add(t);
+    for (const t of builtinTools(yolo ? 'yolo' : 'standard')) add(t);
     for (const t of opts.tools ?? []) add(t);
     const tasks = new TaskManager(opts, context, lineage, runChild, limits.maxDepth, limits.agentConcurrency);
     for (const t of tasks.tools()) add(t);
@@ -70,9 +71,9 @@ export class ToolRuntime {
       const networkEvent = (decision: string) => { if (requested) opts.onEvent?.({ type: 'network_permission', sessionId: state.id ?? '', toolUseId: actual.id, policy, decision, access: 'host', scope: 'this_call' }); };
       if (network === 'deny') { networkEvent('denied'); throw new Error('Execute network access denied by policy or spec mode'); }
       const allowedCommand = name !== 'Execute' || executeAllowed(input, context);
-      const needsApproval = network === 'ask' || t.effect === 'write' && context.autonomy === 'off' ||
+      const needsApproval = !yolo && (network === 'ask' || t.effect === 'write' && context.autonomy === 'off' ||
         t.effect === 'execute' && !['Execute', 'Script'].includes(name) && !['medium', 'high'].includes(context.autonomy) ||
-        !allowedCommand;
+        !allowedCommand);
       let granted = false;
       if (needsApproval) {
         if (context.interactionMode === 'spec' && name === 'Execute') throw new Error('Spec mode denies this command');
@@ -87,6 +88,7 @@ export class ToolRuntime {
       }
       signal.throwIfAborted();
       networkEvent(network === 'allow' && !needsApproval ? 'allowed_automatically' : 'allowed_once');
+      if (yolo && t.effect !== 'read') opts.onEvent?.({ type: 'permission_bypass', sessionId: state.id ?? '', toolUseId: actual.id, toolName: name, permissionMode: 'yolo' });
       const run = async () => {
         if (opts.missionWorker?.sealed() && ['write', 'execute'].includes(t.effect)) throw new Error('Worker workspace mutation is closed after EndFeatureRun');
         if (t.effect !== 'read' && !['Edit', 'Create', 'Script'].includes(name)) await context.fileJournal?.barrier(name, context);

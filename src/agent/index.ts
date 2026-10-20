@@ -3,3 +3,5 @@ export { createOpenAICompatibleProvider, ProviderError } from './provider.ts';
 export { ExecRpc, serveExecRpc, type RpcOptions } from './rpc.ts';
 export { McpManager, type McpConfig, type McpServerConfig } from './mcp.ts';
 export type * from './types.ts';
+
+export { resolveExecutionPolicy, type ExecutionPolicy, type PermissionMode } from './execution-policy.ts';
