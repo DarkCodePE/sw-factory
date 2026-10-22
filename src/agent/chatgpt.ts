@@ -59,7 +59,12 @@ const textOf = (content: Message['content']) =>
   typeof content === 'string' ? content : content?.filter(p => p.type === 'text').map(p => (p as { text: string }).text).join('\n') ?? '';
 
 /** Translate our chat-style history into a Responses request body. */
-export function responsesBody(model: string, request: ModelRequest, reasoningEffort?: string) {
+export function responsesBody(
+  model: string,
+  request: ModelRequest,
+  reasoningEffort?: string,
+  extra?: { extraArgs?: Record<string, unknown>; maxOutputTokens?: number },
+) {
   const instructions: string[] = [];
   const input: unknown[] = [];
   for (const m of request.messages) {
@@ -80,6 +85,14 @@ export function responsesBody(model: string, request: ModelRequest, reasoningEff
     tools: request.tools.map(t => ({ type: 'function', name: t.function.name, description: t.function.description, parameters: t.function.parameters, strict: false })),
   };
   if (reasoningEffort && reasoningEffort !== 'off') body.reasoning = { effort: reasoningEffort };
+  if (extra?.maxOutputTokens !== undefined && Number.isSafeInteger(extra.maxOutputTokens)) {
+    body.max_output_tokens = extra.maxOutputTokens;
+  }
+  if (extra?.extraArgs) {
+    for (const [k, v] of Object.entries(extra.extraArgs)) {
+      if (!Object.hasOwn(body, k)) body[k] = v;
+    }
+  }
   return body;
 }
 

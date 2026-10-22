@@ -314,3 +314,40 @@ git diff --check
 Los escenarios de FetchUrl usan servidores HTTP locales con la excepción de direcciones privadas solo en pruebas; no consultan servicios remotos. Cubren SSRF, DNS mixto, redirecciones, timeout/cancelación, streaming/truncado, extracción HTML y resultado máximo por motor/RPC. Loop cubre permisos por iteración, misiones, budget, filtros/Script, límites, cancelación repetida tres veces y regex fuera del hilo del agente. La revisión corrigió un desajuste Unicode que podía dejar cuerpo de script en texto extraído. [Recibo final](evidence/loop-fetch-url/validation.json).
 
 Validación final de Loop/FetchUrl: **313 pass, 0 fail, 1.947 aserciones en 36 archivos**; 26 casos nuevos. TypeScript y diff-check con salida 0.
+
+## Proveedores de modelos BYOK y Google Gemini (base feat/providers-mcp)
+
+La especificación BYOK observada por REA (`docs-md/pages/model-independence/byok.md`) reconoce tres familias de proveedores configurables mediante `customModels`:
+
+1. `anthropic`: Messages API en streaming (`/v1/messages`) con versión de protocolo fija (`2023-06-01`), autenticación mediante cabecera `x-api-key` (por defecto) o `Authorization: Bearer` cuando se especifica `authMode: "bearer"`. Mapeo directo de bloques de mensajes de fab (system como campo de primer nivel, llamadas a herramientas como `tool_use`, y resultados como `tool_result` dentro del rol user), soporte de razonamiento mediante `thinking` con presupuesto por nivel (`low`, `medium`, `high`, `extra-high`), y control de caché efímero en system mediante `extraArgs.promptCache: true`.
+2. `openai`: Responses API nativa en streaming (`/responses`), reutilizando el codec estructurado de eventos Responses con cabecera `Authorization: Bearer <apiKey>` y `baseUrl` configurable (`https://api.openai.com/v1` por defecto).
+3. `generic-chat-completion-api`: Endpoint estándar compatible con OpenAI (`/chat/completions`).
+
+### Google Gemini mediante endpoint OpenAI-compatible
+
+Como observó REA en la arquitectura de modelos BYOK de Droid, **no existe un tipo de proveedor nativo independiente para Google** en la configuración. Google Gemini se utiliza oficialmente a través del proveedor `generic-chat-completion-api` aprovechando la interfaz OpenAI-compatible que ofrece Google en `generativelanguage.googleapis.com/v1beta/openai/`:
+
+```json
+{
+  "customModels": [
+    {
+      "id": "gemini-2.5-pro",
+      "model": "gemini-2.5-pro",
+      "provider": "generic-chat-completion-api",
+      "baseUrl": "https://generativelanguage.googleapis.com/v1beta/openai/",
+      "apiKey": "${GEMINI_API_KEY}",
+      "displayName": "Google Gemini 2.5 Pro"
+    },
+    {
+      "id": "gemini-2.5-flash",
+      "model": "gemini-2.5-flash",
+      "provider": "generic-chat-completion-api",
+      "baseUrl": "https://generativelanguage.googleapis.com/v1beta/openai/",
+      "apiKey": "${GEMINI_API_KEY}",
+      "displayName": "Google Gemini 2.5 Flash"
+    }
+  ]
+}
+```
+
+Las credenciales soportan tanto variables de entorno `${VAR}` como la directiva `apiKeyHelper` para ejecutar comandos locales sin shell con refresco automático ante códigos de respuesta HTTP 401.
