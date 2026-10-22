@@ -269,7 +269,7 @@ bun test
 bunx tsc --noEmit -p .
 ```
 
-Los recibos de validación indican la base, los hashes del código probado y los resultados de cada tarea; el recibo de Mission Control está en `src/agent/mission-control-evidence/validation.json`.
+Los recibos de validación indican la base, los hashes del código probado y los resultados de cada tarea; el recibo de Mission Control está en `docs/evidence/mission-control/validation.json`.
 
 
 ## Herramientas de modo, propuestas y patches

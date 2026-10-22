@@ -23,7 +23,7 @@
       "sha256": "b6237240531778559ac0481857f9e207cb4def7c2218dd41f781e554469b7a5a"
     },
     {
-      "path": "src/agent/mission-control-evidence/rea-captures.json",
+      "path": "docs/evidence/mission-control/rea-captures.json",
       "sha256": "5e76a4d2b8724f9272b433e6309c32f2eba7432662af5baebdcc94603d9f0001"
     },
     {
