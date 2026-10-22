@@ -4,6 +4,15 @@ Historial detallado de versiones de `sw-factory` desde la etiqueta base `c3eff63
 
 ---
 
+## [Sin publicar] — 2026-10-22 (`59a20c3`)
+
+### Novedades
+- **Mission Control:** el motor de misiones emite `mission_feature_updated`, `mission_milestone_validated`, `mission_paused` y `mission_progress` con un `MissionProgressSnapshot` (features por milestone, validadores, workers con tokens y duración); el host puede pausar un run con `mission.pauseSignal` sin abortar el turno del orquestador (`src/agent/mission.ts`, `src/agent/mission-pause.ts`, `src/agent/mission-progress.ts`).
+- **TUI `/mission`:** panel de orquestación (`status`), `pause [mensaje]` a mitad de run desde la terminal, `resume [mensaje]`, `workers [id]`, `log [n]`, `list` para reanudar misiones pasadas; Ctrl+T alterna el panel y la barra de estado muestra `misión: <estado> <hechas>/<total>` (`src/chat/mission-view.ts`, `src/chat/mission-commands.ts`).
+- Catálogo de herramientas completado tras la captura REA con login (30 ids): ExitSpecMode, StageSettingsChanges, ApplyPatch, Execute en segundo plano, Loop, FetchUrl, WebSearch.
+
+---
+
 ## [v0.1.0-rc.9] — 2026-10-21 (`f023e47`)
 
 ### Novedades
