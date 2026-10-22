@@ -19,6 +19,8 @@ export interface SessionState {
   updatedAt?: number;
   todos?: string | unknown[];
   mission?: import('./mission-contract.ts').MissionState;
+  /** Output only: process handles never survive a session boundary. */
+  backgroundScripts?: import('./script-runs.ts').PersistedScriptRun[];
   backgroundTasks?: Array<{
     taskId: string;
     pid?: number;
@@ -59,7 +61,8 @@ export class SessionStore {
     if (!s || s.version !== 1 || s.id !== id || typeof s.cwd !== 'string' || typeof s.provider !== 'string' ||
         !Array.isArray(s.messages) || !Array.isArray(s.pending) || !Array.isArray(s.tags) ||
         !Number.isSafeInteger(s.turns) || s.turns < 0 ||
-        (s.backgroundTasks !== undefined && !Array.isArray(s.backgroundTasks))) throw new Error('Invalid agent session schema');
+        (s.backgroundTasks !== undefined && !Array.isArray(s.backgroundTasks)) ||
+        (s.backgroundScripts !== undefined && !Array.isArray(s.backgroundScripts))) throw new Error('Invalid agent session schema');
     return s;
   }
   async load(id: string): Promise<SessionState> {

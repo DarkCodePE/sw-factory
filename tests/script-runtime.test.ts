@@ -94,3 +94,38 @@ describe('isolation', () => {
     else expect(r.ok).toBe(false);
   }, T);
 });
+
+describe('detached lifecycle', () => {
+  test('streams content/notifications and kill waits for a live host callback to settle', async () => {
+    const seen: string[] = []; let entered!: () => void, settled = false;
+    const started = new Promise<void>(resolve => { entered = resolve; });
+    const handle = await runScript({ detach: true,
+      code: "text('partial'); notify('working'); await tools.Slow({}); return 1;",
+      tools: { Slow: async (_input, { signal }) => {
+        entered();
+        await new Promise<void>(resolve => { const stop = () => setTimeout(resolve, 40); signal.addEventListener('abort', stop, { once: true }); if (signal.aborted) stop(); });
+        settled = true;
+      } }, onContent: c => { if (c.type === 'text') seen.push(c.text); }, onNotify: n => { seen.push(n); } });
+    await started;
+    expect(seen).toEqual(['partial', 'working']); expect(typeof handle.runId).toBe('string');
+    await handle.kill(); await handle.drained;
+    expect(settled).toBe(true); expect((await handle.done).ok).toBe(false);
+  }, T);
+
+  test('durable streaming can exceed cumulative output limit without retaining a second transcript', async () => {
+    let count = 0;
+    const handle = await runScript({ detach: true, streamOutput: true,
+      code: "for(let i=0;i<80;i++) text('x'.repeat(100000)); return 42;", tools: {}, onContent: () => { count++; } });
+    expect(await handle.done).toMatchObject({ ok: true, output: 42, content: [] });
+    expect(count).toBe(80); await handle.drained;
+  }, T);
+
+  test('blocking callers also drain callbacks and asynchronous output observers on timeout/error', async () => {
+    let observerDone = false;
+    const r = await runScript({ code: "text('first'); throw new Error('broken');", tools: {},
+      onContent: async () => { await Bun.sleep(30); observerDone = true; } });
+    expect(r.ok).toBe(false); expect(observerDone).toBe(true);
+    const failed = await runScript({ code: "text('first');", tools: {}, onContent: () => { throw new Error('observer failed'); } });
+    expect(failed).toMatchObject({ ok: false, error: { origin: 'runtime', message: 'observer failed' } });
+  }, T);
+});

@@ -65,6 +65,21 @@ Las tools del padre son capacidades explícitas y deben aplicar permisos.
 Cada callback recibe además `{ signal }`: se cancela cuando termina la evaluación,
 incluidos timeout, error y aborto externo. Debe observar esa señal y liberar sus
 recursos; no es posible terminar JavaScript arbitrario del padre desde el worker.
-`runScript` recolecta el hijo y devuelve dentro del timeout; el llamador conserva
-la responsabilidad de drenar callbacks antes de reutilizar recursos compartidos.
-El puente del agente realiza ese drenaje antes de continuar o liberar la sesión.
+`runScript` recolecta el hijo y espera todos los callbacks iniciados antes de
+resolver, también en timeout/error. El timeout detiene el worker; la devolución
+puede tardar lo que necesite el drenado de callbacks del host. Un callback que
+ignore su señal indefinidamente también impide completar ese drenado.
+
+`onContent(content)` y `onNotify(message)` reciben eventos durante la ejecución;
+pueden ser asíncronos y forman parte del drenado. Un error del observador falla
+la evaluación. `detach:true` devuelve un handle `{runId, done, kill, drained}`:
+kill aborta la señal, mata al worker y espera callbacks/hijo antes de resolver.
+Sin detach se conserva la devolución bloqueante RunScriptResult.
+
+La opción explícita del host `streamOutput:true` transmite contenido y
+notificaciones a los observadores sin retener un segundo transcript acumulativo.
+En ese modo se desactiva el límite acumulativo de salida del worker/padre; cada
+frame sigue limitado a 10 MiB y el resultado a 5 MiB. El consumidor debe imponer
+su propio búfer acotado. ScriptRunManager lo limita a 5 MiB, descarta con aviso y
+conserva hasta 20 notificaciones. Sin esa opción, incluso con detach, permanece
+el fallo output_limit al superar los 5 MiB acumulativos previos.

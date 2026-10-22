@@ -12,7 +12,7 @@ import {
   DEFAULT_TIMEOUT_MS, RuntimeFailure, contentBytes, encodeFrame, errorMessage,
   isContent, readFrames, record, resolveLimits,
 } from './protocol.ts';
-import type { RunScriptOptions, RunScriptResult, ScriptContent, ScriptError, ToolBinding } from './types.ts';
+import type { RunScriptHandle, RunScriptOptions, RunScriptResult, ScriptContent, ScriptError, ToolBinding } from './types.ts';
 
 const forbiddenPaths = new Set(['__proto__', 'prototype', 'constructor']);
 
@@ -35,7 +35,18 @@ function bindingsFor(tools: RunScriptOptions['tools']): ToolBinding[] {
 }
 
 /** A fresh, disposable Bun subprocess owns every VM evaluation. */
-export async function runScript(opts: RunScriptOptions): Promise<RunScriptResult> {
+export function runScript(opts: RunScriptOptions & { detach: true }): Promise<RunScriptHandle>;
+export function runScript(opts: RunScriptOptions & { detach?: false }): Promise<RunScriptResult>;
+export function runScript(opts: RunScriptOptions): Promise<RunScriptResult | RunScriptHandle>;
+export async function runScript(opts: RunScriptOptions): Promise<RunScriptResult | RunScriptHandle> {
+  if (!opts?.detach) return evaluateScript(opts);
+  const controller = new AbortController();
+  const done = evaluateScript({ ...opts, signal: opts.signal ? AbortSignal.any([opts.signal, controller.signal]) : controller.signal });
+  const drained = done.then(() => {});
+  return { runId: crypto.randomUUID(), done, drained, async kill() { controller.abort(new Error('Script killed')); await drained; } };
+}
+
+async function evaluateScript(opts: RunScriptOptions): Promise<RunScriptResult> {
   const startedAt = performance.now();
   const content: ScriptContent[] = [];
   const notifications: string[] = [];
@@ -56,7 +67,7 @@ export async function runScript(opts: RunScriptOptions): Promise<RunScriptResult
     if (performance.now() - startedAt >= timeoutMs) {
       return failure({ origin: 'timeout', message: 'Script total timeout exceeded' });
     }
-    const workerArgv = [...selfCommand(SCRIPT_WORKER_COMMAND, new URL('./worker.ts', import.meta.url)), JSON.stringify(limits)];
+    const workerArgv = [...selfCommand(SCRIPT_WORKER_COMMAND, new URL('./worker.ts', import.meta.url)), JSON.stringify({ ...limits, streamOutput: opts.streamOutput === true })];
     let argv = workerArgv;
     const env = { PATH: process.env.PATH ?? '' };
     // Inside a compiled binary the module directory is virtual; use a real directory instead.
@@ -88,6 +99,7 @@ export async function runScript(opts: RunScriptOptions): Promise<RunScriptResult
       let finished = false;
       let phase: 'booting' | 'ready' | 'running' = 'booting';
       let outputBytes = 0;
+      const callbacks = new Set<Promise<unknown>>();
       const pending = new Set<string>();
       const usedIds = new Set<string>();
       let writes = Promise.resolve();
@@ -100,7 +112,11 @@ export async function runScript(opts: RunScriptOptions): Promise<RunScriptResult
         opts.signal?.removeEventListener('abort', abort);
         // SIGKILL also stops synchronous loops and VM microtask starvation.
         try { child.kill('SIGKILL'); } catch { /* Already exited. */ }
-        void child.exited.then(() => resolve(answer), () => resolve(answer));
+        void (async () => {
+          await child.exited.catch(() => {});
+          await Promise.allSettled([...callbacks]);
+          resolve(answer);
+        })();
       };
       const fail = (error: unknown) => finish(failure({
         origin: error instanceof RuntimeFailure ? error.origin : 'runtime',
@@ -124,6 +140,7 @@ export async function runScript(opts: RunScriptOptions): Promise<RunScriptResult
         }).catch(fail);
       };
       const charge = (bytes: number) => {
+        if (opts.streamOutput) return;
         outputBytes += bytes;
         if (outputBytes > limits.maxOutputBytes) {
           throw new RuntimeFailure('output_limit', 'Script output limit exceeded');
@@ -138,7 +155,7 @@ export async function runScript(opts: RunScriptOptions): Promise<RunScriptResult
         if (pending.size >= limits.maxPendingCalls) throw new Error('Script pending tool call limit exceeded');
         usedIds.add(toolUseId);
         pending.add(toolUseId);
-        void Promise.resolve().then(() => {
+        const work = Promise.resolve().then(() => {
           if (finished) return;
           return tools.get(toolName)!(frame.input, { signal: calls.signal });
         }).then(value => {
@@ -146,9 +163,10 @@ export async function runScript(opts: RunScriptOptions): Promise<RunScriptResult
         }, error => {
           if (!finished) write({ type: 'tool_result', toolUseId, isError: true, content: errorMessage(error) });
         }).finally(() => pending.delete(toolUseId)).catch(fail);
+        callbacks.add(work); void work.finally(() => callbacks.delete(work)).catch(() => {});
       };
 
-      void (async () => {
+      const outputTask = (async () => {
         try {
           for await (const frame of readFrames(child.stdout)) {
             if (finished) break;
@@ -180,13 +198,15 @@ export async function runScript(opts: RunScriptOptions): Promise<RunScriptResult
               case 'content': {
                 if (!isContent(frame.content)) throw new Error('Invalid Script content frame');
                 charge(contentBytes(frame.content));
-                content.push(frame.content);
+                if (!opts.streamOutput) content.push(frame.content);
+                if (opts.onContent) await opts.onContent(frame.content);
                 break;
               }
               case 'notify': {
                 if (typeof frame.message !== 'string' || !frame.message.trim()) throw new Error('Invalid Script notification');
                 charge(Buffer.byteLength(JSON.stringify(frame.message)));
-                notifications.push(frame.message);
+                if (!opts.streamOutput) notifications.push(frame.message);
+                if (opts.onNotify) await opts.onNotify(frame.message);
                 break;
               }
               case 'result': {
@@ -203,6 +223,7 @@ export async function runScript(opts: RunScriptOptions): Promise<RunScriptResult
           if (!finished) fail(new Error('Script worker exited without a terminal frame'));
         } catch (error) { fail(error); }
       })();
+      callbacks.add(outputTask); void outputTask.finally(() => callbacks.delete(outputTask)).catch(() => {});
     });
   } catch (error) {
     return failure({ origin: error instanceof RuntimeFailure ? error.origin : 'runtime', message: errorMessage(error) });

@@ -1,3 +1,4 @@
+import { ScriptRunManager, SCRIPT_AWAIT_MS, SCRIPT_FOREGROUND_MS } from './script-runs.ts';
 import { loopTool, parseLoop } from './loop.ts';
 import { fetchUrlTool, parseFetch } from './fetch-url.ts';
 import { sessionTools } from './session-tools.ts';
@@ -16,6 +17,8 @@ import type { AgentOptions, AgentResult, AgentTool, ToolCall, ToolContext } from
 export class ToolRuntime {
   readonly registry: Map<string, AgentTool>;
   private exitQueued = false;
+  readonly scripts: ScriptRunManager;
+  private closing?: Promise<void>;
   private readonly available: (name: string) => boolean;
   get visible(): AgentTool[] { return [...this.registry.values()].filter(t => this.available(t.schema.function.name)); }
   commitModeChange(context: ToolContext) {
@@ -79,9 +82,12 @@ export class ToolRuntime {
       if (Buffer.byteLength(text) > 64 * 1024) throw new Error('Skill exceeds size limit');
       return text;
     }, 'Read instructions for a project skill under .agents/skills.'));
+    const scripts = this.scripts = new ScriptRunManager(state, event => opts.onEvent?.({ ...event, sessionId: state.id ?? '' } as import('./types.ts').AgentEvent), saveState, limits.parallel);
     const scheduler = new ToolScheduler(limits.parallel);
-    const dispatch = async (name: string, input: unknown, call?: ToolCall, scopedSignal?: AbortSignal): Promise<unknown> => {
-      const signal = scopedSignal ? AbortSignal.any([context.signal, scopedSignal]) : context.signal;
+    const dispatch = async (name: string, input: unknown, call?: ToolCall, scopedSignal?: AbortSignal, authority?: ToolContext): Promise<unknown> => {
+      if (this.closing) throw new Error('Tool runtime is closed');
+      const scope = authority ?? context;
+      const signal = scopedSignal ? AbortSignal.any([scope.signal, scopedSignal]) : scope.signal;
       signal.throwIfAborted();
       const t = registry.get(name); if (!t) throw new Error(`Unknown tool: ${name}`);
       // Bind approval to the command and network request shown to the caller.
@@ -91,27 +97,27 @@ export class ToolRuntime {
       if (name === 'ApplyPatch') parsePatch(inputObject(input).patch);
       const actual = call ?? { id: crypto.randomUUID(), type: 'function' as const, function: { name, arguments: JSON.stringify(input) } };
       if (!available(name)) throw new Error(`Tool disabled in this scope: ${name}`);
-      if (context.interactionMode === 'spec' && t.effect === 'write') throw new Error('Spec mode denies workspace mutations');
-      if (context.interactionMode === 'spec' && t.effect === 'execute' && !['Script', 'Execute', 'Task', 'SpawnAgent'].includes(name)) throw new Error('Spec mode denies unrestricted execution tools');
-      if (opts.beforeTool && !await abortable(opts.beforeTool(actual), context.signal)) throw new Error('Tool denied by caller policy');
+      if (scope.interactionMode === 'spec' && t.effect === 'write') throw new Error('Spec mode denies workspace mutations');
+      if (scope.interactionMode === 'spec' && t.effect === 'execute' && !['Script', 'WaitForScript', 'Execute', 'Task', 'SpawnAgent'].includes(name)) throw new Error('Spec mode denies unrestricted execution tools');
+      if (opts.beforeTool && !await abortable(opts.beforeTool(actual), signal)) throw new Error('Tool denied by caller policy');
       const netTool = name === 'FetchUrl' || name === 'WebSearch';
       const requested = netTool || name === 'Execute' && requestsNetwork(input);
-      const policy = networkPolicy(context.networkPolicy);
-      const network = networkDecision(requested, policy, context.autonomy, context.interactionMode, netTool);
+      const policy = networkPolicy(scope.networkPolicy);
+      const network = networkDecision(requested, policy, scope.autonomy, scope.interactionMode, netTool);
       const networkEvent = (decision: string) => { if (requested) opts.onEvent?.({ type: 'network_permission', sessionId: state.id ?? '', toolUseId: actual.id, policy, decision, access: netTool ? 'http_url' : 'host', scope: 'this_call', toolName: name }); };
       if (network === 'deny') { networkEvent('denied'); throw new Error(name + ' network access denied by policy or spec mode'); }
-      const allowedCommand = name !== 'Execute' || executeAllowed(input, context);
-      const needsApproval = !yolo && (network === 'ask' || t.effect === 'write' && context.autonomy === 'off' ||
-        t.effect === 'execute' && !['Execute', 'Script'].includes(name) && !['medium', 'high'].includes(context.autonomy) ||
+      const allowedCommand = name !== 'Execute' || executeAllowed(input, scope);
+      const needsApproval = !yolo && (network === 'ask' || t.effect === 'write' && scope.autonomy === 'off' ||
+        t.effect === 'execute' && !['Execute', 'Script', 'WaitForScript'].includes(name) && !['medium', 'high'].includes(scope.autonomy) ||
         !allowedCommand);
       let granted = false;
       if (needsApproval) {
-        if (context.interactionMode === 'spec' && name === 'Execute') throw new Error('Spec mode denies this command');
+        if (scope.interactionMode === 'spec' && name === 'Execute') throw new Error('Spec mode denies this command');
         if (!opts.permissionHandler) {
           networkEvent('denied');
           throw new Error(network === 'ask' ? name + ' network approval required; use the interactive TUI/RPC or auto high with network policy auto' : name === 'Execute' ? COMMAND_POLICY_HINT : 'Tool requires higher autonomy or explicit permission');
         }
-        const outcome = await abortable(opts.permissionHandler(permissionRequest(actual, input, context), { ...context, signal }), signal);
+        const outcome = await abortable(opts.permissionHandler(permissionRequest(actual, input, scope), { ...scope, signal }), signal);
         signal.throwIfAborted();
         if (outcome !== 'proceed_once') { networkEvent('denied'); throw new Error('Tool execution cancelled by caller'); }
         granted = true;
@@ -121,10 +127,14 @@ export class ToolRuntime {
       if (yolo && t.effect !== 'read') opts.onEvent?.({ type: 'permission_bypass', sessionId: state.id ?? '', toolUseId: actual.id, toolName: name, permissionMode: 'yolo' });
       const run = async () => {
         if (opts.missionWorker?.sealed() && ['write', 'execute'].includes(t.effect)) throw new Error('Worker workspace mutation is closed after EndFeatureRun');
-        if (t.effect !== 'read' && !['Edit', 'Create', 'ApplyPatch', 'Script'].includes(name)) await context.fileJournal?.barrier(name, context);
-        return t.run(input, { ...context, tasks, signal, toolUseId: actual.id, networkAccess: requested, ...(granted ? { autonomy: 'high' as const } : {}) });
+        if (t.effect !== 'read' && !['Edit', 'Create', 'ApplyPatch', 'Script', 'WaitForScript'].includes(name)) await scope.fileJournal?.barrier(name, scope);
+        const selected = name === 'Loop' ? loopTool((nested, value, nestedSignal) => dispatch(nested, value, undefined, nestedSignal, scope), () => {
+          if (opts.missionWorker || scope.interactionMode === 'mission') lineage.budget.modelCall(lineage.reservation);
+        }) : t;
+        const result = selected.run(input, { ...scope, tasks, signal, toolUseId: actual.id, networkAccess: requested, ...(granted ? { autonomy: 'high' as const } : {}) });
+        return name === 'TaskOutput' ? abortable(result, signal) : result;
       };
-      const work = ['Loop', 'Script', 'TaskOutput', 'TaskStop', 'InterruptAgent'].includes(name) ? run() : scheduler.run(t.effect === 'read', signal, run);
+      const work = ['Loop', 'Script', 'WaitForScript', 'TaskOutput', 'TaskStop', 'InterruptAgent'].includes(name) ? run() : scripts.runTool(signal, () => scripts.schedule(signal, start => scheduler.run(t.effect === 'read', signal, start), run));
       owned.add(work);
       try {
         const value = await work;
@@ -138,16 +148,29 @@ export class ToolRuntime {
     add(loopTool((name, input, signal) => dispatch(name, input, undefined, signal), () => {
       if (opts.missionWorker || context.interactionMode === 'mission') lineage.budget.modelCall(lineage.reservation);
     }));
-    add(scriptTool((name, input, signal) => dispatch(name, input, undefined, signal), () => [...registry.keys()].filter(available)));
+    add(scriptTool((name, input, signal, authority) => dispatch(name, input, undefined, signal, authority), () => [...registry.keys()].filter(available), scripts));
+    add(tool('WaitForScript', 'execute', { toolCallId: { type: 'string' }, timeoutMs: { type: 'number' }, kill: { type: 'boolean' } }, ['toolCallId'], async (input, c) => {
+      const p = inputObject(input), id = stringArg(p, 'toolCallId');
+      if (Object.keys(p).some(k => !['toolCallId', 'timeoutMs', 'kill'].includes(k)) || !id || id.length > 256 ||
+          p.kill !== undefined && typeof p.kill !== 'boolean' || p.timeoutMs !== undefined && (typeof p.timeoutMs !== 'number' || !Number.isFinite(p.timeoutMs) || p.timeoutMs < 0)) throw new Error('Invalid WaitForScript input');
+      if (p.kill) await scripts.kill(id);
+      return scripts.wait(id, Math.min(SCRIPT_AWAIT_MS, p.timeoutMs as number ?? SCRIPT_FOREGROUND_MS), c.signal);
+    }, 'Read and consume buffered Script output by its original toolCallId. Optionally wait or kill and drain pending calls.'));
     add(tool('ToolSearch', 'read', { query: { type: 'string' } }, ['query'], async input => {
       const query = stringArg(inputObject(input), 'query').toLowerCase();
       return [...registry.values()].filter(t => available(t.schema.function.name) && t.schema.function.name.toLowerCase().includes(query)).map(t => t.schema);
     }, 'Discover registered tool schemas by name.'));
     for (const name of [...opts.onlyTools ?? [], ...opts.removeTools ?? []]) if (!registry.has(name) && !((opts.missionWorker || context.interactionMode === 'mission') && ['ProposeMission', 'StartMissionRun', 'EndFeatureRun', 'DismissHandoffItems'].includes(name))) throw new Error(`Unknown selected tool: ${name}`);
+    if (opts.onlyTools?.length && [...registry.keys()].filter(available).every(n => ['Script', 'WaitForScript'].includes(n))) throw new Error('Script and WaitForScript cannot be the only allowed tools');
     this.registry = registry; this.dispatch = dispatch; this.tasks = tasks;
   }
   async close() {
-    await this.tasks.close();
-    await Promise.allSettled([...this.owned]);
+    this.closing ??= (async () => {
+      const drains = await Promise.allSettled([this.scripts.drainAll(), this.tasks.close()]);
+      await Promise.allSettled([...this.owned]);
+      const failure = drains.find(r => r.status === 'rejected');
+      if (failure?.status === 'rejected') throw failure.reason;
+    })();
+    await this.closing;
   }
 }

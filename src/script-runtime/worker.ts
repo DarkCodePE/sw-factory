@@ -20,6 +20,7 @@ let output: unknown = null;
 let outputBytes = 0;
 let idleScheduled = false;
 let limits: ResolvedLimits;
+let streamOutput = false;
 let control: VmControl;
 const pending = new Set<string>();
 const timers = new Map<number, ReturnType<typeof setTimeout>>();
@@ -58,6 +59,7 @@ function idle(): void {
 }
 
 function charge(bytes: number): void {
+  if (streamOutput) return;
   outputBytes += bytes;
   if (outputBytes > limits.maxOutputBytes) {
     throw new RuntimeFailure('output_limit', 'Script output limit exceeded');
@@ -191,7 +193,8 @@ function evaluate(frame: Record<string, unknown>): void {
 /** Worker entry point; the compiled fab binary calls it for its hidden `__script-worker` subcommand. */
 export async function runScriptWorker(encodedLimits = process.argv[2]): Promise<void> {
   try {
-    limits = resolveLimits(JSON.parse(encodedLimits ?? '{}'));
+    const config = JSON.parse(encodedLimits ?? '{}');
+    limits = resolveLimits(config); streamOutput = config.streamOutput === true;
     process.on('unhandledRejection', error => fail('program', errorMessage(error)));
     process.on('uncaughtException', error => fail('program', errorMessage(error)));
     send({ type: 'ready', protocolVersion: 1 });

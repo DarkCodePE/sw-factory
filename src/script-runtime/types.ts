@@ -20,6 +20,11 @@ export interface RunScriptOptions {
   code: string;
   /** Host callbacks must observe signal for cancellation; arbitrary host JS cannot be killed by the worker. */
   tools: Record<string, (input: unknown, context: { signal: AbortSignal }) => Promise<unknown>>;
+  onContent?: (content: ScriptContent) => void | Promise<void>;
+  onNotify?: (message: string) => void | Promise<void>;
+  /** Stream output to observers rather than retain a cumulative output transcript. */
+  streamOutput?: boolean;
+  detach?: boolean;
   timeoutMs?: number;
   signal?: AbortSignal;
   limits?: ScriptLimits;
@@ -38,3 +43,10 @@ export interface ToolBinding {
 }
 
 export type ResolvedLimits = Required<ScriptLimits>;
+
+export interface RunScriptHandle {
+  runId: string;
+  done: Promise<RunScriptResult>;
+  kill(): Promise<void>;
+  drained: Promise<void>;
+}

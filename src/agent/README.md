@@ -252,7 +252,7 @@ Cada característica definida en `features.json` establece un contrato estricto:
 ## Alcance Pendiente Honesto
 
 Las siguientes capacidades permanecen sin implementar o fuera de alcance:
-1. **Herramientas de agente:** Script durable con `WaitForScript`. Loop ofrece un contrato propio acotado, sin afirmar la semántica original completa.
+1. **Herramientas de agente:** Script conserva su salida entre invocaciones, sin resucitar procesos; no ofrece ejecución tras cerrar el turno. Loop ofrece un contrato propio acotado, sin afirmar la semántica original completa.
 2. **Crash Recovery de misiones:** Reconciliación automática y journal duradero tras caída intempestiva del proceso del runner.
 3. **Protocolos:** Entrada interactiva multiturno mediante `stream-json` y protocolo ACP. El demonio en puerto 37643 y SDKs remotos permanecen fuera de alcance.
 4. **MCP:** Autenticación OAuth, transporte SSE de versión previa y actualización de catálogo en caliente.
@@ -427,3 +427,57 @@ voluntarios con asuntos pendientes conservan `orchestrator_turn`. El contrato
 sellado, los archivos protegidos, el observador de comandos y ambos validadores
 siguen siendo obligatorios: sin verificadores del contrato ejecutados y
 exitosos, repetir StartMissionRun nunca concede `completed`.
+
+
+## Script durable y WaitForScript
+
+`Script({code, await?: boolean})` observa hasta 30 s; `await:true` amplía esa
+observación hasta 10 minutos. Si termina, entrega el RunScriptResult habitual.
+Si sigue vivo, devuelve `{status:'running', runId, toolCallId, elapsedMs}`.
+`WaitForScript({toolCallId, timeoutMs?, kill?})` controla la llamada original:
+con timeout devuelve `running`, content y notifications parciales y vacía ese
+búfer; al terminar devuelve estado, runId, duración y result. timeoutMs se
+acota a 10 minutos (30 s por defecto). `kill:true` cancela y drena herramientas
+anidadas antes de devolver `killed`; no deshace efectos ya aplicados.
+
+Se permiten cuatro runs vivos por invocación. No consumen plazas de procesos
+Execute background. La admisión de VM y herramientas comparte las plazas de
+maxToolConcurrency: el Script cede su plaza a callbacks y la recupera al
+continuar; Wait controla la plaza del propio run para no bloquear su finalización.
+Se conserva el scheduler de lecturas/escrituras. No es una cuota de CPU o memoria
+del sistema operativo. Script y WaitForScript no pueden ser las únicas
+herramientas seleccionadas. Las herramientas anidadas conservan el contexto de
+permisos/autonomía/red al lanzar el Script y pasan por el mismo dispatcher,
+políticas del llamador y observador de misión. Wait no pide aprobación propia.
+
+El búfer conserva hasta 5 MiB por run y, además, 5 MiB entre todos los runs
+retenidos (contenido más resultados), y hasta 20 notificaciones por run.
+Descarta excesos con un aviso; el programa sigue ejecutándose. Un resultado
+que no cabe se sustituye por un error output_limit. El registro limita a 64
+runs sin leer; hay que consumir los terminados para admitir más. Las lecturas
+parciales liberan espacio. Los límites del resultado y del frame NDJSON siguen
+siendo 5 y 10 MiB respectivamente. Cada run durable tiene plazo total de 24 h,
+subordinado al timeout/cierre del agente; observar 10 minutos no concede ese
+tiempo adicional al turno del agente.
+
+Mientras nadie espera, notify emite script_notified y se entrega como dato en
+el siguiente límite del modelo. Un run terminado sin espera se entrega mediante
+un mensaje sintético una sola vez, incluso si termina durante la respuesta final
+del proveedor. Esa entrega consume el resultado, igual que la lectura final por
+Wait: una consulta posterior falla como ID consumida. También se emiten
+script_started (inicio y transición a background) y script_completed con estado,
+duración y número de eventos de salida.
+
+El snapshot backgroundScripts incluye identidad, estado, inicio y salida acotada.
+Reanudar marca cancelled los registros running y conserva la salida para una
+lectura explícita por WaitForScript; nunca restaura procesos ni permisos. Al
+terminar o abortar el turno, o cerrar la sesión RPC, se matan y drenan todos los
+runs y callbacks antes de resolver. Un fallo de persistencia no omite el cierre
+de otros procesos. La persistencia de salida no es recuperación automática de
+llamadas de herramientas interrumpidas.
+
+En spec o sin context.tasks se conserva la ejecución bloqueante: al vencer el
+plazo se mata el Script y se espera el drenado. Sin detach, la API programática
+runScript conserva los límites acumulativos previos; detach ofrece handle con
+done, kill y drained. El modo streaming del runtime es una opción explícita del
+host; el manager implementa el descarte y retención acotados.

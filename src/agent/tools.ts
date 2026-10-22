@@ -5,6 +5,7 @@ import { realpath } from 'node:fs/promises';
 import { atomicReplace, readAnchored, readWorkspaceFile, withWorkspaceFile } from './files.ts';
 import { dirname, isAbsolute, relative, resolve, sep } from 'node:path';
 import { wrapCommand } from '../sandbox/index.ts';
+import { SCRIPT_FOREGROUND_MS, SCRIPT_AWAIT_MS, type ScriptRunManager } from './script-runs.ts';
 import { runScript } from '../script-runtime/index.ts';
 import { runProcess } from './process.ts';
 import { requestsNetwork } from './network-policy.ts';
@@ -318,24 +319,28 @@ export function builtinTools(permissionMode: 'standard' | 'yolo' = 'standard'): 
 }
 
 /** The script bridge routes nested calls back through the SAME policy dispatcher. */
-export function scriptTool(dispatch: (name: string, input: unknown, signal: AbortSignal) => Promise<unknown>, names: () => string[]): AgentTool {
-  return tool('Script', 'execute', { code: str }, ['code'], async (input, c) => {
-    const running = new Set<Promise<unknown>>();
-    const tools = Object.fromEntries(names().filter(n => n !== 'Script').map(n => [n, (v: unknown, scope: { signal: AbortSignal }) => {
-      const work = dispatch(n, v, scope.signal);
-      running.add(work);
-      void work.finally(() => running.delete(work)).catch(() => {});
-      return work;
-    }]));
-    try {
-      const result = await runScript({ code: stringArg(inputObject(input), 'code'), tools, timeoutMs: 30_000, signal: c.signal, sandbox: c.sandbox });
+export function scriptTool(dispatch: (name: string, input: unknown, signal: AbortSignal, context: ToolContext) => Promise<unknown>, names: () => string[], manager?: ScriptRunManager): AgentTool {
+  return tool('Script', 'execute', { code: str, await: { type: 'boolean' } }, ['code'], async (input, c) => {
+    const p = inputObject(input), code = stringArg(p, 'code');
+    if (Object.keys(p).some(k => !['code', 'await'].includes(k)) || p.await !== undefined && typeof p.await !== 'boolean') throw new Error('Invalid Script input');
+    const durable = c.interactionMode !== 'spec' && !!c.tasks && !!manager;
+    const toolCallId = c.toolUseId ?? crypto.randomUUID(), authority = { ...c };
+    const tools = Object.fromEntries(names().filter(n => !['Script', 'WaitForScript'].includes(n)).map(n => [n, (v: unknown, scope: { signal: AbortSignal }) =>
+      durable ? manager!.callback(toolCallId, scope.signal, () => dispatch(n, v, scope.signal, authority)) : dispatch(n, v, scope.signal, authority)]));
+    if (!durable) {
+      const result = await runScript({ code, tools, timeoutMs: p.await ? SCRIPT_AWAIT_MS : SCRIPT_FOREGROUND_MS, signal: c.signal, sandbox: c.sandbox });
       c.signal.throwIfAborted();
       if (!result.ok) throw new Error(`${result.error.origin}: ${result.error.message}`);
       return result;
-    } finally {
-      // Runtime return kills the VM and cancels its callback signals. Keep the agent's
-      // workspace ownership until every dispatched callback has actually settled.
-      await Promise.allSettled([...running]);
     }
-  }, 'Run JavaScript with bounded timers and calls to the same permission-checked tools.');
+    manager!.start(toolCallId, { code, tools, timeoutMs: 86_400_000, signal: c.signal, sandbox: c.sandbox });
+    const value = await manager!.wait(toolCallId, p.await ? SCRIPT_AWAIT_MS : SCRIPT_FOREGROUND_MS, c.signal, true);
+    if (value.status === 'running') {
+      manager!.background(toolCallId);
+      return { status: 'running', runId: value.runId, toolCallId, elapsedMs: value.elapsedMs };
+    }
+    const result = value.result!;
+    if (!result.ok) throw new Error(`${result.error.origin}: ${result.error.message}`);
+    return result;
+  }, 'Run JavaScript with the same permission-checked tools. Long runs return running; use WaitForScript with the original toolCallId. await:true observes longer.');
 }

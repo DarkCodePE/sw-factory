@@ -1,0 +1,19 @@
+{
+  "command": "bun --no-env-file src/cli.ts exec --list-tools -o json",
+  "environment": "fresh temporary HOME/cwd; child environment only PATH and HOME; no configured MCP or remote provider call",
+  "exitCode": 0,
+  "observed": {
+    "llmId": "WaitForScript",
+    "id": "WaitForScript",
+    "category": "execute",
+    "defaultAllowed": false,
+    "currentlyAllowed": false,
+    "conditional": false
+  },
+  "pendingIntegration": {
+    "owner": "Antigravity / catalog.ts",
+    "id": "wait-for-script",
+    "metadata": "Reflect no independent approval for WaitForScript in off/low and spec scopes; dispatcher already implements it."
+  },
+  "scope": "catalog.ts was read but not edited, as required by ownership contract"
+}

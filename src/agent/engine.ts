@@ -183,6 +183,7 @@ export async function runCodingAgent(opts: AgentOptions, inherited?: AgentLineag
     for (; turns < maxTurns; ) {
       context.signal.throwIfAborted();
       for (const message of opts.receiveMessages?.() ?? []) state.messages.push({ role: 'user', content: 'Message from supervising agent:\n' + message });
+      for (const message of runtime.scripts.takeCompletedForModel()) state.messages.push({ role: 'user', content: message });
       if (estimatedTokens(state.messages, schemas) + maxOutput > maxContext) await compact();
       let response: ModelTurn;
       // Every provider's turn is checked here, before it is persisted or any tool is dispatched.
@@ -206,7 +207,7 @@ export async function runCodingAgent(opts: AgentOptions, inherited?: AgentLineag
           let encoded: string;
           try { encoded = typeof value === 'string' ? value : JSON.stringify(value ?? null); }
           catch { value = 'Error: Tool result is not JSON serializable'; encoded = value as string; isError = true; }
-          const resultLimitKiB = call.function.name === 'FetchUrl' ? 8192 : call.function.name === 'Loop' ? 2048 : 256;
+          const resultLimitKiB = ['FetchUrl', 'Script', 'WaitForScript'].includes(call.function.name) ? 8192 : call.function.name === 'Loop' ? 2048 : 256;
           if (Buffer.byteLength(encoded) > resultLimitKiB * 1024) { value = `Error: Tool result exceeds ${resultLimitKiB} KiB`; encoded = value as string; isError = true; }
           emit('tool_result', { id: call.id, isError, value: value ?? null });
           return { role: 'tool' as const, tool_call_id: call.id, content: encoded };
@@ -240,6 +241,11 @@ export async function runCodingAgent(opts: AgentOptions, inherited?: AgentLineag
           : 'No usable answer was produced. Complete the task using the available evidence and tools.' });
         await store.save(state); continue;
       }
+      const scriptMessages = runtime.scripts.takeCompletedForModel();
+      if (scriptMessages.length) {
+        for (const message of scriptMessages) state.messages.push({ role: 'user', content: message });
+        await store.save(state); continue;
+      }
       const rejected = opts.validateFinal ? await abortable(Promise.resolve(opts.validateFinal(response.text)), context.signal) : undefined;
       if (rejected) {
         errorType = 'limit';
@@ -258,7 +264,7 @@ export async function runCodingAgent(opts: AgentOptions, inherited?: AgentLineag
   } catch (e) {
     const error = { type: timedOut ? 'timeout' as const : controller.signal.aborted ? 'aborted' as const : errorType, message: textError(e) };
     controller.abort(e);
-    await runtime?.close();
+    await runtime?.close().catch(() => {});
     await mcp?.close();
     if (saved && state && store) {
       // Only an invocation-bound host pause may balance interrupted calls AFTER all owned work drains.
@@ -276,7 +282,7 @@ export async function runCodingAgent(opts: AgentOptions, inherited?: AgentLineag
   } finally {
     if (timer) clearTimeout(timer);
     opts.signal?.removeEventListener('abort', onAbort);
-    await runtime?.close();
+    await runtime?.close().catch(() => {});
     await mcp?.close();
     await store?.close();
   }
