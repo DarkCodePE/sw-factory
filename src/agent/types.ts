@@ -68,7 +68,7 @@ export interface AgentTool {
 }
 export interface AgentEvent {
   type: 'init' | 'usage' | 'provider_retry' | 'assistant_delta' | 'assistant' | 'tool_call' | 'tool_result' | 'compaction' | 'result' | 'error' |
-    'mission_state_changed' | 'mission_worker_started' | 'mission_worker_completed' | 'network_permission' | 'permission_bypass' | 'agent_spawn' | 'mode_changed' | 'settings_staged';
+    'mission_feature_updated' | 'mission_milestone_validated' | 'mission_paused' | 'mission_progress' | 'mission_state_changed' | 'mission_worker_started' | 'mission_worker_completed' | 'network_permission' | 'permission_bypass' | 'agent_spawn' | 'mode_changed' | 'settings_staged';
   sessionId: string;
   [key: string]: unknown;
 }
@@ -110,7 +110,9 @@ export interface AgentOptions {
   fileJournal?: FileJournal;
   /** A reason rejects the final answer and asks the model to repair it within the recovery budget. */
   validateFinal?: (text: string) => string | undefined | Promise<string | undefined>;
-  mission?: { workerProvider?: ModelProvider; validatorProvider?: ModelProvider };
+  mission?: { workerProvider?: ModelProvider; validatorProvider?: ModelProvider;
+    /** Host-owned pause for the current StartMissionRun, separate from the orchestrator abort. */
+    pauseSignal?: AbortSignal };
   /** Trusted, invocation-local worker capability. Never constructed from model input. */
   missionWorker?: { directory: string; featureId: string; sealed: () => boolean; submit: (input: unknown) => Promise<unknown>;
     /** Runtime record of every tool execution, direct or nested inside Script. */
@@ -141,5 +143,5 @@ export interface AgentResult {
   durationMs: number;
   usage: { inputTokens: number; outputTokens: number };
   error?: { type: 'program' | 'provider' | 'limit' | 'timeout' | 'aborted' | 'session'; message: string };
-  mission?: { missionId: string; state: import('./mission-contract.ts').MissionState['state']; directory: string; completed: number; total: number };
+  mission?: { missionId: string; state: import('./mission-contract.ts').MissionState['state']; directory: string; completed: number; total: number; snapshot: import('./mission-contract.ts').MissionProgressSnapshot };
 }

@@ -1,3 +1,5 @@
+import { missionProgressSnapshot } from './mission-progress.ts';
+import { canReconcileMissionPause, missionChildSessionSaved } from './mission-pause.ts';
 import { resolveExecutionPolicy, type ExecutionPolicy } from './execution-policy.ts';
 import { realpath, stat } from 'node:fs/promises';
 import { join } from 'node:path';
@@ -45,7 +47,7 @@ export async function runCodingAgent(opts: AgentOptions, inherited?: AgentLineag
   const result = (ok: boolean, text: string, error?: AgentResult['error']): AgentResult => ({
     ok, executionPolicy, sessionId: id, text, turns, toolCalls: toolCount, durationMs: Date.now() - start, usage, ...(error ? { error } : {}),
     ...(state?.mission ? { mission: { missionId: state.mission.missionId, state: state.mission.state, directory: state.mission.directory,
-      completed: Object.values(state.mission.features).filter(f => f.status === 'completed').length, total: Object.keys(state.mission.features).length } } : {}),
+      completed: Object.values(state.mission.features).filter(f => f.status === 'completed').length, total: Object.keys(state.mission.features).length, snapshot: missionProgressSnapshot(state.mission) } } : {}),
   });
   try {
     executionPolicy = resolveExecutionPolicy(opts);
@@ -100,7 +102,7 @@ export async function runCodingAgent(opts: AgentOptions, inherited?: AgentLineag
       state = { version: 1, id, cwd, provider: opts.provider.id, messages, pending: [], status: 'running', turns: 0, tags: opts.tags ?? [] };
     }
     await store.save(state, !opts.sessionId || !!opts.fork);
-    saved = true;
+    saved = true; missionChildSessionSaved(opts);
     errorType = 'program';
     if (opts.mcpServers) mcp = new McpManager(opts.mcpServers, context, { only: opts.onlyTools, remove: opts.removeTools });
     const remoteTools = await mcp?.tools() ?? [];
@@ -258,7 +260,16 @@ export async function runCodingAgent(opts: AgentOptions, inherited?: AgentLineag
     controller.abort(e);
     await runtime?.close();
     await mcp?.close();
-    if (saved && state && store) { state.status = 'failed'; await store.save(state).catch(() => {}); }
+    if (saved && state && store) {
+      // Only an invocation-bound host pause may balance interrupted calls AFTER all owned work drains.
+      // Effects may be partial: record uncertainty, never claim cancellation undid them or replay them.
+      if (canReconcileMissionPause(opts)) {
+        for (const id of state.pending) state.messages.push({ role: 'tool', tool_call_id: id,
+          content: 'Error: Interrupted by host mission pause. Execution may have partially completed. Inspect the workspace before retrying; prior calls will not be replayed.' });
+        state.pending = [];
+      }
+      state.status = 'failed'; await store.save(state).catch(() => {});
+    }
     const answer = result(false, '', error);
     try { emit('error', { error }); } catch { /* Observer failures cannot mask terminal failure. */ }
     return answer;

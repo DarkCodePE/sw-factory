@@ -27,6 +27,14 @@ export interface MissionFeature {
 export interface MissionAttempt {
   workerSessionId: string; featureId: string; role: 'worker' | 'scrutiny' | 'user-testing';
   handoff?: FeatureHandoff; error?: string;
+  milestone?: string;
+  /** Set only by the runner's host-pause path; never inferred from error text. */
+  pausedByHost?: boolean;
+  /** False until the child saved its initial session; permits same-ID launch after an early pause. */
+  sessionCreated?: boolean;
+  status?: 'running' | 'completed' | 'failed';
+  usage?: { inputTokens: number; outputTokens: number };
+  durationMs?: number;
   /** Execute calls the runtime observed during this attempt (the handoff is only a claim). */
   observed?: ObservedCommand[];
 }
@@ -34,7 +42,7 @@ export interface MissionState {
   version: 1; missionId: string; directory: string; title: string; proposal: string; workingDirectory: string;
   state: 'planning' | 'running' | 'paused' | 'orchestrator_turn' | 'completed';
   createdAt: string; updatedAt: string; initialFeatureCount?: number;
-  features: Record<string, { status: MissionFeature['status'] | 'awaiting_validation'; attempts: number; workerSessionIds: string[]; definitionHash: string }>;
+  features: Record<string, { status: MissionFeature['status'] | 'awaiting_validation'; attempts: number; milestone?: string; workerSessionIds: string[]; definitionHash: string }>;
   validations: Record<string, { scrutiny?: boolean; 'user-testing'?: boolean; sourceDigest?: string; verifiers?: VerifierResult[] }>;
   attempts: MissionAttempt[];
   /** `attempt` is the index in `attempts` of the handoff whose item this dismissal addresses. */
@@ -43,6 +51,15 @@ export interface MissionState {
   sealedContract?: Record<string, { verificationCommands: string[]; protectedPaths: string[] }>;
   /** Per-file digest of protected paths taken before the first worker of the current run. */
   protectedBaseline?: Record<string, string>;
+}
+export type MissionPauseReason = 'host_request' | 'worker_failed' | 'validation_failed' | 'protected_paths_changed' | 'verification_missing' | 'error';
+export interface MissionProgressSnapshot {
+  missionId: string; title: string; state: MissionState['state']; updatedAt: string;
+  features: Array<{ id: string; milestone: string; status: string; attempts: number }>;
+  milestones: Array<{ id: string; scrutiny: boolean; userTesting: boolean; verifiersPassed: boolean | null }>;
+  workers: Array<{ workerSessionId: string; featureId: string; role: 'worker' | 'scrutiny' | 'user-testing';
+    status: 'running' | 'completed' | 'failed'; usage: { inputTokens: number; outputTokens: number }; durationMs: number }>;
+  totals: { completed: number; total: number; usage: { inputTokens: number; outputTokens: number }; durationMs: number };
 }
 const str = { type: 'string' }, strings = { type: 'array', items: str };
 const reservedKeys = new Set(Object.getOwnPropertyNames(Object.prototype));

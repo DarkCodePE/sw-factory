@@ -1,7 +1,9 @@
+import { MissionRunControl } from './mission-pause.ts';
+import { attemptDuration, attemptUsage, missionProgressSnapshot } from './mission-progress.ts';
 import { scopedExecutionOptions, resolveExecutionPolicy } from './execution-policy.ts';
 import { resolve, join } from 'node:path';
 import { readWorkspaceFile } from './files.ts';
-import { handoffSchema, handoffSucceeded, parseFeatures, parseHandoff, type FeatureHandoff, type MissionAttempt, type MissionFeature, type MissionState } from './mission-contract.ts';
+import { handoffSchema, handoffSucceeded, parseFeatures, parseHandoff, type FeatureHandoff, type MissionAttempt, type MissionFeature, type MissionState, type MissionPauseReason } from './mission-contract.ts';
 import { createCommandObserver, observedSuccessfulCommand, runVerifier, unobservedClaims } from './mission-evidence.ts';
 import { createMissionDirectory, digest, digestPaths, fingerprintWorkspace, missionDirectory, missionGit, writeMissionFile, writeMissionState } from './mission-files.ts';
 import { inputObject, stringArg, tool } from './tools.ts';
@@ -17,6 +19,8 @@ const now = () => new Date().toISOString();
 export class MissionManager {
   readonly directory: string;
   private runSignal?: AbortSignal;
+  private control?: MissionRunControl;
+  private featureView = new Map<string, string>();
   /** Model calls reserved for the active StartMissionRun; workers and validators spend them first. */
   private calls?: CallReservation;
   private get execution() { return { ...this.context, signal: this.runSignal ?? this.context.signal }; }
@@ -26,15 +30,30 @@ export class MissionManager {
     this.directory = missionDirectory(opts, state.id);
     if (state.mission && (state.mission.version !== 1 || state.mission.directory !== this.directory || state.mission.workingDirectory !== context.cwd)) throw new Error('Mission snapshot ownership mismatch');
     context.missionDir = this.directory;
+    for (const [id, f] of Object.entries(state.mission?.features ?? {})) this.featureView.set(id, JSON.stringify([f.status, f.attempts, f.milestone]));
   }
   private get mission() { if (!this.state.mission) throw new Error('ProposeMission must be accepted first'); return this.state.mission; }
-  private emit(type: 'mission_state_changed' | 'mission_worker_started' | 'mission_worker_completed', fields: Record<string, unknown>) {
-    this.opts.onEvent?.({ type, sessionId: this.state.id, ...fields });
+  private emit(type: Extract<import('./types.ts').AgentEvent['type'], `mission_${string}`>, fields: Record<string, unknown>) {
+    this.opts.onEvent?.({ type, sessionId: this.state.id, missionId: this.mission.missionId, ...fields });
   }
   private async sync(state?: MissionState['state']) {
     const m = this.mission; if (state) m.state = state; m.updatedAt = now();
     await this.save(); await writeMissionState(m);
-    if (state) this.emit('mission_state_changed', { state, missionId: m.missionId });
+    if (state) this.emit('mission_state_changed', { state });
+    for (const [featureId, f] of Object.entries(m.features)) {
+      const view = JSON.stringify([f.status, f.attempts, f.milestone]);
+      if (this.featureView.get(featureId) !== view) {
+        this.featureView.set(featureId, view);
+        this.emit('mission_feature_updated', { featureId, milestone: f.milestone ?? '', status: f.status, attempts: f.attempts });
+      }
+    }
+    this.emit('mission_progress', { snapshot: this.snapshot() });
+  }
+  private async pause(reason: MissionPauseReason, message?: string) {
+    await this.sync('paused');
+    const text = message?.slice(0, 500);
+    await this.log('mission_paused', { reason, ...(text ? { message: text } : {}) });
+    this.emit('mission_paused', { reason, ...(text ? { message: text } : {}) });
   }
   private async log(type: string, fields: Record<string, unknown> = {}) {
     let before = '';
@@ -89,6 +108,7 @@ export class MissionManager {
         previous.status = 'pending'; previous.definitionHash = hash; delete m.validations[f.milestone];
       }
       if (!m.features[f.id]) { m.features[f.id] = { status: 'pending', attempts: 0, workerSessionIds: [], definitionHash: hash }; delete m.validations[f.milestone]; }
+      m.features[f.id]!.milestone = f.milestone;
       // A model cannot self-approve by writing status: completed in features.json.
       if (f.status === 'completed' && m.features[f.id]!.status !== 'completed') throw new Error('Only validated worker progress can complete a feature');
       if (f.status === 'cancelled') m.features[f.id]!.status = 'cancelled';
@@ -102,21 +122,25 @@ export class MissionManager {
     if (this.lineage.budget.agents >= this.lineage.budget.maxAgents) throw new Error('Shared mission agent budget exhausted');
   }
   private async attempt(feature: MissionFeature, role: MissionAttempt['role'], skill: string, resume?: string, message?: string) {
-    this.preflight();
+    this.execution.signal.throwIfAborted(); this.preflight();
     const m = this.mission, record = m.features[feature.id]!;
     if (m.attempts.length >= 100) throw new Error('Mission handoff history limit reached');
     if (role === 'worker' && record.attempts >= 5) throw new Error('Feature attempt limit reached');
-    if (role !== 'worker' && m.attempts.filter(a => a.featureId === feature.id && a.role === role).length >= 5) throw new Error('Validator attempt limit reached');
-    if (resume && !m.attempts.some(a => a.workerSessionId === resume && a.featureId === feature.id && a.role === role && !handoffSucceeded(a.handoff))) throw new Error('Worker resume ID is not owned by this active feature');
+    if (role !== 'worker' && m.attempts.filter(a => a.featureId === feature.id && a.role === role && !a.pausedByHost).length >= 5) throw new Error('Validator attempt limit reached');
+    if (resume && !m.attempts.some(a => a.workerSessionId === resume && a.featureId === feature.id && a.role === role && (a.error || !handoffSucceeded(a.handoff)))) throw new Error('Worker resume ID is not owned by this active feature');
     this.lineage.budget.reserveAgent();
+    const previous = resume ? [...m.attempts].reverse().find(a => a.workerSessionId === resume) : undefined;
+    const resumeSession = resume && previous?.sessionCreated !== false ? resume : undefined;
     const workerSessionId = resume ?? crypto.randomUUID();
-    const attempt: MissionAttempt = { workerSessionId, featureId: feature.id, role };
-    m.attempts.push(attempt); if (role === 'worker') record.attempts++;
+    const attempt: MissionAttempt = { workerSessionId, featureId: feature.id, role, milestone: feature.milestone,
+      status: 'running', sessionCreated: !!resumeSession, usage: { inputTokens: 0, outputTokens: 0 }, durationMs: 0 };
+    m.attempts.push(attempt);
     record.workerSessionIds.push(workerSessionId);
-    let sealed = false;
+    let sealed = false, result: AgentResult | undefined, failure: unknown;
+    const startedAt = performance.now(), observer = createCommandObserver();
     try {
       await this.sync(); await this.log('worker_started', { workerSessionId, featureId: feature.id, role });
-      this.emit('mission_worker_started', { workerSessionId, featureId: feature.id, role, executionPolicy: resolveExecutionPolicy(scopedExecutionOptions(this.context, role !== 'worker')) });
+      this.emit('mission_worker_started', { workerSessionId, featureId: feature.id, role, milestone: feature.milestone, executionPolicy: resolveExecutionPolicy(scopedExecutionOptions(this.context, role !== 'worker')) });
       const submit = async (input: unknown) => {
         if (sealed) throw new Error('A handoff has already been submitted for this attempt');
         const handoff = parseHandoff(input, feature.id); sealed = true;
@@ -132,16 +156,18 @@ export class MissionManager {
         } catch (error) { sealed = false; throw error; }
       };
       const validation = role !== 'worker';
-      const observer = createCommandObserver();
       const prompt = `Assigned mission feature ${feature.id}; role ${role}.\n${feature.description}\nPreconditions: ${JSON.stringify(feature.preconditions)}\nExpected behavior: ${JSON.stringify(feature.expectedBehavior)}\nAssertion IDs: ${JSON.stringify(feature.fulfills)}\n\n${skill}\n\n${message ?? ''}\n${validation ? 'Independently verify the current code and tests. The workspace is read-only. Report observed evidence, failures and unfinished work.' : 'Implement this feature and verify it with the available tools.'}\nSubmit exactly one truthful EndFeatureRun handoff. A final text response without a valid handoff does not complete the feature. After submission, workspace mutation is closed.`;
-      const result = await this.runChild({ ...this.opts, prompt, cwd: this.context.cwd,
+      this.execution.signal.throwIfAborted();
+      const child: AgentOptions = { ...this.opts, prompt, cwd: this.context.cwd,
         provider: validation ? this.opts.mission?.validatorProvider ?? this.opts.provider : this.opts.mission?.workerProvider ?? this.opts.provider,
         ...scopedExecutionOptions(this.context, validation), allowExitSpecMode: false,
         signal: this.execution.signal, sessionDir: this.opts.sessionDir ?? join(this.directory, 'sessions'),
-        newSessionId: resume ? undefined : workerSessionId, sessionId: resume, fork: false,
+        newSessionId: resumeSession ? undefined : workerSessionId, sessionId: resumeSession, fork: false,
         tools: [], images: undefined, validateFinal: undefined, receiveMessages: undefined, onEvent: undefined,
         appendSystemPrompt: undefined, mission: undefined, missionWorker: { directory: this.directory, featureId: feature.id, sealed: () => sealed, submit, observe: observer.observe },
-      }, this.calls);
+      };
+      result = await this.runChild(this.control!.authorize(child, () => { attempt.sessionCreated = true; }), this.calls);
+      attempt.usage = attemptUsage(result); attempt.durationMs = attemptDuration(result);
       this.execution.signal.throwIfAborted();
       if (!result.ok) attempt.error = result.error?.message ?? 'Worker failed';
       if (!attempt.handoff) attempt.error = 'Worker ended without a valid EndFeatureRun handoff';
@@ -152,17 +178,45 @@ export class MissionManager {
         if (forged.length) attempt.error = `Handoff claims verification the runtime did not observe: ${forged.join('; ')}`;
         else if (validation && !observedSuccessfulCommand(attempt.observed)) attempt.error = 'Validator reported success without running any successful verification command';
       }
-      await writeMissionFile(this.directory, `handoffs/${workerSessionId}-${m.attempts.length}.json`, attempt);
-      await this.log(attempt.error ? 'worker_failed' : 'worker_completed', { workerSessionId, featureId: feature.id, role, successState: attempt.handoff?.successState, error: attempt.error });
-      this.emit('mission_worker_completed', { workerSessionId, featureId: feature.id, role, exitCode: result.ok ? 0 : 1, hasHandoff: !!attempt.handoff });
-      return attempt;
-    } finally { this.lineage.budget.releaseAgent(); }
+    } catch (error) {
+      failure = error;
+      attempt.pausedByHost = this.control?.pausedByHost === true;
+      attempt.error = attempt.pausedByHost ? 'Paused by host' : error instanceof Error ? error.message : String(error);
+      if (!result) attempt.durationMs = Math.max(0, performance.now() - startedAt);
+    } finally {
+      try {
+        attempt.observed = observer.observed();
+        let counted = false;
+        const settle = () => {
+          if (this.control?.pausedByHost && !attempt.pausedByHost) {
+            attempt.pausedByHost = true; attempt.error = 'Paused by host';
+            if (counted) { record.attempts--; counted = false; }
+          }
+          attempt.status = !attempt.error && handoffSucceeded(attempt.handoff) ? 'completed' : 'failed';
+        };
+        settle();
+        if (role === 'worker' && !attempt.pausedByHost) { record.attempts++; counted = true; }
+        // A pause may arrive while persisting. Rewrite the settled attempt before
+        // publishing its single terminal event; there are at most two passes.
+        for (;;) {
+          const paused = attempt.pausedByHost;
+          await writeMissionFile(this.directory, `handoffs/${workerSessionId}-${m.attempts.length}.json`, attempt);
+          await this.log(attempt.error ? 'worker_failed' : 'worker_completed', { workerSessionId, featureId: feature.id, role,
+            milestone: feature.milestone, successState: attempt.handoff?.successState, error: attempt.error?.slice(0, 500),
+            usage: attempt.usage, durationMs: attempt.durationMs });
+          await this.sync(); settle();
+          if (paused === attempt.pausedByHost) break;
+        }
+        // No awaited bookkeeping follows: this is the completed-attempt boundary.
+        this.emit('mission_worker_completed', { workerSessionId, featureId: feature.id, role, milestone: feature.milestone,
+          exitCode: attempt.pausedByHost ? 1 : result?.ok ? 0 : 1, hasHandoff: !!attempt.handoff, successState: attempt.handoff?.successState,
+          ...(attempt.error ? { error: attempt.error.slice(0, 500) } : {}), usage: { ...attempt.usage! }, durationMs: attempt.durationMs });
+      } finally { this.lineage.budget.releaseAgent(); }
+    }
+    if (failure !== undefined) throw failure;
+    return attempt;
   }
-  private snapshot() {
-    const m = this.mission, records = Object.values(m.features);
-    return { kind: 'start_mission_run_snapshot', state: m.state, updatedAt: m.updatedAt, counts: { total: records.length,
-      completed: records.filter(f => f.status === 'completed').length, cancelled: records.filter(f => f.status === 'cancelled').length } };
-  }
+  private snapshot() { return missionProgressSnapshot(this.mission); }
   /**
    * Items each attempt left open. A dismissal is bound to the attempt that produced the item, so
    * the same text reported by a later attempt is a new item and inherits no earlier approval.
@@ -192,48 +246,66 @@ export class MissionManager {
     return { dismissed: entries.length };
   }
   private async start(input: unknown, scope: ToolContext) {
-    const p = inputObject(input), { features, skills, guidance, contract } = await this.planning();
-    if (this.pendingItems().length) throw new Error('Address the returned handoff items and record DismissHandoffItems before continuing');
-    if (p.restartFeature !== undefined && typeof p.restartFeature !== 'boolean') throw new Error('Invalid restartFeature');
-    const resume = p.resumeWorkerSessionId === undefined ? undefined : stringArg(p, 'resumeWorkerSessionId');
-    const message = p.messageToWorker === undefined ? undefined : stringArg(p, 'messageToWorker');
-    if (resume && p.restartFeature) throw new Error('resumeWorkerSessionId and restartFeature are mutually exclusive');
-    this.preflight(); scope.signal.throwIfAborted();
-    const jobs = features.filter(f => this.mission.features[f.id]!.status === 'pending').length +
-      2 * new Set(features.filter(f => this.mission.features[f.id]!.status !== 'cancelled').map(f => f.milestone)).size;
-    if (this.lineage.budget.maxAgents - this.lineage.budget.agents < jobs) throw new Error('Insufficient shared agent budget for workers and independent validators');
-    // Minimum model calls the run must be able to afford before its first effect: one handoff
-    // per pending worker, and one verification call plus one handoff per validator role.
-    const pendingWorkers = features.filter(f => this.mission.features[f.id]!.status === 'pending').length;
-    this.calls = this.lineage.budget.reserveCalls(pendingWorkers + 2 * (jobs - pendingWorkers));
-    this.runSignal = scope.signal;
+    if (this.runSignal) throw new Error('Mission run is already active');
+    const control = new MissionRunControl(scope.signal, this.opts.mission?.pauseSignal);
+    this.control = control; this.runSignal = control.signal;
     const handoffs: MissionAttempt[] = [];
     try {
+      scope.signal.throwIfAborted();
+      if (control.requested) {
+        await this.pause('host_request', 'Paused by host');
+        scope.signal.throwIfAborted();
+        return { started: true, paused: true, progressSnapshot: this.snapshot() };
+      }
+      const p = inputObject(input), { features, skills, guidance, contract } = await this.planning();
+      if (p.restartFeature !== undefined && typeof p.restartFeature !== 'boolean') throw new Error('Invalid restartFeature');
+      const resume = p.resumeWorkerSessionId === undefined ? undefined : stringArg(p, 'resumeWorkerSessionId');
+      const message = p.messageToWorker === undefined ? undefined : stringArg(p, 'messageToWorker');
+      if (resume && p.restartFeature) throw new Error('resumeWorkerSessionId and restartFeature are mutually exclusive');
+      const resumedIndex = resume ? this.mission.attempts.map(a => a.workerSessionId).lastIndexOf(resume) : -1;
+      if (this.pendingItems().some(item => item.attempt !== resumedIndex || !this.mission.attempts[resumedIndex]?.pausedByHost))
+        throw new Error('Address the returned handoff items and record DismissHandoffItems before continuing');
+      this.preflight(); this.execution.signal.throwIfAborted();
+      const jobs = features.filter(f => this.mission.features[f.id]!.status === 'pending').length +
+        2 * new Set(features.filter(f => this.mission.features[f.id]!.status !== 'cancelled').map(f => f.milestone)).size;
+      if (this.lineage.budget.maxAgents - this.lineage.budget.agents < jobs) throw new Error('Insufficient shared agent budget for workers and independent validators');
+      // Minimum model calls the run must be able to afford before its first effect: one handoff
+      // per pending worker, and one verification call plus one handoff per validator role.
+      const pendingWorkers = features.filter(f => this.mission.features[f.id]!.status === 'pending').length;
+      this.calls = this.lineage.budget.reserveCalls(pendingWorkers + 2 * (jobs - pendingWorkers));
       await this.sync('running'); await this.log('mission_run_started');
       const guarded = [...new Set(features.flatMap(f => f.protectedPaths))].sort();
       // The baseline survives pauses: work resumed later is still compared with the original files.
       this.mission.protectedBaseline ??= await digestPaths(this.execution, guarded);
       for (const path of guarded) if (!(path in this.mission.protectedBaseline)) this.mission.protectedBaseline[path] = (await digestPaths(this.execution, [path]))[path]!;
       await this.sync();
+      const target = resume ? [...this.mission.attempts].reverse().find(a => a.workerSessionId === resume) : undefined;
+      if (resume && (!target || !target.error && handoffSucceeded(target.handoff))) throw new Error('Worker resume ID is not owned by an unsuccessful attempt');
+      if (target) {
+        const record = this.mission.features[target.featureId];
+        if (!record || record.status === 'cancelled' || record.status === 'completed' ||
+          (target.role === 'worker' ? record.status !== 'pending' : record.status !== 'awaiting_validation'))
+          throw new Error('No active feature or validator owns the requested worker resume');
+      }
       let resumed = false;
       for (const feature of features) {
         this.execution.signal.throwIfAborted();
         const record = this.mission.features[feature.id]!;
         if (record.status !== 'pending') continue;
-        const work = await this.attempt(feature, 'worker', skills.get(feature.skillName)! + '\nMission guidance:\n' + guidance + '\nValidation contract:\n' + contract, !resumed ? resume : undefined, message);
-        resumed = true; handoffs.push(work);
-        if (work.error || !handoffSucceeded(work.handoff)) { await this.sync('orchestrator_turn'); return { started: true, workerHandoffs: handoffs, progressSnapshot: this.snapshot() }; }
+        const work = await this.attempt(feature, 'worker', skills.get(feature.skillName)! + '\nMission guidance:\n' + guidance + '\nValidation contract:\n' + contract, target?.role === 'worker' && target.featureId === feature.id ? resume : undefined, message);
+        if (target?.role === 'worker' && target.featureId === feature.id) resumed = true;
+        handoffs.push(work); this.execution.signal.throwIfAborted();
+        if (work.error || !handoffSucceeded(work.handoff)) { await this.pause('worker_failed', work.error); this.execution.signal.throwIfAborted(); return { started: true, workerHandoffs: handoffs, progressSnapshot: this.snapshot() }; }
         record.status = 'awaiting_validation'; delete this.mission.validations[feature.milestone]; await this.sync();
-        if (work.handoff?.returnToOrchestrator || work.handoff?.handoff.discoveredIssues.length) { await this.sync('orchestrator_turn'); return { started: true, workerHandoffs: handoffs, progressSnapshot: this.snapshot() }; }
+        if (work.handoff?.returnToOrchestrator || this.pendingItems().length) { await this.sync('orchestrator_turn'); this.execution.signal.throwIfAborted(); return { started: true, workerHandoffs: handoffs, progressSnapshot: this.snapshot() }; }
       }
-      if (resume && !resumed) throw new Error('No pending feature owns the requested worker resume');
       // Workers may not weaken the checks that will judge them (tests, fixtures, verifier scripts).
       const current = await digestPaths(this.execution, guarded);
       const tampered = guarded.filter(path => current[path] !== this.mission.protectedBaseline![path]);
       if (tampered.length) {
         await this.log('protected_paths_changed', { paths: tampered });
-        await this.sync('paused');
-        return { started: true, workerHandoffs: handoffs, protectedPathsChanged: tampered, progressSnapshot: this.snapshot() };
+        await this.pause('protected_paths_changed');
+        this.execution.signal.throwIfAborted(); return { started: true, workerHandoffs: handoffs, protectedPathsChanged: tampered, progressSnapshot: this.snapshot() };
       }
       // All workers have drained. Validate each milestone against the same frozen
       // source bytes; worker claims and editable feature statuses grant no success.
@@ -242,47 +314,68 @@ export class MissionManager {
         const group = features.filter(f => f.milestone === milestone && this.mission.features[f.id]!.status !== 'cancelled');
         if (!group.length) continue;
         const checks = this.mission.validations[milestone] ??= {};
-        if (checks.sourceDigest !== sourceDigest) { checks.scrutiny = false; checks['user-testing'] = false; checks.sourceDigest = sourceDigest; }
-        if (checks.scrutiny && checks['user-testing']) continue;
+        if (checks.sourceDigest !== sourceDigest) { checks.scrutiny = false; checks['user-testing'] = false; checks.sourceDigest = sourceDigest; delete checks.verifiers; }
+        if (checks.scrutiny && checks['user-testing'] && checks.verifiers?.length && checks.verifiers.every(v => v.exitCode === 0) &&
+            group.every(f => this.mission.features[f.id]!.status === 'completed')) continue;
         for (const f of group) this.mission.features[f.id]!.status = 'awaiting_validation';
         const feature = { ...group[0]!, description: `Validate milestone ${milestone}:\n` + group.map(f => `${f.id}: ${f.description}`).join('\n'),
           expectedBehavior: group.flatMap(f => f.expectedBehavior), fulfills: group.flatMap(f => f.fulfills) };
         for (const role of ['scrutiny', 'user-testing'] as const) {
           if (checks[role]) continue;
           await this.sync();
-          const checked = await this.attempt(feature, role, `Independently review the requested behavior. Run relevant tests and inspect actual outputs. Do not claim unperformed verification.\nMission guidance:\n${guidance}\nValidation contract:\n${contract}`);
-          handoffs.push(checked);
+          const checked = await this.attempt(feature, role, `Independently review the requested behavior. Run relevant tests and inspect actual outputs. Do not claim unperformed verification.\nMission guidance:\n${guidance}\nValidation contract:\n${contract}`,
+            target?.role === role && target.featureId === feature.id ? resume : undefined,
+            target?.role === role ? message : undefined);
+          if (target?.role === role && target.featureId === feature.id) resumed = true;
+          handoffs.push(checked); this.execution.signal.throwIfAborted();
           if (await fingerprintWorkspace(this.execution) !== sourceDigest) throw new Error('Source changed during read-only mission validation');
-          if (checked.error || !handoffSucceeded(checked.handoff)) { await this.sync('paused'); return { started: true, workerHandoffs: handoffs, progressSnapshot: this.snapshot() }; }
-          if (checked.handoff?.returnToOrchestrator || checked.handoff?.handoff.discoveredIssues.length) {
-            await this.sync('orchestrator_turn'); return { started: true, workerHandoffs: handoffs, progressSnapshot: this.snapshot() };
+          if (checked.error || !handoffSucceeded(checked.handoff)) { await this.pause('validation_failed', checked.error); this.execution.signal.throwIfAborted(); return { started: true, workerHandoffs: handoffs, progressSnapshot: this.snapshot() }; }
+          if (checked.handoff?.returnToOrchestrator || this.pendingItems().length) {
+            await this.sync('orchestrator_turn'); this.execution.signal.throwIfAborted(); return { started: true, workerHandoffs: handoffs, progressSnapshot: this.snapshot() };
           }
-          checks[role] = true;
+          checks[role] = true; await this.sync();
         }
         // Contract verifiers run by the runner itself against the same frozen source.
         const commands = [...new Set(group.flatMap(f => f.verificationCommands))];
         if (!commands.length) {
           await this.log('verification_contract_missing', { milestone });
-          await this.sync('paused');
-          return { started: true, workerHandoffs: handoffs, verificationMissing: milestone, progressSnapshot: this.snapshot() };
+          await this.pause('verification_missing');
+          this.execution.signal.throwIfAborted(); return { started: true, workerHandoffs: handoffs, verificationMissing: milestone, progressSnapshot: this.snapshot() };
         }
         {
           checks.verifiers = [];
           for (const command of commands) checks.verifiers.push(await runVerifier(this.execution, command));
           if (await fingerprintWorkspace(this.execution) !== sourceDigest) throw new Error('Source changed during mission verification');
           await this.log('mission_verifiers_ran', { milestone, verifiers: checks.verifiers.map(v => ({ command: v.command, exitCode: v.exitCode })) });
+          this.emit('mission_milestone_validated', { milestone, passed: checks.verifiers.every(v => v.exitCode === 0),
+            verifiers: checks.verifiers.map(v => ({ command: v.command, exitCode: v.exitCode })) });
           if (checks.verifiers.some(v => v.exitCode !== 0)) {
             checks.scrutiny = false; checks['user-testing'] = false;
-            await this.sync('paused'); return { started: true, workerHandoffs: handoffs, progressSnapshot: this.snapshot() };
+            await this.pause('validation_failed'); this.execution.signal.throwIfAborted(); return { started: true, workerHandoffs: handoffs, progressSnapshot: this.snapshot() };
           }
         }
         for (const f of group) this.mission.features[f.id]!.status = 'completed';
         await this.sync();
       }
+      if (resume && !resumed) throw new Error('No active feature or validator owns the requested worker resume');
+      this.execution.signal.throwIfAborted();
       await this.sync('completed');
-      return { started: true, workerHandoffs: handoffs, progressSnapshot: this.snapshot() };
-    } catch (error) { await this.sync('paused'); throw error; }
-    finally { this.runSignal = undefined; this.calls?.release(); this.calls = undefined; }
+      this.execution.signal.throwIfAborted(); return { started: true, workerHandoffs: handoffs, progressSnapshot: this.snapshot() };
+    } catch (error) {
+      if (scope.signal.aborted) {
+        if (this.state.mission) await this.pause('error', 'Orchestrator turn aborted');
+        throw error;
+      }
+      if (control.requested && this.state.mission) {
+        await this.pause('host_request', 'Paused by host');
+        scope.signal.throwIfAborted();
+        return { started: true, paused: true, workerHandoffs: handoffs, progressSnapshot: this.snapshot() };
+      }
+      if (this.state.mission) await this.pause('error', error instanceof Error ? error.message : String(error));
+      throw error;
+    } finally {
+      control.dispose(); this.control = undefined; this.runSignal = undefined; this.calls?.release(); this.calls = undefined;
+    }
   }
   tools(): AgentTool[] {
     return [

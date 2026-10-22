@@ -269,7 +269,7 @@ bun test
 bunx tsc --noEmit -p .
 ```
 
-La suite consolidada registra **298 pruebas unitarias pasando (298 pass, 0 fail)** en **35 archivos de prueba** con **1.823 aserciones** verificadas (`expect()`).
+Los recibos de validación indican la base, los hashes del código probado y los resultados de cada tarea; el recibo de Mission Control está en `src/agent/mission-control-evidence/validation.json`.
 
 
 ## Herramientas de modo, propuestas y patches
@@ -354,3 +354,76 @@ El resultado marca todo contenido como externo/no confiable. Es dato para el mod
 Pruebas dirigidas: `bun test tests/agent-loop.test.ts tests/agent-fetch-url.test.ts`. Recibos REA en `docs/evidence/loop-fetch-url/rea-captures.json`; validación completa en `docs/evidence/loop-fetch-url/validation.json`.
 
 Validación final de Loop/FetchUrl: **313 pass, 0 fail, 1.947 aserciones en 36 archivos**; 26 casos nuevos. TypeScript y diff-check con salida 0.
+
+## Mission Control: eventos, métricas y pausa del host
+
+El host recibe `mission_state_changed`, `mission_worker_started`,
+`mission_worker_completed`, `mission_feature_updated`,
+`mission_milestone_validated`, `mission_paused` y `mission_progress` mediante
+`onEvent`. Todos incluyen `sessionId` y `missionId`. Los eventos de worker
+incluyen `milestone`; al terminar incluyen `usage`, `durationMs`, `exitCode`,
+`hasHandoff` y, cuando existen, `successState` y `error`. Un handoff es una
+pretensión del worker: su `successState` no sustituye la verificación del runner.
+
+`mission_progress.snapshot`, `StartMissionRun.progressSnapshot` y
+`AgentResult.mission.snapshot` comparten `MissionProgressSnapshot`, exportado
+por el módulo público. Contiene misión/estado/fecha, features con milestone,
+estado e intentos, hitos con ambos validadores y resultado de verificadores,
+los 100 intentos más recientes y totales de features, tokens y duración.
+Features e hitos están limitados a 100; no contiene prosa de handoffs. Los
+identificadores se acotan a 100 caracteres y el título a 200. Los totales de
+consumo abarcan todos los intentos conservados, incluidos fallidos y pausados;
+la duración suma los tiempos de los hijos, no el tiempo de planificación del
+orquestador. Datos antiguos sin métricas muestran cero. El límite previo de
+100 intentos persistidos por misión sigue vigente, independientemente del
+límite de visualización del snapshot.
+
+Cada `MissionAttempt` guarda métricas del `AgentResult` del hijo en la sesión
+autoritativa y en `handoffs/<workerSessionId>-<n>.json`. Si el hijo no llegó a
+devolver resultado, se registra consumo cero y duración local transcurrida.
+
+```ts
+const pause = new AbortController();
+const result = await runCodingAgent({
+  ...options,
+  mission: { ...options.mission, pauseSignal: pause.signal },
+});
+// Desde el control interactivo mientras StartMissionRun esté activo:
+// pause.abort();
+```
+
+Abortar `pauseSignal` fuera de StartMissionRun no cambia la misión. Si ya está
+abortada al entrar, devuelve pausado antes de leer planificación o reservar
+presupuestos. Durante un run cancela y drena el hijo, incluidos sus procesos
+foreground/background, antes de devolver `{started:true, paused:true,
+progressSnapshot}`; emite `mission_paused` con `reason: 'host_request'`.
+El intento termina al publicar `mission_worker_completed`; una pausa posterior
+afecta al run y conserva ese intento ya completado. Una pausa durante su
+persistencia se reconcilia antes del evento terminal.
+El intento interrumpido guarda `error: 'Paused by host'` y `pausedByHost: true`;
+no aumenta el contador de reintentos de feature o validador. Las reservas y los
+límites globales de agentes/llamadas siguen aplicándose. Un aborto del turno del
+orquestador prevalece sobre la pausa y devuelve error de aborto.
+
+El host debe proporcionar una señal nueva para continuar. La redirección por
+`receiveMessages` llega al siguiente turno del modelo del orquestador;
+`resumeWorkerSessionId` retoma el hijo propio y `messageToWorker` le entrega
+instrucciones nuevas, también a validadores. Si se pausó antes de guardar la
+sesión del hijo, el runner crea esa misma ID reservada al reanudar. El marcador
+`sessionCreated` distingue este caso; un error al cargar una sesión existente
+no activa ninguna creación alternativa.
+
+Solo una capacidad interna vinculada a esa invocación permite cerrar llamadas
+interrumpidas después del drenado, añadiendo resultados explícitos de
+interrupción sin reproducir herramientas. No habilita recuperación genérica
+tras caída del proceso ni para abortos ordinarios. Un handoff parcial enviado
+antes de pausar puede reanudarse, pero sus ítems pendientes siguen exigiendo
+`DismissHandoffItems` antes de completar la misión.
+
+Las razones de pausa son `host_request`, `worker_failed`, `validation_failed`,
+`protected_paths_changed`, `verification_missing` y `error`. Un fallo de worker
+o un error de preflight deja ahora la misión en `paused`. Los retornos
+voluntarios con asuntos pendientes conservan `orchestrator_turn`. El contrato
+sellado, los archivos protegidos, el observador de comandos y ambos validadores
+siguen siendo obligatorios: sin verificadores del contrato ejecutados y
+exitosos, repetir StartMissionRun nunca concede `completed`.

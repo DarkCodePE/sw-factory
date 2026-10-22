@@ -91,7 +91,7 @@ test('clean worker exit without handoff leaves mission pending and can resume th
   const paths = await workspace(); let childCalls = 0;
   const fixture = scenario(paths.cwd, [feature()], () => { childCalls++; return done(); });
   const first = await runAgent({ ...paths, prompt: 'mission', provider: fixture.provider, autonomy: 'high', interactionMode: 'mission' });
-  expect(first).toMatchObject({ ok: true, mission: { state: 'orchestrator_turn', completed: 0 } }); expect(childCalls).toBe(1);
+  expect(first).toMatchObject({ ok: true, mission: { state: 'paused', completed: 0 } }); expect(childCalls).toBe(1);
   const saved = JSON.parse(await readFile(join(paths.sessionDir, first.sessionId + '.json'), 'utf8'));
   const workerId = saved.mission.attempts[0].workerSessionId;
   let parent = 0; const seen = new Set<string>();
@@ -101,7 +101,7 @@ test('clean worker exit without handoff leaves mission pending and can resume th
     return parent++ ? done() : calls(['StartMissionRun', { resumeWorkerSessionId: workerId }]);
   } };
   const resumed = await runAgent({ ...paths, prompt: 'resume', provider, autonomy: 'high', interactionMode: 'mission', sessionId: first.sessionId });
-  expect(resumed).toMatchObject({ ok: true, mission: { state: 'orchestrator_turn', completed: 0 } });
+  expect(resumed).toMatchObject({ ok: true, mission: { state: 'paused', completed: 0 } });
   const next = JSON.parse(await readFile(join(paths.sessionDir, first.sessionId + '.json'), 'utf8'));
   expect(next.mission.attempts[1]).toMatchObject({ workerSessionId: workerId, handoff: { successState: 'partial' } });
 });
@@ -154,7 +154,7 @@ test('insufficient worker/validator budget fails before feature effects', async 
   const paths = await workspace(); let jobs = 0;
   const fixture = scenario(paths.cwd, [feature()], () => { jobs++; return done(); });
   const result = await runAgent({ ...paths, prompt: 'mission', provider: fixture.provider, autonomy: 'high', interactionMode: 'mission', subagents: { maxAgents: 2 } });
-  expect(jobs).toBe(0); expect(result).toMatchObject({ ok: true, mission: { state: 'planning', completed: 0 } });
+  expect(jobs).toBe(0); expect(result).toMatchObject({ ok: true, mission: { state: 'paused', completed: 0 } });
 });
 
 test('handoffs are structurally checked and bound to the assigned feature', () => {
@@ -310,7 +310,7 @@ test('insufficient model-call budget fails before feature effects', async () => 
   // The orchestrator uses 4 calls to propose, plan and start; the run needs 1 + 2*2 = 5 more.
   const result = await runAgent({ ...paths, prompt: 'mission', provider: fixture.provider, autonomy: 'high', interactionMode: 'mission', subagents: { maxModelCalls: 6 } });
   expect(jobs).toBe(0);
-  expect(result.mission?.state).toBe('planning');
+  expect(result.mission?.state).toBe('paused');
   expect(await readFile(join(paths.cwd, 'calc.ts'), 'utf8')).toContain('return a - b');
 });
 

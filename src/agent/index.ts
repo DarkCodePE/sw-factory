@@ -6,3 +6,4 @@ export type * from './types.ts';
 
 export { resolveExecutionPolicy, type ExecutionPolicy, type PermissionMode } from './execution-policy.ts';
 export type { SettingsChanges, SettingsPolicy, SettingsProposal } from './staged-settings.ts';
+export type { MissionProgressSnapshot, MissionPauseReason } from './mission-contract.ts';
