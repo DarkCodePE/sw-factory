@@ -4,9 +4,11 @@ Historial detallado de versiones de `sw-factory` desde la etiqueta base `c3eff63
 
 ---
 
-## [Sin publicar] — 2026-10-22 (`59a20c3`)
+## [Sin publicar] — 2026-10-22 (`b3fd772`)
 
 ### Novedades
+- **Script durable y `WaitForScript`:** un Script que supera 30 s devuelve `running` con su `toolCallId` y sigue ejecutándose en segundo plano (`await: true` observa hasta 10 min); `WaitForScript { toolCallId, timeoutMs?, kill? }` lee la salida acumulada, espera o mata el run y drena sus llamadas anidadas antes de responder. Hasta 4 runs vivos, búfer de 5 MiB por run, 20 notificaciones; los runs terminados y los `notify()` sin espera llegan al modelo en el siguiente límite de turno; al cerrar o abortar se cancelan y drenan; `backgroundScripts` persiste la salida en la sesión. Eventos `script_started`, `script_notified`, `script_completed` (`src/agent/script-runs.ts`, `src/script-runtime/run.ts`).
+- **Flags de `fab exec`:** `--add-tools` (ids y selectores `MCP:<servidor>[/<tool>]`, orden only → add → remove), `--spec-model` y `--spec-reasoning-effort` (proveedor propio mientras dura el modo spec), `--worker-reasoning-effort` y `--validator-reasoning-effort`, `-w/--worktree [nombre]` con raíz `worktreeDirectory` (worktree bajo `<raíz>/<8 hex>/<repo>/`, rama `<actual>-wt` por defecto, nunca borra worktrees ajenos), `--worktree-dir` (deprecado, con aviso), `--session-title`, `--disable-builtin-skills` (sin efecto: fab no trae skills integradas). `fab chat` acepta `--worktree` y `--add-tools` (`src/agent/exec-flags.ts`, `src/agent/exec-worktree.ts`).
 - **Mission Control:** el motor de misiones emite `mission_feature_updated`, `mission_milestone_validated`, `mission_paused` y `mission_progress` con un `MissionProgressSnapshot` (features por milestone, validadores, workers con tokens y duración); el host puede pausar un run con `mission.pauseSignal` sin abortar el turno del orquestador (`src/agent/mission.ts`, `src/agent/mission-pause.ts`, `src/agent/mission-progress.ts`).
 - **TUI `/mission`:** panel de orquestación (`status`), `pause [mensaje]` a mitad de run desde la terminal, `resume [mensaje]`, `workers [id]`, `log [n]`, `list` para reanudar misiones pasadas; Ctrl+T alterna el panel y la barra de estado muestra `misión: <estado> <hechas>/<total>` (`src/chat/mission-view.ts`, `src/chat/mission-commands.ts`).
 - Catálogo de herramientas completado tras la captura REA con login (30 ids): ExitSpecMode, StageSettingsChanges, ApplyPatch, Execute en segundo plano, Loop, FetchUrl, WebSearch.
