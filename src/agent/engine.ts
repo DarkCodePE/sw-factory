@@ -70,7 +70,7 @@ export async function runCodingAgent(opts: AgentOptions, inherited?: AgentLineag
     const cwd = await realpath(opts.cwd);
     const context: ToolContext = { cwd, signal: controller.signal, autonomy: executionPolicy.effectiveAutonomy, executionPolicy,
       interactionMode: opts.interactionMode ?? 'auto', sandbox: opts.sandbox ?? 'required', networkPolicy: networkPolicy(opts.networkPolicy),
-      fileJournal: inherited ? undefined : opts.fileJournal, requireReadBeforeEdit: opts.requireReadBeforeEdit, fileReads: new Map(), sessionDir: opts.sessionDir };
+      fileJournal: inherited ? undefined : opts.fileJournal, requireReadBeforeEdit: opts.requireReadBeforeEdit, fileReads: new Map(), sessionDir: opts.sessionDir, searchConfig: opts.searchConfig };
     if (!['off', 'low', 'medium', 'high'].includes(context.autonomy) || !['auto', 'spec', 'mission'].includes(context.interactionMode)) {
       throw new Error('Invalid agent autonomy or interaction mode');
     }

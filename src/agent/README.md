@@ -72,7 +72,7 @@ Por defecto, la ejecución en sandbox carece de interfaces de red externas (`--u
   - `deny`: Bloquea permanentemente todo intento de red para el comando.
   - `ask`: Solicita aprobación interactiva al usuario antes del spawn del subproceso.
   - `auto`: Concede acceso a red automáticamente **únicamente bajo autonomía `high`**. En niveles `off`, `low` o `medium`, solicita aprobación interactiva.
-- **Alcance de `networkPolicy`:** La política de red aplica específicamente a los comandos ejecutados por `Execute` dentro del sandbox. No rige el transporte HTTP del proveedor del modelo ni los servidores MCP (MCP stdio usa `allowNetwork: true` en su configuración; MCP HTTP utiliza su propio transporte HTTP).
+- **Alcance de `networkPolicy`:** La política de red aplica a los comandos ejecutados por `Execute` dentro del sandbox y a las solicitudes HTTP externas realizadas por la herramienta `WebSearch`. No rige el transporte HTTP del proveedor del modelo ni los servidores MCP (MCP stdio usa `allowNetwork: true` en su configuración; MCP HTTP utiliza su propio transporte HTTP).
 
 ### 3. Matriz de Ejecución de `Execute`
 
@@ -204,9 +204,35 @@ El adaptador nativo soporta el lanzamiento y control de procesos en segundo plan
 
 ---
 
+## Búsqueda Web (`WebSearch`)
+
+El runtime incorpora la herramienta `WebSearch` (`src/agent/web-search.ts`), clasificada como operación de lectura (`effect: 'read'`):
+
+- **Parámetros de invocación:**
+  - `query`: Cadena de búsqueda (obligatoria, acotada a un máximo de 512 caracteres).
+  - `maxResults`: Número máximo de resultados a retornar (entero entre 1 y 20, por defecto 5).
+- **Formato del resultado:** Devuelve una lista de resultados `[{ title: string, url: string, snippet: string, external: true }]` junto al identificador del proveedor utilizado (`provider: string`). El atributo `external: true` identifica explícitamente contenido originado fuera de los límites del host.
+- **Proveedores configurables (sin clave ni endpoint remoto por defecto):**
+  - `searxng`: Configurado mediante `FABRICA_SEARCH_PROVIDER=searxng` y URL del motor en `FABRICA_SEARCH_URL` (o mediante `searchConfig`). Consume la API JSON nativa (`format=json`).
+  - `brave`: Configurado mediante `FABRICA_SEARCH_PROVIDER=brave` y clave en `FABRICA_SEARCH_API_KEY` (opcionalmente URL alternativa en `FABRICA_SEARCH_URL`). Autentica mediante cabecera `X-Subscription-Token`.
+  - `none` / ausente: Si no se configuran variables de entorno ni opciones de búsqueda, la herramienta aparece en el catálogo (`describeTool`) con `defaultAllowed: false` y `currentlyAllowed: false` (marcada como no disponible), y cualquier intento de invocación falla de inmediato con error explícito sin simular resultados.
+- **Integración con Política de Red (`networkPolicy`):**
+  - Reutiliza la misma compuerta de seguridad que `Execute` con solicitud de red:
+    - `deny`: Bloquea permanentemente la llamada con error explicativo.
+    - `ask`: Solicita confirmación interactiva al operador antes de despachar la petición HTTP.
+    - `auto`: Concede la conexión automáticamente únicamente bajo autonomía `high`; en niveles `off`, `low` o `medium` requiere confirmación interactiva.
+  - **Modo Spec (`--use-spec`):** Dado que `WebSearch` es una herramienta de lectura pura (`effect: 'read'`), no es bloqueada por la barrera de mutaciones de spec mode, pero su acceso externo permanece estrictamente gobernado por la política de red (`auto` en `high` o aprobación interactiva en `ask`).
+- **Límites de Seguridad y Red:**
+  - **Timeout estricto:** Acotado mediante `AbortSignal.timeout(15_000)` (15 segundos).
+  - **Respuesta acotada:** Streaming con interrupción forzada a los 64 KiB; si la respuesta del proveedor supera 64 KiB, se aborta y se rechaza la llamada.
+  - **Validación de redirecciones:** Manejador manual de redirecciones HTTP (máximo 5 saltos) que restringe los esquemas admisibles exclusivamente a `http:` y `https:`, impidiendo accesos mediante `file:`, `data:` u otros protocolos no previstos, y detectando ciclos de redirección.
+  - **Protección de Credenciales:** La clave de API y tokens de autenticación se enmascaran en el transporte y nunca se exponen en eventos de progreso, mensajes de error, logs de depuración ni snapshots de sesión persistidos en disco.
+
+---
+
 ## Subagentes y Confinamiento
 
-- **Catálogo de herramientas:** `Read`, `LS`, `Create`, `Edit`, `ApplyPatch`, `ExitSpecMode` (solo spec raíz), `StageSettingsChanges`, `Glob`, `Grep`, `Execute`, `Loop`, `FetchUrl`, `Script`, `TodoWrite`, `AskUser`, `Skill`, `ToolSearch` y herramientas de subagentes (`src/agent/catalog.ts`).
+- **Catálogo de herramientas:** `Read`, `LS`, `Create`, `Edit`, `ApplyPatch`, `ExitSpecMode` (solo spec raíz), `StageSettingsChanges`, `Glob`, `Grep`, `Execute`, `Loop`, `FetchUrl`, `WebSearch`, `Script`, `TodoWrite`, `AskUser`, `Skill`, `ToolSearch` y herramientas de subagentes (`src/agent/catalog.ts`).
 - **Subagentes (`Task`, `SpawnAgent`):** Generan clones aislados fuera del workspace del proceso padre. Copian el estado del árbol de trabajo (incluyendo modificaciones sin commit). Comparten presupuestos: profundidad máxima 2, hasta 8 subagentes por sesión, concurrencia máxima 2 y 256 llamadas acumuladas al proveedor. Los subagentes en background se drenan y cancelan al finalizar la invocación.
 - **Advertencia sobre Skills y Enlaces Simbólicos:** La interfaz TUI (`/skill`) resuelve enlaces simbólicos internos en `.agents/skills`; sin embargo, la herramienta `Skill` del agente utiliza el acceso anclado por descriptor que rechaza enlaces simbólicos de directorio (`src/agent/files.ts:23`).
 
@@ -243,7 +269,7 @@ bun test
 bunx tsc --noEmit -p .
 ```
 
-La suite consolidada de la base anterior registró **252 pruebas unitarias pasando (252 pass, 0 fail)** en **29 archivos de prueba** con **1.481 aserciones** verificadas (`expect()`).
+La suite consolidada registra **298 pruebas unitarias pasando (298 pass, 0 fail)** en **35 archivos de prueba** con **1.823 aserciones** verificadas (`expect()`).
 
 
 ## Herramientas de modo, propuestas y patches

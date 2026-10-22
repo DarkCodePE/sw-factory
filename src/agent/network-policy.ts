@@ -1,4 +1,4 @@
-import type { Autonomy, InteractionMode } from './types.ts';
+import type { Autonomy, InteractionMode, ToolEffect } from './types.ts';
 
 export const NETWORK_POLICIES = ['auto', 'ask', 'deny'] as const;
 export type NetworkPolicy = typeof NETWORK_POLICIES[number];

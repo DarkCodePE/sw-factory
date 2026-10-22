@@ -50,6 +50,7 @@ export interface ToolContext {
   fileJournal?: FileJournal;
   sessionDir?: string;
   tasks?: import('./tasks.ts').TaskManager;
+  searchConfig?: import('./web-search.ts').SearchConfig;
 }
 export interface FileSnapshot { data: Uint8Array; mode: number }
 export interface FileMutation { path: string; before?: FileSnapshot; after: Uint8Array; mode: number }
@@ -58,10 +59,11 @@ export interface FileJournal {
   prepare(change: FileMutation, context: ToolContext): Promise<(applied: FileSnapshot) => Promise<void>>;
   barrier(toolName: string, context: ToolContext): Promise<void>;
 }
+export type ToolEffect = 'read' | 'write' | 'execute' | 'control';
 export interface AgentTool {
   schema: ToolSchema;
   /** Only read-only tools may be scheduled concurrently. */
-  effect: 'read' | 'write' | 'execute' | 'control';
+  effect: ToolEffect;
   run(input: unknown, context: ToolContext): Promise<unknown>;
 }
 export interface AgentEvent {
@@ -118,6 +120,7 @@ export interface AgentOptions {
   subagents?: { maxDepth?: number; maxAgents?: number; maxConcurrency?: number; maxModelCalls?: number; maxProcessConcurrency?: number; maxProcessOutputBytes?: number };
   maxBackgroundProcesses?: number;
   maxProcessOutputBytes?: number;
+  searchConfig?: import('./web-search.ts').SearchConfig;
   mcpServers?: Record<string, import('./mcp.ts').McpConfig>;
   permissionHandler?: (request: PermissionRequest, context: ToolContext) => Promise<'proceed_once' | 'cancel'>;
   askUserHandler?: (request: { questions: UserQuestion[] }, context: ToolContext) => Promise<UserAnswers>;

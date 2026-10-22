@@ -8,6 +8,7 @@ import { wrapCommand } from '../sandbox/index.ts';
 import { runScript } from '../script-runtime/index.ts';
 import { runProcess } from './process.ts';
 import { requestsNetwork } from './network-policy.ts';
+import { webSearchTool } from './web-search.ts';
 import type { AgentTool, FileMutation, ToolContext } from './types.ts';
 
 export function inputObject(input: unknown): Record<string, unknown> {
@@ -312,6 +313,7 @@ export function builtinTools(permissionMode: 'standard' | 'yolo' = 'standard'): 
       permissionMode === 'yolo'
         ? 'Run /bin/sh -c on the host, with shell pipelines, redirections and host network, without approvals. network is advisory: false does not disable host networking. File access has the user account permissions. Output and runtime remain bounded. Set background:true to run in the background and return taskId and pid immediately.'
         : 'Run in workspace cwd with captured stdout/stderr. Network is blocked by default: set network:true when the command needs a remote service such as Jira, curl or package downloads. This requests permission; it does not grant it. A failed offline command is never replayed automatically. Medium accepts simple development commands and && sequences, including an optional cd <workspace> prefix. Omit pipelines, redirections and || at medium. Each command is checked independently; the sequence stops on failure. riskLevel is advisory. Set background:true to run long-running commands in the background without blocking, returning taskId and pid immediately for inspection via TaskOutput/TaskStop.'),
+    webSearchTool(),
   ];
 }
 

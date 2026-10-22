@@ -94,10 +94,11 @@ export class ToolRuntime {
       if (context.interactionMode === 'spec' && t.effect === 'write') throw new Error('Spec mode denies workspace mutations');
       if (context.interactionMode === 'spec' && t.effect === 'execute' && !['Script', 'Execute', 'Task', 'SpawnAgent'].includes(name)) throw new Error('Spec mode denies unrestricted execution tools');
       if (opts.beforeTool && !await abortable(opts.beforeTool(actual), context.signal)) throw new Error('Tool denied by caller policy');
-      const requested = name === 'FetchUrl' || name === 'Execute' && requestsNetwork(input);
+      const netTool = name === 'FetchUrl' || name === 'WebSearch';
+      const requested = netTool || name === 'Execute' && requestsNetwork(input);
       const policy = networkPolicy(context.networkPolicy);
-      const network = networkDecision(requested, policy, context.autonomy, context.interactionMode, name === 'FetchUrl');
-      const networkEvent = (decision: string) => { if (requested) opts.onEvent?.({ type: 'network_permission', sessionId: state.id ?? '', toolUseId: actual.id, policy, decision, access: name === 'FetchUrl' ? 'http_url' : 'host', scope: 'this_call', toolName: name }); };
+      const network = networkDecision(requested, policy, context.autonomy, context.interactionMode, netTool);
+      const networkEvent = (decision: string) => { if (requested) opts.onEvent?.({ type: 'network_permission', sessionId: state.id ?? '', toolUseId: actual.id, policy, decision, access: netTool ? 'http_url' : 'host', scope: 'this_call', toolName: name }); };
       if (network === 'deny') { networkEvent('denied'); throw new Error(name + ' network access denied by policy or spec mode'); }
       const allowedCommand = name !== 'Execute' || executeAllowed(input, context);
       const needsApproval = !yolo && (network === 'ask' || t.effect === 'write' && context.autonomy === 'off' ||
