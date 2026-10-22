@@ -39,7 +39,7 @@
       "sha256": "ba5fe52231057713658440366ca74d6a19ae77360f9c2829d3169d6c9dc3d393"
     },
     {
-      "path": "src/script-runtime/durable-evidence/catalog-check.json",
+      "path": "docs/evidence/script-durable/catalog-check.json",
       "sha256": "ae73fdcd800ee38feae8add9c1fae27af7e65682ceb254862cee20767a4b4982"
     },
     {
