@@ -1,6 +1,9 @@
 #!/usr/bin/env sh
-# fab installer: curl -fsSL https://raw.githubusercontent.com/DarkCodePE/sw-factory/main/install.sh | sh
-# Downloads the release binary for this OS/arch, verifies its SHA-256 and installs it in ~/.local/bin.
+# NOTA DE DEPRECACIÓN: Este instalador legado en la raíz no soporta canales (stable/prerelease),
+# paginación SemVer ni reemplazo atómico mediante staging.
+# El instalador oficial y mantenido es `scripts/install.sh`:
+#   curl -fsSL https://raw.githubusercontent.com/DarkCodePE/sw-factory/main/scripts/install.sh | sh -s -- --channel prerelease
+# Este archivo se conserva temporalmente por compatibilidad histórica; se recomienda utilizar exclusivamente scripts/install.sh.
 set -eu
 REPO="${FAB_REPO:-DarkCodePE/sw-factory}"
 VERSION="${FAB_VERSION:-latest}"

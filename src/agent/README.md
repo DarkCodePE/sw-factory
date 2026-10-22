@@ -56,6 +56,52 @@ Generada directamente a partir de la especificación de argumentos en `src/agent
 
 ---
 
+## Políticas de Ejecución, Red Opt-in y Modo YOLO
+
+### 1. Resolución de Autoridad (`src/agent/execution-policy.ts`)
+La política de ejecución se resuelve al inicializar el agente y devuelve un objeto inmutable congelado (`Object.freeze`):
+- **Modo Standard (por defecto):** Confinamiento estricto en sandbox `bwrap` (Linux) y política de red predeterminada offline para comandos.
+- **Modo YOLO (`--yolo`):** Habilita ejecución en host (`/bin/sh -c`), acceso libre a red host y omisión de prompts interactivos (`permission_bypass`).
+  - **Efímero por diseño:** El modo YOLO aplica únicamente a la invocación actual. **Nunca se persiste en la sesión ni en el snapshot**, por lo que reanudar con `--session-id` o bifurcar con `--fork` vuelve al modo standard (`tests/yolo-interfaces.test.ts:51`).
+  - **El modelo no puede auto-otorgarse YOLO:** La autoridad proviene de las opciones CLI del anfitrión (`src/agent/exec.ts:58`). Los requests JSON-RPC rechazan explícitamente campos como `yolo`, `permissionMode` o `executionPolicy` con código `-32602` (`src/agent/rpc.ts:64`).
+
+### 2. Red Opt-in para la Herramienta `Execute` (`src/agent/network-policy.ts`)
+Por defecto, la ejecución en sandbox carece de interfaces de red externas (`--unshare-net`):
+- El modelo puede emitir `Execute` con el parámetro `network: true`. Este parámetro es una **solicitud**, no una concesión automática.
+- La política de red (`--sandbox-network` o comando `/network` en TUI) decide:
+  - `deny`: Bloquea permanentemente todo intento de red para el comando.
+  - `ask`: Solicita aprobación interactiva al usuario antes del spawn del subproceso.
+  - `auto`: Concede acceso a red automáticamente **únicamente bajo autonomía `high`**. En niveles `off`, `low` o `medium`, solicita aprobación interactiva.
+- **Alcance de `networkPolicy`:** La política de red aplica específicamente a los comandos ejecutados por `Execute` dentro del sandbox. No rige el transporte HTTP del proveedor del modelo ni los servidores MCP (MCP stdio usa `allowNetwork: true` en su configuración; MCP HTTP utiliza su propio transporte HTTP).
+
+### 3. Matriz de Ejecución de `Execute`
+
+| Modo | Autonomía | `network: false` (o ausente) | `network: true` | Comportamiento en Sandbox |
+| :--- | :--- | :--- | :--- | :--- |
+| **Standard** | `off`, `low`, `medium` | Sin red (offline) | Pregunta al usuario (`ask`); error si no hay TTY | Sandbox requerido; no cambia la política general. |
+| **Standard** | `high` (política `auto`) | Sin red (offline) | Permitido automáticamente con red | Sandbox requerido con namespace de red habilitado. |
+| **Standard** | Cualquiera (`deny` o `spec`) | Sin red (offline) | Rechazado | El comando no se ejecuta. |
+| **YOLO** | Forzado a `high` efectivo | Red host | Red host | Sin sandbox `bwrap`, shell anfitrión `/bin/sh -c`. |
+
+### 4. Ámbitos que Suspenden o Reducen YOLO
+Incluso si la sesión fue iniciada con `--yolo`, existen ámbitos protegidos que degradan automáticamente la autoridad a `standard / spec / required / deny` (`src/agent/execution-policy.ts:34`):
+- **Modo Spec (`--use-spec` o `/mode spec`):** Bloquea escrituras y red.
+- **Consulta lateral `/btw`:** Ejecuta en modo spec con autonomía `off` sin permisos interactivos.
+- **Subagentes `explore` (`Task` con rol explore):** Confinados en modo spec de solo lectura y sandbox requerido.
+- **Validadores de Misión (`--mission`):** Los validadores operan estrictamente en solo lectura con sandbox requerido y sin red. *(Advertencia de seguridad: Aunque los validadores operan aislados, un worker ejecutado en YOLO sobre el shell del host tiene acceso a los procesos del sistema; la separación de validadores en YOLO es lógica en el orquestador, no una barrera del kernel frente a un worker host malicioso).*
+
+---
+
+## Niveles de Autonomía y Permisos
+
+El parámetro `--auto <nivel>` (y `/auto` en TUI) configura la compuerta de herramientas:
+- **`off`:** Las operaciones mutadoras (`Create`, `Edit`) y la ejecución de comandos shell (`Execute`) requieren aprobación interactiva del usuario (`proceed_once` o `cancel`). **Aclaración importante:** Las herramientas puramente de lectura (`Read`, `LS`, `Glob`, `Grep`) y el diálogo interactivo de preguntas (`AskUser`) no pasan por `permissionHandler` y no requieren aprobación en `off`.
+- **`low`:** Permite herramientas básicas de edición; comandos shell continúan requiriendo confirmación.
+- **`medium`:** Permite comandos de desarrollo simples y encadenamientos seguros (`cd <dir> && npm test`).
+- **`high`:** Permite ejecución autónoma de comandos shell y concesión automática de red (si la política es `auto`).
+
+---
+
 ## Protocolo JSON-RPC y Métodos Soportados
 
 El runtime expone un servidor bidireccional sobre NDJSON (`src/agent/rpc.ts`) con **11 métodos implementados**:
@@ -125,22 +171,42 @@ La interfaz interactiva (`src/chat/commands.ts:3-52`) registra **36 comandos loc
 
 ---
 
-## Herramientas, Aislamiento y Subagentes
+## Rebobinado de Archivos (`/rewind` en `src/chat/checkpoints.ts`)
 
-- **Catálogo base de herramientas:** `Read`, `LS`, `Create`, `Edit`, `Glob`, `Grep`, `Execute`, `Script`, `TodoWrite`, `AskUser`, `Skill`, `ToolSearch` y herramientas de subagentes (`src/agent/catalog.ts`).
-- **Seguridad en filesystem:** `Read` exige rutas absolutas. `Read` y `Edit` abren descriptores sin seguir symlinks arbitrarios; los reemplazos son atómicos para prevenir condiciones de carrera. `Create` formatea con salto de línea terminal.
-- **Subagentes (`Task`, `SpawnAgent`):** Generan clones aislados fuera del workspace del proceso padre. Copian el estado actual del árbol de trabajo, incluyendo modificaciones sin commit y adiciones. Comparten presupuestos estrictos: profundidad máxima 2, hasta 8 subagentes por sesión, concurrencia máxima 2 y 256 llamadas acumuladas al proveedor. Los clones en segundo plano se cancelan y drenan automáticamente al terminar la invocación principal.
+- **Estado: IMPLEMENTADO (Archivos):** El comando `/rewind`, `/rewind list` o `/rewind <id>` restaura de manera determinista los archivos alterados o creados por las herramientas `Edit` y `Create`. Utiliza un journal privado ubicado fuera del workspace (`~/.fabrica/prompt-history/`) con registros de intención y verificación de hashes SHA-256 antes y después de cada escritura.
+- **Límites conocidos:**
+  - **No revierte `Execute`:** La ejecución de comandos shell mediante `Execute` coloca una barrera permanente en el journal que invalida la restauración a checkpoints anteriores al comando.
+  - **No revierte la conversación:** No es un rewind de los turnos de diálogo ni de los mensajes enviados al modelo (el comando sin backend `/rewind-conversation` lo advierte explícitamente).
+
+---
+
+## Subagentes y Confinamiento
+
+- **Catálogo de herramientas:** `Read`, `LS`, `Create`, `Edit`, `Glob`, `Grep`, `Execute`, `Script`, `TodoWrite`, `AskUser`, `Skill`, `ToolSearch` y herramientas de subagentes (`src/agent/catalog.ts`).
+- **Subagentes (`Task`, `SpawnAgent`):** Generan clones aislados fuera del workspace del proceso padre. Copian el estado del árbol de trabajo (incluyendo modificaciones sin commit). Comparten presupuestos: profundidad máxima 2, hasta 8 subagentes por sesión, concurrencia máxima 2 y 256 llamadas acumuladas al proveedor. Los subagentes en background se drenan y cancelan al finalizar la invocación.
+- **Advertencia sobre Skills y Enlaces Simbólicos:** La interfaz TUI (`/skill`) resuelve enlaces simbólicos internos en `.agents/skills`; sin embargo, la herramienta `Skill` del agente utiliza el acceso anclado por descriptor que rechaza enlaces simbólicos de directorio (`src/agent/files.ts:23`).
 
 ---
 
 ## Misiones Autónomas (`--mission`)
 
-En modo misión (`--mission --auto high`), el runtime habilita las herramientas de coordinación `ProposeMission`, `StartMissionRun`, `DismissHandoffItems` y `EndFeatureRun`.
+En modo misión (`--mission --auto high`), el runtime habilita `ProposeMission`, `StartMissionRun`, `DismissHandoffItems` y `EndFeatureRun`.
 
 Cada característica definida en `features.json` establece un contrato estricto:
 - `verificationCommands`: Comandos deterministas ejecutados por el **propio runner** en un sandbox aislado sin red y sobre una copia desechable del código.
 - `protectedPaths`: Archivos que los workers tienen estrictamente prohibido alterar (ej. suites de test de referencia). Si un worker muta una ruta protegida, la misión se detiene inmediatamente antes de la validación.
 - **Validación dual:** Dos validadores independientes inspeccionan cada hito en solo lectura; si alguno reporta anomalías o no ejecuta al menos una comprobación exitosa, el hito no se aprueba.
+
+---
+
+## Alcance Pendiente Honesto
+
+Las siguientes capacidades permanecen sin implementar o fuera de alcance:
+1. **Herramientas de agente:** `loop-cli` (bucle autónomo en turno), `exit-spec-mode` como herramienta invocable por el modelo, `stage_settings_changes`, herramienta `ApplyPatch`, `Execute` desacoplado en background y Script durable con `WaitForScript`.
+2. **Crash Recovery de misiones:** Reconciliación automática y journal duradero tras caída intempestiva del proceso del runner.
+3. **Protocolos:** Entrada interactiva multiturno mediante `stream-json` y protocolo ACP. El demonio en puerto 37643 y SDKs remotos permanecen fuera de alcance.
+4. **MCP:** Autenticación OAuth, transporte SSE de versión previa y actualización de catálogo en caliente.
+5. **Aislamiento en plataformas no-Linux:** En macOS no existen namespaces de Linux (`bwrap`); las herramientas operan sin confinamiento de kernel equivalente.
 
 ---
 

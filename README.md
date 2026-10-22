@@ -13,7 +13,7 @@ signal ──triage──▶ change ──▶ [Gate 1: Revisión del change] ─
 
 - **Estado y persistencia:** Base de datos SQLite local (`$FABRICA_HOME/fabrica.db`, por defecto `~/.fabrica/fabrica.db`).
 - **Aislamiento por change:** Un `git worktree` dedicado por cada unidad de cambio en la rama `fab/<id>`.
-- **Agentes soportados:** Agente autónomo propio `native`; adaptadores externos desatendidos (`claude`, `codex`, `agy`) y adaptador determinista `fake` para suites de prueba.
+- **Agentes soportados:** Agente autónomo propio `native`; adaptadores externos (`claude`, `codex`, `agy`, `droid`) y adaptador determinista `fake` para suites de prueba (`src/agents.ts:110`).
 - **Resiliencia:** Reintentos automáticos configurables (hasta 3 por actividad) y recuperación de actividades huérfanas al reiniciar el servicio.
 
 ---
@@ -160,16 +160,18 @@ En entornos Linux, los comandos de herramientas (`Execute`, `Script`) se ejecuta
 
 ### Permisos de red por llamada
 
-Por defecto, la ejecución de comandos en sandbox bloquea todo tráfico de red. La política `--sandbox-network` permite granularidad por invocación:
+Por defecto, la ejecución de comandos en sandbox bloquea todo tráfico de red. La política `--sandbox-network` permite granularidad por invocación para la herramienta `Execute`:
 - `deny`: Bloquea permanentemente el acceso a red.
 - `ask`: Solicita confirmación explícita del usuario cuando una herramienta requiere red.
 - `auto`: Concede red automáticamente únicamente bajo autonomía `high`; en niveles inferiores requiere confirmación humana.
+- *Alcance:* Aplica a comandos confinados en sandbox. No rige las llamadas HTTP del proveedor del modelo ni el transporte de servidores MCP.
 
 ### Modo YOLO (`--yolo`)
 
 El flag `--yolo` (y el comando informativo `/yolo` en TUI) habilita la ejecución directa sobre el anfitrión y acceso libre a red, omitiendo solicitudes interactivas de aprobación:
 - **Ámbito estrictamente efímero:** Aplica únicamente a la invocación actual; **nunca se persiste** en la sesión guardada ni al reanudar mediante `--session-id` o `--fork`.
 - **Restricciones preservadas:** El modo de solo lectura (`spec`), el subcomando de consulta lateral `/btw`, y las fases de validación de misiones continúan aplicando sus restricciones de seguridad aunque `--yolo` esté activo. Consulte [docs/design-yolo-mode.md](docs/design-yolo-mode.md).
+- **Advertencia de contención:** La separación de validadores en misiones bajo YOLO es lógica en el orquestador; un worker ejecutado en YOLO sobre el shell del host tiene acceso al entorno del sistema anfitrión.
 
 ---
 
@@ -185,6 +187,7 @@ El flag `--yolo` (y el comando informativo `/yolo` en TUI) habilita la ejecució
 - `claude`: Invoca Claude Code en modo print (`claude -p`).
 - `codex`: Invoca Codex CLI utilizando el sandbox seguro de escritura `--sandbox workspace-write` (integrado desde la versión RC.1).
 - `agy`: Invoca Antigravity CLI de Google AI en modo headless (`agy -p`).
+- `droid`: Invoca una CLI compatible externa en modo print (`droid exec`).
 - `fake`: Adaptador determinista en memoria para pruebas de integración sin consumo de API.
 
 ---

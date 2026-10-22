@@ -1,8 +1,11 @@
 # Script runtime
 
 Implementación propia desde el contrato documentado en el informe 08; sin código
-del runtime propietario. Requiere Bun. Importar `runScript` y los tipos desde
-`./src/script-runtime/index.ts`.
+del runtime propietario. El desarrollo desde fuentes o la importación programática directa
+desde TypeScript requiere Bun (`./src/script-runtime/index.ts`). En los binarios autónomos
+distribuidos (`dist/fab`) y el paquete global npm `@okuanb/fab`, el runtime de Bun se encuentra
+embebido y no requiere Bun preinstalado en el anfitrión; el ejecutable relanza el worker
+mediante el subcomando oculto `__script-worker` (`src/self.ts:14`, `src/script-runtime/run.ts:59`).
 
 ```ts
 const result = await runScript({
@@ -12,8 +15,8 @@ const result = await runScript({
 });
 ```
 
-Cada llamada inicia `worker.ts` mediante `Bun.spawn`, con entorno vacío salvo
-`PATH`, sin cargar `.env`, y termina/recolecta ese proceso al obtener resultado,
+Cada llamada inicia el subproceso worker (`worker.ts` desde fuentes, o `__script-worker` en compilados),
+con entorno vacío salvo `PATH`, sin cargar `.env`, y termina/recolecta ese proceso al obtener resultado,
 error o timeout. Protocolo NDJSON v1, máximo **10 MiB UTF-8 por frame** sin contar
 el salto de línea. Handshake `ready`, una única `evaluate`, `evaluation_started`,
 `tool_call`/`tool_result`, `content`, `notify` y terminal `result`/`error`.
