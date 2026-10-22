@@ -19,7 +19,7 @@ import { Checkpoints } from './checkpoints.ts';
 import { PromptHistory } from './history.ts';
 import type { FileChange } from './render.ts';
 import type { StatusState } from './presentation.ts';
-import { SessionStore } from '../agent/session.ts';
+import { handleMissionCommand } from './mission-commands.ts';
 import { MissionTracker, formatMissionEvent } from './mission-view.ts';
 
 export interface ChatIO {
@@ -102,6 +102,21 @@ export class ChatController {
   toggleDetail() { this.detailed = !this.detailed; this.io.expand?.(this.detailed); }
   async syncHistory() { this.io.setHistory?.(await new PromptHistory(this.options.home, this.cwd).load()); }
   interrupt() { this.active?.abort(new Error('Interrumpido por el usuario')); }
+  get activeSignal() { return this.active?.signal; }
+  clearActive() { this.active = undefined; }
+  pauseMission(subArg?: string): boolean {
+    if (!this.missionTracker.activeRun || !this.missionPauseController) {
+      this.print('No hay una misión en ejecución activa para pausar.');
+      return false;
+    }
+    if (subArg) this.missionMailbox.push(subArg);
+    this.missionPauseController.abort(new Error('Misión pausada por el usuario'));
+    this.missionTracker.state = 'paused';
+    if (this.missionTracker.snapshot) this.missionTracker.snapshot.state = 'paused';
+    this.print('Pausa solicitada al orquestador' + (subArg ? `: ${subArg}` : ''));
+    this.io.update?.(this.statusState);
+    return true;
+  }
   provider(config = this.config) {
     if (this.options.providerFor) return this.options.providerFor(config.model, config.reasoning);
     const configured = configuredProviders({ ...this.settings, modelId: config.model }, {
@@ -325,13 +340,7 @@ export class ChatController {
       if (input.kind === 'command' && input.name === 'mission' && input.arg.trim().startsWith('pause')) {
         const [, ...rest] = input.arg.trim().split(/\s+/);
         const subArg = rest.join(' ').trim();
-        if (subArg) this.missionMailbox.push(subArg);
-        this.missionPauseController?.abort(new Error('Misión pausada por el usuario'));
-        this.missionTracker.state = 'paused';
-        if (this.missionTracker.snapshot) this.missionTracker.snapshot.state = 'paused';
-        this.print('Pausa solicitada al orquestador' + (subArg ? `: ${subArg}` : ''));
-        this.io.update?.(this.statusState);
-        return true;
+        return this.pauseMission(subArg);
       }
       throw new Error('Hay una operación en curso');
     }
@@ -422,193 +431,7 @@ export class ChatController {
         }
         case 'handoff': this.sessionId = await forkSession(this.sessionDir, this.requireSession(), this.cwd, async s => { await compressSession(s, this.provider(), this.active!.signal, arg); }); this.resetStagedSettings(); this.print(this.status()); break;
         case 'btw': if (!arg) throw new Error('/btw <pregunta>'); await this.runPrompt(arg, true); break;
-        case 'mission': {
-          const [sub, ...rest] = (arg || 'status').trim().split(/\s+/);
-          const subArg = rest.join(' ').trim();
-          switch (sub) {
-            case 'status': {
-              if (!this.missionTracker.hasMission && this.sessionId) {
-                try {
-                  const store = await SessionStore.create(this.sessionDir);
-                  const s = await store.inspect(this.sessionId);
-                  if (s.mission) {
-                    this.missionTracker.state = s.mission.state;
-                    this.missionTracker.directory = s.mission.directory;
-                    this.missionTracker.missionId = s.mission.missionId;
-                  }
-                } catch {}
-              }
-              if (!this.missionTracker.hasMission) {
-                this.print('No hay una misión activa en esta sesión. Usa /mode mission con /auto high para iniciar una.');
-              } else {
-                this.print(this.missionTracker.renderPanel(80, this.config.theme === 'plain'));
-              }
-              break;
-            }
-            case 'pause': {
-              if (!this.missionTracker.activeRun || !this.missionPauseController) {
-                this.print('No hay una misión en ejecución activa para pausar.');
-              } else {
-                if (subArg) this.missionMailbox.push(subArg);
-                this.missionPauseController.abort(new Error('Misión pausada por el usuario'));
-                this.missionTracker.state = 'paused';
-                if (this.missionTracker.snapshot) this.missionTracker.snapshot.state = 'paused';
-                this.print('Pausa solicitada al orquestador' + (subArg ? `: ${subArg}` : ''));
-                this.io.update?.(this.statusState);
-              }
-              break;
-            }
-            case 'resume': {
-              if (this.missionTracker.activeRun) throw new Error('La misión ya está en ejecución');
-              if (this.missionTracker.state !== 'paused' && this.missionTracker.state !== 'orchestrator_turn') {
-                throw new Error('Solo se puede reanudar una misión en estado paused u orchestrator_turn');
-              }
-              const prompt = subArg ? `Continuar la misión: ${subArg}` : 'Continuar con la ejecución de la misión.';
-              this.active = undefined;
-              return await this.submit(prompt);
-            }
-            case 'workers': {
-              let attempts: any[] = [];
-              if (this.sessionId) {
-                try {
-                  const store = await SessionStore.create(this.sessionDir);
-                  const s = await store.inspect(this.sessionId);
-                  attempts = s.mission?.attempts ?? [];
-                } catch {}
-              }
-              if (!subArg) {
-                if (this.missionTracker.snapshot?.workers?.length) {
-                  for (const w of this.missionTracker.snapshot.workers) {
-                    this.print(`• Worker: ${w.workerSessionId} · Feature: ${w.featureId} · Rol: ${w.role} · Estado: ${w.status} · in ${w.usage.inputTokens} / out ${w.usage.outputTokens} · ${(w.durationMs / 1000).toFixed(1)}s`);
-                  }
-                } else if (attempts.length) {
-                  for (const a of attempts) {
-                    this.print(`• Worker: ${a.workerSessionId} · Feature: ${a.featureId} · Rol: ${a.role}${a.handoff ? ' · con handoff' : ''}`);
-                  }
-                } else {
-                  this.print('Sin workers registrados en esta misión.');
-                }
-              } else {
-                const attempt = attempts.find((a: any) => a.workerSessionId === subArg)
-                  ?? (this.missionTracker.snapshot?.workers.find(w => w.workerSessionId === subArg) as any);
-                if (!attempt) {
-                  this.print(`Worker ${subArg}: no se encontró en el snapshot de sesión.`);
-                } else {
-                  const h = attempt.handoff;
-                  this.print(`Worker ${subArg} (${attempt.role ?? 'worker'}, feature: ${attempt.featureId ?? 'desconocida'}):`);
-                  if (h?.handoff) {
-                    this.print(`Estado de éxito: ${h.successState ?? 'desconocido'}`);
-                    this.print(`Resumen: ${h.handoff.salientSummary ?? '(sin resumen)'}`);
-                    if (h.handoff.whatWasImplemented) this.print(`Implementado: ${h.handoff.whatWasImplemented}`);
-                    if (h.handoff.whatWasLeftUndone) this.print(`Pendiente: ${h.handoff.whatWasLeftUndone}`);
-                    const obsCmds = attempt.observed ?? [];
-                    const claimedCmds = h.handoff.verification?.commandsRun ?? [];
-                    this.print('Verificación observada:');
-                    if (obsCmds.length) {
-                      for (const obs of obsCmds) this.print(`  • [observado] ${obs.command} -> exit ${obs.exitCode}`);
-                    } else if (claimedCmds.length) {
-                      for (const claim of claimedCmds) this.print(`  • [declarado] ${claim.command} -> exit ${claim.exitCode}: ${claim.observation}`);
-                    } else {
-                      this.print('  (ninguna)');
-                    }
-                    const issues = h.handoff.discoveredIssues ?? [];
-                    this.print(`Issues detectados (${issues.length}):`);
-                    if (issues.length) {
-                      for (const iss of issues) this.print(`  • [${iss.severity}] ${iss.description}${iss.suggestedFix ? ` (fix: ${iss.suggestedFix})` : ''}`);
-                    } else {
-                      this.print('  (ninguno)');
-                    }
-                  } else {
-                    this.print('Sin handoff registrado para este worker.');
-                    if (attempt.observed?.length) {
-                      this.print('Verificación observada:');
-                      for (const obs of attempt.observed) this.print(`  • [observado] ${obs.command} -> exit ${obs.exitCode}`);
-                    }
-                  }
-                }
-              }
-              break;
-            }
-            case 'log': {
-              let missionDir = this.missionTracker.directory;
-              if (!missionDir && this.sessionId) {
-                try {
-                  const store = await SessionStore.create(this.sessionDir);
-                  const s = await store.inspect(this.sessionId);
-                  missionDir = s.mission?.directory;
-                } catch {}
-              }
-              if (!missionDir && this.sessionId) {
-                missionDir = resolve(this.sessionDir, '..', 'missions', this.sessionId);
-              }
-              if (!missionDir) {
-                this.print('Sin registro de progreso (progress_log.jsonl no existe en esta misión).');
-                break;
-              }
-              const logFile = join(missionDir, 'progress_log.jsonl');
-              try {
-                const content = await readFile(logFile, 'utf8');
-                const count = Math.min(200, Math.max(1, Number(subArg) || 50));
-                const lines = content.split('\n').filter(Boolean).slice(-count);
-                if (!lines.length) {
-                  this.print('El registro de progreso está vacío.');
-                } else {
-                  this.print(`Últimas ${lines.length} entradas de progress_log.jsonl:`);
-                  for (const l of lines) {
-                    try {
-                      const obj = JSON.parse(l);
-                      this.print(`[${obj.timestamp ?? ''}] ${obj.type ?? ''}: ${JSON.stringify(obj)}`);
-                    } catch {
-                      this.print(l);
-                    }
-                  }
-                }
-              } catch {
-                this.print('Sin registro de progreso (progress_log.jsonl no existe en esta misión).');
-              }
-              break;
-            }
-            case 'list': {
-              const store = await SessionStore.create(this.sessionDir);
-              const { readdir } = await import('node:fs/promises');
-              let entries: any[] = [];
-              try {
-                entries = (await readdir(this.sessionDir, { withFileTypes: true })).filter(e => e.isFile() && /^[\w-]{1,100}\.json$/.test(e.name));
-              } catch {}
-              const missionSessions: Array<{ id: string; title: string; state: string; updatedAt: number }> = [];
-              for (const entry of entries) {
-                const id = entry.name.slice(0, -5);
-                try {
-                  const s = await store.inspect(id);
-                  if (s.cwd === this.cwd && s.mission) {
-                    missionSessions.push({
-                      id: s.id,
-                      title: s.mission.title ?? s.title ?? s.id,
-                      state: s.mission.state ?? s.status,
-                      updatedAt: s.updatedAt ?? 0,
-                    });
-                  }
-                } catch {}
-              }
-              missionSessions.sort((a, b) => b.updatedAt - a.updatedAt);
-              if (!missionSessions.length) {
-                this.print('No se encontraron sesiones con misión en esta carpeta.');
-                break;
-              }
-              const choices = missionSessions.map(m => `${m.id} · ${m.title} · estado: ${m.state}`);
-              const chosenIndex = await this.io.select('Seleccionar misión para reanudar', choices, this.active?.signal);
-              if (chosenIndex === undefined) break;
-              const chosen = missionSessions[chosenIndex];
-              if (chosen) {
-                await this.resume(chosen.id);
-              }
-              break;
-            }
-            default:
-              throw new Error(`Subcomando desconocido: /mission ${sub}. Subcomandos disponibles: status, pause, resume, workers, log, list`);
-          }
-          break;
-        }
+        case 'mission': return await handleMissionCommand(this, arg);
         case 'cwd':
           if (!arg) { this.print(this.cwd); break; }
           { const cwd = await realpath(resolve(this.cwd, arg));

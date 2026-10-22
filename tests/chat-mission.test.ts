@@ -2,7 +2,9 @@ import { afterEach, expect, test } from 'bun:test';
 import { mkdtemp, mkdir, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
+import { PassThrough } from 'node:stream';
 import { ChatController, type ChatIO } from '../src/chat/controller.ts';
+import { TerminalInput } from '../src/chat/terminal.ts';
 import { completions } from '../src/chat/commands.ts';
 import { SessionStore } from '../src/agent/session.ts';
 import { formatMissionEvent, MissionTracker, renderMissionPanel, type MissionProgressSnapshot } from '../src/chat/mission-view.ts';
@@ -448,4 +450,82 @@ test('/mode mission sigue exigiendo /auto high', async () => {
   f.app.config.autonomy = 'high';
   await f.app.submit('/mode mission');
   expect(f.app.config.mode).toBe('mission');
+});
+
+test('terminal interactiva: /mission pause escrito durante un turno activo pausa inmediatamente', async () => {
+  const dir = await mkdtemp(join(tmpdir(), 'fab-term-pause-'));
+  dirs.push(dir);
+  const cwd = join(dir, 'workspace');
+  const home = join(dir, 'home');
+  await mkdir(cwd, { recursive: true });
+  await mkdir(home, { recursive: true });
+
+  const input = new PassThrough();
+  const output = new PassThrough();
+  let termOutput = '';
+  output.on('data', b => { termOutput += b.toString(); });
+
+  const io = new TerminalInput(input, output, true);
+
+  let pauseSignalReceived: AbortSignal | undefined;
+  let mailboxMessages: string[] = [];
+  let startedResolve!: () => void;
+  const started = new Promise<void>(r => { startedResolve = r; });
+
+  const longRun = async (opts: AgentOptions): Promise<AgentResult> => {
+    pauseSignalReceived = (opts as any).mission?.pauseSignal;
+    startedResolve();
+    return new Promise(resolve => {
+      const onAbort = () => {
+        mailboxMessages = opts.receiveMessages?.() ?? [];
+        resolve({
+          sessionId: 's-pause-term',
+          ok: true,
+          text: 'Pausado por host',
+          turns: 1,
+          toolCalls: 0,
+          durationMs: 100,
+          usage: { inputTokens: 100, outputTokens: 50 },
+          mission: { missionId: 'm-term-pause', state: 'paused', directory: '/tmp/m-term-pause', completed: 0, total: 2 },
+        });
+      };
+      if (pauseSignalReceived?.aborted) onAbort();
+      else pauseSignalReceived?.addEventListener('abort', onAbort);
+    });
+  };
+
+  const provider: ModelProvider = {
+    id: 'mock-provider',
+    async complete() { return { text: 'Done', toolCalls: [], finishReason: 'stop' }; },
+  };
+
+  const app = new ChatController({
+    cwd,
+    home,
+    providerFor: () => provider,
+    config: { model: 'fixture', autonomy: 'high', mode: 'auto', theme: 'plain' },
+    run: longRun as any,
+  }, io);
+  io.controller = app;
+
+  try {
+    const runPromise = app.submit('Empezar misión');
+    await started;
+
+    expect(app.busy).toBe(true);
+
+    input.write('/mission pause reenfocar\r');
+
+    const result = await runPromise;
+    expect(result).toBe(true);
+
+    expect(pauseSignalReceived?.aborted).toBe(true);
+    expect(mailboxMessages).toContain('reenfocar');
+    expect(app.missionTracker.state).toBe('paused');
+    expect(termOutput).toContain('Pausa solicitada al orquestador: reenfocar');
+  } finally {
+    io.close();
+    input.destroy();
+    output.destroy();
+  }
 });

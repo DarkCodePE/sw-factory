@@ -115,6 +115,9 @@ export class TerminalInput implements ChatIO {
     this.installHistory(); this.presenter.pause(false);
     const waiter = this.waiter;
     if (waiter) { this.waiter = undefined; waiter.cleanup(); waiter.resolve(line); }
+    else if (this.controller?.busy && line.trim().startsWith('/mission pause')) {
+      void this.controller.submit(line).catch(e => this.controller?.print(e.message));
+    }
     else if (this.queue.length < 100) this.queue.push(line);
     else this.close();
   };
