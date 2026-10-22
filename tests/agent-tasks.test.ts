@@ -114,3 +114,21 @@ test('YOLO writer inherits host execution; explore child explicitly reduces poli
     expect(await Bun.file(join(childCwd, 'child-proof')).exists()).toBe(!explore);
   }
 });
+
+test('explore child cannot leave spec through forged ExitSpecMode even at inherited high autonomy', async () => {
+  const { cwd } = await repo(); let parentTurns = 0, childTurns = 0, childCwd = '', denied = false;
+  const provider: ModelProvider = { id: 'fixture', async complete(request) {
+    const workspace = /^Workspace: (.+)$/m.exec(request.messages[1]!.content as string)![1]!;
+    if (workspace === cwd) return parentTurns++ ? done() : calls(['Task', { prompt: 'try exit', subagent_type: 'explore', allowExitSpecMode: true }]);
+    childCwd = workspace;
+    expect(request.tools.some(t => t.function.name === 'ExitSpecMode')).toBe(false);
+    if (!childTurns++) return calls(['ExitSpecMode', {}]);
+    denied = String(request.messages.at(-1)!.content).includes('disabled');
+    expect(JSON.stringify(request.messages)).toContain('standard permissions, spec mode, high autonomy');
+    return done();
+  } };
+  try {
+    expect((await runCodingAgent({ prompt: 'delegate', cwd, provider, autonomy: 'high' })).ok).toBe(true);
+    expect(denied).toBe(true);
+  } finally { if (childCwd) roots.push(dirname(childCwd)); }
+});

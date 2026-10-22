@@ -173,7 +173,7 @@ La interfaz interactiva (`src/chat/commands.ts:3-52`) registra **36 comandos loc
 
 ## Rebobinado de Archivos (`/rewind` en `src/chat/checkpoints.ts`)
 
-- **Estado: IMPLEMENTADO (Archivos):** El comando `/rewind`, `/rewind list` o `/rewind <id>` restaura de manera determinista los archivos alterados o creados por las herramientas `Edit` y `Create`. Utiliza un journal privado ubicado fuera del workspace (`~/.fabrica/prompt-history/`) con registros de intención y verificación de hashes SHA-256 antes y después de cada escritura.
+- **Estado: IMPLEMENTADO (Archivos):** El comando `/rewind`, `/rewind list` o `/rewind <id>` restaura de manera determinista los archivos alterados o creados por las herramientas `Edit`, `Create` y `ApplyPatch`. Utiliza un journal privado ubicado fuera del workspace (`~/.fabrica/file-checkpoints/`) con registros de intención y verificación de hashes SHA-256 antes y después de cada escritura.
 - **Límites conocidos:**
   - **No revierte `Execute`:** La ejecución de comandos shell mediante `Execute` coloca una barrera permanente en el journal que invalida la restauración a checkpoints anteriores al comando.
   - **No revierte la conversación:** No es un rewind de los turnos de diálogo ni de los mensajes enviados al modelo (el comando sin backend `/rewind-conversation` lo advierte explícitamente).
@@ -182,7 +182,7 @@ La interfaz interactiva (`src/chat/commands.ts:3-52`) registra **36 comandos loc
 
 ## Subagentes y Confinamiento
 
-- **Catálogo de herramientas:** `Read`, `LS`, `Create`, `Edit`, `Glob`, `Grep`, `Execute`, `Script`, `TodoWrite`, `AskUser`, `Skill`, `ToolSearch` y herramientas de subagentes (`src/agent/catalog.ts`).
+- **Catálogo de herramientas:** `Read`, `LS`, `Create`, `Edit`, `ApplyPatch`, `ExitSpecMode` (solo spec raíz), `StageSettingsChanges`, `Glob`, `Grep`, `Execute`, `Script`, `TodoWrite`, `AskUser`, `Skill`, `ToolSearch` y herramientas de subagentes (`src/agent/catalog.ts`).
 - **Subagentes (`Task`, `SpawnAgent`):** Generan clones aislados fuera del workspace del proceso padre. Copian el estado del árbol de trabajo (incluyendo modificaciones sin commit). Comparten presupuestos: profundidad máxima 2, hasta 8 subagentes por sesión, concurrencia máxima 2 y 256 llamadas acumuladas al proveedor. Los subagentes en background se drenan y cancelan al finalizar la invocación.
 - **Advertencia sobre Skills y Enlaces Simbólicos:** La interfaz TUI (`/skill`) resuelve enlaces simbólicos internos en `.agents/skills`; sin embargo, la herramienta `Skill` del agente utiliza el acceso anclado por descriptor que rechaza enlaces simbólicos de directorio (`src/agent/files.ts:23`).
 
@@ -202,7 +202,7 @@ Cada característica definida en `features.json` establece un contrato estricto:
 ## Alcance Pendiente Honesto
 
 Las siguientes capacidades permanecen sin implementar o fuera de alcance:
-1. **Herramientas de agente:** `loop-cli` (bucle autónomo en turno), `exit-spec-mode` como herramienta invocable por el modelo, `stage_settings_changes`, herramienta `ApplyPatch`, `Execute` desacoplado en background y Script durable con `WaitForScript`.
+1. **Herramientas de agente:** `loop-cli` (bucle autónomo en turno), `Execute` desacoplado en background y Script durable con `WaitForScript`.
 2. **Crash Recovery de misiones:** Reconciliación automática y journal duradero tras caída intempestiva del proceso del runner.
 3. **Protocolos:** Entrada interactiva multiturno mediante `stream-json` y protocolo ACP. El demonio en puerto 37643 y SDKs remotos permanecen fuera de alcance.
 4. **MCP:** Autenticación OAuth, transporte SSE de versión previa y actualización de catálogo en caliente.
@@ -219,4 +219,39 @@ bun test
 bunx tsc --noEmit -p .
 ```
 
-La suite registra actualmente **252 pruebas unitarias pasando (252 pass, 0 fail)** en **29 archivos de prueba** con **1.481 aserciones** verificadas (`expect()`).
+La suite consolidada de la base anterior registró **252 pruebas unitarias pasando (252 pass, 0 fail)** en **29 archivos de prueba** con **1.481 aserciones** verificadas (`expect()`).
+
+
+## Herramientas de modo, propuestas y patches
+
+Implementación propia; los nombres/ids se contrastan con el inventario REA de Droid 0.244.0. Los nuevos intentos de ejecución del original quedaron bloqueados antes de invocar herramientas por airgap/modelo proxy; no prueban equivalencia de comportamiento. Recibos completos en `docs/evidence/tools-spec-settings-patch/rea-captures.json`.
+
+| Herramienta | ID de catálogo | Efecto / permiso |
+| --- | --- | --- |
+| ExitSpecMode | exit-spec-mode | read, no permitida por defecto; solo spec raíz habilitado |
+| StageSettingsChanges | stage_settings_changes | read, permitida por defecto; nunca aplica cambios |
+| ApplyPatch | apply-patch-cli | write interno / edit en catálogo; mismo permiso que Edit |
+
+**ExitSpecMode** acepta `{reason?: string}` (máximo 8 KiB). Con off/low/medium solicita confirmación por TUI/RPC; un exec desatendido la rechaza. High permite la transición. Todo el lote actual, incluidos callbacks Script, conserva spec: solo el siguiente turno del modelo usa auto, con la misma autonomía y política de ejecución/red. Se actualizan schemas, contexto y evento `mode_changed`. `allowExitSpecMode: false` confina un ámbito; se impone a subagentes, workers/validadores y /btw. No hay un nuevo permiso persistente en el snapshot.
+
+Si la TUI/RPC suspendió YOLO/red al entrar en spec, la salida pedida por el modelo conserva standard y red deny entre prompts. Un cambio de modo explícito o el inicio/carga de otra conversación por el operador puede restaurar la política de arranque.
+
+**StageSettingsChanges** acepta un objeto no vacío con `modelId`, `autonomy` y/o `networkPolicy` (8 KiB máximo, modelId de hasta 256 caracteres). Solo modelos configurados; enum off/low/medium/high y auto/ask/deny. El host puede fijar `settingsPolicy: {modelIds, maxAutonomy, networkPolicy}`; por defecto se usa el modelo y el techo efectivos. Deny no puede relajarse, ask no puede pasar a auto; no acepta campos YOLO/sandbox. Devuelve `{proposalId, changes, applied:false}` y emite `settings_staged`.
+
+La TUI revisa hasta 64 propuestas después de un resultado correcto: cada una exige una respuesta nueva «aplicar / descartar». Valida el proveedor antes de mutar el estado; usa los cambios solo para futuras solicitudes. El techo se captura al comenzar el turno: aceptar una reducción no impide aceptar después otra propuesta dentro de ese mismo techo, con nueva confirmación. No guarda los campos staged ni al persistir un tema/razonamiento distinto. Una orden manual /model, /auto o /network sí puede guardar el campo elegido. /new, /sessions, /fork, /handoff, /archive y /cwd eliminan overrides staged; /clear conserva ajustes por su contrato explícito. /btw no aplica propuestas a la conversación principal. RPC solo informa mediante `fab_settings_staged`, dentro de `droid.session_notification`; no incorpora un método nuevo de aplicación automática. Su actualización existente permite al cliente elegir modelo/autonomía; red sigue siendo configuración del host. El cambio de modo se comunica como `fab_mode_changed`.
+
+**ApplyPatch** acepta `{patch:string}` (1 MiB máximo), un solo archivo absoluto y como máximo 128 hunks. Formato propio:
+
+```text
+*** Update File: /ruta/absoluta/archivo
+@@
+ línea de contexto
+-antes
++después
+```
+
+Para crear: `*** Add File: /ruta/absoluta/nuevo` seguido solo de líneas `+`. Acepta envoltorio opcional `*** Begin Patch` / `*** End Patch`. Rechaza varios archivos, operaciones diferentes, hunks ambiguos/inaplicables o sin contexto, rutas fuera del workspace, symlinks y sobrescritura mediante Add. Solo texto UTF-8 sin NUL; Update requiere LF y conserva la presencia del salto final. No implementa rangos numéricos de unified diff, renames ni deletes como directiva. La búsqueda KMP evita coste cuadrático en archivos repetitivos. Archivo base y resultado limitados a 1 MiB; escritura atómica y journal/rewind compartidos con Edit/Create, también mediante Script.
+
+La opción del host `requireReadBeforeEdit: true` exige para Edit y ApplyPatch una lectura previa válida del archivo y coincidencia de los bytes actuales con el hash leído. No persiste el historial de lecturas; Add sobre un archivo inexistente no lo necesita. Sin esta opción se conserva el comportamiento previo de Edit.
+
+Validación final de este patch: **279 pass, 0 fail, 1.707 aserciones en 33 archivos**; `bunx tsc --noEmit` y `git diff --check` con salida 0. Incluye 27 casos nuevos. Recibo: `docs/evidence/tools-spec-settings-patch/validation.json`.

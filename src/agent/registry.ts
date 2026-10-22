@@ -1,3 +1,5 @@
+import { sessionTools } from './session-tools.ts';
+import { parsePatch } from './patch.ts';
 import { abortable } from './cancellation.ts';
 import { readWorkspaceFile } from './files.ts';
 import { formatAnswers, parseQuestionnaire, permissionRequest } from './interaction.ts';
@@ -11,7 +13,16 @@ import type { AgentOptions, AgentResult, AgentTool, ToolCall, ToolContext } from
 
 export class ToolRuntime {
   readonly registry: Map<string, AgentTool>;
-  readonly visible: AgentTool[];
+  private exitQueued = false;
+  private readonly available: (name: string) => boolean;
+  get visible(): AgentTool[] { return [...this.registry.values()].filter(t => this.available(t.schema.function.name)); }
+  commitModeChange(context: ToolContext) {
+    context.signal.throwIfAborted();
+    if (!this.exitQueued) return false;
+    this.exitQueued = false;
+    context.interactionMode = 'auto';
+    return true;
+  }
   readonly dispatch: (name: string, input: unknown, call?: ToolCall, scopedSignal?: AbortSignal) => Promise<unknown>;
   private readonly owned = new Set<Promise<unknown>>();
   private readonly tasks: TaskManager;
@@ -20,6 +31,14 @@ export class ToolRuntime {
     runChild: (options: AgentOptions, reservation?: CallReservation) => Promise<AgentResult>, state: Partial<SessionState> = {}, saveState: () => Promise<void> = async () => {}) {
     const yolo = context.executionPolicy?.permissionMode === 'yolo';
     const owned = this.owned;
+    const available = (name: string) => (!opts.onlyTools || opts.onlyTools.includes(name)) && !opts.removeTools?.includes(name) &&
+      (name !== 'ExitSpecMode' || context.interactionMode === 'spec' && opts.allowExitSpecMode !== false && !opts.missionWorker);
+    this.available = available;
+    const settingsPolicy = Object.freeze({
+      modelIds: [...opts.settingsPolicy?.modelIds ?? [opts.provider.id]],
+      maxAutonomy: opts.settingsPolicy?.maxAutonomy ?? context.autonomy,
+      networkPolicy: opts.settingsPolicy?.networkPolicy ?? networkPolicy(context.networkPolicy),
+    });
     const registry = new Map<string, AgentTool>();
     const add = (t: AgentTool) => {
       const name = t.schema.function.name;
@@ -27,6 +46,7 @@ export class ToolRuntime {
       registry.set(name, t);
     };
     for (const t of builtinTools(yolo ? 'yolo' : 'standard')) add(t);
+    for (const t of sessionTools(opts, context, settingsPolicy, () => { this.exitQueued = true; }, state.id ?? '')) add(t);
     for (const t of opts.tools ?? []) add(t);
     const tasks = new TaskManager(opts, context, lineage, runChild, limits.maxDepth, limits.agentConcurrency);
     for (const t of tasks.tools()) add(t);
@@ -59,9 +79,10 @@ export class ToolRuntime {
       signal.throwIfAborted();
       const t = registry.get(name); if (!t) throw new Error(`Unknown tool: ${name}`);
       // Bind approval to the command and network request shown to the caller.
-      if (name === 'Execute') input = Object.freeze({ ...inputObject(input) });
+      if (name === 'Execute' || name === 'ApplyPatch' || name === 'ExitSpecMode' || name === 'StageSettingsChanges') input = Object.freeze({ ...inputObject(input) });
+      if (name === 'ApplyPatch') parsePatch(inputObject(input).patch);
       const actual = call ?? { id: crypto.randomUUID(), type: 'function' as const, function: { name, arguments: JSON.stringify(input) } };
-      if (opts.onlyTools && !opts.onlyTools.includes(name) || opts.removeTools?.includes(name)) throw new Error(`Tool disabled: ${name}`);
+      if (!available(name)) throw new Error(`Tool disabled in this scope: ${name}`);
       if (context.interactionMode === 'spec' && t.effect === 'write') throw new Error('Spec mode denies workspace mutations');
       if (context.interactionMode === 'spec' && t.effect === 'execute' && !['Script', 'Execute', 'Task', 'SpawnAgent'].includes(name)) throw new Error('Spec mode denies unrestricted execution tools');
       if (opts.beforeTool && !await abortable(opts.beforeTool(actual), context.signal)) throw new Error('Tool denied by caller policy');
@@ -91,7 +112,7 @@ export class ToolRuntime {
       if (yolo && t.effect !== 'read') opts.onEvent?.({ type: 'permission_bypass', sessionId: state.id ?? '', toolUseId: actual.id, toolName: name, permissionMode: 'yolo' });
       const run = async () => {
         if (opts.missionWorker?.sealed() && ['write', 'execute'].includes(t.effect)) throw new Error('Worker workspace mutation is closed after EndFeatureRun');
-        if (t.effect !== 'read' && !['Edit', 'Create', 'Script'].includes(name)) await context.fileJournal?.barrier(name, context);
+        if (t.effect !== 'read' && !['Edit', 'Create', 'ApplyPatch', 'Script'].includes(name)) await context.fileJournal?.barrier(name, context);
         return t.run(input, { ...context, signal, toolUseId: actual.id, networkAccess: requested, ...(granted ? { autonomy: 'high' as const } : {}) });
       };
       const work = ['Script', 'TaskOutput', 'TaskStop', 'InterruptAgent'].includes(name) ? run() : scheduler.run(t.effect === 'read', signal, run);
@@ -105,14 +126,13 @@ export class ToolRuntime {
         throw error;
       } finally { owned.delete(work); }
     };
-    add(scriptTool((name, input, signal) => dispatch(name, input, undefined, signal), () => [...registry.keys()]));
+    add(scriptTool((name, input, signal) => dispatch(name, input, undefined, signal), () => [...registry.keys()].filter(available)));
     add(tool('ToolSearch', 'read', { query: { type: 'string' } }, ['query'], async input => {
       const query = stringArg(inputObject(input), 'query').toLowerCase();
-      return [...registry.values()].filter(t => t.schema.function.name.toLowerCase().includes(query)).map(t => t.schema);
+      return [...registry.values()].filter(t => available(t.schema.function.name) && t.schema.function.name.toLowerCase().includes(query)).map(t => t.schema);
     }, 'Discover registered tool schemas by name.'));
-    const visible = [...registry.values()].filter(t => (!opts.onlyTools || opts.onlyTools.includes(t.schema.function.name)) && !opts.removeTools?.includes(t.schema.function.name));
     for (const name of [...opts.onlyTools ?? [], ...opts.removeTools ?? []]) if (!registry.has(name) && !((opts.missionWorker || context.interactionMode === 'mission') && ['ProposeMission', 'StartMissionRun', 'EndFeatureRun', 'DismissHandoffItems'].includes(name))) throw new Error(`Unknown selected tool: ${name}`);
-    this.registry = registry; this.visible = visible; this.dispatch = dispatch; this.tasks = tasks;
+    this.registry = registry; this.dispatch = dispatch; this.tasks = tasks;
   }
   async close() {
     await this.tasks.close();

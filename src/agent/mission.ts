@@ -136,7 +136,7 @@ export class MissionManager {
       const prompt = `Assigned mission feature ${feature.id}; role ${role}.\n${feature.description}\nPreconditions: ${JSON.stringify(feature.preconditions)}\nExpected behavior: ${JSON.stringify(feature.expectedBehavior)}\nAssertion IDs: ${JSON.stringify(feature.fulfills)}\n\n${skill}\n\n${message ?? ''}\n${validation ? 'Independently verify the current code and tests. The workspace is read-only. Report observed evidence, failures and unfinished work.' : 'Implement this feature and verify it with the available tools.'}\nSubmit exactly one truthful EndFeatureRun handoff. A final text response without a valid handoff does not complete the feature. After submission, workspace mutation is closed.`;
       const result = await this.runChild({ ...this.opts, prompt, cwd: this.context.cwd,
         provider: validation ? this.opts.mission?.validatorProvider ?? this.opts.provider : this.opts.mission?.workerProvider ?? this.opts.provider,
-        ...scopedExecutionOptions(this.context, validation),
+        ...scopedExecutionOptions(this.context, validation), allowExitSpecMode: false,
         signal: this.execution.signal, sessionDir: this.opts.sessionDir ?? join(this.directory, 'sessions'),
         newSessionId: resume ? undefined : workerSessionId, sessionId: resume, fork: false,
         tools: [], images: undefined, validateFinal: undefined, receiveMessages: undefined, onEvent: undefined,

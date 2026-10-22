@@ -67,7 +67,7 @@ export async function runCodingAgent(opts: AgentOptions, inherited?: AgentLineag
     timer = setTimeout(() => { timedOut = true; controller.abort(new Error('Agent total timeout exceeded')); }, timeout);
     const cwd = await realpath(opts.cwd);
     const context: ToolContext = { cwd, signal: controller.signal, autonomy: executionPolicy.effectiveAutonomy, executionPolicy,
-      interactionMode: opts.interactionMode ?? 'auto', sandbox: opts.sandbox ?? 'required', networkPolicy: networkPolicy(opts.networkPolicy), fileJournal: inherited ? undefined : opts.fileJournal };
+      interactionMode: opts.interactionMode ?? 'auto', sandbox: opts.sandbox ?? 'required', networkPolicy: networkPolicy(opts.networkPolicy), fileJournal: inherited ? undefined : opts.fileJournal, requireReadBeforeEdit: opts.requireReadBeforeEdit, fileReads: new Map() };
     if (!['off', 'low', 'medium', 'high'].includes(context.autonomy) || !['auto', 'spec', 'mission'].includes(context.interactionMode)) {
       throw new Error('Invalid agent autonomy or interaction mode');
     }
@@ -103,10 +103,11 @@ export async function runCodingAgent(opts: AgentOptions, inherited?: AgentLineag
     const remoteTools = await mcp?.tools() ?? [];
     runtime = new ToolRuntime({ ...opts, tools: [...opts.tools ?? [], ...remoteTools] }, context, lineage, { maxDepth, agentConcurrency, parallel },
       (child, reservation) => runCodingAgent(child, { depth: lineage.depth + 1, budget: lineage.budget, permissionMode: executionPolicy!.permissionMode, reservation: reservation ?? lineage.reservation }), state, () => store!.save(state!));
-    const { registry, dispatch, visible } = runtime;
+    const { registry, dispatch } = runtime;
+    const visible = runtime.visible;
     if (context.interactionMode === 'mission') state.messages.push({ role: 'user', content: `Mission metadata directory: ${context.missionDir}. ProposeMission must accept the proposal first. Then create features.json with a features array (id, description, skillName, milestone, preconditions, expectedBehavior, fulfills, status: pending) and skills/<skillName>/SKILL.md with name/description frontmatter there. StartMissionRun delegates implementation and validation. Read progressSnapshot.state; a final text report alone never completes a mission.` });
     emit('init', { executionPolicy, cwd, tools: visible.map(t => t.schema.function.name), model: opts.provider.id });
-    const schemas = visible.map(t => t.schema);
+    let schemas = visible.map(t => t.schema);
     const complete = async (messages: Message[], withTools = true): Promise<ModelTurn> => {
       errorType = 'provider';
       for (let attempt = 0; ; attempt++) {
@@ -213,6 +214,14 @@ export async function runCodingAgent(opts: AgentOptions, inherited?: AgentLineag
           context.signal.throwIfAborted();
           state.messages.push(...results);
           state.pending = state.pending.filter(id => !batch.some(c => c.id === id));
+          await store.save(state);
+        }
+        if (runtime.commitModeChange(context)) {
+          schemas = runtime.visible.map(t => t.schema);
+          const banner = state.messages.find(m => m.role === 'user' && typeof m.content === 'string' && m.content.startsWith(`Workspace: ${cwd}\nMode: `));
+          if (banner && typeof banner.content === 'string')
+            banner.content = banner.content.replace(/\nMode: [^\n]+/, `\nMode: ${context.interactionMode}; autonomy: ${context.autonomy}.`);
+          emit('mode_changed', { interactionMode: context.interactionMode, autonomy: context.autonomy, executionPolicy });
           await store.save(state);
         }
         recoveries = 0; continue;

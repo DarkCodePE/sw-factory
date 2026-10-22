@@ -21,7 +21,7 @@ export interface RpcOptions {
   sessionDir: string;
   defaultModelId: string;
   providers: Record<string, ModelProvider>;
-  agent?: Pick<AgentOptions, 'permissionMode' | 'sandbox' | 'networkPolicy' | 'timeoutMs' | 'maxTurns' | 'maxContextTokens' | 'tools' | 'beforeTool' | 'afterTool' | 'permissionHandler' | 'askUserHandler' | 'mcpServers'>;
+  agent?: Pick<AgentOptions, 'allowExitSpecMode' | 'requireReadBeforeEdit' | 'settingsPolicy' | 'permissionMode' | 'sandbox' | 'networkPolicy' | 'timeoutMs' | 'maxTurns' | 'maxContextTokens' | 'tools' | 'beforeTool' | 'afterTool' | 'permissionHandler' | 'askUserHandler' | 'mcpServers'>;
   signal?: AbortSignal;
 }
 
@@ -35,6 +35,7 @@ export class ExecRpc {
   private modelId: string;
   private autonomy: Autonomy = 'off';
   private mode: InteractionMode = 'auto';
+  private agentExitedSpec = false;
   private only?: string[];
   private removed?: string[];
   private active?: { controller: AbortController; done: Promise<void> };
@@ -58,12 +59,15 @@ export class ExecRpc {
       params: { ...(this.sessionId ? { sessionId: this.sessionId } : {}), notification } });
   }
   private executionOptions() {
-    return scopedExecutionOptions({ executionPolicy: this.startupPolicy, autonomy: this.autonomy,
-      sandbox: this.options.agent?.sandbox ?? 'required', networkPolicy: this.options.agent?.networkPolicy }, this.mode === 'spec');
+    return scopedExecutionOptions({ executionPolicy: this.agentExitedSpec ? resolveExecutionPolicy({ autonomy: this.autonomy }) : this.startupPolicy, autonomy: this.autonomy,
+      sandbox: this.options.agent?.sandbox ?? 'required', networkPolicy: this.agentExitedSpec ? 'deny' : this.options.agent?.networkPolicy }, this.mode === 'spec');
   }
   private rejectAuthority(p: Record<string, any>) {
     for (const key of ['permissionMode', 'yolo', 'sandbox', 'networkPolicy', 'executionPolicy', 'fab_execution_policy'])
       if (Object.hasOwn(p, key)) throw new RpcError(-32602, `${key} is configured by the host, not session requests`);
+  }
+  private settingsPolicy() {
+    return this.options.agent?.settingsPolicy ?? { modelIds: Object.keys(this.options.providers), maxAutonomy: this.autonomy, networkPolicy: this.executionOptions().networkPolicy ?? 'auto' };
   }
   private settings() {
     return { modelId: this.modelId, reasoningEffort: 'none', autonomyMode: this.mode === 'spec' ? 'spec' : this.autonomy === 'off' ? 'normal' : `auto-${this.autonomy}`,
@@ -86,6 +90,7 @@ export class ExecRpc {
     if (p.reasoningEffort !== undefined && p.reasoningEffort !== 'none') throw new RpcError(-32602, 'Reasoning overrides require a configured provider');
     this.catalog = undefined;
     this.modelId = modelId; this.autonomy = autonomy; this.mode = mode;
+    if (Object.hasOwn(p, 'interactionMode')) this.agentExitedSpec = false;
     if (p.restrictToolIds) this.only = p.restrictToolIds.length ? p.restrictToolIds : undefined;
     if (p.disabledToolIds) this.removed = p.disabledToolIds;
   }
@@ -93,7 +98,7 @@ export class ExecRpc {
   private initialized() { if (!this.sessionId) throw new RpcError(-32000, 'Session is not initialized'); }
   private async toolCatalog() {
     if (!this.catalog) this.catalog = await listConfiguredToolCatalog({ ...this.options.agent, prompt: '', cwd: this.cwd,
-      provider: this.options.providers[this.modelId]!, ...this.executionOptions() }, this.options.signal);
+      provider: this.options.providers[this.modelId]!, ...this.executionOptions(), settingsPolicy: this.settingsPolicy() }, this.options.signal);
     return this.catalog;
   }
   private async call(method: string, params: unknown, signal: AbortSignal) {
@@ -131,6 +136,11 @@ export class ExecRpc {
   }
   private event = (event: AgentEvent) => {
     if (event.type === 'init') this.notify({ type: 'fab_execution_policy', policy: event.executionPolicy });
+    else if (event.type === 'mode_changed') {
+      this.agentExitedSpec = true; this.mode = 'auto'; this.catalog = undefined;
+      this.notify({ type: 'fab_mode_changed', interactionMode: 'auto', autonomyLevel: event.autonomy });
+    }
+    else if (event.type === 'settings_staged') this.notify({ type: 'fab_settings_staged', proposal: event.proposal });
     else if (event.type === 'permission_bypass') this.notify({ type: 'fab_permission_bypass', toolUseId: event.toolUseId, toolName: event.toolName, permissionMode: event.permissionMode });
     else if (event.type === 'assistant_delta') {
       this.assistantId ??= crypto.randomUUID();
@@ -203,6 +213,7 @@ export class ExecRpc {
                 askUserHandler: this.options.agent?.askUserHandler ?? this.askUser,
                 sessionDir: this.options.sessionDir, ...(this.persisted ? { sessionId: this.sessionId } : { newSessionId: this.sessionId }),
                 provider: this.options.providers[this.modelId]!, ...this.executionOptions(),
+                settingsPolicy: this.settingsPolicy(),
                 onlyTools: selectToolNames(this.only), removeTools: selectToolNames(this.removed), signal, onEvent: this.event });
               this.persisted = true;
               this.notify({ type: 'agent_turn_completed', reason: result.ok ? 'completed' : result.error?.type === 'aborted' ? 'interrupted' : 'error',

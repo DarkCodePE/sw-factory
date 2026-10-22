@@ -1,0 +1,51 @@
+{
+  "task": "tools-spec-settings-patch",
+  "authorization": "task-codex-tools-spec-settings-patch.md: worktree exclusivo, commit local autorizado; sin push",
+  "worktree": "/home/orlando/Desktop/factory/sw-factory-codex",
+  "branch": "feat/tools-spec-settings-patch",
+  "baseCommit": "c58467f0cb77106a38af47213215907f7d6895a0",
+  "checks": [
+    {
+      "command": "bun test",
+      "exitCode": 0,
+      "pass": 279,
+      "fail": 0,
+      "assertions": 1707,
+      "files": 33,
+      "durationSeconds": 27.86,
+      "newTests": 27
+    },
+    {
+      "command": "bunx tsc --noEmit",
+      "exitCode": 0
+    },
+    {
+      "command": "git diff --check",
+      "exitCode": 0
+    }
+  ],
+  "review": {
+    "mode": "solo lectura",
+    "fixed": [
+      "Búsqueda cuadrática de hunks sustituida por KMP con regresión repetitiva (~500 KB de fuente).",
+      "Overrides staged restaurados al cambiar de conversación; persistencia de preferencias excluye ajustes temporales.",
+      "ExitSpecMode conserva autonomía efectiva high desde YOLO con preferencia guardada off; no persiste ese high ni restaura YOLO/red automáticamente."
+    ]
+  },
+  "evidence": {
+    "originalCatalog": "ev_e92431f6094e3464761b91f54fea5b65592ecd987f84dca9f9d9644bf6c9f790",
+    "attempts": [
+      "ev_b9b14948cbeda3381a841880599412628dfdaa64eb606469675952ae05431952",
+      "ev_972a2dbd34f124ec7060ccc96ba25c5b8a93428cc7457a0fcaf34732b1dfc63b",
+      "ev_f7786ab345742e0a6a484d83cdd3a730d3df0487c55272dd8971c9e8bdee9ee7"
+    ],
+    "result": "Bloqueo antes de herramientas: airgap rechaza modelo proxy gpt-6-sol. No se verificó ejecución exitosa de estas herramientas en Droid.",
+    "droidSha256": "f4740a4821288415a5089c04a3cc3e6bfbd7866137863422d1d9a220b31640e2"
+  },
+  "limitations": [
+    "Gramática de patch propia de un único archivo, no unified diff completo; Update solo LF/UTF-8 sin NUL.",
+    "Stage no aplica cambios en el motor/RPC; TUI confirma tras resultado correcto, máximo 64 propuestas.",
+    "No hay nuevas credenciales ni publicación; pruebas de modelos mediante proveedores deterministas y endpoints locales.",
+    "MCP de grafo no indexa este worktree; se utilizó Graft y lectura directa de los ámbitos afectados."
+  ]
+}

@@ -1,3 +1,5 @@
+import { parsePatch, applyHunks } from './patch.ts';
+import { checkRead, rememberRead } from './file-policy.ts';
 import { executeHost, hostCommand } from './execute-host.ts';
 import { realpath } from 'node:fs/promises';
 import { atomicReplace, readAnchored, readWorkspaceFile, withWorkspaceFile } from './files.ts';
@@ -165,9 +167,11 @@ export function builtinTools(permissionMode: 'standard' | 'yolo' = 'standard'): 
     tool('Read', 'read', { file_path: str, offset: { type: 'integer' }, limit: { type: 'integer' } }, ['file_path'], async (input, c) => {
       const args = inputObject(input), path = stringArg(args, 'file_path');
       if (!isAbsolute(path)) throw new Error('file_path must be an absolute path');
-      const { text } = await readWorkspaceFile(fileRoot(c, path), path);
+      const { text, data } = await readWorkspaceFile(fileRoot(c, path), path);
       const offset = args.offset ?? 0, limit = args.limit ?? 2000;
       if (!Number.isSafeInteger(offset) || Number(offset) < 0 || !Number.isSafeInteger(limit) || Number(limit) < 1) throw new Error('Invalid Read range');
+      c.signal.throwIfAborted();
+      rememberRead(c, resolve(c.cwd, path), data);
       return limitText(text.split('\n').slice(Number(offset), Number(offset) + Number(limit)).join('\n'));
     }, 'Read a UTF-8 workspace file using an absolute path.'),
     tool('LS', 'read', { directory_path: str }, [], async (input, c) => {
@@ -195,6 +199,7 @@ export function builtinTools(permissionMode: 'standard' | 'yolo' = 'standard'): 
         const args = inputObject(input), path = stringArg(args, 'file_path');
         return withWorkspaceFile(fileRoot(c, path, true), path, false, async (parent, name, absolute) => {
           const snapshot = await readAnchored(parent, name), { text: before, mode } = snapshot;
+          checkRead(c, absolute, snapshot.data);
           const old = stringArg(args, 'old_str'), replacement = stringArg(args, 'new_str');
           if (!old || !before.includes(old)) throw new Error('Edit search text not found');
           if (!args.change_all && before.indexOf(old) !== before.lastIndexOf(old)) throw new Error('Edit search text is ambiguous');
@@ -202,9 +207,30 @@ export function builtinTools(permissionMode: 'standard' | 'yolo' = 'standard'): 
           const applied = await prepareWrite(c, fileRoot(c, path, true), { path: absolute, before: snapshot, after: Buffer.from(after), mode });
           await atomicReplace(parent, name, after, c.signal, mode);
           if (applied) await applied(await readAnchored(parent, name));
+          rememberRead(c, absolute, Buffer.from(after));
           return { success: true, file_path: absolute };
         });
       }, 'Replace exact text in a workspace file; ambiguous edits require change_all.'),
+    tool('ApplyPatch', 'write', { patch: str }, ['patch'], async (input, c) => {
+      const patch = parsePatch(inputObject(input).patch), root = fileRoot(c, patch.path, true);
+      return withWorkspaceFile(root, patch.path, patch.operation === 'add', async (parent, name, absolute) => {
+        c.signal.throwIfAborted();
+        let snapshot;
+        try { snapshot = await readAnchored(parent, name); } catch (error: any) { if (error.code !== 'ENOENT' || patch.operation !== 'add') throw error; }
+        if (patch.operation === 'add' && snapshot) throw new Error('Add File refuses an existing file');
+        if (snapshot) {
+          new TextDecoder('utf-8', { fatal: true }).decode(snapshot.data);
+          if (snapshot.text.includes('\0')) throw new Error('Patch requires UTF-8 text without NUL');
+          checkRead(c, absolute, snapshot.data);
+        }
+        const after = Buffer.from(applyHunks(snapshot?.text ?? '', patch)), mode = snapshot?.mode ?? 0o666;
+        const applied = await prepareWrite(c, root, { path: absolute, before: snapshot, after, mode });
+        await atomicReplace(parent, name, after, c.signal, mode);
+        if (applied) await applied(await readAnchored(parent, name));
+        rememberRead(c, absolute, after);
+        return { success: true, file_path: absolute, operation: patch.operation };
+      });
+    }, 'Apply one original-format patch to an absolute workspace file: *** Update File: path followed by @@ hunks, or *** Add File: path with + lines. No multi-file or delete directives.'),
     tool('Glob', 'read', { patterns: { type: 'array', items: str }, folder: str }, ['patterns'], async (input, c) => {
       const args = inputObject(input), path = typeof args.folder === 'string' ? args.folder : '.';
       const root = await workspacePath(fileRoot(c, path), resolve(c.cwd, path));

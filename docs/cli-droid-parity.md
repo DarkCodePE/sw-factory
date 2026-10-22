@@ -47,8 +47,8 @@ Sin preferencia guardada, autonomía off. El orden del modelo es flag `-m`, env,
 | MCP | `/mcp [list|enable nombre|disable nombre]`: conecta los configurados al siguiente turno; enable/disable dura esta invocación. Listar no inicia servidores ni afirma conectividad. `/tools` sí puede negociarlos para descubrir schemas y los cierra al terminar. |
 | Herramientas | `/tools [list|only nombres|remove nombres|reset]` aplica filtros al motor y a llamadas anidadas. Permisos una vez/cancel y AskUser responden con señales cancelables. |
 | Trabajo visible | Spinner con tiempo del turno y nombre de herramienta; se oculta al recibir texto o pedir una respuesta al usuario. Dos filas reservadas para trabajo y estado (modelo, modo/autonomía, tokens de usage acumulados durante esta invocación, contexto estimado del último request, incluidos schemas). Se adapta a resize. |
-| Respuestas y cambios | Markdown incremental por líneas: títulos, negritas, listas, inline code, bloques cercados con fondo/borde y tablas delimitadas por pipes. Edit/Create muestran +/- con números de línea, 12 líneas compactas o hasta 400 ampliadas. Sin ApplyPatch propio en el catálogo actual. |
-| Rewind local | `/rewind`, `/rewind list`, `/rewind <id>` restauran únicamente archivos Edit/Create del último checkpoint con archivos o del ID elegido. Incluye llamadas anidadas de Script. No rebobina el historial conversacional. |
+| Respuestas y cambios | Markdown incremental por líneas: títulos, negritas, listas, inline code, bloques cercados con fondo/borde y tablas delimitadas por pipes. Edit/Create/ApplyPatch muestran +/- con números de línea, 12 líneas compactas o hasta 400 ampliadas. ApplyPatch usa un diff propio de un único archivo. |
+| Rewind local | `/rewind`, `/rewind list`, `/rewind <id>` restauran únicamente archivos Edit/Create/ApplyPatch del último checkpoint con archivos o del ID elegido. Incluye llamadas anidadas de Script. No rebobina el historial conversacional. |
 | Recursos de proyecto | `/skills [nombre]` lista/lee `.agents/skills`; `/skill nombre argumentos` invoca una skill. Skills y prompts de `.agents/commands/*.md` aparecen en la paleta y se invocan por `/nombre argumentos`; `/commands` enumera los invocables. Sustituye `$ARGUMENTS` como texto y elimina el frontmatter antes de enviar el cuerpo al motor. Los comandos integrados y sus aliases tienen prioridad. No sigue catálogos enlazados fuera del proyecto. |
 | Proyecto | `/cwd`/`/cd [ruta]` cambia carpeta y abre conversación nueva; `/init [instrucciones]` pide preparar AGENTS.md bajo los permisos y herramientas del agente. |
 | Subagentes | `/droids` informa de Task/SpawnAgent y límites disponibles. No implementa un gestor de definiciones custom Droids. |
@@ -242,3 +242,35 @@ A la versión `f023e47`, la suite completa registra:
 bun test
 ```
 **252 pass, 0 fail, 1.481 expect() calls en 29 archivos** (ejecución completa exit 0 en ~26 s; `bunx tsc --noEmit` exit 0).
+
+
+## Patch propio: spec, propuestas y ApplyPatch (base c58467f)
+
+| Herramienta / id observado | Categoría | Implementación en FAB | Límite de evidencia |
+| --- | --- | --- | --- |
+| ExitSpecMode / exit-spec-mode | read; defaultAllowed false | Solo spec raíz; confirmación salvo high; transición al próximo turno, contexto y schemas renovados; evento mode_changed / notificación fab_mode_changed | Catálogo original confirmado; semántica propia verificada con proveedores deterministas |
+| StageSettingsChanges / stage_settings_changes | read; defaultAllowed true | Propuesta estructurada y settings_staged; TUI aplicar/descartar con respuesta nueva; RPC fab_settings_staged; techos del host y sin YOLO/sandbox | Catálogo original confirmado; aplicación propia solo por el operador |
+| ApplyPatch / apply-patch-cli | edit; defaultAllowed false | Archivo absoluto único, @@ y prefijos espacio/-/+; escritura atómica, rutas ancladas, permisos y rewind de Edit/Create | Catálogo original confirmado; gramática propia, no equivalencia byte por byte |
+
+El inventario autenticado histórico `ev_e92431f6094e3464761b91f54fea5b65592ecd987f84dca9f9d9644bf6c9f790` confirma esos tres ids/categorías/defaultAllowed dentro de 30 entradas. Se leyeron solo los campos del inventario, sin copiar descripciones o código propietario.
+
+En esta tarea se repitieron tres escenarios REA con el Droid seleccionado (SHA-256 ya indicado), dentro de bwrap: raíz RO, workspace y HOME nuevos escribibles, /tmp efímero, entorno limpio y namespace sin red. Los tres terminaron con exit 1 antes de ejecutar herramientas: airgap rechaza el modelo proxy gpt-6-sol y pide configurar BYOK. Esto es un bloqueo de configuración, no prueba de ausencia de funciones ni de login fallido. No se copiaron credenciales ni se hicieron llamadas comerciales.
+
+- Spec/ExitSpecMode: `ev_b9b14948cbeda3381a841880599412628dfdaa64eb606469675952ae05431952`.
+- Propuesta de ajustes: `ev_972a2dbd34f124ec7060ccc96ba25c5b8a93428cc7457a0fcaf34732b1dfc63b`.
+- Edición/ApplyPatch: `ev_f7786ab345742e0a6a484d83cdd3a730d3df0487c55272dd8971c9e8bdee9ee7`.
+
+Los [recibos completos](evidence/tools-spec-settings-patch/rea-captures.json) conservan argumentos, salida y límites. Su hash de launcher corresponde a bwrap; la identidad de Droid se midió por separado. El muestreo de procesos no es exhaustivo y no se pidieron observaciones de archivos: no permite afirmar ausencia global de efectos.
+
+Las decisiones de diseño y límites están en [el contrato del motor](../src/agent/README.md#herramientas-de-modo-propuestas-y-patches). `fab exec --list-tools` ahora aplica filtros only/remove al inventario mostrado: ExitSpecMode desaparece fuera de spec y ApplyPatch desaparece con `--remove-tools apply-patch-cli`. No se añadieron flags, servicios de Factory ni dependencia de Droid.
+
+Pruebas reproducibles del patch:
+
+```bash
+bun test tests/agent-session-tools.test.ts tests/agent-patch.test.ts tests/chat-session-tools.test.ts tests/rpc-session-tools.test.ts tests/agent-tasks.test.ts
+bun test
+bunx tsc --noEmit
+git diff --check
+```
+
+Resultado de este patch: **279 pass, 0 fail, 1.707 aserciones, 33 archivos** (27 casos nuevos). TypeScript y diff-check: exit 0. [Recibo de validación](evidence/tools-spec-settings-patch/validation.json). No es una publicación ni una validación de modelos comerciales.

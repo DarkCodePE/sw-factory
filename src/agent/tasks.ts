@@ -151,7 +151,7 @@ export class TaskManager {
           sessionId: undefined, newSessionId: undefined, fork: false,
           // A separate child lock/session and no closure-based host capabilities.
           tools: [], images: undefined, onEvent: undefined, beforeTool: this.parent.beforeTool, afterTool: this.parent.afterTool,
-          mission: undefined, missionWorker: undefined,
+          mission: undefined, missionWorker: undefined, allowExitSpecMode: false,
           onlyTools: this.parent.onlyTools?.filter(n => !['ProposeMission', 'StartMissionRun', 'EndFeatureRun', 'DismissHandoffItems'].includes(n)),
           removeTools: this.parent.removeTools?.filter(n => !['ProposeMission', 'StartMissionRun', 'EndFeatureRun', 'DismissHandoffItems'].includes(n)),
           receiveMessages: () => task.mailbox.splice(0),

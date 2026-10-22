@@ -1,3 +1,4 @@
+import { validateSettingsChanges, type SettingsPolicy, type SettingsProposal } from '../agent/staged-settings.ts';
 import { resolveExecutionPolicy, scopedExecutionOptions, YOLO_NOTICE, type ExecutionPolicy } from '../agent/execution-policy.ts';
 import { realpath, stat } from 'node:fs/promises';
 import { join, resolve } from 'node:path';
@@ -32,7 +33,7 @@ export interface ChatIO {
 }
 export interface ChatOptions {
   cwd: string; home: string; settings?: ExecSettings; config?: ChatConfig;
-  agent?: Pick<AgentOptions, 'permissionMode' | 'timeoutMs' | 'maxTurns' | 'maxContextTokens' | 'sandbox' | 'appendSystemPrompt' | 'onlyTools' | 'removeTools'>;
+  agent?: Pick<AgentOptions, 'allowExitSpecMode' | 'requireReadBeforeEdit' | 'settingsPolicy' | 'permissionMode' | 'timeoutMs' | 'maxTurns' | 'maxContextTokens' | 'sandbox' | 'appendSystemPrompt' | 'onlyTools' | 'removeTools'>;
   providerFor?: (model: string, reasoning?: string) => ModelProvider;
   run?: typeof runCodingAgent;
 }
@@ -48,6 +49,8 @@ export class ChatController {
   private removed?: string[];
   private readonly startupPolicy: ExecutionPolicy;
   private defaults: ChatConfig;
+  private agentExitedSpec = false;
+  private savedOverrides: Partial<Pick<ChatConfig, 'model' | 'autonomy' | 'networkPolicy'>> = {};
   private settings: ExecSettings;
   private lastResult?: AgentResult;
   private customNames: string[] = [];
@@ -65,8 +68,8 @@ export class ChatController {
   }
   get yoloAuthorized() { return this.startupPolicy.permissionMode === 'yolo'; }
   executionOptions(side = false) {
-    const scope = scopedExecutionOptions({ executionPolicy: this.startupPolicy, autonomy: side ? 'off' : this.yoloAuthorized ? 'high' : this.config.autonomy,
-      sandbox: this.options.agent?.sandbox ?? 'required', networkPolicy: networkPolicy(this.config.networkPolicy) }, side || this.config.mode === 'spec');
+    const scope = scopedExecutionOptions({ executionPolicy: this.agentExitedSpec ? resolveExecutionPolicy({ autonomy: this.config.autonomy }) : this.startupPolicy, autonomy: side ? 'off' : this.yoloAuthorized && !this.agentExitedSpec ? 'high' : this.config.autonomy,
+      sandbox: this.options.agent?.sandbox ?? 'required', networkPolicy: this.agentExitedSpec ? 'deny' : networkPolicy(this.config.networkPolicy) }, side || this.config.mode === 'spec');
     return { ...scope, interactionMode: side ? 'spec' as const : this.config.mode };
   }
   get executionPolicy() { return resolveExecutionPolicy(this.executionOptions()); }
@@ -79,18 +82,18 @@ export class ChatController {
   get palette() { return paletteCatalog(this.projectResources); }
   get mcpServers() { return Object.fromEntries(Object.entries(this.settings.mcpServers ?? {}).filter(([name]) => !this.disabledMcp.has(name))); }
   print(value: unknown) { this.io.write(terminalText(value) + '\n'); }
-  status() { return `${this.yoloAuthorized ? this.config.mode === 'spec' ? 'YOLO suspendido · sandbox requerido · sin red · ' : YOLO_NOTICE + ' · ' : ''}${this.config.model} (${this.config.reasoning ?? 'predeterminado'}) · ${this.config.mode} · auto ${this.executionPolicy.effectiveAutonomy} · red ${this.executionOptions().networkPolicy ?? 'auto'} · ${this.cwd} · sesión ${this.sessionId ?? '(nueva)'}`; }
-  get statusState(): StatusState { return { model: this.config.model, mode: this.config.mode, autonomy: this.executionPolicy.effectiveAutonomy, permissionMode: this.executionPolicy.permissionMode, yoloSuspended: this.yoloAuthorized && this.config.mode === 'spec',
+  status() { return `${this.yoloAuthorized ? (this.config.mode === 'spec' || this.agentExitedSpec) ? 'YOLO suspendido · sandbox requerido · sin red · ' : YOLO_NOTICE + ' · ' : ''}${this.config.model} (${this.config.reasoning ?? 'predeterminado'}) · ${this.config.mode} · auto ${this.executionPolicy.effectiveAutonomy} · red ${this.executionOptions().networkPolicy ?? 'auto'} · ${this.cwd} · sesión ${this.sessionId ?? '(nueva)'}`; }
+  get statusState(): StatusState { return { model: this.config.model, mode: this.config.mode, autonomy: this.executionPolicy.effectiveAutonomy, permissionMode: this.executionPolicy.permissionMode, yoloSuspended: this.yoloAuthorized && (this.config.mode === 'spec' || this.agentExitedSpec),
     inputTokens: this.tokens.inputTokens + this.turnUsage.inputTokens, outputTokens: this.tokens.outputTokens + this.turnUsage.outputTokens,
     contextTokens: this.contextTokens, maxContextTokens: this.options.agent?.maxContextTokens ?? 32000, reasoning: this.config.reasoning, modelLabel: this.modelLabel, resources: { ...this.resources, mcpConfigured: Object.keys(this.mcpServers).length } }; }
   cycleReasoning() { this.config.reasoning = REASONING[(REASONING.indexOf(this.config.reasoning as any) + 1) % REASONING.length]; this.persist(); this.io.update?.(this.statusState); }
   toggleDetail() { this.detailed = !this.detailed; this.io.expand?.(this.detailed); }
   async syncHistory() { this.io.setHistory?.(await new PromptHistory(this.options.home, this.cwd).load()); }
   interrupt() { this.active?.abort(new Error('Interrumpido por el usuario')); }
-  provider() {
-    if (this.options.providerFor) return this.options.providerFor(this.config.model, this.config.reasoning);
-    const configured = configuredProviders({ ...this.settings, modelId: this.config.model }, {
-      model: this.config.model, baseUrl: process.env.FABRICA_LLM_BASE_URL, apiKey: process.env.FABRICA_LLM_API_KEY, reasoningEffort: this.config.reasoning,
+  provider(config = this.config) {
+    if (this.options.providerFor) return this.options.providerFor(config.model, config.reasoning);
+    const configured = configuredProviders({ ...this.settings, modelId: config.model }, {
+      model: config.model, baseUrl: process.env.FABRICA_LLM_BASE_URL, apiKey: process.env.FABRICA_LLM_API_KEY, reasoningEffort: config.reasoning,
     });
     return configured.providers[configured.defaultModelId]!;
   }
@@ -108,11 +111,15 @@ export class ChatController {
     if (!resource || commandFor(name) && !kind) throw new Error(`Recurso no disponible: ${name}`);
     await this.runPrompt(promptBody(await projectPrompt(this.cwd, resource.kind, resource.name)).replaceAll('$ARGUMENTS', args));
   }
-  private persist() { saveChatConfig(this.config, this.options.home); }
+  private resetStagedSettings() {
+    this.config = { ...this.config, ...this.savedOverrides };
+    this.savedOverrides = {}; this.agentExitedSpec = false;
+  }
+  private persist() { saveChatConfig({ ...this.config, ...this.savedOverrides }, this.options.home); }
   setMode(value: string) {
     if (!['auto', 'spec', 'mission'].includes(value)) throw new Error('Modo: auto, spec o mission');
     if (value === 'mission' && this.executionPolicy.effectiveAutonomy !== 'high') throw new Error('Mission exige /auto high explícito');
-    this.config.mode = value as ChatConfig['mode']; this.print(this.status());
+    this.agentExitedSpec = false; this.config.mode = value as ChatConfig['mode']; this.print(this.status());
   }
   cycleMode() {
     const modes = this.executionPolicy.effectiveAutonomy === 'high' ? ['auto', 'spec', 'mission'] : ['auto', 'spec'];
@@ -125,7 +132,7 @@ export class ChatController {
     }
     const previous = this.config.model; this.config.model = id;
     try { this.provider(); } catch (e) { this.config.model = previous; throw e; }
-    this.persist(); this.print(this.status());
+    delete this.savedOverrides.model; this.persist(); this.print(this.status());
   }
   private requireSession() { if (!this.sessionId) throw new Error('No hay una sesión guardada; envía primero una tarea'); return this.sessionId; }
   async resume(id = '', last = false) {
@@ -138,7 +145,7 @@ export class ChatController {
       if (n === undefined) return; id = sessions[n]!.id;
     }
     await editSession(this.sessionDir, id, this.cwd, s => { s.archived = false; });
-    this.sessionId = id; this.print(this.status());
+    this.resetStagedSettings(); this.sessionId = id; this.print(this.status());
   }
   private permission = async (request: PermissionRequest, context: ToolContext): Promise<'proceed_once' | 'cancel'> => {
     this.print('Permiso para esta llamada (sin autorización permanente):');
@@ -163,6 +170,10 @@ export class ChatController {
   };
   async runPrompt(prompt: string, side = false) {
     let streamed = '', finalText = '';
+    const settingsPolicy: SettingsPolicy = this.options.agent?.settingsPolicy ?? {
+      modelIds: this.modelIds, maxAutonomy: this.executionPolicy.effectiveAutonomy, networkPolicy: this.executionOptions(side).networkPolicy ?? 'auto',
+    };
+    const proposals: SettingsProposal[] = [];
     const previousId = this.sessionId;
     const checkpoints = new Checkpoints(this.cwd, this.options.home);
     const changed = new Set<string>();
@@ -175,7 +186,17 @@ export class ChatController {
     const assistant = (text: string, final = false) => this.io.assistant ? this.io.assistant(text, final) : this.io.write(text + (final ? '\n' : ''));
     this.io.work?.('Modelo');
     const onEvent = (event: AgentEvent) => {
-      if (event.type === 'provider_retry') {
+      if (event.type === 'settings_staged' && !side) {
+        if (proposals.length < 64) proposals.push(event.proposal as SettingsProposal);
+        else this.print('Límite de propuestas de ajustes: se descarta esta propuesta');
+      } else if (event.type === 'mode_changed' && !side) {
+        const autonomy = event.autonomy as ChatConfig['autonomy'];
+        if (!AUTONOMIES.includes(autonomy)) throw new Error('Autonomía inválida en cambio de modo');
+        if (this.config.autonomy !== autonomy && !Object.hasOwn(this.savedOverrides, 'autonomy')) this.savedOverrides.autonomy = this.config.autonomy;
+        this.config.autonomy = autonomy;
+        this.agentExitedSpec = true; this.config.mode = 'auto'; this.print('Modo auto para el próximo turno; autonomía conservada.');
+        this.io.update?.(this.statusState);
+      } else if (event.type === 'provider_retry') {
         if (streamed) assistant('', true); streamed = '';
         this.print(`Reintento del proveedor ${event.attempt}/${event.maxAttempts}: ${event.message}`);
         this.io.work?.('Modelo');
@@ -201,6 +222,7 @@ export class ChatController {
     try {
     const result = await (this.options.run ?? runCodingAgent)({ ...this.options.agent,
       prompt, cwd: this.cwd, provider: this.provider(), ...this.executionOptions(side), mcpServers: this.mcpServers,
+      allowExitSpecMode: !side && this.options.agent?.allowExitSpecMode !== false, settingsPolicy,
       sessionDir: side ? undefined : this.sessionDir, sessionId: side ? undefined : this.sessionId,
       onlyTools: this.only, removeTools: this.removed, signal: this.active?.signal, onEvent,
       permissionHandler: side ? undefined : this.permission, askUserHandler: this.askUser,
@@ -232,6 +254,22 @@ export class ChatController {
       this.lastResult = result;
     } else this.sessionId = previousId;
     if (!result.ok) this.print(`${result.error?.type}: ${result.error?.message}`);
+    if (!side && result.ok) for (const proposal of proposals) {
+      this.active?.signal.throwIfAborted();
+      const changes = validateSettingsChanges(proposal.changes, settingsPolicy, this.executionPolicy);
+      this.print(`Propuesta de ajustes de sesión: ${JSON.stringify(changes)}`);
+      const answer = (await this.io.question('¿Aplicar / descartar? [a/d] ', this.active?.signal, { fresh: true })).trim().toLowerCase();
+      this.active?.signal.throwIfAborted();
+      if (!['a', 'aplicar'].includes(answer)) { this.print('Propuesta descartada'); continue; }
+      const candidate = { ...this.config, ...(changes.modelId !== undefined ? { model: changes.modelId } : {}),
+        ...(changes.autonomy !== undefined ? { autonomy: changes.autonomy } : {}),
+        ...(changes.networkPolicy !== undefined ? { networkPolicy: changes.networkPolicy } : {}) };
+      this.provider(candidate); // Validate all settings before changing session state.
+      for (const key of ['model', 'autonomy', 'networkPolicy'] as const) if (candidate[key] !== this.config[key] && !Object.hasOwn(this.savedOverrides, key))
+        Object.assign(this.savedOverrides, { [key]: this.config[key] });
+      this.config = candidate;
+      this.print('Ajustes aplicados solo a esta sesión'); this.io.update?.(this.statusState);
+    }
     this.print(`${result.turns} turnos · ${result.toolCalls} tools · ${(result.durationMs / 1000).toFixed(1)} s`);
     return result;
     } finally { this.io.work?.(); assistant('', true); await checkpoints.finish(); this.io.update?.(this.statusState); }
@@ -251,7 +289,7 @@ export class ChatController {
         case 'exit': return false;
         case 'help': this.print(commandHelp()); break;
         case 'rewind': {
-          this.print('Rewind solo de Edit/Create. Nunca revierte Execute, otros efectos ni el historial de conversación; conserva directorios vacíos.');
+          this.print('Rewind de Edit/Create/ApplyPatch. Nunca revierte Execute, otros efectos ni el historial de conversación; conserva directorios vacíos.');
           const journal = new Checkpoints(this.cwd, this.options.home);
           if (arg === 'list') { for (const t of await journal.list()) this.print(`${t.id} · ${t.label} · ${t.files} archivos${t.blocked ? ' [bloqueado]' : ''}`); }
           else { const restored = await journal.rewind(arg || undefined, this.active.signal); this.print(`Checkpoint ${restored.id}: ${restored.files} archivos restaurados. El contexto conserva el turno; comunica el rewind al agente.`); }
@@ -271,7 +309,7 @@ export class ChatController {
           if (n === undefined) break;
           if (n < 0) throw new Error('Autonomía: off, low, medium o high');
           if (this.yoloAuthorized) { if (AUTONOMIES[n] !== 'high') throw new Error('YOLO exige high; reinicia sin --yolo para cambiar autonomía'); this.print(this.status()); break; }
-          this.config.autonomy = AUTONOMIES[n]!;
+          this.config.autonomy = AUTONOMIES[n]!; delete this.savedOverrides.autonomy;
           if (this.config.mode === 'mission' && this.config.autonomy !== 'high') this.config.mode = 'auto';
           this.persist(); this.print(this.status()); break;
         }
@@ -282,7 +320,7 @@ export class ChatController {
             if (selected !== 'auto') throw new Error('YOLO exige red auto; reinicia sin --yolo para limitar la red');
             this.print(this.status()); break;
           }
-          this.config.networkPolicy = networkPolicy(selected); this.persist(); this.print(this.status()); break;
+          this.config.networkPolicy = networkPolicy(selected); delete this.savedOverrides.networkPolicy; this.persist(); this.print(this.status()); break;
         }
         case 'mode': {
           const modes = ['auto', 'spec', 'mission'];
@@ -299,7 +337,7 @@ export class ChatController {
           if (n === undefined) break; if (n < 0) throw new Error('Tema: color o plain');
           this.config.theme = choices[n] as ChatConfig['theme']; this.persist(); break;
         }
-        case 'new': this.config = { ...this.defaults }; this.sessionId = undefined; this.print('Conversación nueva con ajustes de arranque'); break;
+        case 'new': this.agentExitedSpec = false; this.config = { ...this.defaults }; this.savedOverrides = {}; this.sessionId = undefined; this.print('Conversación nueva con ajustes de arranque'); break;
         case 'clear': this.sessionId = undefined; this.print('Contexto nuevo; ajustes conservados'); break;
         case 'sessions': await this.resume(arg === '--last' ? '' : arg, arg === '--last'); break;
         case 'search': {
@@ -307,11 +345,11 @@ export class ChatController {
           sessions.forEach(s => this.print(`${s.id} · ${s.title}${s.archived ? ' [archivada]' : ''}\n  ${s.preview.replace(/\n/g, ' ')}`));
           this.print(`${sessions.length} sesiones${truncated ? ' (búsqueda parcial por límite)' : ''}`); break;
         }
-        case 'fork': this.sessionId = await forkSession(this.sessionDir, arg || this.requireSession(), this.cwd); this.print(this.status()); break;
+        case 'fork': this.sessionId = await forkSession(this.sessionDir, arg || this.requireSession(), this.cwd); this.resetStagedSettings(); this.print(this.status()); break;
         case 'rename': if (!arg || arg.length > 200) throw new Error('Título requerido, máximo 200 caracteres');
           await editSession(this.sessionDir, this.requireSession(), this.cwd, s => { s.title = arg; }); this.print('Título guardado'); break;
         case 'favorite': await editSession(this.sessionDir, this.requireSession(), this.cwd, s => { s.pinned = !s.pinned; this.print(s.pinned ? 'Sesión fijada' : 'Sesión desfijada'); }); break;
-        case 'archive': await editSession(this.sessionDir, this.requireSession(), this.cwd, s => { s.archived = true; }); this.sessionId = undefined; this.print('Sesión archivada; /search la incluye'); break;
+        case 'archive': await editSession(this.sessionDir, this.requireSession(), this.cwd, s => { s.archived = true; }); this.resetStagedSettings(); this.sessionId = undefined; this.print('Sesión archivada; /search la incluye'); break;
         case 'tree': {
           const { sessions } = await listSessions(this.sessionDir, this.cwd, '', true);
           sessions.forEach(s => this.print(`${s.id} ← ${s.parentSessionId ?? '(raíz)'} · ${s.title}`)); break;
@@ -324,13 +362,13 @@ export class ChatController {
           const result = await editSession(this.sessionDir, this.requireSession(), this.cwd, s => compressSession(s, this.provider(), this.active!.signal, arg));
           this.print(`Contexto comprimido: ~${result.before} → ~${result.after} tokens`); break;
         }
-        case 'handoff': this.sessionId = await forkSession(this.sessionDir, this.requireSession(), this.cwd, async s => { await compressSession(s, this.provider(), this.active!.signal, arg); }); this.print(this.status()); break;
+        case 'handoff': this.sessionId = await forkSession(this.sessionDir, this.requireSession(), this.cwd, async s => { await compressSession(s, this.provider(), this.active!.signal, arg); }); this.resetStagedSettings(); this.print(this.status()); break;
         case 'btw': if (!arg) throw new Error('/btw <pregunta>'); await this.runPrompt(arg, true); break;
         case 'cwd':
           if (!arg) { this.print(this.cwd); break; }
           { const cwd = await realpath(resolve(this.cwd, arg));
             if (!(await stat(cwd)).isDirectory()) throw new Error('La carpeta no existe');
-            this.cwd = cwd; this.sessionId = undefined; await this.refreshCommands(); this.print(this.status()); } break;
+            this.resetStagedSettings(); this.cwd = cwd; this.sessionId = undefined; await this.refreshCommands(); this.print(this.status()); } break;
         case 'mcp': {
           const [action, server] = arg.split(/\s+/);
           if (action && action !== 'list') {
@@ -345,11 +383,11 @@ export class ChatController {
           if (action === 'reset') { this.only = undefined; this.removed = undefined; }
           else if (action === 'only' || action === 'remove') {
             if (!names.length) throw new Error('/tools only|remove <nombres separados por coma>');
-            const catalog = await listConfiguredToolCatalog({ prompt: '', cwd: this.cwd, provider: this.provider(), mcpServers: this.mcpServers, ...this.executionOptions() }, this.active.signal);
+            const catalog = await listConfiguredToolCatalog({ ...this.options.agent, prompt: '', cwd: this.cwd, provider: this.provider(), mcpServers: this.mcpServers, ...this.executionOptions() }, this.active.signal);
             for (const n of names) if (!catalog.some(t => t.schema.function.name === n)) throw new Error(`Tool desconocida: ${n}`);
             if (action === 'only') this.only = names; else this.removed = names;
           } else if (action && action !== 'list') throw new Error('/tools [list|only <nombres>|remove <nombres>|reset]');
-          const catalog = await listConfiguredToolCatalog({ prompt: '', cwd: this.cwd, provider: this.provider(), mcpServers: this.mcpServers,
+          const catalog = await listConfiguredToolCatalog({ ...this.options.agent, prompt: '', cwd: this.cwd, provider: this.provider(), mcpServers: this.mcpServers,
             ...this.executionOptions(), onlyTools: this.only, removeTools: this.removed }, this.active.signal);
           this.print(catalog.map(t => `${t.schema.function.name} [${t.effect}]`).join('\n')); break;
         }

@@ -2,7 +2,7 @@ import type { AgentTool, Autonomy, InteractionMode } from './types.ts';
 
 /** Public wire identifiers observed in the client, separate from model-facing names. */
 const IDS: Record<string, string> = { Read: 'read-cli', LS: 'ls-cli', Grep: 'grep_tool_cli', Glob: 'glob-search-cli',
-  Edit: 'edit-cli', Create: 'create-cli', Execute: 'execute-cli', TodoWrite: 'todo_write', ToolSearch: 'tool-search-cli',
+  ExitSpecMode: 'exit-spec-mode', StageSettingsChanges: 'stage_settings_changes', ApplyPatch: 'apply-patch-cli', Edit: 'edit-cli', Create: 'create-cli', Execute: 'execute-cli', TodoWrite: 'todo_write', ToolSearch: 'tool-search-cli',
   AskUser: 'ask-user', Skill: 'skill', Script: 'script', Task: 'task-cli', TaskOutput: 'task-output-cli', TaskStop: 'task-stop-cli',
   ProposeMission: 'propose-mission', StartMissionRun: 'start-mission-run', EndFeatureRun: 'end-feature-run', DismissHandoffItems: 'dismiss-handoff-items' };
 export const toolId = (name: string) => IDS[name] ?? name;
@@ -10,11 +10,11 @@ export const toolName = (selector: string) => Object.entries(IDS).find(([, id]) 
 export const selectToolNames = (selectors?: string[]) => selectors?.map(toolName);
 export function describeTool(t: Pick<AgentTool, 'schema' | 'effect'>, autonomy: Autonomy = 'off', mode: InteractionMode = 'auto', only?: string[], removed?: string[], policy?: import('./execution-policy.ts').ExecutionPolicy) {
   const name = t.schema.function.name;
-  const conditional = policy?.permissionMode !== 'yolo' && ['Script', 'Execute'].includes(name);
+  const conditional = name === 'ExitSpecMode' || policy?.permissionMode !== 'yolo' && ['Script', 'Execute'].includes(name);
   const boundedChild = ['Task', 'SpawnAgent'].includes(name);
   const permitted = policy?.permissionMode === 'yolo' || t.effect === 'read' || conditional || (mode !== 'spec' || boundedChild) &&
     (t.effect === 'write' ? autonomy !== 'off' : ['medium', 'high'].includes(autonomy));
   return { executionPolicy: policy, id: toolId(name), llmId: name, displayName: name, description: t.schema.function.description,
-    category: t.effect === 'write' ? 'edit' : t.effect, defaultAllowed: t.effect === 'read',
+    category: t.effect === 'write' ? 'edit' : t.effect, defaultAllowed: t.effect === 'read' && name !== 'ExitSpecMode',
     currentlyAllowed: permitted && (!only || only.includes(name)) && !removed?.includes(name), conditional, schema: t.schema };
 }

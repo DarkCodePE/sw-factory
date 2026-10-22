@@ -64,6 +64,7 @@ export async function execMain(argv: string[]): Promise<number> {
     const configured = configuredProviders(settings, { model: process.env.FABRICA_LLM_MODEL ?? 'qwen3.5-32k',
       baseUrl: v['base-url'] ?? process.env.FABRICA_LLM_BASE_URL, apiKey: process.env.FABRICA_LLM_API_KEY, reasoningEffort: v['reasoning-effort'] });
     const provider = configured.providers[configured.defaultModelId]!;
+    const settingsPolicy = { modelIds: Object.keys(configured.providers), maxAutonomy: policy.effectiveAutonomy, networkPolicy: executionNetwork };
     const roleProvider = (name?: string) => {
       if (!name) return undefined;
       if (!Object.hasOwn(configured.providers, name)) throw new Error(`Unknown configured mission model: ${name}`);
@@ -87,7 +88,7 @@ export async function execMain(argv: string[]): Promise<number> {
     }
     if (v['list-tools']) {
       const tools = (await listConfiguredToolCatalog({ ...execution, prompt: '', cwd: resolve(v.cwd ?? process.cwd()), provider,
-        mcpServers: settings.mcpServers, interactionMode: v.mission ? 'mission' : v['use-spec'] ? 'spec' : 'auto' })).map(t => describeTool(t, policy.effectiveAutonomy, v.mission ? 'mission' : v['use-spec'] ? 'spec' : 'auto', selected(v['only-tools']), selected(v['remove-tools']), policy));
+        mcpServers: settings.mcpServers, settingsPolicy, onlyTools: selected(v['only-tools']), removeTools: selected(v['remove-tools']), interactionMode: v.mission ? 'mission' : v['use-spec'] ? 'spec' : 'auto' })).map(t => describeTool(t, policy.effectiveAutonomy, v.mission ? 'mission' : v['use-spec'] ? 'spec' : 'auto', selected(v['only-tools']), selected(v['remove-tools']), policy));
       if (format === 'text') console.log(tools.map(t => `${t.id}\t${t.category}`).join('\n'));
       else console.log(JSON.stringify(tools));
       return 0;
@@ -101,7 +102,7 @@ export async function execMain(argv: string[]): Promise<number> {
     process.once('SIGINT', stop); process.once('SIGTERM', stop);
     try {
       const result = await runCodingAgent({ ...execution, prompt, mcpServers: settings.mcpServers, cwd: resolve(v.cwd ?? process.cwd()), provider,
-        autonomy: execution.autonomy, interactionMode: v.mission ? 'mission' : v['use-spec'] ? 'spec' : 'auto', mission,
+        settingsPolicy, autonomy: execution.autonomy, interactionMode: v.mission ? 'mission' : v['use-spec'] ? 'spec' : 'auto', mission,
         sandbox: v.sandbox as 'required' | 'best-effort' | undefined, networkPolicy: executionNetwork,
         timeoutMs: v['timeout-ms'] ? Number(v['timeout-ms']) : undefined,
         maxTurns: v['max-turns'] ? Number(v['max-turns']) : undefined,
