@@ -1,43 +1,12 @@
 import { fit } from './render.ts';
 
-export interface MissionFeatureProgress {
-  id: string;
-  milestone: string;
-  status: string; // 'pending' | 'awaiting_validation' | 'completed' | 'cancelled'
-  attempts: number;
-}
-
-export interface MissionMilestoneProgress {
-  id: string;
-  scrutiny: boolean;
-  userTesting: boolean;
-  verifiersPassed: boolean | null;
-}
-
-export interface MissionWorkerProgress {
-  workerSessionId: string;
-  featureId: string;
-  role: 'worker' | 'scrutiny' | 'user-testing';
-  status: 'running' | 'completed' | 'failed';
-  usage: { inputTokens: number; outputTokens: number };
-  durationMs: number;
-}
-
-export interface MissionProgressSnapshot {
-  missionId: string;
-  title: string;
-  state: string; // 'planning' | 'running' | 'paused' | 'orchestrator_turn' | 'completed'
-  updatedAt: string;
-  features: MissionFeatureProgress[];
-  milestones: MissionMilestoneProgress[];
-  workers: MissionWorkerProgress[];
-  totals: {
-    completed: number;
-    total: number;
-    usage: { inputTokens: number; outputTokens: number };
-    durationMs: number;
-  };
-}
+import type { MissionProgressSnapshot } from '../agent/mission-contract.ts';
+export type { MissionProgressSnapshot };
+export type MissionFeatureProgress = MissionProgressSnapshot['features'][number];
+export type MissionMilestoneProgress = MissionProgressSnapshot['milestones'][number];
+export type MissionWorkerProgress = MissionProgressSnapshot['workers'][number];
+const MISSION_STATES = ['planning', 'running', 'paused', 'orchestrator_turn', 'completed'] as const;
+const isMissionState = (v: string): v is MissionProgressSnapshot['state'] => (MISSION_STATES as readonly string[]).includes(v);
 
 export function formatMissionEvent(event: Record<string, any>): string {
   if (!event || typeof event.type !== 'string') return '[Misión] Evento no estructurado';
@@ -175,7 +144,7 @@ export class MissionTracker {
         if (this.snapshot?.missionId) this.missionId = this.snapshot.missionId;
       } else if (event.type === 'mission_state_changed' && event.state) {
         this.state = String(event.state);
-        if (this.snapshot) this.snapshot.state = this.state;
+        if (this.snapshot && isMissionState(this.state)) this.snapshot.state = this.state;
       } else if (event.type === 'mission_paused') {
         this.state = 'paused';
         if (this.snapshot) this.snapshot.state = 'paused';

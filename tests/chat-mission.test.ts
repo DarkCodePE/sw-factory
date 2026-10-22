@@ -103,7 +103,7 @@ test('positivo: panel y barra reflejan features, workers, tokens y eventos legib
       toolCalls: 0,
       durationMs: 4600,
       usage: { inputTokens: 900, outputTokens: 350 },
-      mission: { missionId: 'm-alpha', state: 'running', directory: '/tmp/m-alpha', completed: 2, total: 3 },
+      mission: { missionId: 'm-alpha', state: 'running', directory: '/tmp/m-alpha', completed: 1, total: 3, snapshot: sampleSnapshot },
     };
   };
 
@@ -367,7 +367,7 @@ test('cancelación: /mission pause aborta la señal de pausa y encola el mensaje
           toolCalls: 0,
           durationMs: 100,
           usage: { inputTokens: 100, outputTokens: 50 },
-          mission: { missionId: 'm-pause', state: 'paused', directory: '/tmp/m-pause', completed: 0, total: 2 },
+          mission: { missionId: 'm-pause', state: 'paused', directory: '/tmp/m-pause', completed: 0, total: 2, snapshot: { missionId: 'm-pause', title: 'm-pause', state: 'paused', updatedAt: '2026-10-22T00:00:00.000Z', features: [], milestones: [], workers: [], totals: { completed: 0, total: 2, usage: { inputTokens: 0, outputTokens: 0 }, durationMs: 0 } } },
         });
       };
       if (pauseSignalReceived?.aborted) {
@@ -486,7 +486,7 @@ test('terminal interactiva: /mission pause escrito durante un turno activo pausa
           toolCalls: 0,
           durationMs: 100,
           usage: { inputTokens: 100, outputTokens: 50 },
-          mission: { missionId: 'm-term-pause', state: 'paused', directory: '/tmp/m-term-pause', completed: 0, total: 2 },
+          mission: { missionId: 'm-term-pause', state: 'paused', directory: '/tmp/m-term-pause', completed: 0, total: 2, snapshot: { missionId: 'm-term-pause', title: 'm-term-pause', state: 'paused', updatedAt: '2026-10-22T00:00:00.000Z', features: [], milestones: [], workers: [], totals: { completed: 0, total: 2, usage: { inputTokens: 0, outputTokens: 0 }, durationMs: 0 } } },
         });
       };
       if (pauseSignalReceived?.aborted) onAbort();

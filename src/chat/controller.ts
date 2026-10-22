@@ -302,9 +302,7 @@ export class ChatController {
         this.missionTracker.missionId = result.mission.missionId;
         this.missionTracker.state = result.mission.state;
         this.missionTracker.directory = result.mission.directory;
-        if ((result.mission as any).snapshot) {
-          this.missionTracker.snapshot = (result.mission as any).snapshot;
-        }
+        if (result.mission.snapshot) this.missionTracker.snapshot = result.mission.snapshot;
       }
     } else this.sessionId = previousId;
     if (!result.ok) this.print(`${result.error?.type}: ${result.error?.message}`);
