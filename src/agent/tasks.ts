@@ -20,7 +20,7 @@ export class AgentBudget {
   reservedCalls = 0;
   get freeCalls() { return this.maxCalls - this.calls - this.reservedCalls; }
   /**
-   * Count one model call. A call inside a reserved run is paid from that reservation first;
+   * Count one model call or mission Loop invocation. A call inside a reserved run is paid from that reservation first;
    * any other call may only use capacity nobody has reserved.
    */
   modelCall(reservation?: CallReservation) {

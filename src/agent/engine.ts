@@ -204,7 +204,8 @@ export async function runCodingAgent(opts: AgentOptions, inherited?: AgentLineag
           let encoded: string;
           try { encoded = typeof value === 'string' ? value : JSON.stringify(value ?? null); }
           catch { value = 'Error: Tool result is not JSON serializable'; encoded = value as string; isError = true; }
-          if (Buffer.byteLength(encoded) > 256 * 1024) { value = 'Error: Tool result exceeds 256 KiB'; encoded = value as string; isError = true; }
+          const resultLimitKiB = call.function.name === 'FetchUrl' ? 8192 : call.function.name === 'Loop' ? 2048 : 256;
+          if (Buffer.byteLength(encoded) > resultLimitKiB * 1024) { value = `Error: Tool result exceeds ${resultLimitKiB} KiB`; encoded = value as string; isError = true; }
           emit('tool_result', { id: call.id, isError, value: value ?? null });
           return { role: 'tool' as const, tool_call_id: call.id, content: encoded };
         };

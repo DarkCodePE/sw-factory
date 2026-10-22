@@ -251,6 +251,8 @@ bun test
 | ExitSpecMode / exit-spec-mode | read; defaultAllowed false | Solo spec raíz; confirmación salvo high; transición al próximo turno, contexto y schemas renovados; evento mode_changed / notificación fab_mode_changed | Catálogo original confirmado; semántica propia verificada con proveedores deterministas |
 | StageSettingsChanges / stage_settings_changes | read; defaultAllowed true | Propuesta estructurada y settings_staged; TUI aplicar/descartar con respuesta nueva; RPC fab_settings_staged; techos del host y sin YOLO/sandbox | Catálogo original confirmado; aplicación propia solo por el operador |
 | ApplyPatch / apply-patch-cli | edit; defaultAllowed false | Archivo absoluto único, @@ y prefijos espacio/-/+; escritura atómica, rutas ancladas, permisos y rewind de Edit/Create | Catálogo original confirmado; gramática propia, no equivalencia byte por byte |
+| Loop / loop-cli | execute; defaultAllowed false | Contrato propio: comando simple repetido 1..50 veces, condición de salida/regex; cada Execute pasa por dispatcher; cancelación y presupuesto de misión | Catálogo original confirmado; semántica propia, original bloqueado en la nueva captura |
+| FetchUrl / fetch_url | read; defaultAllowed true | HTTP(S), permiso de red por llamada, destinos privados bloqueados, DNS fijado, 5 redirects, 1 MiB y timeout total | Catálogo original confirmado; lectura propia, original bloqueado en la nueva captura |
 
 El inventario autenticado histórico `ev_e92431f6094e3464761b91f54fea5b65592ecd987f84dca9f9d9644bf6c9f790` confirma esos tres ids/categorías/defaultAllowed dentro de 30 entradas. Se leyeron solo los campos del inventario, sin copiar descripciones o código propietario.
 
@@ -274,3 +276,30 @@ git diff --check
 ```
 
 Resultado de este patch: **279 pass, 0 fail, 1.707 aserciones, 33 archivos** (27 casos nuevos). TypeScript y diff-check: exit 0. [Recibo de validación](evidence/tools-spec-settings-patch/validation.json). No es una publicación ni una validación de modelos comerciales.
+
+
+## Loop y FetchUrl propios (base main 79793e7)
+
+La entrega incorpora Loop y FetchUrl al catálogo, CLI/TUI/RPC y callbacks Script mediante el dispatcher existente. No añade comandos slash ni flags, ni depende de Droid para ejecutarse. Las entradas y límites propios están en [README del motor](../src/agent/README.md#loop-y-fetchurl-base-main-79793e7).
+
+Inventario original: `ev_e92431f6094e3464761b91f54fea5b65592ecd987f84dca9f9d9644bf6c9f790` (30 entradas). Se consultaron solo campos id/llmId/category/defaultAllowed: Loop = loop-cli / execute / false; FetchUrl = fetch_url / read / true. No se copiaron esquemas ni descripciones.
+
+Nuevos escenarios REA bajo bwrap, raíz RO, HOME/workspace propios, entorno explícito, airgap y namespace sin red:
+
+| Solicitud | Evidencia | Resultado observado |
+| --- | --- | --- |
+| Loop con pwd y máximo dos intentos | ev_4c0c21e623da669a1b8af728fa6156b3573f98865e4486adfd100231152dd5c1 | Exit 1 antes de usar herramientas: airgap rechaza gpt-6-sol vía proxy y pide configurar BYOK |
+| FetchUrl de example.com | ev_a963f7e0bc10d4a63f76208746b214a9179b9bd5df1e271273bf248697c2a884 | Mismo bloqueo de configuración; no se observó descarga |
+
+El SHA-256 de Droid sigue siendo `f4740a4821288415a5089c04a3cc3e6bfbd7866137863422d1d9a220b31640e2`, coincidente con el histórico 0.244.0. No se habilitó red ni se copiaron credenciales para superar el bloqueo. [Capturas completas](evidence/loop-fetch-url/rea-captures.json): identifican el launcher bwrap; la identidad de Droid se midió aparte. Muestreo de procesos y sin snapshot de archivos: no hay prueba de ejecución exitosa de estas herramientas originales ni de ausencia global de efectos.
+
+```bash
+bun test tests/agent-loop.test.ts tests/agent-fetch-url.test.ts
+bun test
+bunx tsc --noEmit
+git diff --check
+```
+
+Los escenarios de FetchUrl usan servidores HTTP locales con la excepción de direcciones privadas solo en pruebas; no consultan servicios remotos. Cubren SSRF, DNS mixto, redirecciones, timeout/cancelación, streaming/truncado, extracción HTML y resultado máximo por motor/RPC. Loop cubre permisos por iteración, misiones, budget, filtros/Script, límites, cancelación repetida tres veces y regex fuera del hilo del agente. La revisión corrigió un desajuste Unicode que podía dejar cuerpo de script en texto extraído. [Recibo final](evidence/loop-fetch-url/validation.json).
+
+Validación final de Loop/FetchUrl: **313 pass, 0 fail, 1.947 aserciones en 36 archivos**; 26 casos nuevos. TypeScript y diff-check con salida 0.

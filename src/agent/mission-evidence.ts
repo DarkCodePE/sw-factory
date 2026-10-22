@@ -73,9 +73,9 @@ const SHELL_OPERATORS = new Set(['|', '&', ';', '<', '>', '`', '$', '(', ')', '{
  * outside quotes escapes the next character. Any unquoted operator, expansion or glob is refused,
  * as are newlines and unterminated quotes, so the argv means exactly what it says.
  */
-export function verifierArgv(command: string): string[] {
+export function verifierArgv(command: string, maxLength = 1000): string[] {
   const fail = (why: string): never => { throw new Error(`Verifier must be a simple command without shell syntax (${why}): ${command}`); };
-  if (!command.trim() || command.length > 1000) fail('empty or longer than 1000 characters');
+  if (!command.trim() || command.length > maxLength) fail('empty or exceeds command length limit');
   if (/[\n\r\0]/.test(command)) fail('newline or NUL');
   const argv: string[] = [];
   let word = '', inWord = false, i = 0;

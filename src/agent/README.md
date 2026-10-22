@@ -206,7 +206,7 @@ El adaptador nativo soporta el lanzamiento y control de procesos en segundo plan
 
 ## Subagentes y Confinamiento
 
-- **Catálogo de herramientas:** `Read`, `LS`, `Create`, `Edit`, `ApplyPatch`, `ExitSpecMode` (solo spec raíz), `StageSettingsChanges`, `Glob`, `Grep`, `Execute`, `Script`, `TodoWrite`, `AskUser`, `Skill`, `ToolSearch` y herramientas de subagentes (`src/agent/catalog.ts`).
+- **Catálogo de herramientas:** `Read`, `LS`, `Create`, `Edit`, `ApplyPatch`, `ExitSpecMode` (solo spec raíz), `StageSettingsChanges`, `Glob`, `Grep`, `Execute`, `Loop`, `FetchUrl`, `Script`, `TodoWrite`, `AskUser`, `Skill`, `ToolSearch` y herramientas de subagentes (`src/agent/catalog.ts`).
 - **Subagentes (`Task`, `SpawnAgent`):** Generan clones aislados fuera del workspace del proceso padre. Copian el estado del árbol de trabajo (incluyendo modificaciones sin commit). Comparten presupuestos: profundidad máxima 2, hasta 8 subagentes por sesión, concurrencia máxima 2 y 256 llamadas acumuladas al proveedor. Los subagentes en background se drenan y cancelan al finalizar la invocación.
 - **Advertencia sobre Skills y Enlaces Simbólicos:** La interfaz TUI (`/skill`) resuelve enlaces simbólicos internos en `.agents/skills`; sin embargo, la herramienta `Skill` del agente utiliza el acceso anclado por descriptor que rechaza enlaces simbólicos de directorio (`src/agent/files.ts:23`).
 
@@ -226,7 +226,7 @@ Cada característica definida en `features.json` establece un contrato estricto:
 ## Alcance Pendiente Honesto
 
 Las siguientes capacidades permanecen sin implementar o fuera de alcance:
-1. **Herramientas de agente:** `loop-cli` (bucle autónomo en turno) y Script durable con `WaitForScript`.
+1. **Herramientas de agente:** Script durable con `WaitForScript`. Loop ofrece un contrato propio acotado, sin afirmar la semántica original completa.
 2. **Crash Recovery de misiones:** Reconciliación automática y journal duradero tras caída intempestiva del proceso del runner.
 3. **Protocolos:** Entrada interactiva multiturno mediante `stream-json` y protocolo ACP. El demonio en puerto 37643 y SDKs remotos permanecen fuera de alcance.
 4. **MCP:** Autenticación OAuth, transporte SSE de versión previa y actualización de catálogo en caliente.
@@ -255,6 +255,8 @@ Implementación propia; los nombres/ids se contrastan con el inventario REA de D
 | ExitSpecMode | exit-spec-mode | read, no permitida por defecto; solo spec raíz habilitado |
 | StageSettingsChanges | stage_settings_changes | read, permitida por defecto; nunca aplica cambios |
 | ApplyPatch | apply-patch-cli | write interno / edit en catálogo; mismo permiso que Edit |
+| Loop | loop-cli | execute; no permitida por defecto; cada iteración usa Execute |
+| FetchUrl | fetch_url | read; permitida por defecto; red condicionada por política/confirmación |
 
 **ExitSpecMode** acepta `{reason?: string}` (máximo 8 KiB). Con off/low/medium solicita confirmación por TUI/RPC; un exec desatendido la rechaza. High permite la transición. Todo el lote actual, incluidos callbacks Script, conserva spec: solo el siguiente turno del modelo usa auto, con la misma autonomía y política de ejecución/red. Se actualizan schemas, contexto y evento `mode_changed`. `allowExitSpecMode: false` confina un ámbito; se impone a subagentes, workers/validadores y /btw. No hay un nuevo permiso persistente en el snapshot.
 
@@ -279,3 +281,50 @@ Para crear: `*** Add File: /ruta/absoluta/nuevo` seguido solo de líneas `+`. Ac
 La opción del host `requireReadBeforeEdit: true` exige para Edit y ApplyPatch una lectura previa válida del archivo y coincidencia de los bytes actuales con el hash leído. No persiste el historial de lecturas; Add sobre un archivo inexistente no lo necesita. Sin esta opción se conserva el comportamiento previo de Edit.
 
 Validación final de este patch: **279 pass, 0 fail, 1.707 aserciones en 33 archivos**; `bunx tsc --noEmit` y `git diff --check` con salida 0. Incluye 27 casos nuevos. Recibo: `docs/evidence/tools-spec-settings-patch/validation.json`.
+
+
+## Loop y FetchUrl (base main 79793e7)
+
+Implementaciones propias basadas en el contrato de la tarea. REA confirma nombres/IDs/categorías en el inventario histórico; las nuevas capturas del original se bloquearon por airgap/modelo proxy antes de ejecutar herramientas. No se copiaron código, descripciones, esquemas ni prompts propietarios.
+
+### Loop
+
+Entrada:
+
+```json
+{"command":"bun test","until":"exit_zero","maxIterations":10,"intervalMs":1000,"network":false}
+```
+
+Para buscar una condición textual: `until:"output_matches"` y `pattern:"READY"`. El patrón RegExp no admite flags separados y tiene máximo 256 caracteres; el matching ocurre en un worker Script aislado sin herramientas, con deadline de 1 s, por lo que una regex costosa no bloquea el agente. Sigue la semántica RegExp de Bun y sus propios límites internos.
+
+Acepta un comando simple de hasta 16 KiB, sin operadores de shell, expansiones ni secuencias &&; conserva argumentos entre comillas. No acepta background ni campos ajenos. maxIterations: 1..50 (10 por defecto); intervalMs: 0..60000 (1000 por defecto). Devuelve `{iterations,satisfied,lastExitCode,lastOutput}`; lastOutput concatena stdout y stderr del último Execute. Agotar iteraciones devuelve satisfied:false; un error del dispatcher, cancelación o error del matcher sí aborta el Loop.
+
+Cada iteración se invoca por el mismo dispatcher que Execute: aplica filtros, permisos de comando y red por llamada, sandbox, journal y observación de misiones. En concreto, beforeTool se comprueba también en Execute interno; afterTool mantiene su alcance previo de llamadas del modelo, y la observación missionWorker.observe sí recibe cada Execute. No se transfiere a las iteraciones la autonomía high temporal que autorice el Loop: off/low pueden requerir permiso para Loop y después para cada Execute. Network true solicita red por cada ejecución, sin concesión duradera. Spec deniega Loop incluso con high o desde Script.
+
+Loop es una herramienta compuesta sin lease propia del scheduler; los Execute internos sí se serializan. En misión/missionWorker consume una unidad del presupuesto compartido de llamadas al admitir cada invocación Loop, además de las llamadas del modelo existentes; no consume una unidad por iteración. Usa la reserva del run cuando existe. El observador de comandos conserva el límite previo de 200 registros por intento; cada ejecución sigue notificándose por el dispatcher.
+
+La cancelación interrumpe la espera entre iteraciones y mata/drena el proceso foreground actual; no inicia el siguiente. Execute foreground ahora activa el mismo cierre de grupo/drenado acotado que YOLO al terminar el líder o exceder salida; los procesos duraderos requieren background explícito. La salida cruda mantiene el máximo de Execute de 256 KiB; el resultado JSON de Loop admite hasta 2 MiB para su escape y metadatos. Loop coloca una barrera de rewind como Execute, sin prometer deshacer efectos de shell.
+
+### FetchUrl
+
+Entrada:
+
+```json
+{"url":"https://example.com/documento","maxBytes":262144,"timeoutMs":10000}
+```
+
+Solo HTTP(S), sin userinfo con credenciales, URL de hasta 8192 caracteres, sin campos adicionales. maxBytes: 1..1048576 (256 KiB por defecto); timeoutMs: 1..30000 (10000 por defecto). Devuelve `{status,contentType,bytes,truncated,text,source:"external",warning}`. bytes cuenta bytes crudos retenidos, no caracteres ni tamaño total del recurso; truncated indica que se observó contenido adicional. Un HTTP 4xx/5xx es una respuesta con su status, no un error de transporte.
+
+Red deny bloquea; ask exige aprobación por llamada; auto concede automáticamente solo en high. En off/low/medium sin handler interactivo se rechaza. FetchUrl puede usarse como lectura en spec si el host mantiene una política permisiva y la concede; los ámbitos TUI/RPC spec, explore, validadores y /btw que fuerzan deny permanecen sin red. El permiso identifica la URL y sus redirecciones validadas, sin conceder red a Execute ni almacenar autorizaciones.
+
+Se resuelve y valida todo el conjunto de IPs por cada salto y se fija una de ellas al socket mediante lookup, sin una segunda resolución. Bloquea por defecto loopback, link-local, privadas, CGNAT, multicast y rangos reservados/documentación, incluidos IPv4 alternativos normalizados y IPv4 mapeadas en IPv6. IPv6 es conservador: unicast global sin rangos de transición/especiales. `FABRICA_FETCH_ALLOW_PRIVATE=1` es una excepción del entorno del host para pruebas, no un argumento del modelo.
+
+Máximo cinco redirecciones, cada destino nuevamente validado; no admite otro esquema ni userinfo en los saltos. Requests sin reutilización de agente, proxies automáticos, cookies ni headers de autenticación; User-Agent fab, TLS/certificado/SNI del hostname original. El timeout total abarca DNS, redirecciones, headers y cuerpo. Al abortar/truncar se destruye la conexión; una resolución DNS pendiente puede continuar en el sistema, pero su resultado tardío no inicia HTTP.
+
+Se solicita identity y se rechazan respuestas comprimidas para evitar expansión fuera del presupuesto. Se decodifica como UTF-8 con reemplazo de bytes inválidos; un corte en medio de un carácter puede producir U+FFFD. HTML/XHTML anunciado por Content-Type se convierte a texto con un extractor lineal simple: elimina tags, comentarios, scripts y estilos; decodifica entidades comunes/numéricas. No es un DOM, no ejecuta JavaScript ni carga subrecursos. La conversión de mayúsculas preserva offsets UTF-16 incluso ante Unicode.
+
+El resultado marca todo contenido como externo/no confiable. Es dato para el modelo: no se ejecuta ni se transforma en instrucciones del runtime. El límite de JSON del resultado FetchUrl es 8 MiB para permitir escape de hasta 1 MiB de bytes descargados; se mantiene el frame RPC de 10 MiB. Existe una regresión de 1 MiB de controles por RPC. Los límites existentes de contexto e historial siguen vigentes; Script puede consumir el resultado y devolver una síntesis bajo su límite de resultado habitual.
+
+Pruebas dirigidas: `bun test tests/agent-loop.test.ts tests/agent-fetch-url.test.ts`. Recibos REA en `docs/evidence/loop-fetch-url/rea-captures.json`; validación completa en `docs/evidence/loop-fetch-url/validation.json`.
+
+Validación final de Loop/FetchUrl: **313 pass, 0 fail, 1.947 aserciones en 36 archivos**; 26 casos nuevos. TypeScript y diff-check con salida 0.

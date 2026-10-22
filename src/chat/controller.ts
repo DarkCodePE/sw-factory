@@ -151,7 +151,8 @@ export class ChatController {
     this.print('Permiso para esta llamada (sin autorización permanente):');
     for (const use of request.toolUses) {
       this.print(`${use.toolUse.name}\n${JSON.stringify(use.toolUse.input, null, 2)}`);
-      if (use.details.network) this.print(`Acceso de red del equipo para este comando y sus descendientes, solo durante esta llamada.\nCarpeta: ${context.cwd}\nEl aislamiento de archivos se conserva. No se limita la conexión a un dominio concreto.`);
+      if (use.toolUse.name === 'FetchUrl') this.print('Acceso HTTP(S) para esta URL y hasta cinco redirecciones validadas, solo durante esta llamada. Sin credenciales; se bloquean destinos privados por defecto.');
+      else if (use.details.network) this.print(`Acceso de red del equipo para este comando y sus descendientes, solo durante esta llamada.\nCarpeta: ${context.cwd}\nEl aislamiento de archivos se conserva. No se limita la conexión a un dominio concreto.`);
     }
     const answer = (await this.io.question('¿Permitir una vez? [s/N] ', context.signal, { fresh: true })).trim().toLowerCase();
     return ['s', 'si', 'sí', 'y'].includes(answer) ? 'proceed_once' : 'cancel';

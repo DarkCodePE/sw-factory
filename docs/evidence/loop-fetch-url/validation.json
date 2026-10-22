@@ -1,0 +1,61 @@
+{
+  "task": "loop-fetch-url",
+  "authorization": "task-codex-loop-fetch-url.md: único escritor en worktree asignado; commit local autorizado; sin push",
+  "worktree": "/home/orlando/Desktop/factory/sw-factory-codex",
+  "branch": "feat/loop-fetch-url",
+  "baseCommit": "79793e7f2a10f3ddca5b7709695a7cb44339edd3",
+  "checks": [
+    {
+      "command": "bun test",
+      "exitCode": 0,
+      "pass": 313,
+      "fail": 0,
+      "assertions": 1947,
+      "files": 36,
+      "durationSeconds": 39.69,
+      "newTests": 26
+    },
+    {
+      "command": "bun test tests/agent-loop.test.ts tests/agent-fetch-url.test.ts",
+      "exitCode": 0,
+      "pass": 26,
+      "fail": 0,
+      "assertions": 185
+    },
+    {
+      "command": "bunx tsc --noEmit",
+      "exitCode": 0
+    },
+    {
+      "command": "git diff --check",
+      "exitCode": 0
+    }
+  ],
+  "review": {
+    "mode": "solo lectura",
+    "fixed": [
+      "Fold ASCII con offsets UTF-16 estables en extractor HTML; regresión Unicode que antes exponía cuerpo de script.",
+      "Límites JSON específicos para retorno completo: FetchUrl 8 MiB, Loop 2 MiB; datos crudos siguen limitados a 1 MiB y 256 KiB respectivamente."
+    ],
+    "verified": [
+      "DNS fijado a socket sin segunda resolución en Bun; bloqueo de todas las respuestas privadas.",
+      "Cancelación Loop durante ejecución repetida tres veces sin escrituras tardías.",
+      "1 MiB de controles FetchUrl cabe en el frame RPC de 10 MiB; se conserva el texto sin normalizar controles."
+    ]
+  },
+  "evidence": {
+    "originalCatalog": "ev_e92431f6094e3464761b91f54fea5b65592ecd987f84dca9f9d9644bf6c9f790",
+    "loop": "ev_4c0c21e623da669a1b8af728fa6156b3573f98865e4486adfd100231152dd5c1",
+    "fetchUrl": "ev_a963f7e0bc10d4a63f76208746b214a9179b9bd5df1e271273bf248697c2a884",
+    "droidSha256": "f4740a4821288415a5089c04a3cc3e6bfbd7866137863422d1d9a220b31640e2",
+    "result": "Ambas capturas originales se bloquearon antes de herramientas: airgap rechaza gpt-6-sol vía proxy y requiere configurar BYOK. No es ejecución exitosa de Loop/FetchUrl."
+  },
+  "limits": [
+    "Regex Loop en worker Script aislado con timeout total 1 s y semántica RegExp de Bun; sin flags separados.",
+    "FetchUrl identity sin compresión, sin cookies/auth; extractor HTML simple, no DOM; UTF8 con reemplazo de bytes inválidos.",
+    "Presupuesto compartido de misión ahora cobra un crédito adicional por Loop admitido, no por iteración; cada Execute interno notifica observador existente (registro máximo 200 por intento).",
+    "Resolución DNS pendiente no es cancelable por el SO; el resultado tardío no inicia HTTP tras aborto.",
+    "Tests HTTP locales únicamente; FABRICA_FETCH_ALLOW_PRIVATE=1 en pruebas, bloqueado por defecto.",
+    "MCP no indexa este worktree; consultas Graft y lectura de fuente en ámbitos afectados."
+  ]
+}

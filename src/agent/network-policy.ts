@@ -12,8 +12,8 @@ export function requestsNetwork(input: unknown): boolean {
   if (value !== undefined && typeof value !== 'boolean') throw new Error('Execute network must be a boolean');
   return value === true;
 }
-export function networkDecision(requested: boolean, policy: NetworkPolicy, autonomy: Autonomy, mode: InteractionMode): 'none' | 'deny' | 'ask' | 'allow' {
+export function networkDecision(requested: boolean, policy: NetworkPolicy, autonomy: Autonomy, mode: InteractionMode, readOnly = false): 'none' | 'deny' | 'ask' | 'allow' {
   if (!requested) return 'none';
-  if (policy === 'deny' || mode === 'spec') return 'deny';
+  if (policy === 'deny' || mode === 'spec' && !readOnly) return 'deny';
   return policy === 'auto' && autonomy === 'high' ? 'allow' : 'ask';
 }

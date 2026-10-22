@@ -5,12 +5,16 @@ import { requestsNetwork } from './network-policy.ts';
 
 export function permissionRequest(call: ToolCall, input: unknown, context: ToolContext): PermissionRequest {
   const p = input && typeof input === 'object' ? input as Record<string, unknown> : {};
-  const name = call.function.name, type = ({ Create: 'create', Edit: 'edit', ApplyPatch: 'edit', Execute: 'execute' } as Record<string, string>)[name] ?? 'tool';
+  const name = call.function.name, type = ({ Create: 'create', Edit: 'edit', ApplyPatch: 'edit', Execute: 'execute', FetchUrl: 'network' } as Record<string, string>)[name] ?? 'tool';
   const details: Record<string, unknown> = { type };
   if (typeof p.file_path === 'string') { details.filePath = resolve(context.cwd, p.file_path); details.fileName = basename(p.file_path); }
   if (name === 'ApplyPatch') { const patch = parsePatch(p.patch); details.filePath = patch.path; details.fileName = basename(patch.path); details.patch = p.patch; }
   if (name === 'Create') details.content = p.content;
   if (name === 'Edit') { details.oldStr = p.old_str; details.newStr = p.new_str; }
+  if (name === 'FetchUrl') {
+    details.url = p.url;
+    details.network = { requested: true, access: 'http_url', scope: 'this_call', policy: context.networkPolicy ?? 'auto' };
+  }
   if (name === 'Execute') {
     details.command = p.command; details.cwd = context.cwd;
     if (requestsNetwork(input)) details.network = { requested: true, access: 'host', scope: 'this_call', policy: context.networkPolicy ?? 'auto' };

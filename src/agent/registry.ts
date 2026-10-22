@@ -1,3 +1,5 @@
+import { loopTool, parseLoop } from './loop.ts';
+import { fetchUrlTool, parseFetch } from './fetch-url.ts';
 import { sessionTools } from './session-tools.ts';
 import { parsePatch } from './patch.ts';
 import { abortable } from './cancellation.ts';
@@ -46,6 +48,7 @@ export class ToolRuntime {
       registry.set(name, t);
     };
     for (const t of builtinTools(yolo ? 'yolo' : 'standard')) add(t);
+    add(fetchUrlTool());
     for (const t of sessionTools(opts, context, settingsPolicy, () => { this.exitQueued = true; }, state.id ?? '')) add(t);
     for (const t of opts.tools ?? []) add(t);
     const maxProcesses = limits.maxBackgroundProcesses ?? opts.maxBackgroundProcesses ?? opts.subagents?.maxProcessConcurrency ?? 4;
@@ -82,18 +85,20 @@ export class ToolRuntime {
       signal.throwIfAborted();
       const t = registry.get(name); if (!t) throw new Error(`Unknown tool: ${name}`);
       // Bind approval to the command and network request shown to the caller.
-      if (name === 'Execute' || name === 'ApplyPatch' || name === 'ExitSpecMode' || name === 'StageSettingsChanges') input = Object.freeze({ ...inputObject(input) });
+      if (name === 'Execute' || name === 'ApplyPatch' || name === 'ExitSpecMode' || name === 'StageSettingsChanges' || name === 'Loop' || name === 'FetchUrl') input = Object.freeze({ ...inputObject(input) });
+      if (name === 'Loop') parseLoop(input);
+      if (name === 'FetchUrl') parseFetch(input);
       if (name === 'ApplyPatch') parsePatch(inputObject(input).patch);
       const actual = call ?? { id: crypto.randomUUID(), type: 'function' as const, function: { name, arguments: JSON.stringify(input) } };
       if (!available(name)) throw new Error(`Tool disabled in this scope: ${name}`);
       if (context.interactionMode === 'spec' && t.effect === 'write') throw new Error('Spec mode denies workspace mutations');
       if (context.interactionMode === 'spec' && t.effect === 'execute' && !['Script', 'Execute', 'Task', 'SpawnAgent'].includes(name)) throw new Error('Spec mode denies unrestricted execution tools');
       if (opts.beforeTool && !await abortable(opts.beforeTool(actual), context.signal)) throw new Error('Tool denied by caller policy');
-      const requested = name === 'Execute' && requestsNetwork(input);
+      const requested = name === 'FetchUrl' || name === 'Execute' && requestsNetwork(input);
       const policy = networkPolicy(context.networkPolicy);
-      const network = networkDecision(requested, policy, context.autonomy, context.interactionMode);
-      const networkEvent = (decision: string) => { if (requested) opts.onEvent?.({ type: 'network_permission', sessionId: state.id ?? '', toolUseId: actual.id, policy, decision, access: 'host', scope: 'this_call' }); };
-      if (network === 'deny') { networkEvent('denied'); throw new Error('Execute network access denied by policy or spec mode'); }
+      const network = networkDecision(requested, policy, context.autonomy, context.interactionMode, name === 'FetchUrl');
+      const networkEvent = (decision: string) => { if (requested) opts.onEvent?.({ type: 'network_permission', sessionId: state.id ?? '', toolUseId: actual.id, policy, decision, access: name === 'FetchUrl' ? 'http_url' : 'host', scope: 'this_call', toolName: name }); };
+      if (network === 'deny') { networkEvent('denied'); throw new Error(name + ' network access denied by policy or spec mode'); }
       const allowedCommand = name !== 'Execute' || executeAllowed(input, context);
       const needsApproval = !yolo && (network === 'ask' || t.effect === 'write' && context.autonomy === 'off' ||
         t.effect === 'execute' && !['Execute', 'Script'].includes(name) && !['medium', 'high'].includes(context.autonomy) ||
@@ -103,7 +108,7 @@ export class ToolRuntime {
         if (context.interactionMode === 'spec' && name === 'Execute') throw new Error('Spec mode denies this command');
         if (!opts.permissionHandler) {
           networkEvent('denied');
-          throw new Error(network === 'ask' ? 'Execute network approval required; use the interactive TUI/RPC or auto high with network policy auto' : name === 'Execute' ? COMMAND_POLICY_HINT : 'Tool requires higher autonomy or explicit permission');
+          throw new Error(network === 'ask' ? name + ' network approval required; use the interactive TUI/RPC or auto high with network policy auto' : name === 'Execute' ? COMMAND_POLICY_HINT : 'Tool requires higher autonomy or explicit permission');
         }
         const outcome = await abortable(opts.permissionHandler(permissionRequest(actual, input, context), { ...context, signal }), signal);
         signal.throwIfAborted();
@@ -118,7 +123,7 @@ export class ToolRuntime {
         if (t.effect !== 'read' && !['Edit', 'Create', 'ApplyPatch', 'Script'].includes(name)) await context.fileJournal?.barrier(name, context);
         return t.run(input, { ...context, tasks, signal, toolUseId: actual.id, networkAccess: requested, ...(granted ? { autonomy: 'high' as const } : {}) });
       };
-      const work = ['Script', 'TaskOutput', 'TaskStop', 'InterruptAgent'].includes(name) ? run() : scheduler.run(t.effect === 'read', signal, run);
+      const work = ['Loop', 'Script', 'TaskOutput', 'TaskStop', 'InterruptAgent'].includes(name) ? run() : scheduler.run(t.effect === 'read', signal, run);
       owned.add(work);
       try {
         const value = await work;
@@ -129,6 +134,9 @@ export class ToolRuntime {
         throw error;
       } finally { owned.delete(work); }
     };
+    add(loopTool((name, input, signal) => dispatch(name, input, undefined, signal), () => {
+      if (opts.missionWorker || context.interactionMode === 'mission') lineage.budget.modelCall(lineage.reservation);
+    }));
     add(scriptTool((name, input, signal) => dispatch(name, input, undefined, signal), () => [...registry.keys()].filter(available)));
     add(tool('ToolSearch', 'read', { query: { type: 'string' } }, ['query'], async input => {
       const query = stringArg(inputObject(input), 'query').toLowerCase();

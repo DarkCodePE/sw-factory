@@ -206,7 +206,7 @@ async function executeOne(input: unknown, context: ToolContext) {
     writablePaths: gitWritable, readOnlyPaths: [...(readGit || context.interactionMode === 'spec' ? [context.cwd] : []), ...missionReadOnly],
     env: { PATH: process.env.PATH ?? '', HOME: context.cwd, GIT_OPTIONAL_LOCKS: '0', GIT_CONFIG_NOSYSTEM: '1', GIT_CONFIG_GLOBAL: '/dev/null' },
   });
-  const result = await runProcess(wrapped.argv, context.cwd, wrapped.env, context.signal);
+  const result = await runProcess(wrapped.argv, context.cwd, wrapped.env, context.signal, 256 * 1024, true);
   return { ...result, sandboxed: !wrapped.degraded, sandboxReason: wrapped.reason, network: { requested: network, enabled: network } };
 }
 
