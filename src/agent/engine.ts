@@ -1,3 +1,4 @@
+import { Hooks } from './hooks.ts';
 import { missionProgressSnapshot } from './mission-progress.ts';
 import { canReconcileMissionPause, missionChildSessionSaved } from './mission-pause.ts';
 import { resolveExecutionPolicy, type ExecutionPolicy } from './execution-policy.ts';
@@ -34,10 +35,14 @@ export async function runCodingAgent(opts: AgentOptions, inherited?: AgentLineag
   let saved = false;
   let runtime: ToolRuntime | undefined;
   let mcp: McpManager | undefined;
+  let hooks: Hooks | undefined;
+  let ownHooks = false;
+  let journalEnded = false;
   let turns = 0, toolCount = 0, timedOut = false;
   let errorType: NonNullable<AgentResult['error']>['type'] = 'program';
   const controller = new AbortController();
-  const onAbort = () => controller.abort(opts.signal?.reason ?? new Error('Agent aborted'));
+  const abort = (reason: unknown) => { runtime?.interruptProcesses(); controller.abort(reason); };
+  const onAbort = () => abort(opts.signal?.reason ?? new Error('Agent aborted'));
   opts.signal?.addEventListener('abort', onAbort, { once: true });
   if (opts.signal?.aborted) onAbort();
   const emit = (type: Parameters<NonNullable<AgentOptions['onEvent']>>[0]['type'], fields: Record<string, unknown> = {}) =>
@@ -68,7 +73,7 @@ export async function runCodingAgent(opts: AgentOptions, inherited?: AgentLineag
     if (maxDepth > 4 || maxAgents > 32 || agentConcurrency > 8 || maxCalls > 4096 || maxBackgroundProcesses > 32) throw new Error('Subagent limits exceed runtime maxima');
     const lineage = inherited ?? { depth: 0, budget: new AgentBudget(maxAgents, maxCalls, agentConcurrency) };
     if (maxOutput >= maxContext) throw new Error('Output budget must be smaller than context budget');
-    timer = setTimeout(() => { timedOut = true; controller.abort(new Error('Agent total timeout exceeded')); }, timeout);
+    timer = setTimeout(() => { timedOut = true; abort(new Error('Agent total timeout exceeded')); }, timeout);
     const cwd = await realpath(opts.cwd);
     const context: ToolContext = { cwd, signal: controller.signal, autonomy: executionPolicy.effectiveAutonomy, executionPolicy,
       interactionMode: opts.interactionMode ?? 'auto', sandbox: opts.sandbox ?? 'required', networkPolicy: networkPolicy(opts.networkPolicy),
@@ -81,13 +86,15 @@ export async function runCodingAgent(opts: AgentOptions, inherited?: AgentLineag
     errorType = 'session';
     store = await SessionStore.create(opts.sessionDir);
     if (!opts.fork) await store.acquire(id);
+    let promptMessage: Message | undefined;
     if (opts.sessionId) {
       const previous = await store.load(opts.sessionId);
       if (previous.cwd !== cwd) throw new Error('Session workspace mismatch');
       if (opts.fork) await store.acquire(id);
       state = { ...previous, id, provider: opts.provider.id, pending: [], status: 'running', tags: [...previous.tags, ...(opts.tags ?? [])],
         ...(opts.fork ? { mission: undefined } : {}) };
-      if (opts.prompt.trim()) state.messages.push({ role: 'user', content: opts.prompt });
+      if (opts.prompt.trim() || opts.images?.length) promptMessage = { role: 'user', content: opts.images?.length
+        ? [{ type: 'text', text: opts.prompt }, ...opts.images.map(image => ({ type: 'image_url' as const, image_url: { url: `data:${image.mime};base64,${image.data}` } }))] : opts.prompt };
     } else {
       const messages: Message[] = [{ role: 'system', content: SYSTEM + (opts.appendSystemPrompt ? '\n' + opts.appendSystemPrompt : '') }];
       let guidance = '';
@@ -97,17 +104,33 @@ export async function runCodingAgent(opts: AgentOptions, inherited?: AgentLineag
       } catch (e: any) { if (e.code !== 'ENOENT') throw e; }
       messages.push({ role: 'user', content: `Workspace: ${cwd}\nMode: ${context.interactionMode}; autonomy: ${context.autonomy}.\nRepository guidance:\n${guidance || '(none)'}` });
       const images = opts.images ?? [];
-      messages.push({ role: 'user', content: images.length ? [{ type: 'text', text: opts.prompt },
-        ...images.map(image => ({ type: 'image_url' as const, image_url: { url: `data:${image.mime};base64,${image.data}` } }))] : opts.prompt });
+      promptMessage = { role: 'user', content: images.length ? [{ type: 'text', text: opts.prompt },
+        ...images.map(image => ({ type: 'image_url' as const, image_url: { url: `data:${image.mime};base64,${image.data}` } }))] : opts.prompt };
       state = { version: 1, id, cwd, provider: opts.provider.id, messages, pending: [], status: 'running', turns: 0, tags: opts.tags ?? [] };
     }
     await store.save(state, !opts.sessionId || !!opts.fork);
     saved = true; missionChildSessionSaved(opts);
+    if (store.reconciled) emit('reconciled', store.reconciled);
+    await store.journal?.append('session_start'); await store.journal?.append('turn_start');
+    let hookContext: string[] = [];
+    if (!inherited && opts.hooks) {
+      ownHooks = !(opts.hooks instanceof Hooks);
+      hooks = ownHooks ? await new Hooks(cwd, id, executionPolicy, e => opts.onEvent?.(e)).load() : opts.hooks as Hooks;
+      hooks.restrictWorkspace(context.interactionMode === 'spec');
+      const opening = await hooks.start(context.signal);
+      const submitting = await hooks.fire('UserPromptSubmit', { prompt: opts.prompt }, context.signal);
+      if (submitting.block || submitting.deny) throw new Error(submitting.reason ?? 'Prompt blocked by hook');
+      hookContext = [...opening.context, ...submitting.context];
+    }
+    if (promptMessage) state.messages.push(promptMessage);
+    for (const text of hookContext) state.messages.push({ role: 'user', content: 'Hook context (data): ' + text });
+    await store.save(state);
     errorType = 'program';
     if (opts.mcpServers) mcp = new McpManager(opts.mcpServers, context, { only: opts.onlyTools, remove: opts.removeTools });
     const remoteTools = await mcp?.tools() ?? [];
     runtime = new ToolRuntime({ ...opts, tools: [...opts.tools ?? [], ...remoteTools] }, context, lineage, { maxDepth, agentConcurrency, parallel, maxBackgroundProcesses, maxProcessOutputBytes },
-      (child, reservation) => runCodingAgent(child, { depth: lineage.depth + 1, budget: lineage.budget, permissionMode: executionPolicy!.permissionMode, reservation: reservation ?? lineage.reservation }), state, () => store!.save(state!));
+      (child, reservation) => { child.hooks = undefined; return runCodingAgent(child, { depth: lineage.depth + 1, budget: lineage.budget, permissionMode: executionPolicy!.permissionMode, reservation: reservation ?? lineage.reservation }); }, state, () => store!.save(state!), store.journal, hooks);
+    if (store.recoveredCrash) await runtime.reconcileMissionCrash();
     const { registry, dispatch } = runtime;
     const visible = runtime.visible;
     if (context.interactionMode === 'mission') state.messages.push({ role: 'user', content: `Mission metadata directory: ${context.missionDir}. ProposeMission must accept the proposal first. Then create features.json with a features array (id, description, skillName, milestone, preconditions, expectedBehavior, fulfills, status: pending) and skills/<skillName>/SKILL.md with name/description frontmatter there. StartMissionRun delegates implementation and validation. Read progressSnapshot.state; a final text report alone never completes a mission.` });
@@ -180,9 +203,10 @@ export async function runCodingAgent(opts: AgentOptions, inherited?: AgentLineag
       state!.messages = reduced; compactedAt = turns;
       await store!.save(state!); emit('compaction', { estimatedTokens: estimatedTokens(reduced, schemas) });
     };
-    let recoveries = 0;
+    let recoveries = 0, stopBlocks = 0;
     for (; turns < maxTurns; ) {
       context.signal.throwIfAborted();
+      for (const text of hooks?.takeContext() ?? []) state.messages.push({ role: 'user', content: 'Hook context (data): ' + text });
       for (const message of opts.receiveMessages?.() ?? []) state.messages.push({ role: 'user', content: 'Message from supervising agent:\n' + message });
       for (const message of runtime.scripts.takeCompletedForModel()) state.messages.push({ role: 'user', content: message });
       if (estimatedTokens(state.messages, schemas) + maxOutput > maxContext) await compact();
@@ -225,6 +249,7 @@ export async function runCodingAgent(opts: AgentOptions, inherited?: AgentLineag
           await store.save(state);
         }
         if (runtime.commitModeChange(context)) {
+          hooks?.restrictWorkspace(context.interactionMode === 'spec');
           schemas = runtime.visible.map(t => t.schema);
           const banner = state.messages.find(m => m.role === 'user' && typeof m.content === 'string' && m.content.startsWith(`Workspace: ${cwd}\nMode: `));
           if (banner && typeof banner.content === 'string')
@@ -254,17 +279,22 @@ export async function runCodingAgent(opts: AgentOptions, inherited?: AgentLineag
         state.messages.push({ role: 'user', content: `The caller rejected the final answer: ${rejected}\nRepair the answer using the evidence already collected. Do not invent actions or test results.` });
         await store.save(state); continue;
       }
+      if (hooks && stopBlocks < 2) {
+        const stopping = await hooks.fire('Stop', { stop_hook_active: stopBlocks > 0 }, context.signal);
+        if (stopping.block) { stopBlocks++; state.messages.push({ role: 'user', content: 'Hook requested further work: ' + (stopping.reason ?? 'Review before stopping') }); await store.save(state); continue; }
+      }
       await runtime.close();
       await mcp?.close();
       context.signal.throwIfAborted();
       state.status = 'completed'; await store.save(state);
       context.signal.throwIfAborted();
+      await store.journal?.append('turn_end', { ok: true }); await store.journal?.append('session_end'); journalEnded = true;
       const answer = result(true, response.text); emit('result', { result: answer }); return answer;
     }
     errorType = 'limit'; throw new Error('Agent turn budget exhausted');
   } catch (e) {
     const error = { type: timedOut ? 'timeout' as const : controller.signal.aborted ? 'aborted' as const : errorType, message: textError(e) };
-    controller.abort(e);
+    abort(e);
     await runtime?.close().catch(() => {});
     await mcp?.close();
     if (saved && state && store) {
@@ -277,6 +307,7 @@ export async function runCodingAgent(opts: AgentOptions, inherited?: AgentLineag
       }
       state.status = 'failed'; await store.save(state).catch(() => {});
     }
+    if (!journalEnded) { await store?.journal?.append('turn_end', { ok: false }).catch(() => {}); await store?.journal?.append('session_end').catch(() => {}); journalEnded = true; }
     const answer = result(false, '', error);
     try { emit('error', { error }); } catch { /* Observer failures cannot mask terminal failure. */ }
     return answer;
@@ -285,7 +316,8 @@ export async function runCodingAgent(opts: AgentOptions, inherited?: AgentLineag
     opts.signal?.removeEventListener('abort', onAbort);
     await runtime?.close().catch(() => {});
     await mcp?.close();
-    await store?.close();
+    if (ownHooks) await hooks?.close();
+    await store?.close().catch(() => {});
   }
 }
 

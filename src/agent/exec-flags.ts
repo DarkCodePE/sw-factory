@@ -135,6 +135,7 @@ export function parseExecArgs(argv: string[]) {
       model: { type: 'string', short: 'm' },
       'base-url': { type: 'string' },
       yolo: { type: 'boolean' },
+      hooks: { type: 'boolean' },
       auto: { type: 'string' },
       'use-spec': { type: 'boolean' },
       'reasoning-effort': { type: 'string', short: 'r' },
@@ -177,7 +178,7 @@ export function parseExecArgs(argv: string[]) {
 
   const format = v['output-format'] ?? 'text';
   if (!['text', 'json', 'stream-json', 'stream-jsonrpc'].includes(format)) throw new Error('Unsupported output format');
-  if (v['input-format'] && v['input-format'] !== 'stream-jsonrpc') throw new Error('Unsupported input format');
+  if (v['input-format'] && !['stream-jsonrpc', 'stream-json'].includes(v['input-format'])) throw new Error('Unsupported input format');
   if ((format === 'stream-jsonrpc') !== (v['input-format'] === 'stream-jsonrpc')) throw new Error('stream-jsonrpc requires matching input and output formats');
   if (v['session-id'] && v.fork) throw new Error('session-id and fork are mutually exclusive');
   if (v.mission && v['use-spec']) throw new Error('mission and use-spec are mutually exclusive');
@@ -198,6 +199,8 @@ export function parseExecArgs(argv: string[]) {
     }
   }
 
+  if (v['input-format'] === 'stream-json' && (v['output-format'] !== 'stream-json' || positionals.length || v.file || v.mission))
+    throw new Error('stream-json input requires -o stream-json and forbids prompt, --file and --mission');
   return { v, positionals, worktreeName, isHelp: false };
 }
 

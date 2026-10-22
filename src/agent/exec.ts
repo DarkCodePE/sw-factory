@@ -1,3 +1,5 @@
+import { hookSettings } from './hooks.ts';
+import { serveStreamInput } from './stream-input.ts';
 import { resolveExecutionPolicy, YOLO_NOTICE } from './execution-policy.ts';
 import { readFile } from 'node:fs/promises';
 import { resolve } from 'node:path';
@@ -19,7 +21,7 @@ const HELP = `fab exec — independent coding-agent runtime
     [--worker-model id] [--worker-reasoning-effort effort]
     [--validator-model id] [--validator-reasoning-effort effort]
     [-w, --worktree [name]] [--worktree-dir path]
-    [-o text|json|stream-json|stream-jsonrpc] [--input-format stream-jsonrpc]
+    [-o text|json|stream-json|stream-jsonrpc] [--input-format stream-jsonrpc|stream-json] [--hooks]
     [--session-id id|--fork id] [--session-dir path] [--session-title title]
     [--only-tools names] [--add-tools names] [--remove-tools names] [--tag name]
     [--append-system-prompt text|--append-system-prompt-file path]
@@ -39,7 +41,8 @@ export async function execMain(argv: string[]): Promise<number> {
     if (isHelp) { console.log(HELP); return 0; }
 
     const format = v['output-format'] ?? 'text';
-    const settings = await loadExecSettings(v.settings);
+    const loaded = await hookSettings(v.settings, loadExecSettings);
+    const settings = loaded.settings;
     const executionNetwork = networkPolicy(v['sandbox-network'] ?? settings.sandboxNetwork);
     const execution = {
       permissionMode: v.yolo ? 'yolo' as const : 'standard' as const,
@@ -84,6 +87,7 @@ export async function execMain(argv: string[]): Promise<number> {
       }
 
       if (format === 'stream-jsonrpc') {
+        if (v.hooks || loaded.enabled) throw new Error('Hooks are supported by exec text/json/stream-json; RPC hook lifecycle integration is pending');
         if (v.file || positionals.length || v['session-id'] || v.fork || v.auto || v['use-spec'] || v.mission ||
             v['only-tools'] || v['add-tools'] || v['remove-tools'] || v['require-status'] ||
             v['spec-model'] || v['spec-reasoning-effort'] || v['worker-reasoning-effort'] || v['validator-reasoning-effort'] ||
@@ -158,13 +162,14 @@ export async function execMain(argv: string[]): Promise<number> {
         return 0;
       }
 
-      let prompt = v.file ? await readFile(resolve(v.file), 'utf8') : positionals.join(' ');
-      if (!prompt && !process.stdin.isTTY) prompt = await Bun.stdin.text();
-      if (!prompt.trim()) throw new Error('An agent prompt is required');
+      let prompt = v['input-format'] === 'stream-json' ? '' : v.file ? await readFile(resolve(v.file), 'utf8') : positionals.join(' ');
+      if (v['input-format'] !== 'stream-json' && !prompt && !process.stdin.isTTY) prompt = await Bun.stdin.text();
+      if (v['input-format'] !== 'stream-json' && !prompt.trim()) throw new Error('An agent prompt is required');
 
       const append = [v['append-system-prompt'], v['append-system-prompt-file'] ? await readFile(resolve(v['append-system-prompt-file']), 'utf8') : ''].filter(Boolean).join('\n');
 
-      const result = await runCodingAgent({
+      const options: import('./types.ts').AgentOptions = {
+        hooks: v.hooks || loaded.enabled,
         ...execution,
         prompt,
         mcpServers: settings.mcpServers,
@@ -189,8 +194,14 @@ export async function execMain(argv: string[]): Promise<number> {
         removeTools: toolSel.removeTools,
         signal: controller.signal,
         validateFinal: v['require-status'] ? validateReportStatus : undefined,
-        onEvent: format === 'stream-json' ? e => console.log(JSON.stringify(e)) : undefined,
-      });
+        onEvent: format === 'stream-json' ? (e: import('./types.ts').AgentEvent) => console.log(JSON.stringify(e)) : undefined,
+      };
+      if (v['input-format'] === 'stream-json') {
+        console.error('stream-json deprecado, usa stream-jsonrpc');
+        await serveStreamInput(Bun.stdin.stream(), options);
+        return controller.signal.aborted ? 130 : 0;
+      }
+      const result = await runCodingAgent(options);
 
       if (v['session-title']) {
         const store = await SessionStore.create(sessionDir);

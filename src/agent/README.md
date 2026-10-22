@@ -253,8 +253,8 @@ Cada característica definida en `features.json` establece un contrato estricto:
 
 Las siguientes capacidades permanecen sin implementar o fuera de alcance:
 1. **Herramientas de agente:** Script conserva su salida entre invocaciones, sin resucitar procesos; no ofrece ejecución tras cerrar el turno. Loop ofrece un contrato propio acotado, sin afirmar la semántica original completa.
-2. **Crash Recovery de misiones:** Reconciliación automática y journal duradero tras caída intempestiva del proceso del runner.
-3. **Protocolos:** Entrada interactiva multiturno mediante `stream-json` y protocolo ACP. El demonio en puerto 37643 y SDKs remotos permanecen fuera de alcance.
+2. **Recuperación:** Locks antiguos inválidos o guardas de recuperación abandonadas requieren revisión manual. No se revierten efectos inciertos.
+3. **Protocolos:** ACP, demonio en puerto 37643 y SDKs remotos permanecen fuera de alcance.
 4. **MCP:** Autenticación OAuth, transporte SSE de versión previa y actualización de catálogo en caliente.
 5. **Aislamiento en plataformas no-Linux:** En macOS no existen namespaces de Linux (`bwrap`); las herramientas operan sin confinamiento de kernel equivalente.
 
@@ -481,3 +481,16 @@ plazo se mata el Script y se espera el drenado. Sin detach, la API programática
 runScript conserva los límites acumulativos previos; detach ofrece handle con
 done, kill y drained. El modo streaming del runtime es una opción explícita del
 host; el manager implementa el descarte y retención acotados.
+
+
+## stream-json de entrada
+
+`fab exec --input-format stream-json -o stream-json` acepta líneas `{type:"user",content:"..."}`, `{type:"interrupt"}` y `{type:"end"}` (EOF termina los prompts ya aceptados). Mismo sessionId entre turnos, evento turn_end; interrupt cancela y drena solo el turno activo. Máximo 1 MiB por línea y 64 prompts en cola; líneas inválidas avisan y se descartan. Es deprecado: se recomienda stream-jsonrpc. No admite prompt posicional, --file ni --mission.
+
+## Journal y reconciliación
+
+Cada sesión escribe journal append-only con fsync antes de efectos. Un PID muerto comprobado permite recuperar el lock y reconciliar llamadas inciertas sin repetir herramientas; lecturas/no iniciadas se descartan. Un registro final roto se repara; corrupción intermedia falla. PID vivo, lock inválido y guarda de recuperación abandonada bloquean. El evento reconciled identifica efectos inciertos. Las misiones interrumpidas quedan paused y permiten retomar el worker propio; sesiones antiguas sin journal conservan el rechazo de pending. Un interrupt de stream reconcilia únicamente después del drenado probado. En Linux, la cancelación termina el árbol background propio, con PID y hora de inicio verificados, antes de su monitor bwrap.
+
+## Hooks
+
+Opt-in en exec con --hooks o settings hooks.enabled=true; archivos `$FABRICA_HOME/hooks.json` y `.fab/hooks.json`. Soporta PreToolUse, PostToolUse, UserPromptSubmit, Stop, SessionStart/End; otros eventos admitidos avisan sin ejecutarse. Máximo ocho comandos por evento, timeout 60 s, salida 64 KiB y matching regex aislado con 500 ms. allow solo sustituye aprobación puntual: no anula red deny, spec, filtros ni sellos de misión. updatedInput pasa por el dispatcher; Stop bloquea como máximo dos veces. Contexto/feedback llegan al modelo como datos. Misma política host/sandbox, workspace de solo lectura en spec, env mínimo y sin red en sandbox. Hooks excluidos de Script anidado e hijos; SessionStart/End una vez por proceso stream. SessionEnd tiene plazo de cierre de 1 s. Settings se activa con --settings <archivo>; exec no descubre una ruta por defecto. Chat queda pendiente por propiedad de archivos; hooks con stream-jsonrpc se rechaza explícitamente hasta integrar su ciclo de vida.

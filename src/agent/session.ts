@@ -1,3 +1,5 @@
+import { constants } from 'node:fs';
+import { Journal, reconcile, syncDirectory } from './journal.ts';
 import { link, mkdir, open, readFile, rename, realpath, unlink } from 'node:fs/promises';
 import { join, resolve } from 'node:path';
 import type { Message } from './types.ts';
@@ -32,6 +34,10 @@ export interface SessionState {
 export class SessionStore {
   private lock?: Awaited<ReturnType<typeof open>>;
   private lockPath?: string;
+  private ownedId?: string;
+  journal?: Journal;
+  recoveredCrash = false;
+  reconciled?: { uncertain: Array<{ toolCallId: string; name: string }> };
   private constructor(private readonly dir?: string) {}
   static async create(dir?: string) {
     const store = new SessionStore(dir ? resolve(dir) : undefined);
@@ -44,10 +50,35 @@ export class SessionStore {
   }
   async acquire(id: string) {
     if (!this.dir) return;
-    this.lockPath = this.path(id) + '.lock';
-    this.lock = await open(this.lockPath, 'wx', 0o600).catch(() => {
-      throw new Error('Agent session is locked; reconcile its interrupted owner before resuming');
-    });
+    if (this.lock) throw new Error('Session store already owns a lock');
+    const path = this.path(id) + '.lock', guardPath = path + '.recover';
+    const guard = await open(guardPath, 'wx', 0o600).catch(() => { throw new Error('Session recovery is locked; inspect its interrupted recovery owner'); });
+    try {
+      await guard.writeFile(JSON.stringify({ pid: process.pid, startedAt: Date.now() })); await guard.sync();
+      const create = () => open(path, constants.O_WRONLY | constants.O_CREAT | constants.O_EXCL | constants.O_NOFOLLOW, 0o600);
+      try { this.lock = await create(); }
+      catch (error: any) {
+        if (error.code !== 'EEXIST') throw error;
+        const old = await open(path, constants.O_RDONLY | constants.O_NOFOLLOW);
+        let identity: Awaited<ReturnType<typeof old.stat>>;
+        try {
+          identity = await old.stat(); if (!identity.isFile() || identity.size > 1024) throw new Error('Invalid session lock');
+          let owner: any; try { owner = JSON.parse(await old.readFile('utf8')); } catch { throw new Error('Invalid session lock; reconcile its interrupted owner manually'); }
+          if (!Number.isSafeInteger(owner.pid) || owner.pid < 1 || !Number.isFinite(owner.startedAt)) throw new Error('Invalid session lock');
+          try { process.kill(owner.pid, 0); throw new Error('Agent session is locked; reconcile its interrupted owner before resuming'); }
+          catch (e: any) { if (e.code !== 'ESRCH') throw e; }
+        } finally { await old.close(); }
+        const check = await open(path, constants.O_RDONLY | constants.O_NOFOLLOW);
+        try { const current = await check.stat(); if (current.ino !== identity.ino || current.dev !== identity.dev) throw new Error('Session lock changed during recovery'); }
+        finally { await check.close(); }
+        await unlink(path); this.lock = await create(); this.recoveredCrash = true;
+      }
+      this.lockPath = path; this.ownedId = id;
+      try {
+        await this.lock.writeFile(JSON.stringify({ pid: process.pid, startedAt: Date.now() })); await this.lock.sync(); await syncDirectory(this.dir);
+        this.journal = await Journal.open(this.path(id).replace(/\.json$/, '.journal.jsonl'));
+      } catch (error) { await this.close(); throw error; }
+    } finally { await guard.close(); await unlink(guardPath); }
   }
   /** Read metadata/history for local browsing. This does NOT authorize resuming effects. */
   async inspect(id: string): Promise<SessionState> {
@@ -67,6 +98,7 @@ export class SessionStore {
   }
   async load(id: string): Promise<SessionState> {
     const s = await this.inspect(id);
+    if (this.recoveredCrash) await this.reconcileInterrupted(id, s);
     const waiting = new Set<string>();
     for (const m of s.messages) {
       if (!m || !['system', 'user', 'assistant', 'tool'].includes(m.role) ||
@@ -85,6 +117,12 @@ export class SessionStore {
     if (waiting.size || s.pending.length) throw new Error('Interrupted tool execution requires reconciliation; tools will not be replayed');
     return s;
   }
+  /** Caller must own this session, and prove the previous invocation drained or died. */
+  async reconcileInterrupted(id: string, existing?: SessionState) {
+    if (id !== this.ownedId || !this.journal?.entries.some(r => r.type === 'session_start')) return;
+    const s = existing ?? await this.inspect(id), result = reconcile(s, this.journal.entries);
+    if (result.changed) { await this.save(s); this.reconciled = { uncertain: result.uncertain }; }
+  }
   async save(state: SessionState, createOnly = false) {
     if (!this.dir) return;
     state.updatedAt = Date.now();
@@ -96,9 +134,20 @@ export class SessionStore {
     try {
       if (createOnly) { await link(temp, target); await unlink(temp); }
       else await rename(temp, target);
+      await syncDirectory(this.dir);
     } catch (e) { await unlink(temp).catch(() => {}); throw e; }
   }
   async close() {
-    if (this.lock) { await this.lock.close(); await unlink(this.lockPath!).catch(() => {}); this.lock = undefined; }
+    try { if (this.journal) { const journal = this.journal; this.journal = undefined; await journal.close(); } }
+    finally {
+      if (this.lock) {
+        const lock = this.lock; this.lock = undefined;
+        try {
+          const held = await lock.stat(), current = await open(this.lockPath!, constants.O_RDONLY | constants.O_NOFOLLOW);
+          try { const st = await current.stat(); if (st.ino === held.ino && st.dev === held.dev) await unlink(this.lockPath!); }
+          finally { await current.close(); }
+        } finally { await lock.close(); }
+      }
+    }
   }
 }

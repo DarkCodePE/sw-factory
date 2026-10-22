@@ -1,3 +1,4 @@
+import { SessionStore } from './session.ts';
 import { MissionRunControl } from './mission-pause.ts';
 import { attemptDuration, attemptUsage, missionProgressSnapshot } from './mission-progress.ts';
 import { scopedExecutionOptions, resolveExecutionPolicy } from './execution-policy.ts';
@@ -31,6 +32,21 @@ export class MissionManager {
     if (state.mission && (state.mission.version !== 1 || state.mission.directory !== this.directory || state.mission.workingDirectory !== context.cwd)) throw new Error('Mission snapshot ownership mismatch');
     context.missionDir = this.directory;
     for (const [id, f] of Object.entries(state.mission?.features ?? {})) this.featureView.set(id, JSON.stringify([f.status, f.attempts, f.milestone]));
+  }
+  async reconcileCrash() {
+    const attempts = this.state.mission?.attempts.filter(a => a.status === 'running' && !a.handoff) ?? [];
+    for (const a of attempts) {
+      const store = await SessionStore.create(this.opts.sessionDir ?? join(this.directory, 'sessions'));
+      try { const child = await store.inspect(a.workerSessionId); if (child.cwd !== this.context.cwd) throw new Error('Mission child workspace mismatch'); a.sessionCreated = true; }
+      catch (e: any) { if (e.code !== 'ENOENT') throw e; a.sessionCreated = false; }
+      finally { await store.close(); }
+      a.status = 'failed'; a.error = 'Interrupted by crash';
+      if (a.role === 'worker') this.mission.features[a.featureId]!.attempts++;
+    }
+    if (attempts.length) {
+      await this.log('crash_reconciled', { workers: attempts.map(a => a.workerSessionId) });
+      await this.pause('error', 'Interrupted by crash');
+    }
   }
   private get mission() { if (!this.state.mission) throw new Error('ProposeMission must be accepted first'); return this.state.mission; }
   private emit(type: Extract<import('./types.ts').AgentEvent['type'], `mission_${string}`>, fields: Record<string, unknown>) {

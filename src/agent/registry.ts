@@ -1,3 +1,6 @@
+import type { Journal } from './journal.ts';
+import type { Hooks } from './hooks.ts';
+import { readFileSync } from 'node:fs';
 import { ScriptRunManager, SCRIPT_AWAIT_MS, SCRIPT_FOREGROUND_MS } from './script-runs.ts';
 import { loopTool, parseLoop } from './loop.ts';
 import { fetchUrlTool, parseFetch } from './fetch-url.ts';
@@ -19,6 +22,8 @@ export class ToolRuntime {
   private exitQueued = false;
   readonly scripts: ScriptRunManager;
   private closing?: Promise<void>;
+  private mission?: MissionManager;
+  async reconcileMissionCrash() { await this.mission?.reconcileCrash(); }
   private readonly available: (name: string) => boolean;
   get visible(): AgentTool[] { return [...this.registry.values()].filter(t => this.available(t.schema.function.name)); }
   commitModeChange(context: ToolContext) {
@@ -31,9 +36,36 @@ export class ToolRuntime {
   readonly dispatch: (name: string, input: unknown, call?: ToolCall, scopedSignal?: AbortSignal) => Promise<unknown>;
   private readonly owned = new Set<Promise<unknown>>();
   private readonly tasks: TaskManager;
+  private processRoots = new Map<number, string>();
+  private processIdentity(pid: number) {
+    try {
+      const stat = readFileSync(`/proc/${pid}/stat`, 'utf8');
+      const fields = stat.slice(stat.lastIndexOf(')') + 2).trim().split(/\s+/);
+      return { parent: Number(fields[1]), started: fields[19]! };
+    } catch { return undefined; }
+  }
+  /** bwrap's namespace init can have another session/group: kill descendants before its monitor. */
+  interruptProcesses() {
+    if (process.platform !== 'linux') return;
+    const owned = new Map<number, string>();
+    const visit = (pid: number, started: string, depth = 0) => {
+      if (depth > 32 || owned.size >= 1024 || this.processIdentity(pid)?.started !== started) return;
+      owned.set(pid, started);
+      let children: string[]; try { children = readFileSync(`/proc/${pid}/task/${pid}/children`, 'utf8').trim().split(/\s+/); } catch { return; }
+      for (const value of children) {
+        const child = Number(value), identity = child > 0 ? this.processIdentity(child) : undefined;
+        if (identity?.parent === pid) visit(child, identity.started, depth + 1);
+      }
+    };
+    for (const [pid, started] of this.processRoots) if (this.processIdentity(pid)?.parent === process.pid) visit(pid, started);
+    for (const [pid, started] of [...owned].reverse()) {
+      if (this.processIdentity(pid)?.started === started) try { process.kill(pid, 'SIGKILL'); } catch { /* Already exited. */ }
+    }
+    this.processRoots.clear();
+  }
   constructor(opts: AgentOptions, context: ToolContext, lineage: AgentLineage,
     limits: { maxDepth: number; agentConcurrency: number; parallel: number; maxBackgroundProcesses?: number; maxProcessOutputBytes?: number },
-    runChild: (options: AgentOptions, reservation?: CallReservation) => Promise<AgentResult>, state: Partial<SessionState> = {}, saveState: () => Promise<void> = async () => {}) {
+    runChild: (options: AgentOptions, reservation?: CallReservation) => Promise<AgentResult>, state: Partial<SessionState> = {}, saveState: () => Promise<void> = async () => {}, journal?: Journal, hooks?: Hooks) {
     const yolo = context.executionPolicy?.permissionMode === 'yolo';
     const owned = this.owned;
     const available = (name: string) => (!opts.onlyTools || opts.onlyTools.includes(name)) && !opts.removeTools?.includes(name) &&
@@ -61,7 +93,8 @@ export class ToolRuntime {
     for (const t of tasks.tools()) add(t);
     if (context.interactionMode === 'mission') {
       const session = state.id ? state as SessionState : { id: 'catalog', ...state } as SessionState;
-      for (const t of new MissionManager(opts, context, session, lineage, limits.maxDepth, saveState, runChild).tools()) add(t);
+      this.mission = new MissionManager(opts, context, session, lineage, limits.maxDepth, saveState, runChild);
+      for (const t of this.mission.tools()) add(t);
     }
     if (opts.missionWorker) add(featureHandoffTool(opts.missionWorker));
     add(tool('TodoWrite', 'read', { todos: { anyOf: [{ type: 'string' }, { type: 'array', items: { type: 'object' } }] } }, ['todos'], async input => {
@@ -84,12 +117,17 @@ export class ToolRuntime {
     }, 'Read instructions for a project skill under .agents/skills.'));
     const scripts = this.scripts = new ScriptRunManager(state, event => opts.onEvent?.({ ...event, sessionId: state.id ?? '' } as import('./types.ts').AgentEvent), saveState, limits.parallel);
     const scheduler = new ToolScheduler(limits.parallel);
-    const dispatch = async (name: string, input: unknown, call?: ToolCall, scopedSignal?: AbortSignal, authority?: ToolContext): Promise<unknown> => {
+    const dispatch = async (name: string, input: unknown, call?: ToolCall, scopedSignal?: AbortSignal, authority?: ToolContext, skipHooks = false): Promise<unknown> => {
       if (this.closing) throw new Error('Tool runtime is closed');
       const scope = authority ?? context;
       const signal = scopedSignal ? AbortSignal.any([scope.signal, scopedSignal]) : scope.signal;
       signal.throwIfAborted();
       const t = registry.get(name); if (!t) throw new Error(`Unknown tool: ${name}`);
+      const pre = !skipHooks && hooks ? await hooks.fire('PreToolUse', { tool_name: name, tool_input: input }, signal) : undefined;
+      if (pre?.deny || pre?.block) throw new Error(pre.reason ?? 'Tool denied by hook');
+      if (pre && Object.hasOwn(pre, 'updatedInput')) input = pre.updatedInput;
+      hooks?.context(pre?.context ?? []);
+      if (call) call.function.arguments = JSON.stringify(input);
       // Bind approval to the command and network request shown to the caller.
       if (name === 'Execute' || name === 'ApplyPatch' || name === 'ExitSpecMode' || name === 'StageSettingsChanges' || name === 'Loop' || name === 'FetchUrl') input = Object.freeze({ ...inputObject(input) });
       if (name === 'Loop') parseLoop(input);
@@ -107,10 +145,10 @@ export class ToolRuntime {
       const networkEvent = (decision: string) => { if (requested) opts.onEvent?.({ type: 'network_permission', sessionId: state.id ?? '', toolUseId: actual.id, policy, decision, access: netTool ? 'http_url' : 'host', scope: 'this_call', toolName: name }); };
       if (network === 'deny') { networkEvent('denied'); throw new Error(name + ' network access denied by policy or spec mode'); }
       const allowedCommand = name !== 'Execute' || executeAllowed(input, scope);
-      const needsApproval = !yolo && (network === 'ask' || t.effect === 'write' && scope.autonomy === 'off' ||
+      const needsApproval = pre?.ask || !pre?.allow && !yolo && (network === 'ask' || t.effect === 'write' && scope.autonomy === 'off' ||
         t.effect === 'execute' && !['Execute', 'Script', 'WaitForScript'].includes(name) && !['medium', 'high'].includes(scope.autonomy) ||
         !allowedCommand);
-      let granted = false;
+      let granted = pre?.allow === true;
       if (needsApproval) {
         if (scope.interactionMode === 'spec' && name === 'Execute') throw new Error('Spec mode denies this command');
         if (!opts.permissionHandler) {
@@ -128,27 +166,39 @@ export class ToolRuntime {
       const run = async () => {
         if (opts.missionWorker?.sealed() && ['write', 'execute'].includes(t.effect)) throw new Error('Worker workspace mutation is closed after EndFeatureRun');
         if (t.effect !== 'read' && !['Edit', 'Create', 'ApplyPatch', 'Script', 'WaitForScript'].includes(name)) await scope.fileJournal?.barrier(name, scope);
-        const selected = name === 'Loop' ? loopTool((nested, value, nestedSignal) => dispatch(nested, value, undefined, nestedSignal, scope), () => {
+        const selected = name === 'Loop' ? loopTool((nested, value, nestedSignal) => dispatch(nested, value, undefined, nestedSignal, scope, skipHooks), () => {
           if (opts.missionWorker || scope.interactionMode === 'mission') lineage.budget.modelCall(lineage.reservation);
         }) : t;
-        const result = selected.run(input, { ...scope, tasks, signal, toolUseId: actual.id, networkAccess: requested, ...(granted ? { autonomy: 'high' as const } : {}) });
-        return name === 'TaskOutput' ? abortable(result, signal) : result;
+        const work = selected.run(input, { ...scope, tasks, signal, toolUseId: actual.id, networkAccess: requested, ...(granted && name !== 'Script' ? { autonomy: 'high' as const } : {}) });
+        const value = await (name === 'TaskOutput' ? abortable(work, signal) : work);
+        if (name === 'Execute' && (input as any)?.background === true && process.platform === 'linux') {
+          const pid = (value as any)?.pid, identity = Number.isSafeInteger(pid) ? this.processIdentity(pid) : undefined;
+          if (identity?.parent === process.pid) this.processRoots.set(pid, identity.started);
+        }
+        return value;
       };
+      await journal?.append('tool_start', { toolCallId: actual.id, name, effect: t.effect });
+      signal.throwIfAborted(); if (this.closing) throw new Error('Tool runtime is closed');
       const work = ['Loop', 'Script', 'WaitForScript', 'TaskOutput', 'TaskStop', 'InterruptAgent'].includes(name) ? run() : scripts.runTool(signal, () => scripts.schedule(signal, start => scheduler.run(t.effect === 'read', signal, start), run));
       owned.add(work);
       try {
         const value = await work;
         opts.missionWorker?.observe?.(name, input, value, false);
+        await journal?.append('tool_end', { toolCallId: actual.id, name, effect: t.effect, ok: true });
+        const post = !skipHooks && hooks ? await hooks.fire('PostToolUse', { tool_name: name, tool_input: input, tool_response: value }, signal) : undefined;
+        hooks?.context(post?.context ?? []);
+        if (post?.block) hooks?.context(['PostToolUse feedback: ' + (post.reason ?? 'Review the observed result')]);
         return value;
       } catch (error) {
         opts.missionWorker?.observe?.(name, input, null, true);
+        if (!signal.aborted) await journal?.append('tool_end', { toolCallId: actual.id, name, effect: t.effect, ok: false });
         throw error;
       } finally { owned.delete(work); }
     };
     add(loopTool((name, input, signal) => dispatch(name, input, undefined, signal), () => {
       if (opts.missionWorker || context.interactionMode === 'mission') lineage.budget.modelCall(lineage.reservation);
     }));
-    add(scriptTool((name, input, signal, authority) => dispatch(name, input, undefined, signal, authority), () => [...registry.keys()].filter(available), scripts));
+    add(scriptTool((name, input, signal, authority) => dispatch(name, input, undefined, signal, authority, true), () => [...registry.keys()].filter(available), scripts));
     add(tool('WaitForScript', 'execute', { toolCallId: { type: 'string' }, timeoutMs: { type: 'number' }, kill: { type: 'boolean' } }, ['toolCallId'], async (input, c) => {
       const p = inputObject(input), id = stringArg(p, 'toolCallId');
       if (Object.keys(p).some(k => !['toolCallId', 'timeoutMs', 'kill'].includes(k)) || !id || id.length > 256 ||
@@ -166,8 +216,10 @@ export class ToolRuntime {
   }
   async close() {
     this.closing ??= (async () => {
+      this.interruptProcesses();
       const drains = await Promise.allSettled([this.scripts.drainAll(), this.tasks.close()]);
       await Promise.allSettled([...this.owned]);
+      this.interruptProcesses(); await this.tasks.close();
       const failure = drains.find(r => r.status === 'rejected');
       if (failure?.status === 'rejected') throw failure.reason;
     })();

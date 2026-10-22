@@ -67,7 +67,7 @@ export interface AgentTool {
   run(input: unknown, context: ToolContext): Promise<unknown>;
 }
 export interface AgentEvent {
-  type: 'script_started' | 'script_notified' | 'script_completed' | 'init' | 'usage' | 'provider_retry' | 'assistant_delta' | 'assistant' | 'tool_call' | 'tool_result' | 'compaction' | 'result' | 'error' |
+  type: 'turn_end' | 'reconciled' | 'hook' | 'script_started' | 'script_notified' | 'script_completed' | 'init' | 'usage' | 'provider_retry' | 'assistant_delta' | 'assistant' | 'tool_call' | 'tool_result' | 'compaction' | 'result' | 'error' |
     'mission_feature_updated' | 'mission_milestone_validated' | 'mission_paused' | 'mission_progress' | 'mission_state_changed' | 'mission_worker_started' | 'mission_worker_completed' | 'network_permission' | 'permission_bypass' | 'agent_spawn' | 'mode_changed' | 'settings_staged';
   sessionId: string;
   [key: string]: unknown;
@@ -79,6 +79,7 @@ export interface AgentOptions {
   /** Host ceilings and configured model IDs for model-proposed session changes. */
   settingsPolicy?: import('./staged-settings.ts').SettingsPolicy;
   permissionMode?: import('./execution-policy.ts').PermissionMode;
+  hooks?: boolean | import('./hooks.ts').Hooks;
   prompt: string;
   cwd: string;
   provider: ModelProvider;
