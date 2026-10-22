@@ -82,6 +82,7 @@ export interface AgentOptions {
   prompt: string;
   cwd: string;
   provider: ModelProvider;
+  specProvider?: ModelProvider;
   autonomy?: Autonomy;
   interactionMode?: InteractionMode;
   sandbox?: 'required' | 'best-effort';

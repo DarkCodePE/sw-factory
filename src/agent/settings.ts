@@ -9,6 +9,7 @@ export interface ExecSettings {
   sandboxNetwork?: NetworkPolicy;
   modelId?: string;
   streamIdleMs?: number;
+  worktreeDirectory?: string;
   customModels?: Array<{ id: string; model: string; provider: 'generic-chat-completion-api' | 'openai' | 'chatgpt';
     baseUrl?: string; apiKey?: string; maxOutputTokens?: number; authFile?: string; streamIdleMs?: number; displayName?: string }>;
   mcpServers?: Record<string, McpConfig>;
@@ -37,9 +38,10 @@ export async function loadExecSettings(path?: string): Promise<ExecSettings> {
   } finally { await file.close(); }
   if (!object(raw) || raw.modelId !== undefined && typeof raw.modelId !== 'string' ||
       raw.streamIdleMs !== undefined && (!Number.isSafeInteger(raw.streamIdleMs) || raw.streamIdleMs < 0 || raw.streamIdleMs > 2147483647) ||
+      raw.worktreeDirectory !== undefined && (typeof raw.worktreeDirectory !== 'string' || !raw.worktreeDirectory.trim()) ||
       raw.customModels !== undefined && (!Array.isArray(raw.customModels) || raw.customModels.length > 32) ||
       raw.mcpServers !== undefined && !object(raw.mcpServers)) throw new Error('Invalid settings schema');
-  for (const key of Object.keys(raw)) if (!['modelId', 'customModels', 'mcpServers', 'streamIdleMs', 'sandboxNetwork'].includes(key)) throw new Error(`Unsupported settings field: ${key}`);
+  for (const key of Object.keys(raw)) if (!['modelId', 'customModels', 'mcpServers', 'streamIdleMs', 'sandboxNetwork', 'worktreeDirectory'].includes(key)) throw new Error(`Unsupported settings field: ${key}`);
   if (raw.sandboxNetwork !== undefined) networkPolicy(raw.sandboxNetwork);
   const settings = raw as ExecSettings;
   const ids = new Set<string>();

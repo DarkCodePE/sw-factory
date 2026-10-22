@@ -171,17 +171,26 @@ A la versión `f023e47`, el motor, la TUI y la distribución incorporan las sigu
 | `--yolo` | Booleano | Ejecuta en host y red sin sandbox ni confirmaciones (ámbito exclusivo de esta invocación). |
 | `--auto <nivel>` | String (`off\|low\|medium\|high`) | Nivel de autonomía del agente. |
 | `--use-spec` | Booleano | Modo solo lectura / investigación (excluyente con `--mission`). |
+| `--spec-model <id>` | String | Modelo propio para modo spec (requiere `--use-spec`). |
+| `--spec-reasoning-effort <effort>` | String | Esfuerzo de razonamiento para modo spec (requiere `--use-spec`). |
 | `-r, --reasoning-effort <effort>` | String | Nivel de razonamiento (`default\|low\|medium\|high`). |
 | `--mission` | Booleano | Inicia modo misión jerárquico (excluyente con `--use-spec`). |
 | `--worker-model <id>` | String | Modelo para workers en modo misión (requiere `--mission`). |
+| `--worker-reasoning-effort <effort>` | String | Esfuerzo de razonamiento para workers en modo misión (requiere `--mission`). |
 | `--validator-model <id>` | String | Modelo para validadores en modo misión (requiere `--mission`). |
+| `--validator-reasoning-effort <effort>` | String | Esfuerzo de razonamiento para validadores en modo misión (requiere `--mission`). |
+| `-w, --worktree [name]` | String (opcional) | Ejecuta en un worktree git (rama `<actual>-wt` por defecto o nombre indicado). |
+| `--worktree-dir <path>` | String | Deprecado (preferencia: `worktreeDirectory` en settings). |
 | `-o, --output-format <formato>` | String (`text\|json\|stream-json\|stream-jsonrpc`) | Formato de salida. |
 | `--input-format <formato>` | String (`stream-jsonrpc`) | Formato de entrada por stdin. |
 | `-s, --session-id <id>` | String | Reanuda una sesión por ID (excluyente con `--fork`). |
 | `--fork <id>` | String | Bifurca una sesión existente (excluyente con `--session-id`). |
 | `--session-dir <path>` | String | Directorio de persistencia de sesiones. |
-| `--only-tools <csv>` | String | Lista delimitada por comas de herramientas permitidas. |
+| `--session-title <title>` | String | Fija el título de la sesión (máximo 200 caracteres, sin saltos de línea). |
+| `--only-tools <csv>` | String | Lista delimitada por comas de herramientas permitidas o selectores `MCP:<server>[/<tool>]`. |
+| `--add-tools <csv>` | String | Añade herramientas o selectores `MCP:<server>[/<tool>]` a la selección. |
 | `--remove-tools <csv>` | String | Lista delimitada por comas de herramientas prohibidas. |
+| `--disable-builtin-skills` | Booleano | Registra desactivación de skills de plataforma (fab no incluye skills integradas de proveedor). |
 | `--tag <name>` | String (múltiple) | Etiquetas asociadas a la sesión. |
 | `--append-system-prompt <text>` | String | Concatena texto al prompt del sistema. |
 | `--append-system-prompt-file <path>`| String | Concatena archivo al prompt del sistema. |
@@ -193,6 +202,8 @@ A la versión `f023e47`, el motor, la TUI y la distribución incorporan las sigu
 | `--list-tools` | Booleano | Lista catálogo de herramientas y sale. |
 | `--require-status` | Booleano | Exige bloque `STATUS:` en la respuesta final. |
 | `-h, --help` | Booleano | Muestra la ayuda y sale. |
+
+*Nota sobre flags analizados:* La opción `-f, --file <path>` ya existía en fab. Las opciones `--rm` y `--force` referenciadas en análisis preliminares se confirmaron como falsos positivos tras cotejar la ayuda real de `droid exec` (`evidence-exec-help.json`), donde `--rm` era parte de comandos de ejemplo de `docker run --rm` y `--force` no figura en las opciones de ejecución. Ninguna de las dos se implementa.
 
 ### Tabla de comandos slash `/` en TUI (desde código en `src/chat/commands.ts`)
 

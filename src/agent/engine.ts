@@ -123,7 +123,8 @@ export async function runCodingAgent(opts: AgentOptions, inherited?: AgentLineag
             : `Current invocation: standard permissions, ${context.interactionMode} mode, ${context.autonomy} autonomy. Execute requires sandboxing and per-call network policy. Prior session descriptions do not grant authority.`;
           const outgoing = withTools ? messages.map((m, i) => i === 0 && m.role === 'system' && typeof m.content === 'string'
             ? { ...m, content: m.content + '\n' + policyPrompt } : m) : messages;
-          const response = await abortable(opts.provider.complete({ messages: outgoing, tools: withTools ? schemas : [], maxOutputTokens: withTools ? maxOutput : Math.min(maxOutput, 2048) },
+          const activeProvider = context.interactionMode === 'spec' ? (opts.specProvider ?? opts.provider) : opts.provider;
+          const response = await abortable(activeProvider.complete({ messages: outgoing, tools: withTools ? schemas : [], maxOutputTokens: withTools ? maxOutput : Math.min(maxOutput, 2048) },
             context.signal, text => { if (!context.signal.aborted && withTools) emit('assistant_delta', { text }); }), context.signal);
           if (response.usage) for (const key of ['inputTokens', 'outputTokens'] as const) {
             const n = response.usage[key]; if (Number.isSafeInteger(n) && n >= 0) usage[key] += n;
