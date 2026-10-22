@@ -3,14 +3,15 @@ import { existsSync, statSync } from 'node:fs';
 import { readFile, realpath } from 'node:fs/promises';
 import { resolve } from 'node:path';
 import { parseArgs } from 'node:util';
-import { loadExecSettings } from './agent/settings.ts';
+import { configuredProviders, loadExecSettings } from './agent/settings.ts';
 import { AUTONOMIES, chatHome, loadChatConfig, terminalText } from './chat/config.ts';
 import { ChatController } from './chat/controller.ts';
 import { TerminalInput } from './chat/terminal.ts';
 import { commandHelp } from './chat/commands.ts';
 import { networkPolicy } from './agent/network-policy.ts';
+import { listConfiguredToolCatalog } from './agent/engine.ts';
 
-import { resolveToolSelection, normalizeExecArgv } from './agent/exec-flags.ts';
+import { hasToolPrefixSelector, resolveToolSelection, normalizeExecArgv } from './agent/exec-flags.ts';
 import { prepareExecWorktree } from './agent/exec-worktree.ts';
 
 export { loadChatConfig } from './chat/config.ts';
@@ -64,7 +65,21 @@ export async function chatMain(argv: string[]): Promise<number> {
       const n = Number(v[key]); if (!Number.isSafeInteger(n) || n < 1 || n > 2147483647) throw new Error(`Límite inválido: ${key}`); return n;
     };
     const append = [v['append-system-prompt'], v['append-system-prompt-file'] ? await readFile(resolve(v['append-system-prompt-file']), 'utf8') : ''].filter(Boolean).join('\n');
-    const toolSel = resolveToolSelection(v['only-tools'], v['add-tools'], v['remove-tools']);
+    let availableToolNames: string[] | undefined;
+    if (hasToolPrefixSelector(v['only-tools'], v['add-tools'], v['remove-tools'])) {
+      const configured = configuredProviders(settings, { model: config.model });
+      const prov = configured.providers[configured.defaultModelId]!;
+      const fullCatalog = await listConfiguredToolCatalog({
+        prompt: '',
+        cwd,
+        provider: prov,
+        mcpServers: settings.mcpServers,
+        settingsPolicy: { modelIds: [config.model], maxAutonomy: config.autonomy, networkPolicy: config.networkPolicy ?? 'auto' },
+        interactionMode: config.mode,
+      });
+      availableToolNames = fullCatalog.map(t => t.schema.function.name);
+    }
+    const toolSel = resolveToolSelection(v['only-tools'], v['add-tools'], v['remove-tools'], availableToolNames);
     io = new TerminalInput(process.stdin, process.stdout, !!process.stdin.isTTY);
     const app = new ChatController({ cwd, home, settings, config, agent: {
       permissionMode: v.yolo ? 'yolo' : 'standard',

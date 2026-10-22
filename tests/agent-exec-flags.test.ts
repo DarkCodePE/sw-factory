@@ -1,7 +1,8 @@
 import { afterEach, expect, test } from 'bun:test';
 import { mkdtemp, rm, writeFile, mkdir } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
-import { join } from 'node:path';
+import { basename, join } from 'node:path';
+import { createHash } from 'node:crypto';
 import { fileURLToPath } from 'node:url';
 import { SessionStore } from '../src/agent/session.ts';
 import { prepareExecWorktree } from '../src/agent/exec-worktree.ts';
@@ -77,6 +78,75 @@ test('positivo: --add-tools suma una herramienta eliminada por defecto y un sele
   const mcpEcho = tools.find((t: any) => t.id === 'local___echo');
   expect(mcpEcho).toBeDefined();
   expect(mcpEcho.currentlyAllowed).toBe(true);
+});
+
+test('positivo: selector MCP:local en --only-tools y en --remove-tools', async () => {
+  const cwd = await temp();
+  const settingsPath = join(cwd, 'settings.json');
+  await writeFile(settingsPath, JSON.stringify({
+    mcpServers: {
+      local: {
+        command: process.execPath,
+        args: ['--no-env-file', mcpFixture],
+        env: { MCP_ALLOWED: 'explicit' },
+        readOnlyTools: ['echo'],
+      },
+    },
+  }));
+
+  // 1. Test --only-tools MCP:local
+  const childOnly = Bun.spawn([
+    process.execPath, '--no-env-file', entry, 'exec',
+    '--settings', settingsPath,
+    '--only-tools', 'MCP:local',
+    '--list-tools', '-o', 'json',
+  ], {
+    cwd,
+    env: { PATH: process.env.PATH ?? '', HOME: cwd },
+    stdin: 'ignore',
+    stdout: 'pipe',
+    stderr: 'pipe',
+  });
+
+  const [codeOnly, outOnly, errOnly] = await Promise.all([
+    childOnly.exited,
+    new Response(childOnly.stdout).text(),
+    new Response(childOnly.stderr).text(),
+  ]);
+  expect(codeOnly).toBe(0);
+  expect(errOnly).toBe('');
+  const toolsOnly = JSON.parse(outOnly);
+  const mcpEchoOnly = toolsOnly.find((t: any) => t.id === 'local___echo');
+  expect(mcpEchoOnly).toBeDefined();
+  expect(mcpEchoOnly.currentlyAllowed).toBe(true);
+  expect(toolsOnly.some((t: any) => t.id === 'read-cli')).toBe(false);
+
+  // 2. Test --remove-tools MCP:local
+  const childRemove = Bun.spawn([
+    process.execPath, '--no-env-file', entry, 'exec',
+    '--settings', settingsPath,
+    '--remove-tools', 'MCP:local',
+    '--list-tools', '-o', 'json',
+  ], {
+    cwd,
+    env: { PATH: process.env.PATH ?? '', HOME: cwd },
+    stdin: 'ignore',
+    stdout: 'pipe',
+    stderr: 'pipe',
+  });
+
+  const [codeRemove, outRemove, errRemove] = await Promise.all([
+    childRemove.exited,
+    new Response(childRemove.stdout).text(),
+    new Response(childRemove.stderr).text(),
+  ]);
+  expect(codeRemove).toBe(0);
+  expect(errRemove).toBe('');
+  const toolsRemove = JSON.parse(outRemove);
+  expect(toolsRemove.some((t: any) => t.id === 'local___echo')).toBe(false);
+  const readToolRemove = toolsRemove.find((t: any) => t.id === 'read-cli');
+  expect(readToolRemove).toBeDefined();
+  expect(readToolRemove.currentlyAllowed).toBe(true);
 });
 
 test('positivo: --spec-model usa el segundo modelo durante spec y el principal tras ExitSpecMode', async () => {
@@ -451,6 +521,35 @@ test('negativo: rama ya checkouteada en otro worktree falla', async () => {
   const [code, , err] = await Promise.all([child.exited, new Response(child.stdout).text(), new Response(child.stderr).text()]);
   expect(code).not.toBe(0);
   expect(err).toContain("Branch 'main' is already checked out at");
+});
+
+test('negativo: ruta de worktree ya ocupada por otra rama falla y preserva archivo sin commit', async () => {
+  const repoDir = await temp();
+  await gitInit(repoDir);
+  const wtRoot = await temp();
+
+  // Create another branch and check it out at the canonical targetPath
+  const topProc = Bun.spawn(['git', 'rev-parse', '--show-toplevel'], { cwd: repoDir, stdout: 'pipe' });
+  const repoRoot = (await new Response(topProc.stdout).text()).trim();
+  const repoHash = createHash('sha256').update(repoRoot).digest('hex').slice(0, 8);
+  const targetPath = join(wtRoot, repoHash, basename(repoRoot));
+
+  await Bun.spawn(['git', 'branch', 'branch-ajena'], { cwd: repoDir }).exited;
+  await Bun.spawn(['git', 'worktree', 'add', targetPath, 'branch-ajena'], { cwd: repoDir }).exited;
+
+  // Write an uncommitted file in that existing worktree
+  const uncommittedFile = join(targetPath, 'trabajo-sin-commit.txt');
+  await writeFile(uncommittedFile, 'contenido critico sin commit');
+
+  // Attempt prepareExecWorktree for the same repo with a different branch
+  await expect(prepareExecWorktree({
+    repo: repoDir,
+    name: 'branch-nueva',
+    root: wtRoot,
+  })).rejects.toThrow(/la ruta ya pertenece al worktree de la rama branch-ajena/);
+
+  // Verify the uncommitted file in the existing worktree is still intact!
+  expect(await Bun.file(uncommittedFile).text()).toBe('contenido critico sin commit');
 });
 
 test('negativo: --add-tools con --only-tools que no la incluye falla (regla documentada)', async () => {

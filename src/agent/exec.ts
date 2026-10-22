@@ -8,7 +8,7 @@ import { describeTool } from './catalog.ts';
 import type { Autonomy } from './types.ts';
 import { validateReportStatus } from '../prompts.ts';
 import { networkPolicy } from './network-policy.ts';
-import { buildProviders, parseExecArgs, resolveToolSelection } from './exec-flags.ts';
+import { buildProviders, hasToolPrefixSelector, parseExecArgs, resolveToolSelection } from './exec-flags.ts';
 import { prepareExecWorktree } from './exec-worktree.ts';
 import { SessionStore } from './session.ts';
 
@@ -53,7 +53,6 @@ export async function execMain(argv: string[]): Promise<number> {
 
     const { configured, provider, specProvider, mission } = buildProviders(v, settings);
     const settingsPolicy = { modelIds: Object.keys(configured.providers), maxAutonomy: policy.effectiveAutonomy, networkPolicy: executionNetwork };
-    const toolSel = resolveToolSelection(v['only-tools'], v['add-tools'], v['remove-tools']);
 
     let effectiveCwd = resolve(v.cwd ?? process.cwd());
     const sessionDir = resolve(v['session-dir'] ?? resolve(process.env.FABRICA_HOME ?? resolve(process.env.HOME ?? '.', '.fabrica'), 'agent-sessions'));
@@ -109,6 +108,22 @@ export async function execMain(argv: string[]): Promise<number> {
         });
         return controller.signal.aborted ? 130 : 0;
       }
+
+      let availableToolNames: string[] | undefined;
+      if (hasToolPrefixSelector(v['only-tools'], v['add-tools'], v['remove-tools'])) {
+        const mode = v.mission ? 'mission' : v['use-spec'] ? 'spec' : 'auto';
+        const fullCatalog = await listConfiguredToolCatalog({
+          ...execution,
+          prompt: '',
+          cwd: effectiveCwd,
+          provider,
+          mcpServers: settings.mcpServers,
+          settingsPolicy,
+          interactionMode: mode,
+        }, controller.signal);
+        availableToolNames = fullCatalog.map(t => t.schema.function.name);
+      }
+      const toolSel = resolveToolSelection(v['only-tools'], v['add-tools'], v['remove-tools'], availableToolNames);
 
       if (v['list-tools']) {
         const mode = v.mission ? 'mission' : v['use-spec'] ? 'spec' : 'auto';

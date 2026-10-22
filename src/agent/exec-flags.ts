@@ -41,15 +41,46 @@ export function normalizeExecArgv(argv: string[]): { args: string[]; worktreeNam
   return { args: normalized, worktreeName };
 }
 
+export function hasToolPrefixSelector(rawOnly?: string, rawAdd?: string, rawRemove?: string): boolean {
+  for (const s of [rawOnly, rawAdd, rawRemove]) {
+    if (s && (s.includes('MCP:') || s.includes('___'))) return true;
+  }
+  return false;
+}
+
 export function resolveToolSelection(
   rawOnly?: string,
   rawAdd?: string,
   rawRemove?: string,
+  availableToolNames?: string[],
 ) {
   const selected = (s?: string) => selectToolNames(s?.split(',').map(x => x.trim()).filter(Boolean));
-  const only = selected(rawOnly);
-  const add = selected(rawAdd);
-  const remove = selected(rawRemove);
+  const expand = (names?: string[]) => {
+    if (!names) return undefined;
+    if (!availableToolNames || availableToolNames.length === 0) return names;
+    const result: string[] = [];
+    for (const name of names) {
+      if (name.endsWith('___')) {
+        const matches = availableToolNames.filter(t => t.startsWith(name));
+        if (matches.length > 0) {
+          result.push(...matches);
+        } else {
+          result.push(name);
+        }
+      } else {
+        result.push(name);
+      }
+    }
+    return result;
+  };
+
+  const rawOnlyList = selected(rawOnly);
+  const rawAddList = selected(rawAdd);
+  const rawRemoveList = selected(rawRemove);
+
+  const only = expand(rawOnlyList);
+  const add = expand(rawAddList);
+  const remove = expand(rawRemoveList);
 
   // Negative validation: --add-tools with --only-tools that does not include it
   if (only && add) {
@@ -72,8 +103,16 @@ export function resolveToolSelection(
   } else {
     effectiveOnlyTools = undefined;
     if (remove) {
-      effectiveRemoveTools = remove.filter(t => !add?.includes(t));
-      if (effectiveRemoveTools.length === 0) effectiveRemoveTools = undefined;
+      const activeRemove = remove.filter(t => !add?.includes(t));
+      if (activeRemove.length > 0) {
+        const hasMcpRemove = activeRemove.some(t => t.includes('___'));
+        if (hasMcpRemove && availableToolNames && availableToolNames.length > 0) {
+          effectiveOnlyTools = availableToolNames.filter(t => !activeRemove.includes(t));
+          effectiveRemoveTools = undefined;
+        } else {
+          effectiveRemoveTools = activeRemove;
+        }
+      }
     }
   }
 

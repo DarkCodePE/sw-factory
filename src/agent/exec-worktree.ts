@@ -23,7 +23,9 @@ const GIT_ENV: Record<string, string> = {
   GIT_TERMINAL_PROMPT: '0',
 };
 
-async function runGit(args: string[], cwd: string, signal?: AbortSignal): Promise<{ code: number; stdout: string; stderr: string }> {
+const GIT_TIMEOUT_MS = 30_000;
+
+async function runGit(args: string[], cwd: string, signal?: AbortSignal, timeoutMs = GIT_TIMEOUT_MS): Promise<{ code: number; stdout: string; stderr: string }> {
   signal?.throwIfAborted();
   const proc = Bun.spawn(['git', '-c', 'core.hooksPath=/dev/null', ...args], {
     cwd,
@@ -33,19 +35,31 @@ async function runGit(args: string[], cwd: string, signal?: AbortSignal): Promis
     stderr: 'pipe',
   });
 
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  const timeoutPromise = new Promise<never>((_, reject) => {
+    timer = setTimeout(() => {
+      try { proc.kill(); } catch {}
+      reject(new Error(`Git command timed out after ${timeoutMs}ms: git ${args.join(' ')}`));
+    }, timeoutMs);
+  });
+
   const abortHandler = () => {
     try { proc.kill(); } catch {}
   };
   signal?.addEventListener('abort', abortHandler, { once: true });
 
   try {
-    const [stdout, stderr, code] = await Promise.all([
-      new Response(proc.stdout).text(),
-      new Response(proc.stderr).text(),
-      proc.exited,
+    const [stdout, stderr, code] = await Promise.race([
+      Promise.all([
+        new Response(proc.stdout).text(),
+        new Response(proc.stderr).text(),
+        proc.exited,
+      ]),
+      timeoutPromise,
     ]);
     return { code, stdout: stdout.trim(), stderr: stderr.trim() };
   } finally {
+    if (timer) clearTimeout(timer);
     signal?.removeEventListener('abort', abortHandler);
   }
 }
@@ -117,10 +131,10 @@ export async function prepareExecWorktree(options: ExecWorktreeOptions): Promise
     return { path: targetPath, branch, created: false };
   }
 
-  // 6. If targetPath already exists on disk as a worktree with another branch, remove it
+  // 6. If targetPath already exists on disk as a worktree with another branch, error out (never delete an existing worktree)
   const existingAtPath = existingWorktrees.find(w => w.path === targetPath);
   if (existingAtPath) {
-    await runGit(['worktree', 'remove', '--force', targetPath], repoRoot, options.signal);
+    throw new Error(`Target path '${targetPath}' already belongs to worktree with branch '${existingAtPath.branch}': la ruta ya pertenece al worktree de la rama ${existingAtPath.branch}`);
   }
 
   // Ensure parent directory of targetPath exists
