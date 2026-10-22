@@ -140,7 +140,7 @@ flowchart TD
     H3 -- Observaciones --> H2
 ```
 
-> **Nota aclaratoria sobre verificación:** En el flujo estándar de la fábrica (`src/pool.ts:40-47`), el pool verifica únicamente que la actividad de implementación haya dejado al menos un commit en la rama `fab/<id>`. La ejecución autónoma de `verificationCommands` independientes y la inmutabilidad forzada de `protectedPaths` corresponden específicamente al modo de misiones de `fab exec` (`--mission`), no a la cola general de signals/changes.
+> **Nota aclaratoria sobre verificación:** En el flujo estándar de la fábrica (`src/pool.ts:40-47`), el pool verifica únicamente que la actividad de implementación haya dejado al menos un commit en la rama `fab/<id>`. La ejecución autónoma de `verificationCommands` independientes y la inmutabilidad forzada de `protectedPaths` corresponden específicamente al modo de misiones de `fab exec` (`--mission`), no a la cola general de signals/changes. Ambos modos son el contrato vigente de la fábrica: el Lab elige flujo de señales (gates humanos) o misión (verificación por el runtime) según el encargo; la fábrica no cambia su contrato por cliente.
 
 ### 3.2 Matriz de responsabilidades por etapa
 
@@ -161,7 +161,7 @@ flowchart TD
 
 ### 3.3 Interfaz de Entrada requerida por la fábrica
 
-Para que `sw-factory` pueda ejecutar un encargo, el Humano del Lab debe suministrar:
+La interfaz es la de la fábrica tal como existe en `main`; las plantillas DOC-301/302/303 de Startería Lab se adaptan a ella, no al revés. Para que `sw-factory` pueda ejecutar un encargo, el Humano del Lab debe suministrar:
 1. **Ruta local al repositorio Git (`repo`):** Un directorio con `.git` inicializado, dependencias instaladas y un comando de test funcional (`src/worktrees.ts:20-21`).
 2. **Registro de Workstream:**
    ```bash
@@ -170,8 +170,8 @@ Para que `sw-factory` pueda ejecutar un encargo, el Humano del Lab debe suminist
 3. **Payload del Change / Signal (`ExecutionBrief` técnico):**
    - **Título:** Breve y enfocado (ej. `Implementar autenticación JWT y middleware de protección`).
    - **Descripción del problema y alcance:** Explicación técnica de la funcionalidad requerida.
-   - **Archivos protegidos (`protectedPaths`):** Archivos que los agentes tienen prohibido modificar (ej. `tests/auth.test.ts`). *Nota de contrato:* implementado y exigido en `fab exec --mission` (`src/agent/mission.ts:140`); en el flujo general de señales de la fábrica (`pool.ts`) se pasa como directiva en el prompt pero la inmutabilidad mecánica aún no está cableada en la cola desatendida.
-   - **Comandos de verificación (`verificationCommands`):** Comandos deterministas que el runner ejecutará en sandbox estricto para juzgar el éxito (ej. `bun test tests/auth.test.ts`, `npx tsc --noEmit`) (`src/agent/mission.ts:135`). *Nota de contrato:* actualmente activo en `fab exec --mission`; el flujo general de `pool.ts:40-47` verifica únicamente que la rama `fab/<id>` contenga commits.
+   - **Archivos protegidos (`protectedPaths`):** Archivos que los agentes tienen prohibido modificar (ej. `tests/auth.test.ts`). *Contrato:* se exige mecánicamente en `fab exec --mission` (`src/agent/mission.ts:140`). En el flujo general de señales (`pool.ts`) es una directiva del prompt; la garantía la dan los gates humanos. Si el Lab necesita inmutabilidad verificada por el runtime, el encargo se formula como misión (DOC-303).
+   - **Comandos de verificación (`verificationCommands`):** Comandos deterministas que el runner ejecutará en sandbox estricto para juzgar el éxito (ej. `bun test tests/auth.test.ts`, `npx tsc --noEmit`) (`src/agent/mission.ts:135`). *Contrato:* propio del modo de misiones (`fab exec --mission`). El flujo general de `pool.ts:40-47` comprueba que la rama `fab/<id>` contenga commits y deja la verificación al revisor humano del Gate 3; es el diseño de la fábrica, no una carencia transitoria.
 
 ### 3.4 Interfaz de Salida devuelta por la fábrica
 
