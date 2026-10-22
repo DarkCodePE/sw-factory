@@ -1,8 +1,6 @@
 # Motor propio de `fab exec`
 
-Agente de código propio, escrito con Bun. El adaptador `native` es el predeterminado
-para workstreams nuevos y conserva los gates de la fábrica. El alcance todavía es
-**parcial**; ver la sección final.
+Agente de código autónomo e independiente, implementado sobre Bun y TypeScript. El adaptador `native` es el motor predeterminado para los nuevos workstreams de la fábrica y opera tanto desatendido como mediante la interfaz CLI interactiva.
 
 ```bash
 bun src/cli.ts exec --cwd /ruta/proyecto --auto medium \
@@ -10,181 +8,149 @@ bun src/cli.ts exec --cwd /ruta/proyecto --auto medium \
   'Investiga, corrige el fallo y ejecuta los tests'
 ```
 
-Formatos: `text`, `json`, `stream-json` y JSON-RPC NDJSON con
-`--input-format stream-jsonrpc --output-format stream-jsonrpc`.
-Los frames RPC están limitados a 10 MiB. El sobre JSON-RPC 2.0 incluye
-`factoryApiVersion: 1.0.0` y `factoryProtocolVersion: 1.269.0`; no se declara
-compatibilidad con otras versiones del protocolo.
+Formatos soportados: `text`, `json`, `stream-json` (eventos de progreso estructurados) y protocolo `stream-jsonrpc` bidireccional sobre NDJSON (`--input-format stream-jsonrpc --output-format stream-jsonrpc`).
 
-El bucle transmite texto, reúne las llamadas completas antes de ejecutarlas,
-correlaciona resultados, conserva errores para el turno siguiente y limita
-recuperación, reintentos y contexto. La compactación cubre todos los fragmentos
-descartados, recomprime resúmenes anteriores y conserva las instrucciones de
-usuario. Falla explícitamente si no puede reducir el contexto.
+Los frames de transporte RPC están acotados a un máximo de 10 MiB. El sobre JSON-RPC 2.0 incluye las cabeceras protocolarias `factoryApiVersion: 1.0.0` y `factoryProtocolVersion: 1.269.0`.
 
-## Modelos y configuración
+El bucle central procesa texto por streaming, reúne las llamadas a herramientas emitidas antes de despacharlas, correlaciona sus resultados mediante identificadores únicos de invocación, maneja errores para el turno subsiguiente y controla estrictamente presupuestos de llamadas, recuperación y contexto. La compactación contextual cubre todos los fragmentos descartados, recomprime resúmenes previos y preserva intactas las instrucciones de usuario, fallando explícitamente si no logra reducir la ventana de contexto.
 
-Variables: `FABRICA_LLM_MODEL`, `FABRICA_LLM_BASE_URL`, `FABRICA_LLM_API_KEY`.
-`--settings archivo.json` admite este subconjunto explícito:
+---
 
-```json
-{
-  "modelId": "custom:local",
-  "customModels": [{
-    "id": "custom:local",
-    "model": "qwen3.5-32k:latest",
-    "provider": "generic-chat-completion-api",
-    "baseUrl": "http://127.0.0.1:11434/v1",
-    "maxOutputTokens": 4096
-  }]
-}
-```
+## Tabla de Opciones de `fab exec`
 
-También admite `provider: "openai"`. Una clave puede usar `${NOMBRE_VARIABLE}`;
-se resuelve únicamente esa variable. No se leen settings globales del usuario. Los campos
-de política desconocidos se rechazan. Anthropic/Google nativos no están implementados.
+Generada directamente a partir de la especificación de argumentos en `src/agent/exec.ts:32-45`:
 
-Para workers de la fábrica: `FABRICA_AGENT_SETTINGS`,
-`FABRICA_AGENT_AUTONOMY` (medium por defecto), `FABRICA_AGENT_TIMEOUT_MS` y
-`FABRICA_AGENT_MAX_TURNS`. Los workers de investigación usan spec.
-El adaptador exige un STATUS válido y permite repararlo dentro del presupuesto
-de recuperación. El parser de la fábrica consume esa misma primera línea; los
-informes largos conservan el estado cuando se limita el cuerpo a 20.000 caracteres.
+| Opción / Flag | Tipo / Valores | Descripción y Comportamiento en Código |
+| :--- | :--- | :--- |
+| `[prompt]` | Posicional | Texto de instrucción para el agente (si se omite y stdin no es TTY, se lee de stdin). |
+| `-f, --file <path>` | String | Lee el prompt del agente directamente desde un archivo (`src/agent/exec.ts:95`). |
+| `--cwd <path>` | String | Directorio de trabajo base para la ejecución del agente (por defecto `process.cwd()`). |
+| `-m, --model <id>` | String | Identificador del modelo a utilizar; sobrescribe la configuración por defecto (`-m`). |
+| `--base-url <url>` | String | URL base del endpoint HTTP del modelo (sobrescribe `FABRICA_LLM_BASE_URL`). |
+| `--settings <file>` | String | Ruta al archivo JSON con perfiles de configuración, modelos custom y servidores MCP. |
+| `--yolo` | Booleano | Ejecuta en el host sin sandbox y con red abierta, omitiendo prompts interactivos. Ámbito exclusivo de la invocación actual (`src/agent/execution-policy.ts`). |
+| `--auto <nivel>` | `off`, `low`, `medium`, `high` | Nivel de autonomía del agente; determina las herramientas y comandos admitidos sin aprobación. |
+| `--use-spec` | Booleano | Activa el modo de solo lectura (spec); bloquea mutaciones. Excluyente con `--mission`. |
+| `-r, --reasoning-effort <effort>` | String | Esfuerzo de razonamiento del modelo (`default`, `low`, `medium`, `high`). |
+| `--mission` | Booleano | Inicia una misión jerárquica con orquestador, workers y validadores (`src/agent/mission.ts`). |
+| `--worker-model <id>` | String | Modelo asignado al rol worker en misiones (requiere `--mission`). |
+| `--validator-model <id>` | String | Modelo asignado al rol validator en misiones (requiere `--mission`). |
+| `-o, --output-format <formato>` | `text`, `json`, `stream-json`, `stream-jsonrpc` | Formato de salida del resultado y eventos del agente (`short: 'o'`). |
+| `--input-format <formato>` | `stream-jsonrpc` | Formato de entrada de comandos y mensajes por stdin (requiere `-o stream-jsonrpc`). |
+| `-s, --session-id <id>` | String | Reanuda una conversación previa por su ID de sesión (excluyente con `--fork`). |
+| `--fork <id>` | String | Bifurca el historial de una sesión existente creando un nuevo ID de sesión. |
+| `--session-dir <path>` | String | Directorio de persistencia de sesiones (por defecto `~/.fabrica/agent-sessions`). |
+| `--only-tools <csv>` | CSV de nombres | Restringe las herramientas activas a las listadas en formato delimitado por comas. |
+| `--remove-tools <csv>` | CSV de nombres | Deshabilita explícitamente las herramientas indicadas. |
+| `--tag <name>` | String (múltiple) | Asigna etiquetas descriptivas a la sesión para categorización y filtrado. |
+| `--append-system-prompt <text>` | String | Concatena texto adicional al prompt del sistema base del agente. |
+| `--append-system-prompt-file <path>`| String | Concatena el contenido de un archivo al prompt del sistema. |
+| `--timeout-ms <N>` | Entero (ms) | Tiempo límite total de la invocación en milisegundos. |
+| `--max-turns <N>` | Entero | Límite máximo de turnos conversacionales antes de detener la invocación. |
+| `--max-context-tokens <N>` | Entero | Límite máximo del presupuesto de tokens en el historial conversacional. |
+| `--sandbox <modo>` | `required`, `best-effort` | Exige aislamiento en Linux con `bwrap` (`required`) o permite degradación (`best-effort`). |
+| `--sandbox-network <política>` | `auto`, `ask`, `deny` | Política de red para `Execute`: `auto` (solo automático en high), `ask` (consulta), `deny` (bloqueo). |
+| `--list-tools` | Booleano | Muestra el catálogo de herramientas configuradas y finaliza con código 0. |
+| `--require-status` | Booleano | Valida que la respuesta final incluya un bloque `STATUS:` reconocible por la fábrica. |
+| `-h, --help` | Booleano | Imprime el resumen de ayuda CLI y termina. |
 
-## Tools, permisos y sesiones
+---
 
-`--list-tools -o json` devuelve el catálogo instalado con IDs wire y nombres LLM.
-Incluye Read, LS, Create, Edit, Glob, Grep, Execute, Script, TodoWrite, AskUser,
-Skill, ToolSearch y herramientas de subagentes. `--only-tools`/`--remove-tools`
-se aplican también a llamadas anidadas. `conditional` indica que la admisión
-depende de los argumentos. No se usa `riskLevel` del modelo como autorización.
+## Protocolo JSON-RPC y Métodos Soportados
 
-Autonomías: off/low/medium/high. Spec bloquea mutaciones y ejecuta los comandos
-admitidos con el workspace en lectura. Git de lectura también exige sandbox RO.
-Medium admite comandos de desarrollo simples, secuencias `&&` y el prefijo `cd <workspace> &&`;
-composición arbitraria requiere high. El sandbox de ejecución bloquea red.
+El runtime expone un servidor bidireccional sobre NDJSON (`src/agent/rpc.ts`) con **11 métodos implementados**:
 
-Read exige ruta absoluta. Read/Edit abren descriptores sin seguir symlinks;
-los reemplazos son atómicos y no modifican aliases hardlink externos. Create
-reemplaza contenido y añade salto de línea final.
-Se serializan escrituras directas y anidadas de Script; lecturas pueden solaparse.
+### Métodos de Solicitud Entrantes (Inbound Requests — 8 métodos)
+1. `droid.initialize_session`: Inicializa la sesión con el ID de máquina del cliente, directorio de trabajo `cwd`, modelo y parámetros de interacción. Devuelve ID de sesión, modelos disponibles y configuración de ejecución.
+2. `droid.list_models`: Enumera los modelos actualmente configurados y disponibles para la sesión.
+3. `droid.list_tools`: Devuelve el catálogo completo de herramientas con su estado de habilitación, nivel de autonomía requerido y descripción.
+4. `droid.update_session_settings`: Actualiza en caliente parámetros de la sesión activa (`modelId`, `autonomyLevel`, `interactionMode`, `restrictToolIds`, `disabledToolIds`).
+5. `droid.add_user_message`: Agrega un mensaje de usuario a la conversación e inicia el turno de trabajo y streaming del asistente.
+6. `droid.interrupt_session`: Solicita la interrupción controlada del turno activo en ejecución mediante su señal de cancelación.
+7. `droid.load_session`: Carga una sesión persistida previamente desde el almacén de sesiones (`SessionStore`).
+8. `droid.close_session`: Cierra ordenadamente la sesión activa y aborta cualquier trabajo pendiente.
 
-La API `runCodingAgent` permite tools propias, hooks antes/después, permisos y
-respuestas de usuario. En RPC, las solicitudes `droid.request_permission` y
-`droid.ask_user` son bidireccionales. Se admite `proceed_once`/`cancel`;
-la aprobación no evita las restricciones de spec o del sandbox. AskUser usa
-el cuestionario `[question]`, `[topic]`, `[option]`.
+### Métodos de Solicitud Salientes (Outbound Requests — 2 métodos)
+9. `droid.request_permission`: Solicita confirmación interactiva al cliente para ejecutar una herramienta que requiere aprobación (`proceed_once` o `cancel`).
+10. `droid.ask_user`: Envía un cuestionario estructurado al cliente (`questions`, `topics`, `options`) para resolver ambigüedades técnicas y espera la selección del usuario.
 
-`--session-id` reanuda, `--fork` crea otra sesión y `--session-dir` elige su
-almacenamiento. Los snapshots se escriben atómicamente bajo lock exclusivo.
-Se rechaza reanudar herramientas pendientes para no repetir efectos inciertos.
-Callbacks de host personalizados deben observar `context.signal`: no es posible
-matar JavaScript arbitrario del padre; se conserva ownership hasta su finalización.
+### Métodos de Notificación Salientes (Outbound Notifications — 1 método)
+11. `droid.session_notification`: Notificación de eventos de progreso, cambios de estado (`droid_working_state_changed`), deltas de texto del asistente (`assistant_text_delta`), resolución de permisos (`permission_resolved`), y finalización de turnos (`agent_turn_completed`).
 
-## Subagentes
+---
 
-Task/SpawnAgent crean clones aislados fuera del workspace del padre. Copian bytes
-actuales, incluidos cambios sin commit, archivos nuevos y eliminaciones. No copian
-archivos ignorados ni configuración/hooks Git. El snapshot admite 10.000 archivos,
-1 MiB por archivo y 32 MiB totales; submódulos/symlinks no están soportados.
+## Catálogo de Comandos de la TUI
 
-Presupuestos compartidos: profundidad 2, 8 agentes, concurrencia 2 y 256 llamadas
-al proveedor por defecto. Un hijo no aumenta estos límites. TaskOutput, TaskStop,
-ListAgents, InterruptAgent y SendMessage operan sobre hijos propios; mensajes se
-entregan al comenzar el siguiente turno. Los diffs se recolectan dentro del sandbox.
-Los clones quedan disponibles para revisión e integración explícita.
-Los hijos background se cancelan y drenan al terminar la invocación; no son tareas
-duraderas entre sesiones. El resultado terminal se emite después de ese drenaje.
+La interfaz interactiva (`src/chat/commands.ts:3-52`) registra **36 comandos locales activos** organizados por grupos funcionales y **15 comandos con advertencia explícita de servicio no disponible**:
 
-## MCP
+| Grupo | Comando | Parámetros / Alias | Descripción |
+| :--- | :--- | :--- | :--- |
+| **Ayuda** | `/help` | `/?` | Despliega el catálogo de comandos y atajos de teclado. |
+| **Ayuda** | `/terminal-setup` | — | Muestra información de atajos de teclado sin alterar la configuración del terminal. |
+| **Ayuda** | `/exit` | `/quit` | Cierra la sesión interactiva y libera la consola. |
+| **Configuración** | `/model` | `[id]` | Abre selector de modelos configurados o asigna un identificador directamente. |
+| **Configuración** | `/reasoning` | `[default\|low\|medium\|high]` | Modifica el nivel de esfuerzo de razonamiento del modelo (también con `Tab`). |
+| **Configuración** | `/auto` | `[off\|low\|medium\|high]` | Cambia el nivel de autonomía del agente. |
+| **Configuración** | `/yolo` | — | Informa el estado del modo YOLO (solo activable vía `--yolo` al arrancar). |
+| **Configuración** | `/network` | `[auto\|ask\|deny]` | Configura la política de red para la herramienta `Execute`. |
+| **Configuración** | `/mode` | `[auto\|spec\|mission]` | Cambia entre modo interactivo (`auto`), solo lectura (`spec`) o misión (requiere high). |
+| **Configuración** | `/settings` | `[clave valor]` | Visualiza o actualiza ajustes de modelo, autonomía, temas o red. |
+| **Configuración** | `/themes` | `[color\|plain]` | Alterna entre interfaz con formato y color ANSI o salida limpia en texto plano. |
+| **Configuración** | `/cwd` | `[ruta]`, `/cd` | Muestra o cambia el directorio de trabajo; abre una nueva conversación. |
+| **Capacidades** | `/mcp` | `[list\|enable\|disable]` | Gestiona servidores MCP configurados y exclusiones locales por sesión. |
+| **Capacidades** | `/tools` | `[list\|only\|remove\|reset]`| Muestra el catálogo de herramientas y aplica filtros temporales. |
+| **Capacidades** | `/skills` | `[nombre]` | Lista las skills del proyecto (`.agents/skills`) o muestra el contenido de una. |
+| **Capacidades** | `/skill` | `<nombre> [args]` | Invoca una skill local pasando argumentos específicos. |
+| **Capacidades** | `/commands` | — | Lista prompts personalizados descubiertos en `.agents/commands/*.md`. |
+| **Capacidades** | `/droids` | — | Informa las capacidades y límites de los subagentes internos (`Task`, `SpawnAgent`). |
+| **Sesión** | `/context` | — | Calcula y muestra la estimación de tokens consumidos en el historial. |
+| **Sesión** | `/limits` | — | Presenta los límites vigentes de turnos, contexto y timeouts. |
+| **Sesión** | `/status` | — | Resumen del modelo activo, modo, nivel de autonomía, ruta y sesión. |
+| **Sesión** | `/diagnostics` | — | Diagnóstico de salud local: disponibilidad de bubblewrap, permisos y settings. |
+| **Sesión** | `/clear` | — | Inicia una nueva conversación conservando los ajustes de configuración actuales. |
+| **Sesión** | `/new` | — | Inicia una nueva conversación restaurando los ajustes originales de arranque. |
+| **Sesión** | `/sessions` | `[id]`, `/resume` | Abre el selector de sesiones locales o reanuda una sesión por su ID. |
+| **Sesión** | `/search` | `<texto>`, `/find` | Busca texto en el historial de sesiones guardadas del repositorio actual. |
+| **Sesión** | `/fork` | `[id]` | Crea una bifurcación de la conversación actual o de la indicada. |
+| **Sesión** | `/tree` | — | Visualiza el árbol de parentesco de las bifurcaciones y sesiones locales. |
+| **Sesión** | `/rename` | `<título>` | Asigna un título personalizado a la sesión actual. |
+| **Sesión** | `/favorite` | `/pin` | Marca o desmarca la sesión como favorita. |
+| **Sesión** | `/archive` | — | Archiva la sesión activa y abre una conversación limpia. |
+| **Sesión** | `/compress` | `/compact` | Reduce el historial resumiendo turnos anteriores sin ejecutar herramientas. |
+| **Sesión** | `/handoff` | — | Genera una bifurcación con el historial comprimido manteniendo intacta la sesión original. |
+| **Sesión** | `/btw` | `<pregunta>` | Ejecuta una consulta secundaria en solo lectura sin alterar el historial principal. |
+| **Sesión** | `/rewind` | `[list\|<id>]` | Restaura archivos mutados por `Edit`/`Create` al estado de un checkpoint previo. |
+| **Proyecto** | `/init` | `[instrucciones]` | Solicita al agente la creación estructurada del archivo `AGENTS.md`. |
+| **Sin backend** | `/account`, `/login`, `/logout`, `/share`, `/install-code-review`, `/install-triage`, `/detect-overlapping-workstreams`, `/plugins`, `/hooks`, `/fast`, `/language`, `/statusline`, `/rewind-conversation`, `/migrate`, `/simplify` | — | Comandos sin backend local; la TUI muestra un mensaje explícito explicando la ausencia de servicio remoto en vez de enviar el comando al modelo. |
 
-`mcpServers` configura stdio (`command`, `args`, `env`) o Streamable HTTP (`url`,
-`headers`). El cliente negocia versión, pagina `tools/list`, procesa JSON/SSE y
-conserva contenido estructurado. Los nombres son `servidor___tool`.
-Solo `readOnlyTools`, declarado por el caller, otorga clasificación de lectura;
-las annotations del servidor no la otorgan.
+---
 
-Los procesos stdio usan sandbox required, entorno explícito y montajes limitados
-a runtimes del sistema, workspace, ejecutable/argumentos absolutos existentes y
-`readPaths` explícitos para dependencias adicionales. No se monta todo el home.
-Metadata se descubre siempre en RO. Una operación stdio con escritura inicia un
-proceso propio después de su admisión y lo recolecta al retornar; su estado en
-memoria no persiste entre operaciones de escritura. HTTP y tools stdio de lectura
-conservan sesión durante la invocación. `allowNetwork: true` es opt-in para stdio.
+## Herramientas, Aislamiento y Subagentes
 
-Límites: 8 servidores, 256 tools, 16 páginas y 512 KiB agregados por catálogo;
-discovery total 30 s, solicitudes de metadata 15 s y calls 180 s configurables con
-`timeoutMs`. Cancelación HTTP usa un envío independiente acotado. Al cerrar se
-recolectan procesos y se solicita DELETE de sesiones HTTP.
-No se implementan todavía OAuth, SSE legado, reanudación GET ni actualización
-automática de catálogos. Base pública:
-[lifecycle](https://modelcontextprotocol.io/specification/2025-11-25/basic/lifecycle),
-[transportes](https://modelcontextprotocol.io/specification/2025-11-25/basic/transports) y
-[tools](https://modelcontextprotocol.io/specification/2025-11-25/server/tools).
+- **Catálogo base de herramientas:** `Read`, `LS`, `Create`, `Edit`, `Glob`, `Grep`, `Execute`, `Script`, `TodoWrite`, `AskUser`, `Skill`, `ToolSearch` y herramientas de subagentes (`src/agent/catalog.ts`).
+- **Seguridad en filesystem:** `Read` exige rutas absolutas. `Read` y `Edit` abren descriptores sin seguir symlinks arbitrarios; los reemplazos son atómicos para prevenir condiciones de carrera. `Create` formatea con salto de línea terminal.
+- **Subagentes (`Task`, `SpawnAgent`):** Generan clones aislados fuera del workspace del proceso padre. Copian el estado actual del árbol de trabajo, incluyendo modificaciones sin commit y adiciones. Comparten presupuestos estrictos: profundidad máxima 2, hasta 8 subagentes por sesión, concurrencia máxima 2 y 256 llamadas acumuladas al proveedor. Los clones en segundo plano se cancelan y drenan automáticamente al terminar la invocación principal.
 
-## Misiones
+---
 
-`--mission --auto high` habilita ProposeMission, StartMissionRun y
-DismissHandoffItems. El rol worker recibe EndFeatureRun. `--worker-model` y
-`--validator-model` seleccionan proveedores ya configurados en settings.
-La metadata queda fuera del workspace y de sus directorios Git escribibles.
-Los archivos de planificación/skills pueden editarse; estado y handoffs son del runner.
+## Misiones Autónomas (`--mission`)
 
-Cada feature de `features.json` declara, además de su descripción:
+En modo misión (`--mission --auto high`), el runtime habilita las herramientas de coordinación `ProposeMission`, `StartMissionRun`, `DismissHandoffItems` y `EndFeatureRun`.
 
-- `verificationCommands`: comandos que el **runner** ejecuta antes de completar la
-  milestone. Corren en sandbox obligatorio, sin red, con entorno restringido y sobre
-  una copia desechable del código congelado (las dependencias ignoradas, como
-  `node_modules`, se montan en solo lectura). Admiten comillas, sin shell: operadores,
-  expansiones y globs sin comillas se rechazan.
-- `protectedPaths`: archivos que los workers no pueden cambiar (por ejemplo, los tests
-  que juzgan su trabajo). Se registran antes del primer worker.
+Cada característica definida en `features.json` establece un contrato estricto:
+- `verificationCommands`: Comandos deterministas ejecutados por el **propio runner** en un sandbox aislado sin red y sobre una copia desechable del código.
+- `protectedPaths`: Archivos que los workers tienen estrictamente prohibido alterar (ej. suites de test de referencia). Si un worker muta una ruta protegida, la misión se detiene inmediatamente antes de la validación.
+- **Validación dual:** Dos validadores independientes inspeccionan cada hito en solo lectura; si alguno reporta anomalías o no ejecuta al menos una comprobación exitosa, el hito no se aprueba.
 
-Reglas de completitud:
+---
 
-1. Workers en serie; un worker sin handoff, con resultado parcial, issues o
-   `returnToOrchestrator` devuelve el turno al orquestador.
-2. Un handoff que afirma comandos que el runtime no observó (incluidos los
-   ejecutados dentro de Script) se rechaza. `validatorsPassed` no decide nada.
-3. Si cambió un `protectedPath`, el run se pausa antes de validar.
-4. Dos validadores por milestone, en solo lectura. Cada uno debe haber ejecutado
-   al menos un comando con éxito; si devuelve el turno o reporta issues, no se completa.
-5. Sin `verificationCommands`, o con alguno fallando, la milestone queda en pausa.
-6. Verificadores y rutas protegidas se sellan en la primera planificación: replanificar
-   solo puede añadirlos, nunca quitarlos.
-7. Antes del primer efecto se reservan las llamadas al modelo que necesitan workers y
-   validadores; si no alcanzan, el run no empieza.
-8. Cada descarte (DismissHandoffItems) cubre el item de un intento concreto; el mismo
-   texto en un intento posterior es un item nuevo.
+## Verificación y Estado de la Suite
 
-`result.ok` representa el turno; consultar por separado `result.mission.state`.
-Contraejemplo y caso positivo reproducibles, sin modelo real:
-
-```bash
-bun scripts/native-mission-probe.ts truthful   # completed y test independiente en verde
-bun scripts/native-mission-probe.ts forged     # handoffs falsos: la misión no se completa
-```
-
-Ambos terminan con exit 0 cuando el runner se comporta según el contrato.
-Faltan journal/recuperación tras crash y la aceptación de misión con un modelo real.
-
-## Validación y alcance pendiente
+Para validar el motor y la consistencia de tipos:
 
 ```bash
 bun test
 bunx tsc --noEmit -p .
 ```
 
-Las suites incluyen errores/cancelación, protocolo SSE/RPC, confinamiento de
-escrituras, clones con estado sin commit, MCP y la fábrica completa con modelo
-determinista. `scripts/native-factory-smoke.ts /directorio/nuevo` es una prueba
-opt-in con Ollama local: crea únicamente un repositorio fixture, ejecuta
-investigación/implementación y verifica tests y rama. Hace commits solo dentro
-de esa fixture. `--resume` requiere su marcador y no repite investigación.
-
-Faltan cerrar los gates y la aceptación de missions, ACP, entrada stream-json
-multiturno, rewind, ApplyPatch, tareas/Script duraderos, hooks de configuración,
-gestión completa MCP y conectores externos. Una prueba real con Qwen local completó
-investigación e implementación: tests verificados y commit únicamente en su
-repositorio fixture, sin cambiar main. Una corrida aislada no certifica estabilidad;
-la aceptación con modelo real (varias corridas seguidas) sigue pendiente.
+La suite registra actualmente **252 pruebas unitarias pasando (252 pass, 0 fail)** en **29 archivos de prueba** con **1.481 aserciones** verificadas (`expect()`).

@@ -146,4 +146,99 @@ Esta pasada parte de `e5548de` y de la [captura del usuario](evidence/droid-0.24
 
 Identificadores completos y salidas en [evidence/paridad-2-validation.json](evidence/paridad-2-validation.json): D1–D6 son `paridad-2-droid-1..6.json`; F1 es `paridad-2-fab-source-1.json` (intermedio); F2 es `paridad-2-fab-compiled-final.json`; F3 es `paridad-2-fab-source-empty-final.json`. Los intentos D1/D2 no prueban navegación completa; D4 contiene una secuencia de entrada que acabó invocando un prompt sintético en lugar del modal MCP. D5 permaneció en el selector; D6 completa el cambio de modelo. Todos se conservan con sus límites.
 
-**Resultado final:** 183 pass, 0 fail, 866 aserciones en 20 archivos; TypeScript y diff-check exit 0. Se recompiló `dist/fab`, SHA-256 `867f5bceef0dc41992874836998400075d971cd1765ca3a50f273f16f639bcc8`; su probe confirma callback Script aislado y timeout. F2/F3 terminan con exit 0 sin truncamiento. No se actualizó el FAB global ni se usaron modelos comerciales. El [informe de esta pasada](report-codex-tui-paridad-2.md) incluye pruebas reproducibles, referencias locales consultadas con Graft y pendientes. Los recibos anteriores conservan sus identidades históricas.
+**Resultado final histórico de la fase 2:** 183 pass, 0 fail, 866 aserciones en 20 archivos; TypeScript y diff-check exit 0. Se recompiló `dist/fab`, SHA-256 `867f5bceef0dc41992874836998400075d971cd1765ca3a50f273f16f639bcc8`; su probe confirma callback Script aislado y timeout. F2/F3 terminan con exit 0 sin truncamiento. No se actualizó el FAB global ni se usaron modelos comerciales. El [informe de esta pasada](report-codex-tui-paridad-2.md) incluye pruebas reproducibles, referencias locales consultadas con Graft y pendientes. Los recibos anteriores conservan sus identidades históricas.
+
+---
+
+## Estado consolidado en `main` `f023e47` (v0.1.0-rc.9)
+
+A la versión `f023e47`, el motor, la TUI y la distribución incorporan las siguientes capacidades:
+- **RC.7 (`b9e6a10`):** Instaladores por canales (`install.sh`, `latest.sh`, `prerelease.sh`) y autoactualización `fab update` con preservación del prefix y método original.
+- **RC.8 (`fc6fc84`):** Permisos de red por llamada para la herramienta `Execute` (`--sandbox-network auto|ask|deny`, `network: true`, comando `/network` en TUI).
+- **RC.9 (`f023e47`):** Modo YOLO por invocación (`--yolo`, `/yolo`) para ejecución directa en el host y red sin prompts interactivos, confinado estrictamente a la invocación activa y sin persistirse en la sesión.
+- **Protocolo RPC (11 métodos en `src/agent/rpc.ts`):** 8 métodos de solicitud entrantes (`droid.initialize_session`, `droid.list_models`, `droid.list_tools`, `droid.update_session_settings`, `droid.add_user_message`, `droid.interrupt_session`, `droid.load_session`, `droid.close_session`), 2 de solicitud saliente (`droid.request_permission`, `droid.ask_user`) y 1 notificación (`droid.session_notification`).
+
+### Tabla de flags de `fab exec` (desde código en `src/agent/exec.ts`)
+
+| Flag / Argumento | Tipo | Descripción |
+| :--- | :--- | :--- |
+| `[prompt]` | Posicional | Prompt inicial (o leído de stdin si no es TTY). |
+| `-f, --file <path>` | String | Lee el prompt desde un archivo especificado. |
+| `--cwd <path>` | String | Directorio de trabajo base. |
+| `-m, --model <id>` | String | Sobrescribe el modelo configurado. |
+| `--base-url <url>` | String | Endpoint HTTP base del modelo. |
+| `--settings <file>` | String | Archivo JSON de configuración de perfiles y MCP. |
+| `--yolo` | Booleano | Ejecuta en host y red sin sandbox ni confirmaciones (ámbito exclusivo de esta invocación). |
+| `--auto <nivel>` | String (`off\|low\|medium\|high`) | Nivel de autonomía del agente. |
+| `--use-spec` | Booleano | Modo solo lectura / investigación (excluyente con `--mission`). |
+| `-r, --reasoning-effort <effort>` | String | Nivel de razonamiento (`default\|low\|medium\|high`). |
+| `--mission` | Booleano | Inicia modo misión jerárquico (excluyente con `--use-spec`). |
+| `--worker-model <id>` | String | Modelo para workers en modo misión (requiere `--mission`). |
+| `--validator-model <id>` | String | Modelo para validadores en modo misión (requiere `--mission`). |
+| `-o, --output-format <formato>` | String (`text\|json\|stream-json\|stream-jsonrpc`) | Formato de salida. |
+| `--input-format <formato>` | String (`stream-jsonrpc`) | Formato de entrada por stdin. |
+| `-s, --session-id <id>` | String | Reanuda una sesión por ID (excluyente con `--fork`). |
+| `--fork <id>` | String | Bifurca una sesión existente (excluyente con `--session-id`). |
+| `--session-dir <path>` | String | Directorio de persistencia de sesiones. |
+| `--only-tools <csv>` | String | Lista delimitada por comas de herramientas permitidas. |
+| `--remove-tools <csv>` | String | Lista delimitada por comas de herramientas prohibidas. |
+| `--tag <name>` | String (múltiple) | Etiquetas asociadas a la sesión. |
+| `--append-system-prompt <text>` | String | Concatena texto al prompt del sistema. |
+| `--append-system-prompt-file <path>`| String | Concatena archivo al prompt del sistema. |
+| `--timeout-ms <N>` | String | Timeout total en milisegundos. |
+| `--max-turns <N>` | String | Límite máximo de turnos conversacionales. |
+| `--max-context-tokens <N>` | String | Límite de tokens en el historial. |
+| `--sandbox <modo>` | String (`required\|best-effort`) | Nivel de exigencia del sandbox bwrap. |
+| `--sandbox-network <política>` | String (`auto\|ask\|deny`) | Política de red para `Execute`. |
+| `--list-tools` | Booleano | Lista catálogo de herramientas y sale. |
+| `--require-status` | Booleano | Exige bloque `STATUS:` en la respuesta final. |
+| `-h, --help` | Booleano | Muestra la ayuda y sale. |
+
+### Tabla de comandos slash `/` en TUI (desde código en `src/chat/commands.ts`)
+
+| Grupo | Comando | Alias | Descripción / Estado |
+| :--- | :--- | :--- | :--- |
+| **Ayuda** | `/help` | `/?` | Catálogo de comandos y atajos de teclado. |
+| **Ayuda** | `/terminal-setup` | — | Mostrar atajos sin modificar el terminal. |
+| **Ayuda** | `/exit` | `/quit` | Salir de la TUI. |
+| **Configuración** | `/model` | — | Seleccionar modelo configurado o introducir su ID. |
+| **Configuración** | `/reasoning` | — | Esfuerzo low, medium, high o default; Tab lo alterna. |
+| **Configuración** | `/auto` | — | Autonomía off, low, medium o high. |
+| **Configuración** | `/yolo` | — | Ver estado de YOLO (solo activable con `--yolo` al arrancar). |
+| **Configuración** | `/network` | — | Red de Execute: auto (automática solo en high), ask o deny. |
+| **Configuración** | `/mode` | — | Modo auto, spec o mission (requiere high). |
+| **Configuración** | `/settings` | — | Ver ajustes o cambiar model/auto/mode/theme/reasoning/network. |
+| **Configuración** | `/themes` | — | Elegir color o plain. |
+| **Configuración** | `/cwd` | `/cd` | Ver o cambiar carpeta; abre conversación nueva. |
+| **Capacidades** | `/mcp` | — | Servidores configurados y exclusión local por sesión. |
+| **Capacidades** | `/tools` | — | Catálogo de herramientas y filtros only/remove/reset. |
+| **Capacidades** | `/skills` | — | Listar skills del proyecto o leer una por nombre. |
+| **Capacidades** | `/skill` | — | Invocar una skill local: `/skill nombre argumentos`. |
+| **Capacidades** | `/commands` | — | Listar prompts propios de `.agents/commands/*.md`. |
+| **Capacidades** | `/droids` | — | Ver capacidades y límites de subagentes propios. |
+| **Sesión** | `/context` | — | Estimar tokens del historial, sin llamar al modelo. |
+| **Sesión** | `/limits` | — | Ver límites locales de ejecución. |
+| **Sesión** | `/status` | — | Modelo, modo, autonomía, carpeta y sesión. |
+| **Sesión** | `/diagnostics` | — | Diagnóstico local de sandbox y configuración. |
+| **Sesión** | `/clear` | — | Nueva conversación conservando ajustes actuales. |
+| **Sesión** | `/new` | — | Nueva conversación con los ajustes de arranque. |
+| **Sesión** | `/sessions` | `/resume` | Seleccionar sesión local o reanudar por ID. |
+| **Sesión** | `/search` | `/find` | Buscar texto en las sesiones de esta carpeta. |
+| **Sesión** | `/fork` | — | Crear una rama de la conversación actual o indicada. |
+| **Sesión** | `/tree` | — | Ver parentesco de los forks locales. |
+| **Sesión** | `/rename` | — | Cambiar título de la sesión actual. |
+| **Sesión** | `/favorite` | `/pin` | Fijar o desfijar sesión. |
+| **Sesión** | `/archive` | — | Archivar sesión y abrir una conversación nueva. |
+| **Sesión** | `/compress` | `/compact` | Resumir el historial sin ejecutar herramientas. |
+| **Sesión** | `/handoff` | — | Crear un fork con historial resumido; conserva el original. |
+| **Sesión** | `/btw` | — | Consulta lateral readonly, sin cambiar el historial principal. |
+| **Sesión** | `/rewind` | — | Restaurar archivos del último checkpoint, por ID, o listarlos con list; excluye Execute. |
+| **Proyecto** | `/init` | — | Pedir al agente que prepare `AGENTS.md`, con los permisos actuales. |
+| **Sin backend** | `/account`, `/login`, `/logout`, `/share`, `/install-code-review`, `/install-triage`, `/detect-overlapping-workstreams`, `/plugins`, `/hooks`, `/fast`, `/language`, `/statusline`, `/rewind-conversation`, `/migrate`, `/simplify` | — | Informa explícitamente que la funcionalidad no dispone de servicio local en vez de fingir soporte. |
+
+### Resultado de la suite consolidada
+A la versión `f023e47`, la suite completa registra:
+```bash
+bun test
+```
+**252 pass, 0 fail, 1.481 expect() calls en 29 archivos** (ejecución completa exit 0 en ~26 s; `bunx tsc --noEmit` exit 0).
