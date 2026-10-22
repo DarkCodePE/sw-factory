@@ -19,6 +19,13 @@ export interface SessionState {
   updatedAt?: number;
   todos?: string | unknown[];
   mission?: import('./mission-contract.ts').MissionState;
+  backgroundTasks?: Array<{
+    taskId: string;
+    pid?: number;
+    command: string;
+    status: 'running' | 'completed' | 'failed' | 'cancelled';
+    exitCode?: number | null;
+  }>;
 }
 export class SessionStore {
   private lock?: Awaited<ReturnType<typeof open>>;
@@ -51,7 +58,8 @@ export class SessionStore {
     try { s = JSON.parse(await readFile(file, 'utf8')); } catch { throw new Error('Invalid agent session JSON'); }
     if (!s || s.version !== 1 || s.id !== id || typeof s.cwd !== 'string' || typeof s.provider !== 'string' ||
         !Array.isArray(s.messages) || !Array.isArray(s.pending) || !Array.isArray(s.tags) ||
-        !Number.isSafeInteger(s.turns) || s.turns < 0) throw new Error('Invalid agent session schema');
+        !Number.isSafeInteger(s.turns) || s.turns < 0 ||
+        (s.backgroundTasks !== undefined && !Array.isArray(s.backgroundTasks))) throw new Error('Invalid agent session schema');
     return s;
   }
   async load(id: string): Promise<SessionState> {

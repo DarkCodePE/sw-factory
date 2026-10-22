@@ -1,12 +1,15 @@
 import { scopedExecutionOptions, resolveExecutionPolicy, type ExecutionPolicy, type PermissionMode } from './execution-policy.ts';
-import { mkdtemp, symlink } from 'node:fs/promises';
+import { createWriteStream } from 'node:fs';
+import { mkdir, mkdtemp, readFile, symlink } from 'node:fs/promises';
+import { spawn } from 'node:child_process';
 import { tmpdir } from 'node:os';
-import { join } from 'node:path';
+import { isAbsolute, join, relative, resolve, sep } from 'node:path';
 import { atomicReplace, readWorkspaceFile, unlinkAnchored, withWorkspaceFile } from './files.ts';
 import { runProcess } from './process.ts';
 import { wrapCommand } from '../sandbox/index.ts';
 import { inputObject, stringArg, tool } from './tools.ts';
 import type { AgentOptions, AgentResult, AgentTool, ToolContext } from './types.ts';
+import type { SessionState } from './session.ts';
 
 export class AgentBudget {
   agents = 0;
@@ -41,7 +44,30 @@ export class AgentBudget {
 }
 export interface CallReservation { remaining: number; release(): void }
 export interface AgentLineage { permissionMode?: PermissionMode; depth: number; budget: AgentBudget; reservation?: CallReservation }
-interface TaskRecord {
+export interface ProcessTaskRecord {
+  kind: 'process';
+  id: string;
+  pid: number;
+  command: string;
+  description: string;
+  status: 'running' | 'completed' | 'failed' | 'cancelled';
+  controller: AbortController;
+  done: Promise<void>;
+  stdoutFile: string;
+  stderrFile: string;
+  exitCode?: number | null;
+  signal?: string | null;
+  error?: string;
+  sandboxed?: boolean;
+  sandboxReason?: string;
+  network?: { requested: boolean; enabled: boolean; access?: string };
+  readStdout(): Promise<string>;
+  readStderr(): Promise<string>;
+  stop(): Promise<void>;
+}
+
+export interface SubagentTaskRecord {
+  kind?: 'subagent';
   executionPolicy?: ExecutionPolicy;
   id: string;
   description: string;
@@ -53,6 +79,41 @@ interface TaskRecord {
   error?: string;
   mailbox: string[];
   diff?: string;
+}
+
+export interface RecordedProcessTask {
+  kind: 'recorded';
+  id: string;
+  pid: number;
+  command: string;
+  description: string;
+  status: 'completed' | 'failed' | 'cancelled';
+  exitCode?: number | null;
+}
+
+export type AnyTaskRecord = SubagentTaskRecord | ProcessTaskRecord | RecordedProcessTask;
+
+export interface SpawnProcessOptions {
+  command: string;
+  argv: string[];
+  cwd: string;
+  env: Record<string, string>;
+  sandboxed: boolean;
+  sandboxReason: string;
+  permissionMode?: PermissionMode;
+  network?: { requested: boolean; enabled: boolean; access?: string };
+  description?: string;
+}
+
+function resolveSessionHome(cwd: string, sessionDir?: string, sessionId?: string): string {
+  const id = sessionId ?? crypto.randomUUID();
+  if (sessionDir) {
+    const candidate = resolve(sessionDir);
+    const r = relative(cwd, candidate);
+    const inside = !r || (!r.startsWith('..' + sep) && r !== '..' && !isAbsolute(r));
+    if (!inside) return join(candidate, id);
+  }
+  return join(tmpdir(), 'fab-session-' + id);
 }
 const env = () => ({ PATH: process.env.PATH ?? '', GIT_CONFIG_NOSYSTEM: '1', GIT_CONFIG_GLOBAL: '/dev/null', GIT_TERMINAL_PROMPT: '0' });
 
@@ -113,19 +174,284 @@ async function snapshotWorkspace(cwd: string, signal: AbortSignal): Promise<{ cw
 /** Invocation-owned tasks. Foreground and background tasks share the parent's
  * hard call/agent/depth limits. Shutdown aborts and drains all children. */
 export class TaskManager {
-  private tasks = new Map<string, TaskRecord>();
+  private tasks = new Map<string, SubagentTaskRecord>();
+  private processTasks = new Map<string, ProcessTaskRecord>();
+  private recordedTasks = new Map<string, RecordedProcessTask>();
   private closed = false;
   private running = 0;
+  private runningProcesses = 0;
+  private readonly maxProcessConcurrency: number;
+  private readonly maxProcessOutputBytes: number;
+  private readonly sessionHome: string;
+
   constructor(private readonly parent: AgentOptions, private readonly context: ToolContext,
     private readonly lineage: AgentLineage, private readonly runChild: (options: AgentOptions, reservation?: CallReservation) => Promise<AgentResult>,
-    private readonly maxDepth: number, private readonly concurrency: number) {}
-
-  private get(id: string) { const task = this.tasks.get(id); if (!task) throw new Error('Unknown task ID'); return task; }
-  private view(t: TaskRecord) {
-    return { executionPolicy: t.executionPolicy, task_id: t.id, agentId: t.id, description: t.description, status: t.status, cwd: t.cwd,
-      ...(t.result ? { result: t.result } : {}), ...(t.error ? { error: t.error } : {}),
-      ...(t.diff ? { diff: t.diff } : {}), mailbox: [...t.mailbox] };
+    private readonly maxDepth: number, private readonly concurrency: number,
+    maxProcessConcurrency = 4, maxProcessOutputBytes = 1024 * 1024, sessionHome?: string,
+    private readonly sessionState?: Partial<SessionState>) {
+    this.maxProcessConcurrency = maxProcessConcurrency;
+    this.maxProcessOutputBytes = maxProcessOutputBytes;
+    this.sessionHome = resolveSessionHome(context.cwd, sessionHome ?? parent.sessionDir, parent.sessionId);
+    if (sessionState?.backgroundTasks) {
+      for (const p of sessionState.backgroundTasks) {
+        this.recordedTasks.set(p.taskId, {
+          kind: 'recorded',
+          id: p.taskId,
+          pid: p.pid ?? 0,
+          command: p.command,
+          description: p.command.slice(0, 100),
+          status: p.status === 'running' ? 'cancelled' : p.status,
+          exitCode: p.exitCode,
+        });
+      }
+    }
   }
+
+  private get(id: string): AnyTaskRecord {
+    const task = this.tasks.get(id) ?? this.processTasks.get(id) ?? this.recordedTasks.get(id);
+    if (!task) throw new Error('Unknown task ID');
+    return task;
+  }
+
+  private async view(t: AnyTaskRecord, block = false) {
+    if ('kind' in t && t.kind === 'recorded') {
+      return {
+        task_id: t.id,
+        taskId: t.id,
+        pid: t.pid,
+        command: t.command,
+        description: t.description,
+        status: t.status,
+        exitCode: t.exitCode ?? 0,
+        output: '',
+      };
+    }
+    if ('kind' in t && t.kind === 'process') {
+      if (block) await t.done;
+      const stdout = await t.readStdout();
+      const stderr = await t.readStderr();
+      return {
+        task_id: t.id,
+        taskId: t.id,
+        pid: t.pid,
+        command: t.command,
+        description: t.description,
+        status: t.status,
+        exitCode: t.exitCode !== undefined ? t.exitCode : (t.status === 'running' ? null : 0),
+        stdout,
+        stderr,
+        output: stdout + (stderr ? (stdout ? '\n' : '') + stderr : ''),
+        sandboxed: t.sandboxed,
+        sandboxReason: t.sandboxReason,
+        network: t.network,
+        ...(t.error ? { error: t.error } : {}),
+      };
+    }
+    const sub = t as SubagentTaskRecord;
+    if (block) await sub.done;
+    return {
+      executionPolicy: sub.executionPolicy,
+      task_id: sub.id,
+      taskId: sub.id,
+      agentId: sub.id,
+      description: sub.description,
+      status: sub.status,
+      cwd: sub.cwd,
+      ...(sub.result ? { result: sub.result } : {}),
+      ...(sub.error ? { error: sub.error } : {}),
+      ...(sub.diff ? { diff: sub.diff } : {}),
+      mailbox: [...sub.mailbox],
+    };
+  }
+
+  private syncSessionState() {
+    if (!this.sessionState) return;
+    const tasks: Array<{ taskId: string; pid?: number; command: string; status: 'running' | 'completed' | 'failed' | 'cancelled'; exitCode?: number | null }> = [];
+    for (const rec of this.recordedTasks.values()) {
+      tasks.push({ taskId: rec.id, pid: rec.pid, command: rec.command, status: rec.status, exitCode: rec.exitCode });
+    }
+    for (const p of this.processTasks.values()) {
+      tasks.push({ taskId: p.id, pid: p.pid, command: p.command, status: p.status, exitCode: p.exitCode });
+    }
+    this.sessionState.backgroundTasks = tasks;
+  }
+
+  async spawnProcess(opts: SpawnProcessOptions): Promise<{ taskId: string; pid: number; status: 'running' }> {
+    if (this.closed) throw new Error('Task manager is closed');
+    if (this.runningProcesses >= this.maxProcessConcurrency) {
+      throw new Error(`Background process limit reached (maximum ${this.maxProcessConcurrency} concurrent processes)`);
+    }
+    const id = crypto.randomUUID();
+    const tasksDir = join(this.sessionHome, 'tasks');
+    await mkdir(tasksDir, { recursive: true, mode: 0o700 });
+    const stdoutFile = join(tasksDir, `${id}.stdout`);
+    const stderrFile = join(tasksDir, `${id}.stderr`);
+
+    const stdoutStream = createWriteStream(stdoutFile, { flags: 'a', mode: 0o600 });
+    const stderrStream = createWriteStream(stderrFile, { flags: 'a', mode: 0o600 });
+
+    const controller = new AbortController();
+    const signal = AbortSignal.any([this.context.signal, controller.signal]);
+
+    let totalBytes = 0;
+    let truncated = false;
+    const maxBytes = this.maxProcessOutputBytes;
+
+    const child = spawn(opts.argv[0]!, opts.argv.slice(1), {
+      cwd: opts.cwd,
+      env: opts.env,
+      detached: process.platform !== 'win32',
+      stdio: ['ignore', 'pipe', 'pipe'],
+    });
+
+    await new Promise<void>((resolve, reject) => {
+      child.once('spawn', () => resolve());
+      child.once('error', (err) => reject(err));
+    });
+
+    const pid = child.pid!;
+    this.runningProcesses++;
+
+    const kill = (sig: 'SIGTERM' | 'SIGKILL') => {
+      try {
+        if (process.platform !== 'win32' && pid) process.kill(-pid, sig);
+      } catch {}
+      try {
+        child.kill(sig);
+      } catch {}
+      try {
+        if (pid) process.kill(pid, sig);
+      } catch {}
+    };
+
+    let exited = false;
+    const closeStreams = () => new Promise<void>((res) => {
+      let pending = 2;
+      const doneOne = () => {
+        if (--pending <= 0) res();
+      };
+      try { stdoutStream.end(doneOne); } catch { doneOne(); }
+      try { stderrStream.end(doneOne); } catch { doneOne(); }
+    });
+
+    const destroyPipes = () => {
+      try { child.stdout?.destroy(); } catch {}
+      try { child.stderr?.destroy(); } catch {}
+    };
+
+    const done = new Promise<void>((resolve) => {
+      let exitTimer: ReturnType<typeof setTimeout> | undefined;
+
+      const finish = async (code: number | null, signalName: string | null) => {
+        if (exited) return;
+        exited = true;
+        if (exitTimer) clearTimeout(exitTimer);
+        this.runningProcesses--;
+        signal.removeEventListener('abort', onAbort);
+        record.exitCode ??= code;
+        record.signal ??= signalName;
+        if (record.status === 'running') {
+          record.status = signal.aborted ? 'cancelled' : record.exitCode === 0 ? 'completed' : 'failed';
+        }
+        await closeStreams();
+        this.syncSessionState();
+        resolve();
+      };
+
+      const onAbort = () => {
+        if (exited) return;
+        kill('SIGTERM');
+        setTimeout(() => {
+          if (!exited) {
+            kill('SIGKILL');
+            destroyPipes();
+            finish(null, 'SIGKILL');
+          }
+        }, 200);
+      };
+
+      signal.addEventListener('abort', onAbort, { once: true });
+
+      child.stdout?.on('data', (part: Buffer) => {
+        if (totalBytes < maxBytes) {
+          const toWrite = part.subarray(0, maxBytes - totalBytes);
+          stdoutStream.write(toWrite);
+          totalBytes += toWrite.length;
+          if (totalBytes >= maxBytes && !truncated) {
+            truncated = true;
+            stdoutStream.write(Buffer.from('\n[output truncated at limit]\n'));
+          }
+        }
+      });
+
+      child.stderr?.on('data', (part: Buffer) => {
+        if (totalBytes < maxBytes) {
+          const toWrite = part.subarray(0, maxBytes - totalBytes);
+          stderrStream.write(toWrite);
+          totalBytes += toWrite.length;
+          if (totalBytes >= maxBytes && !truncated) {
+            truncated = true;
+            stderrStream.write(Buffer.from('\n[output truncated at limit]\n'));
+          }
+        }
+      });
+
+      child.once('exit', (code, signalName) => {
+        record.exitCode = code;
+        record.signal = signalName;
+        exitTimer = setTimeout(() => {
+          destroyPipes();
+          finish(code, signalName);
+        }, 1000);
+      });
+
+      child.once('close', (code, signalName) => {
+        finish(code, signalName);
+      });
+    });
+
+    const record: ProcessTaskRecord = {
+      kind: 'process',
+      id,
+      pid,
+      command: opts.command,
+      description: opts.description ?? opts.command.slice(0, 100),
+      status: 'running',
+      controller,
+      done,
+      stdoutFile,
+      stderrFile,
+      sandboxed: opts.sandboxed,
+      sandboxReason: opts.sandboxReason,
+      network: opts.network,
+      readStdout: async () => {
+        try { return await readFile(stdoutFile, 'utf8'); } catch { return ''; }
+      },
+      readStderr: async () => {
+        try { return await readFile(stderrFile, 'utf8'); } catch { return ''; }
+      },
+      stop: async () => {
+        if (record.status !== 'running') return;
+        record.status = 'cancelled';
+        controller.abort(new Error('Task stopped'));
+        kill('SIGTERM');
+        const finished = await Promise.race([
+          done.then(() => true),
+          Bun.sleep(200).then(() => false),
+        ]);
+        if (!finished) {
+          kill('SIGKILL');
+          destroyPipes();
+        }
+        await done;
+      },
+    };
+
+    this.processTasks.set(id, record);
+    this.syncSessionState();
+    return { taskId: id, pid, status: 'running' };
+  }
+
   private async spawn(input: unknown, background: boolean, scopeSignal: AbortSignal) {
     const p = inputObject(input), prompt = stringArg(p, 'prompt');
     if (!prompt.trim() || Buffer.byteLength(prompt) > 64 * 1024) throw new Error('Invalid subagent prompt');
@@ -133,7 +459,7 @@ export class TaskManager {
     if (this.running >= this.concurrency) throw new Error('Subagent concurrency limit reached');
     this.lineage.budget.reserveAgent();
     const controller = new AbortController(), id = crypto.randomUUID();
-    const task: TaskRecord = { id, description: typeof p.description === 'string' ? p.description.slice(0, 1000) : prompt.slice(0, 100),
+    const task: SubagentTaskRecord = { id, description: typeof p.description === 'string' ? p.description.slice(0, 1000) : prompt.slice(0, 100),
       status: 'queued', controller, done: Promise.resolve(), mailbox: [] };
     this.tasks.set(id, task); this.running++;
     const signal = AbortSignal.any([this.context.signal, scopeSignal, controller.signal]);
@@ -182,6 +508,7 @@ export class TaskManager {
     if (!background) await task.done;
     return this.view(task);
   }
+
   tools(): AgentTool[] {
     const str = { type: 'string' };
     const properties = { prompt: str, description: str, subagent_type: str, run_in_background: { type: 'boolean' } };
@@ -191,26 +518,66 @@ export class TaskManager {
       tool('SpawnAgent', 'execute', properties, ['prompt'], (input, c) => this.spawn(input, true, c.signal),
         'Start an isolated child agent and return its ID; retrieve output and interrupt it using task tools.'),
       tool('TaskOutput', 'read', { task_id: str, block: { type: 'boolean' } }, ['task_id'], async input => {
-        const p = inputObject(input), t = this.get(stringArg(p, 'task_id')); if (p.block !== false) await t.done; return this.view(t);
-      }, 'Read a delegated task report; block until completion unless block is false.'),
+        const p = inputObject(input), t = this.get(stringArg(p, 'task_id'));
+        const block = p.block !== false;
+        return this.view(t, block);
+      }, 'Read a delegated task report or background process output; block until completion unless block is false.'),
       tool('TaskStop', 'read', { task_id: str }, ['task_id'], async input => {
-        const t = this.get(stringArg(inputObject(input), 'task_id')); t.controller.abort(new Error('Task stopped')); await t.done; return this.view(t);
-      }, 'Cancel and drain an owned task before returning.'),
+        const t = this.get(stringArg(inputObject(input), 'task_id'));
+        if ('kind' in t && t.kind === 'process') {
+          await t.stop();
+          return this.view(t, false);
+        }
+        if ('kind' in t && t.kind === 'recorded') {
+          return this.view(t, false);
+        }
+        (t as SubagentTaskRecord).controller.abort(new Error('Task stopped'));
+        await (t as SubagentTaskRecord).done;
+        return this.view(t, true);
+      }, 'Cancel and drain an owned task or background process before returning.'),
       tool('InterruptAgent', 'read', { agentId: str }, ['agentId'], async input => {
-        const t = this.get(stringArg(inputObject(input), 'agentId')); t.controller.abort(new Error('Agent interrupted')); await t.done; return this.view(t);
-      }, 'Interrupt an owned child agent and await its cleanup.'),
-      tool('ListAgents', 'read', {}, [], async () => [...this.tasks.values()].map(t => this.view(t)), 'List owned agents and their current state.'),
+        const t = this.get(stringArg(inputObject(input), 'agentId'));
+        if ('kind' in t && t.kind === 'process') {
+          await t.stop();
+          return this.view(t, false);
+        }
+        if ('kind' in t && t.kind === 'recorded') {
+          return this.view(t, false);
+        }
+        (t as SubagentTaskRecord).controller.abort(new Error('Agent interrupted'));
+        await (t as SubagentTaskRecord).done;
+        return this.view(t, true);
+      }, 'Interrupt an owned child agent or background process and await its cleanup.'),
+      tool('ListAgents', 'read', {}, [], async () => {
+        const all: unknown[] = [];
+        for (const t of this.tasks.values()) all.push(await this.view(t, false));
+        for (const p of this.processTasks.values()) all.push(await this.view(p, false));
+        for (const r of this.recordedTasks.values()) all.push(await this.view(r, false));
+        return all;
+      }, 'List owned agents and background processes and their current state.'),
       tool('SendMessage', 'read', { agentId: str, message: str }, ['agentId', 'message'], async input => {
         const p = inputObject(input), t = this.get(stringArg(p, 'agentId')), message = stringArg(p, 'message');
-        if (t.status !== 'running') throw new Error('Agent is not running');
+        if ('status' in t && t.status !== 'running') throw new Error('Agent is not running');
+        if (!('mailbox' in t)) throw new Error('Cannot send message to a background process');
         if (Buffer.byteLength(message) > 16 * 1024 || t.mailbox.length >= 64) throw new Error('Agent mailbox limit exceeded');
         t.mailbox.push(message); return { queued: true, agentId: t.id };
       }, 'Queue a bounded message for delivery at the child agent’s next model-turn boundary.'),
     ];
   }
+
   async close() {
     this.closed = true;
     for (const t of this.tasks.values()) if (t.status === 'running' || t.status === 'queued') t.controller.abort(new Error('Parent invocation ended'));
-    await Promise.allSettled([...this.tasks.values()].map(t => t.done));
+    for (const p of this.processTasks.values()) {
+      if (p.status === 'running') {
+        p.controller.abort(new Error('Parent invocation ended'));
+        void p.stop();
+      }
+    }
+    await Promise.allSettled([
+      ...[...this.tasks.values()].map(t => t.done),
+      ...[...this.processTasks.values()].map(p => p.stop()),
+    ]);
+    this.syncSessionState();
   }
 }

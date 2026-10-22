@@ -180,6 +180,30 @@ La interfaz interactiva (`src/chat/commands.ts:3-52`) registra **36 comandos loc
 
 ---
 
+## Ejecución de Comandos en Segundo Plano (`Execute` con `background: true`)
+
+El adaptador nativo soporta el lanzamiento y control de procesos en segundo plano:
+
+- **Lanzamiento inmediato:** `Execute` con `background: true` valida la política de comandos, inicia el subproceso y devuelve de inmediato `{ taskId: string, pid: number, status: 'running' }` sin bloquear el turno del agente.
+- **Gestión mediante la familia `Task`:**
+  - `TaskOutput`: Acepta identificadores `task_id` tanto de subagentes como de subprocesos en background. Con `block: false` realiza un muestreo parcial sin bloquear; con `block: true` (predeterminado) espera la terminación y entrega `{ stdout, stderr, output, exitCode, sandboxed, network }`.
+  - `TaskStop` / `InterruptAgent`: Detiene un proceso activo enviando `SIGTERM` y escalando a `SIGKILL` si no finaliza en 200 ms, marcando la tarea como `cancelled` de forma limpia.
+  - `ListAgents`: Enumera tanto subagentes como subprocesos en ejecución o finalizados en la invocación.
+- **Salida acotada y aislamiento de archivos:**
+  - Los streams de `stdout` y `stderr` se canalizan a disco bajo el home privado de la sesión (`$SESSION_HOME/tasks/<taskId>.stdout` y `.stderr`). Si la sesión se configuró dentro del workspace, el runtime redirige la salida a un directorio temporal privado (`/tmp/fab-session-<id>/tasks/`), asegurando que **nunca se escriban archivos ni logs de tareas en el workspace**.
+  - La salida está estrictamente acotada por `maxProcessOutputBytes` (por defecto 1 MiB, configurable). Al alcanzar el límite, se detiene la escritura a disco y se añade el marcador `\n[output truncated at limit]\n`.
+  - Concurrencia de procesos acotada por `maxBackgroundProcesses` (por defecto 4, configurable hasta 32).
+- **Drenado en el ciclo de vida (Lifecycle Drain):**
+  - Al terminar la invocación del agente (fin normal de turnos, timeout o cancelación/aborto), `TaskManager.close()` mata y drena todos los procesos en segundo plano antes de retornar el resultado o emitir notificaciones terminales, evitando escrituras tardías.
+- **Seguridad y Permisos:**
+  - Confinamiento idéntico a `Execute` síncrono: corre dentro del sandbox `bwrap` (en Linux), con política de red offline por defecto (`--unshare-net`) y aislamiento de filesystem.
+  - En modo YOLO (`--yolo`): Ejecuta en el shell del host (`/bin/sh -c`) con red del host sin requerir confirmación interactiva.
+  - En modo spec (`--use-spec`): Bloquea explícitamente el lanzamiento de comandos en background (`Spec mode denies background command execution`).
+- **Comportamiento en Sesiones:**
+  - Un proceso en background no se reanuda tras `resume` o `fork`. El snapshot de la sesión registra su estado terminal (`completed`, `failed` o `cancelled`) y su código de salida para consultas retrospectivas sin revivir el subproceso.
+
+---
+
 ## Subagentes y Confinamiento
 
 - **Catálogo de herramientas:** `Read`, `LS`, `Create`, `Edit`, `ApplyPatch`, `ExitSpecMode` (solo spec raíz), `StageSettingsChanges`, `Glob`, `Grep`, `Execute`, `Script`, `TodoWrite`, `AskUser`, `Skill`, `ToolSearch` y herramientas de subagentes (`src/agent/catalog.ts`).
@@ -202,7 +226,7 @@ Cada característica definida en `features.json` establece un contrato estricto:
 ## Alcance Pendiente Honesto
 
 Las siguientes capacidades permanecen sin implementar o fuera de alcance:
-1. **Herramientas de agente:** `loop-cli` (bucle autónomo en turno), `Execute` desacoplado en background y Script durable con `WaitForScript`.
+1. **Herramientas de agente:** `loop-cli` (bucle autónomo en turno) y Script durable con `WaitForScript`.
 2. **Crash Recovery de misiones:** Reconciliación automática y journal duradero tras caída intempestiva del proceso del runner.
 3. **Protocolos:** Entrada interactiva multiturno mediante `stream-json` y protocolo ACP. El demonio en puerto 37643 y SDKs remotos permanecen fuera de alcance.
 4. **MCP:** Autenticación OAuth, transporte SSE de versión previa y actualización de catálogo en caliente.

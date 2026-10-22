@@ -48,6 +48,8 @@ export interface ToolContext {
   missionDir?: string;
   missionReadOnly?: boolean;
   fileJournal?: FileJournal;
+  sessionDir?: string;
+  tasks?: import('./tasks.ts').TaskManager;
 }
 export interface FileSnapshot { data: Uint8Array; mode: number }
 export interface FileMutation { path: string; before?: FileSnapshot; after: Uint8Array; mode: number }
@@ -113,7 +115,9 @@ export interface AgentOptions {
     observe?: (name: string, input: unknown, value: unknown, isError: boolean) => void };
   /** Trusted host inbox; checked at model-turn boundaries. */
   receiveMessages?: () => string[];
-  subagents?: { maxDepth?: number; maxAgents?: number; maxConcurrency?: number; maxModelCalls?: number };
+  subagents?: { maxDepth?: number; maxAgents?: number; maxConcurrency?: number; maxModelCalls?: number; maxProcessConcurrency?: number; maxProcessOutputBytes?: number };
+  maxBackgroundProcesses?: number;
+  maxProcessOutputBytes?: number;
   mcpServers?: Record<string, import('./mcp.ts').McpConfig>;
   permissionHandler?: (request: PermissionRequest, context: ToolContext) => Promise<'proceed_once' | 'cancel'>;
   askUserHandler?: (request: { questions: UserQuestion[] }, context: ToolContext) => Promise<UserAnswers>;

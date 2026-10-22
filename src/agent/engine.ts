@@ -61,13 +61,16 @@ export async function runCodingAgent(opts: AgentOptions, inherited?: AgentLineag
     const maxAgents = budget(opts.subagents?.maxAgents, 8, 'maxAgents', 0);
     const agentConcurrency = budget(opts.subagents?.maxConcurrency, 2, 'maxConcurrency');
     const maxCalls = budget(opts.subagents?.maxModelCalls, 256, 'maxModelCalls');
-    if (maxDepth > 4 || maxAgents > 32 || agentConcurrency > 8 || maxCalls > 4096) throw new Error('Subagent limits exceed runtime maxima');
+    const maxBackgroundProcesses = budget(opts.subagents?.maxProcessConcurrency ?? opts.maxBackgroundProcesses, 4, 'maxProcessConcurrency', 1);
+    const maxProcessOutputBytes = opts.subagents?.maxProcessOutputBytes ?? opts.maxProcessOutputBytes ?? 1024 * 1024;
+    if (maxDepth > 4 || maxAgents > 32 || agentConcurrency > 8 || maxCalls > 4096 || maxBackgroundProcesses > 32) throw new Error('Subagent limits exceed runtime maxima');
     const lineage = inherited ?? { depth: 0, budget: new AgentBudget(maxAgents, maxCalls, agentConcurrency) };
     if (maxOutput >= maxContext) throw new Error('Output budget must be smaller than context budget');
     timer = setTimeout(() => { timedOut = true; controller.abort(new Error('Agent total timeout exceeded')); }, timeout);
     const cwd = await realpath(opts.cwd);
     const context: ToolContext = { cwd, signal: controller.signal, autonomy: executionPolicy.effectiveAutonomy, executionPolicy,
-      interactionMode: opts.interactionMode ?? 'auto', sandbox: opts.sandbox ?? 'required', networkPolicy: networkPolicy(opts.networkPolicy), fileJournal: inherited ? undefined : opts.fileJournal, requireReadBeforeEdit: opts.requireReadBeforeEdit, fileReads: new Map() };
+      interactionMode: opts.interactionMode ?? 'auto', sandbox: opts.sandbox ?? 'required', networkPolicy: networkPolicy(opts.networkPolicy),
+      fileJournal: inherited ? undefined : opts.fileJournal, requireReadBeforeEdit: opts.requireReadBeforeEdit, fileReads: new Map(), sessionDir: opts.sessionDir };
     if (!['off', 'low', 'medium', 'high'].includes(context.autonomy) || !['auto', 'spec', 'mission'].includes(context.interactionMode)) {
       throw new Error('Invalid agent autonomy or interaction mode');
     }
@@ -101,7 +104,7 @@ export async function runCodingAgent(opts: AgentOptions, inherited?: AgentLineag
     errorType = 'program';
     if (opts.mcpServers) mcp = new McpManager(opts.mcpServers, context, { only: opts.onlyTools, remove: opts.removeTools });
     const remoteTools = await mcp?.tools() ?? [];
-    runtime = new ToolRuntime({ ...opts, tools: [...opts.tools ?? [], ...remoteTools] }, context, lineage, { maxDepth, agentConcurrency, parallel },
+    runtime = new ToolRuntime({ ...opts, tools: [...opts.tools ?? [], ...remoteTools] }, context, lineage, { maxDepth, agentConcurrency, parallel, maxBackgroundProcesses, maxProcessOutputBytes },
       (child, reservation) => runCodingAgent(child, { depth: lineage.depth + 1, budget: lineage.budget, permissionMode: executionPolicy!.permissionMode, reservation: reservation ?? lineage.reservation }), state, () => store!.save(state!));
     const { registry, dispatch } = runtime;
     const visible = runtime.visible;
@@ -273,7 +276,7 @@ export function listAgentTools(opts: AgentOptions): AgentTool[] {
   const context: ToolContext = { executionPolicy, networkPolicy: networkPolicy(opts.networkPolicy), cwd: opts.cwd, signal: new AbortController().signal,
     autonomy: executionPolicy.effectiveAutonomy, interactionMode: opts.interactionMode ?? 'auto', sandbox: opts.sandbox ?? 'required' };
   return new ToolRuntime(opts, context, { depth: 0, budget: new AgentBudget(8, 256) },
-    { maxDepth: 2, agentConcurrency: 2, parallel: 8 }, child => runCodingAgent(child)).visible;
+    { maxDepth: 2, agentConcurrency: 2, parallel: 8, maxBackgroundProcesses: 4 }, child => runCodingAgent(child)).visible;
 }
 
 /** Discover configured schemas without retaining executable closures to closed servers. */

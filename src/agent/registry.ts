@@ -27,7 +27,7 @@ export class ToolRuntime {
   private readonly owned = new Set<Promise<unknown>>();
   private readonly tasks: TaskManager;
   constructor(opts: AgentOptions, context: ToolContext, lineage: AgentLineage,
-    limits: { maxDepth: number; agentConcurrency: number; parallel: number },
+    limits: { maxDepth: number; agentConcurrency: number; parallel: number; maxBackgroundProcesses?: number; maxProcessOutputBytes?: number },
     runChild: (options: AgentOptions, reservation?: CallReservation) => Promise<AgentResult>, state: Partial<SessionState> = {}, saveState: () => Promise<void> = async () => {}) {
     const yolo = context.executionPolicy?.permissionMode === 'yolo';
     const owned = this.owned;
@@ -48,7 +48,10 @@ export class ToolRuntime {
     for (const t of builtinTools(yolo ? 'yolo' : 'standard')) add(t);
     for (const t of sessionTools(opts, context, settingsPolicy, () => { this.exitQueued = true; }, state.id ?? '')) add(t);
     for (const t of opts.tools ?? []) add(t);
-    const tasks = new TaskManager(opts, context, lineage, runChild, limits.maxDepth, limits.agentConcurrency);
+    const maxProcesses = limits.maxBackgroundProcesses ?? opts.maxBackgroundProcesses ?? opts.subagents?.maxProcessConcurrency ?? 4;
+    const maxOutputBytes = limits.maxProcessOutputBytes ?? opts.maxProcessOutputBytes ?? opts.subagents?.maxProcessOutputBytes ?? 1024 * 1024;
+    const tasks = new TaskManager(opts, context, lineage, runChild, limits.maxDepth, limits.agentConcurrency, maxProcesses, maxOutputBytes, opts.sessionDir, state);
+    context.tasks = tasks;
     for (const t of tasks.tools()) add(t);
     if (context.interactionMode === 'mission') {
       const session = state.id ? state as SessionState : { id: 'catalog', ...state } as SessionState;
@@ -113,7 +116,7 @@ export class ToolRuntime {
       const run = async () => {
         if (opts.missionWorker?.sealed() && ['write', 'execute'].includes(t.effect)) throw new Error('Worker workspace mutation is closed after EndFeatureRun');
         if (t.effect !== 'read' && !['Edit', 'Create', 'ApplyPatch', 'Script'].includes(name)) await context.fileJournal?.barrier(name, context);
-        return t.run(input, { ...context, signal, toolUseId: actual.id, networkAccess: requested, ...(granted ? { autonomy: 'high' as const } : {}) });
+        return t.run(input, { ...context, tasks, signal, toolUseId: actual.id, networkAccess: requested, ...(granted ? { autonomy: 'high' as const } : {}) });
       };
       const work = ['Script', 'TaskOutput', 'TaskStop', 'InterruptAgent'].includes(name) ? run() : scheduler.run(t.effect === 'read', signal, run);
       owned.add(work);

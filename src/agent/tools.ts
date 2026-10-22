@@ -108,8 +108,18 @@ export const executeAllowed = (input: unknown, context: ToolContext) => {
 };
 export const COMMAND_POLICY_HINT = 'Tool requires higher autonomy or explicit permission. At medium, use simple commands or && sequences; omit pipelines, redirections and ||. stdout and stderr are already captured. cwd is already the workspace.';
 async function execute(input: unknown, context: ToolContext) {
+  const p = inputObject(input);
+  const background = p.background === true;
+  if (background && context.interactionMode === 'spec') {
+    throw new Error('Spec mode denies background command execution');
+  }
   if (context.executionPolicy?.permissionMode === 'yolo') return executeHost(input, context);
   const network = requestsNetwork(input);
+  if (background) {
+    if (!context.tasks) throw new Error('Background execution requires task runtime');
+    if (!executeAllowed(input, context)) throw new Error(COMMAND_POLICY_HINT);
+    return executeBackground(input, context);
+  }
   const parts = commandSequence(input, context);
   if (!parts || parts.length === 1) return executeOne(parts ? { command: parts[0], network } : input, context);
   if (!executeAllowed(input, context)) throw new Error(COMMAND_POLICY_HINT);
@@ -122,6 +132,45 @@ async function execute(input: unknown, context: ToolContext) {
     if (exitCode !== 0) break;
   }
   return { stdout, stderr, exitCode, sandboxed, sandboxReason, network: { requested: network, enabled: network } };
+}
+async function executeBackground(input: unknown, context: ToolContext) {
+  const network = requestsNetwork(input);
+  if (network && !context.networkAccess) throw new Error('Execute network access requires a runtime grant');
+  if (network && (context.networkPolicy === 'deny' || context.interactionMode === 'spec')) throw new Error('Execute network access denied by policy or spec mode');
+  const { argv, command, readGit, allowed } = commandPolicy(input, context);
+  if (!allowed) throw new Error(COMMAND_POLICY_HINT);
+  const gitWritable: string[] = [];
+  if (argv?.[0] === 'git' && !readGit) {
+    for (const option of ['--absolute-git-dir', '--git-common-dir']) {
+      const r = await runProcess(['git', 'rev-parse', option], context.cwd, { PATH: process.env.PATH ?? '' }, context.signal);
+      if (r.exitCode === 0) gitWritable.push(resolve(context.cwd, r.stdout.trim()));
+    }
+  }
+  const commandArgv = readGit ? ['git', '-c', 'core.fsmonitor=false', '-c', 'core.pager=cat',
+    '-c', 'diff.external=', '-c', 'core.hooksPath=/dev/null', ...argv!.slice(1)] : argv ?? ['sh', '-c', command];
+  if (readGit && ['diff', 'log', 'show'].includes(argv![1]!)) {
+    commandArgv.splice(commandArgv.length - argv!.length + 2, 0, '--no-textconv', '--no-ext-diff');
+  }
+  const missionReadOnly: string[] = [];
+  if (context.missionDir) {
+    try { missionReadOnly.push(await realpath(context.missionDir)); }
+    catch (e: any) { if (e.code !== 'ENOENT') throw e; }
+  }
+  const wrapped = await wrapCommand(commandArgv, {
+    workdir: context.cwd, mode: context.sandbox, allowNetwork: network,
+    writablePaths: gitWritable, readOnlyPaths: [...(readGit || context.interactionMode === 'spec' ? [context.cwd] : []), ...missionReadOnly],
+    env: { PATH: process.env.PATH ?? '', HOME: context.cwd, GIT_OPTIONAL_LOCKS: '0', GIT_CONFIG_NOSYSTEM: '1', GIT_CONFIG_GLOBAL: '/dev/null' },
+  });
+  return context.tasks!.spawnProcess({
+    command,
+    argv: wrapped.argv,
+    cwd: context.cwd,
+    env: wrapped.env,
+    sandboxed: !wrapped.degraded,
+    sandboxReason: wrapped.reason,
+    permissionMode: 'standard',
+    network: { requested: network, enabled: network },
+  });
 }
 async function executeOne(input: unknown, context: ToolContext) {
   const network = requestsNetwork(input);
@@ -255,8 +304,14 @@ export function builtinTools(permissionMode: 'standard' | 'yolo' = 'standard'): 
       if (result.exitCode > 1) throw new Error(limitText(result.stderr, 2000));
       return limitText(result.stdout);
     }, 'Search workspace text with ripgrep; return bounded matching lines.'),
-    tool('Execute', 'execute', { command: str, riskLevel: str, summary: str, network: { type: 'boolean', description: permissionMode === 'yolo' ? 'Advisory in YOLO: host network remains available even when false or omitted.' : 'Request host network for this invocation; requires caller policy or explicit approval.' } }, ['command'], execute,
-      permissionMode === 'yolo' ? 'Run /bin/sh -c on the host, with shell pipelines, redirections and host network, without approvals. network is advisory: false does not disable host networking. File access has the user account permissions. Output and runtime remain bounded.' : 'Run in workspace cwd with captured stdout/stderr. Network is blocked by default: set network:true when the command needs a remote service such as Jira, curl or package downloads. This requests permission; it does not grant it. A failed offline command is never replayed automatically. Medium accepts simple development commands and && sequences, including an optional cd <workspace> prefix. Omit pipelines, redirections and || at medium. Each command is checked independently; the sequence stops on failure. riskLevel is advisory.'),
+    tool('Execute', 'execute', {
+      command: str, riskLevel: str, summary: str,
+      background: { type: 'boolean', description: 'Run command in the background and return immediately with taskId and pid. Output and status can be inspected with TaskOutput and terminated with TaskStop.' },
+      network: { type: 'boolean', description: permissionMode === 'yolo' ? 'Advisory in YOLO: host network remains available even when false or omitted.' : 'Request host network for this invocation; requires caller policy or explicit approval.' }
+    }, ['command'], execute,
+      permissionMode === 'yolo'
+        ? 'Run /bin/sh -c on the host, with shell pipelines, redirections and host network, without approvals. network is advisory: false does not disable host networking. File access has the user account permissions. Output and runtime remain bounded. Set background:true to run in the background and return taskId and pid immediately.'
+        : 'Run in workspace cwd with captured stdout/stderr. Network is blocked by default: set network:true when the command needs a remote service such as Jira, curl or package downloads. This requests permission; it does not grant it. A failed offline command is never replayed automatically. Medium accepts simple development commands and && sequences, including an optional cd <workspace> prefix. Omit pipelines, redirections and || at medium. Each command is checked independently; the sequence stops on failure. riskLevel is advisory. Set background:true to run long-running commands in the background without blocking, returning taskId and pid immediately for inspection via TaskOutput/TaskStop.'),
   ];
 }
 

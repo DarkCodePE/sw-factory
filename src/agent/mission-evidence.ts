@@ -33,11 +33,22 @@ const normalize = (command: string) => command.trim().replace(/\s+/g, ' ');
 export function createCommandObserver() {
   const observed: ObservedCommand[] = [];
   const observe = (name: string, input: unknown, value: unknown, isError: boolean) => {
-    if (name !== 'Execute' || observed.length >= MAX_OBSERVED) return;
-    const command = (input as { command?: unknown } | null)?.command;
-    if (typeof command !== 'string') return;
-    const exitCode = (value as { exitCode?: unknown } | null)?.exitCode;
-    observed.push({ command, exitCode: !isError && typeof exitCode === 'number' ? exitCode : null, isError });
+    if (observed.length >= MAX_OBSERVED) return;
+    if (name === 'Execute') {
+      const command = (input as { command?: unknown } | null)?.command;
+      if (typeof command !== 'string') return;
+      const exitCode = (value as { exitCode?: unknown } | null)?.exitCode;
+      observed.push({ command, exitCode: !isError && typeof exitCode === 'number' ? exitCode : null, isError });
+    } else if (name === 'TaskOutput' && value && typeof value === 'object') {
+      const v = value as { command?: unknown; exitCode?: unknown };
+      if (typeof v.command === 'string' && typeof v.exitCode === 'number' && !isError) {
+        const match = observed.find(o => normalize(o.command) === normalize(v.command as string) && o.exitCode === null);
+        if (match) {
+          match.exitCode = v.exitCode;
+          match.isError = v.exitCode !== 0;
+        }
+      }
+    }
   };
   return { observe, observed: () => observed.slice() };
 }
