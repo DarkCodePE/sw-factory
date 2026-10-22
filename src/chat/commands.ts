@@ -33,6 +33,7 @@ export const CHAT_COMMANDS: ChatCommand[] = [
   { name: 'compress', aliases: ['compact'], group: 'Sesión', help: 'Resumir el historial sin ejecutar herramientas' },
   { name: 'handoff', group: 'Sesión', help: 'Crear un fork con historial resumido; conserva el original' },
   { name: 'btw', group: 'Sesión', help: 'Consulta lateral readonly, sin cambiar el historial principal' },
+  { name: 'mission', group: 'Sesión', help: 'Mission Control: status, pause [msg], resume [msg], workers [id], log [n], list' },
   { name: 'rewind', group: 'Sesión', help: 'Restaurar archivos del último checkpoint, por ID, o listarlos con list; excluye Execute' },
   { name: 'init', group: 'Proyecto', help: 'Pedir al agente que prepare AGENTS.md, con los permisos actuales' },
   { name: 'terminal-setup', group: 'Ayuda', help: 'Mostrar atajos sin modificar el terminal' },
@@ -70,6 +71,7 @@ export function completions(line: string, models: string[] = [], custom: string[
     : line.startsWith('/reasoning ') ? ['default', 'low', 'medium', 'high'].map(r => '/reasoning ' + r)
     : line.startsWith('/auto ') ? ['off', 'low', 'medium', 'high'].map(a => '/auto ' + a)
     : line.startsWith('/mode ') ? ['auto', 'spec', 'mission'].map(m => '/mode ' + m)
+    : line.startsWith('/mission ') ? ['status', 'pause', 'resume', 'workers', 'log', 'list'].map(sub => '/mission ' + sub)
     : [...CHAT_COMMANDS.flatMap(c => [c.name, ...c.aliases ?? []]), ...custom].map(n => '/' + n);
   return [options.filter(c => c.startsWith(line)), line];
 }

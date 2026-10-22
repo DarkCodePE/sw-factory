@@ -170,10 +170,10 @@ export class TerminalInput implements ChatIO {
       if (b === 27 && bytes[i + 1] === 91) {
         if (bytes[i + 2] === 90) { key = { name: 'tab', shift: true }; width = 3; }
         else if ((this.selection || this.waiter && this.prompt.startsWith('fab ')) && [65, 66].includes(bytes[i + 2]!)) { key = { name: bytes[i + 2] === 65 ? 'up' : 'down' }; width = 3; }
-      } else if ([12, 14, 15].includes(b!)) key = { name: b === 12 ? 'l' : b === 14 ? 'n' : 'o', ctrl: true };
+      } else if ([12, 14, 15, 20].includes(b!)) key = { name: b === 12 ? 'l' : b === 14 ? 'n' : b === 15 ? 'o' : 't', ctrl: true };
       else if (b === 9 && this.rootQuestion()) key = { name: 'tab' };
       else if ([10, 13].includes(b!) && this.paletteEntries.length && this.paletteIndex >= 0 && this.rootQuestion()) { key = { name: 'accept' }; if (b === 13 && bytes[i + 1] === 10) width = 2; }
-      if (key && (this.selection || this.controller && (!this.controller.busy || key.name === 'o'))) {
+      if (key && (this.selection || this.controller && (!this.controller.busy || key.name === 'o' || key.name === 't'))) {
         this.relay.write(bytes.subarray(start, i)); this.syncPalette(); this.shortcut(key); i += width; start = i;
       } else i++;
     }
@@ -196,6 +196,7 @@ export class TerminalInput implements ChatIO {
     }
     const app = this.controller; if (!app) return;
     if (key.ctrl && key.name === 'o') { app.toggleDetail(); return; }
+    if (key.ctrl && key.name === 't') { app.toggleMissionPanel(); return; }
     if (app.busy) return;
     if (key.name === 'tab' && !key.shift) {
       if (this.rl.line.startsWith('/')) {

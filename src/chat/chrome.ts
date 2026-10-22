@@ -16,6 +16,6 @@ export function modeLine(c: { model: string; mode: string; autonomy: string; rea
 export function welcome(width: number, r: Resources, tipIndex = 0) {
   const logo = width >= 48 ? ['███████╗ █████╗ ██████╗ ', '██╔════╝██╔══██╗██╔══██╗', '█████╗  ███████║██████╔╝', '██╔══╝  ██╔══██║██╔══██╗', '██║     ██║  ██║██████╔╝', '╚═╝     ╚═╝  ╚═╝╚═════╝ '] : ['FAB'];
   const lines = [...logo, `fab v${FAB_VERSION} · agente propio`, '', `TIP: ${TIPS[((tipIndex % TIPS.length) + TIPS.length) % TIPS.length]}`,
-    'Shift+Tab: modos · Ctrl+N: modelos · Ctrl+L: autonomía', 'Tab: razonamiento · /: comandos · Ctrl+C: cancelar', resourceLine(r)];
+    'Shift+Tab: modos · Ctrl+N: modelos · Ctrl+L: autonomía', 'Tab: razonamiento · /: comandos · Ctrl+T: misión · Ctrl+C: cancelar', resourceLine(r)];
   return lines.map(line => { const text = fit(line, Math.max(1, width - 1)); return ' '.repeat(Math.max(0, Math.floor((width - cellWidth(text)) / 2))) + text; }).join('\n') + '\n';
 }

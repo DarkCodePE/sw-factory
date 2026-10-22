@@ -1,6 +1,6 @@
 import { validateSettingsChanges, type SettingsPolicy, type SettingsProposal } from '../agent/staged-settings.ts';
 import { resolveExecutionPolicy, scopedExecutionOptions, YOLO_NOTICE, type ExecutionPolicy } from '../agent/execution-policy.ts';
-import { realpath, stat } from 'node:fs/promises';
+import { readFile, realpath, stat } from 'node:fs/promises';
 import { join, resolve } from 'node:path';
 import { listConfiguredToolCatalog, runCodingAgent } from '../agent/engine.ts';
 import { estimatedTokens } from '../agent/provider.ts';
@@ -19,6 +19,8 @@ import { Checkpoints } from './checkpoints.ts';
 import { PromptHistory } from './history.ts';
 import type { FileChange } from './render.ts';
 import type { StatusState } from './presentation.ts';
+import { SessionStore } from '../agent/session.ts';
+import { MissionTracker, formatMissionEvent } from './mission-view.ts';
 
 export interface ChatIO {
   write(text: string): void;
@@ -59,6 +61,9 @@ export class ChatController {
   private tokens = { inputTokens: 0, outputTokens: 0 };
   private turnUsage = { inputTokens: 0, outputTokens: 0 };
   private contextTokens = 0;
+  missionTracker = new MissionTracker();
+  private missionPauseController?: AbortController;
+  private missionMailbox: string[] = [];
   constructor(readonly options: ChatOptions, readonly io: ChatIO) {
     this.cwd = options.cwd; this.settings = options.settings ?? {};
     this.config = options.config ?? loadChatConfig(this.settings, options.home);
@@ -85,7 +90,14 @@ export class ChatController {
   status() { return `${this.yoloAuthorized ? (this.config.mode === 'spec' || this.agentExitedSpec) ? 'YOLO suspendido · sandbox requerido · sin red · ' : YOLO_NOTICE + ' · ' : ''}${this.config.model} (${this.config.reasoning ?? 'predeterminado'}) · ${this.config.mode} · auto ${this.executionPolicy.effectiveAutonomy} · red ${this.executionOptions().networkPolicy ?? 'auto'} · ${this.cwd} · sesión ${this.sessionId ?? '(nueva)'}`; }
   get statusState(): StatusState { return { model: this.config.model, mode: this.config.mode, autonomy: this.executionPolicy.effectiveAutonomy, permissionMode: this.executionPolicy.permissionMode, yoloSuspended: this.yoloAuthorized && (this.config.mode === 'spec' || this.agentExitedSpec),
     inputTokens: this.tokens.inputTokens + this.turnUsage.inputTokens, outputTokens: this.tokens.outputTokens + this.turnUsage.outputTokens,
-    contextTokens: this.contextTokens, maxContextTokens: this.options.agent?.maxContextTokens ?? 32000, reasoning: this.config.reasoning, modelLabel: this.modelLabel, resources: { ...this.resources, mcpConfigured: Object.keys(this.mcpServers).length } }; }
+    contextTokens: this.contextTokens, maxContextTokens: this.options.agent?.maxContextTokens ?? 32000, reasoning: this.config.reasoning, modelLabel: this.modelLabel,
+    missionSummary: this.missionTracker.summary,
+    resources: { ...this.resources, mcpConfigured: Object.keys(this.mcpServers).length } }; }
+  toggleMissionPanel() {
+    if (!this.missionTracker.hasMission) return;
+    this.missionTracker.panelVisible = !this.missionTracker.panelVisible;
+    this.print(this.missionTracker.renderPanel(80, this.config.theme === 'plain'));
+  }
   cycleReasoning() { this.config.reasoning = REASONING[(REASONING.indexOf(this.config.reasoning as any) + 1) % REASONING.length]; this.persist(); this.io.update?.(this.statusState); }
   toggleDetail() { this.detailed = !this.detailed; this.io.expand?.(this.detailed); }
   async syncHistory() { this.io.setHistory?.(await new PromptHistory(this.options.home, this.cwd).load()); }
@@ -144,7 +156,14 @@ export class ChatController {
         : await this.io.select('Reanudar sesión', sessions.map(s => `${s.pinned ? '★ ' : ''}${s.id} · ${s.title} · ${s.blocked ? 'requiere reconciliación' : s.status}`), this.active?.signal);
       if (n === undefined) return; id = sessions[n]!.id;
     }
-    await editSession(this.sessionDir, id, this.cwd, s => { s.archived = false; });
+    await editSession(this.sessionDir, id, this.cwd, s => {
+      s.archived = false;
+      if (s.mission) {
+        this.missionTracker.state = s.mission.state;
+        this.missionTracker.directory = s.mission.directory;
+        this.missionTracker.missionId = s.mission.missionId;
+      }
+    });
     this.resetStagedSettings(); this.sessionId = id; this.print(this.status());
   }
   private permission = async (request: PermissionRequest, context: ToolContext): Promise<'proceed_once' | 'cancel'> => {
@@ -183,6 +202,8 @@ export class ChatController {
       const history = new PromptHistory(this.options.home, this.cwd); await history.load();
       try { await history.add(prompt); this.io.setHistory?.(history.entries); } catch { this.print('No se pudo guardar el historial local de prompts'); }
       await checkpoints.begin(prompt);
+      this.missionPauseController = new AbortController();
+      this.missionTracker.markRunStarted();
     }
     const assistant = (text: string, final = false) => this.io.assistant ? this.io.assistant(text, final) : this.io.write(text + (final ? '\n' : ''));
     this.io.work?.('Modelo');
@@ -218,7 +239,11 @@ export class ChatController {
       }
       else if (event.type === 'compaction') this.print('(contexto compactado)');
       else if (event.type === 'network_permission' && event.decision === 'allowed_automatically' && !this.yoloAuthorized) this.print('Red autorizada automáticamente para esta llamada (auto high).');
-      else if (event.type.startsWith('mission_')) this.print(JSON.stringify(event));
+      else if (event.type.startsWith('mission_')) {
+        this.missionTracker.handleEvent(event as Record<string, any>);
+        this.print(formatMissionEvent(event as Record<string, any>));
+        this.io.update?.(this.statusState);
+      }
     };
     try {
     const result = await (this.options.run ?? runCodingAgent)({ ...this.options.agent,
@@ -227,6 +252,11 @@ export class ChatController {
       sessionDir: side ? undefined : this.sessionDir, sessionId: side ? undefined : this.sessionId,
       onlyTools: this.only, removeTools: this.removed, signal: this.active?.signal, onEvent,
       permissionHandler: side ? undefined : this.permission, askUserHandler: this.askUser,
+      receiveMessages: () => this.missionMailbox.splice(0),
+      mission: {
+        ...(this.options.agent as any)?.mission,
+        pauseSignal: this.missionPauseController?.signal,
+      },
       fileJournal: side ? undefined : {
         barrier: (name, context) => checkpoints.barrier(name, context),
         prepare: async (change, context) => {
@@ -253,6 +283,14 @@ export class ChatController {
         this.print(`Sesión ${result.sessionId} conservada para inspección; no se reanuda automáticamente. Usa /sessions o /new.`);
       }
       this.lastResult = result;
+      if (result.mission) {
+        this.missionTracker.missionId = result.mission.missionId;
+        this.missionTracker.state = result.mission.state;
+        this.missionTracker.directory = result.mission.directory;
+        if ((result.mission as any).snapshot) {
+          this.missionTracker.snapshot = (result.mission as any).snapshot;
+        }
+      }
     } else this.sessionId = previousId;
     if (!result.ok) this.print(`${result.error?.type}: ${result.error?.message}`);
     if (!side && result.ok) for (const proposal of proposals) {
@@ -273,11 +311,30 @@ export class ChatController {
     }
     this.print(`${result.turns} turnos · ${result.toolCalls} tools · ${(result.durationMs / 1000).toFixed(1)} s`);
     return result;
-    } finally { this.io.work?.(); assistant('', true); await checkpoints.finish(); this.io.update?.(this.statusState); }
+    } finally {
+      if (!side) {
+        this.missionPauseController = undefined;
+        this.missionTracker.markRunEnded();
+      }
+      this.io.work?.(); assistant('', true); await checkpoints.finish(); this.io.update?.(this.statusState);
+    }
   }
   async submit(line: string): Promise<boolean> {
-    if (this.active) throw new Error('Hay una operación en curso');
     const input = parseInput(line); if (input.kind === 'empty') return true;
+    if (this.active) {
+      if (input.kind === 'command' && input.name === 'mission' && input.arg.trim().startsWith('pause')) {
+        const [, ...rest] = input.arg.trim().split(/\s+/);
+        const subArg = rest.join(' ').trim();
+        if (subArg) this.missionMailbox.push(subArg);
+        this.missionPauseController?.abort(new Error('Misión pausada por el usuario'));
+        this.missionTracker.state = 'paused';
+        if (this.missionTracker.snapshot) this.missionTracker.snapshot.state = 'paused';
+        this.print('Pausa solicitada al orquestador' + (subArg ? `: ${subArg}` : ''));
+        this.io.update?.(this.statusState);
+        return true;
+      }
+      throw new Error('Hay una operación en curso');
+    }
     this.active = new AbortController();
     const operation = this.active;
     const timer = setTimeout(() => operation.abort(new Error('Tiempo total de la operación agotado')), this.options.agent?.timeoutMs ?? 1200000);
@@ -338,8 +395,8 @@ export class ChatController {
           if (n === undefined) break; if (n < 0) throw new Error('Tema: color o plain');
           this.config.theme = choices[n] as ChatConfig['theme']; this.persist(); break;
         }
-        case 'new': this.agentExitedSpec = false; this.config = { ...this.defaults }; this.savedOverrides = {}; this.sessionId = undefined; this.print('Conversación nueva con ajustes de arranque'); break;
-        case 'clear': this.sessionId = undefined; this.print('Contexto nuevo; ajustes conservados'); break;
+        case 'new': this.agentExitedSpec = false; this.config = { ...this.defaults }; this.savedOverrides = {}; this.sessionId = undefined; this.missionTracker = new MissionTracker(); this.print('Conversación nueva con ajustes de arranque'); break;
+        case 'clear': this.sessionId = undefined; this.missionTracker = new MissionTracker(); this.print('Contexto nuevo; ajustes conservados'); break;
         case 'sessions': await this.resume(arg === '--last' ? '' : arg, arg === '--last'); break;
         case 'search': {
           const { sessions, truncated } = await listSessions(this.sessionDir, this.cwd, arg, true);
@@ -365,6 +422,193 @@ export class ChatController {
         }
         case 'handoff': this.sessionId = await forkSession(this.sessionDir, this.requireSession(), this.cwd, async s => { await compressSession(s, this.provider(), this.active!.signal, arg); }); this.resetStagedSettings(); this.print(this.status()); break;
         case 'btw': if (!arg) throw new Error('/btw <pregunta>'); await this.runPrompt(arg, true); break;
+        case 'mission': {
+          const [sub, ...rest] = (arg || 'status').trim().split(/\s+/);
+          const subArg = rest.join(' ').trim();
+          switch (sub) {
+            case 'status': {
+              if (!this.missionTracker.hasMission && this.sessionId) {
+                try {
+                  const store = await SessionStore.create(this.sessionDir);
+                  const s = await store.inspect(this.sessionId);
+                  if (s.mission) {
+                    this.missionTracker.state = s.mission.state;
+                    this.missionTracker.directory = s.mission.directory;
+                    this.missionTracker.missionId = s.mission.missionId;
+                  }
+                } catch {}
+              }
+              if (!this.missionTracker.hasMission) {
+                this.print('No hay una misión activa en esta sesión. Usa /mode mission con /auto high para iniciar una.');
+              } else {
+                this.print(this.missionTracker.renderPanel(80, this.config.theme === 'plain'));
+              }
+              break;
+            }
+            case 'pause': {
+              if (!this.missionTracker.activeRun || !this.missionPauseController) {
+                this.print('No hay una misión en ejecución activa para pausar.');
+              } else {
+                if (subArg) this.missionMailbox.push(subArg);
+                this.missionPauseController.abort(new Error('Misión pausada por el usuario'));
+                this.missionTracker.state = 'paused';
+                if (this.missionTracker.snapshot) this.missionTracker.snapshot.state = 'paused';
+                this.print('Pausa solicitada al orquestador' + (subArg ? `: ${subArg}` : ''));
+                this.io.update?.(this.statusState);
+              }
+              break;
+            }
+            case 'resume': {
+              if (this.missionTracker.activeRun) throw new Error('La misión ya está en ejecución');
+              if (this.missionTracker.state !== 'paused' && this.missionTracker.state !== 'orchestrator_turn') {
+                throw new Error('Solo se puede reanudar una misión en estado paused u orchestrator_turn');
+              }
+              const prompt = subArg ? `Continuar la misión: ${subArg}` : 'Continuar con la ejecución de la misión.';
+              this.active = undefined;
+              return await this.submit(prompt);
+            }
+            case 'workers': {
+              let attempts: any[] = [];
+              if (this.sessionId) {
+                try {
+                  const store = await SessionStore.create(this.sessionDir);
+                  const s = await store.inspect(this.sessionId);
+                  attempts = s.mission?.attempts ?? [];
+                } catch {}
+              }
+              if (!subArg) {
+                if (this.missionTracker.snapshot?.workers?.length) {
+                  for (const w of this.missionTracker.snapshot.workers) {
+                    this.print(`• Worker: ${w.workerSessionId} · Feature: ${w.featureId} · Rol: ${w.role} · Estado: ${w.status} · in ${w.usage.inputTokens} / out ${w.usage.outputTokens} · ${(w.durationMs / 1000).toFixed(1)}s`);
+                  }
+                } else if (attempts.length) {
+                  for (const a of attempts) {
+                    this.print(`• Worker: ${a.workerSessionId} · Feature: ${a.featureId} · Rol: ${a.role}${a.handoff ? ' · con handoff' : ''}`);
+                  }
+                } else {
+                  this.print('Sin workers registrados en esta misión.');
+                }
+              } else {
+                const attempt = attempts.find((a: any) => a.workerSessionId === subArg)
+                  ?? (this.missionTracker.snapshot?.workers.find(w => w.workerSessionId === subArg) as any);
+                if (!attempt) {
+                  this.print(`Worker ${subArg}: no se encontró en el snapshot de sesión.`);
+                } else {
+                  const h = attempt.handoff;
+                  this.print(`Worker ${subArg} (${attempt.role ?? 'worker'}, feature: ${attempt.featureId ?? 'desconocida'}):`);
+                  if (h?.handoff) {
+                    this.print(`Estado de éxito: ${h.successState ?? 'desconocido'}`);
+                    this.print(`Resumen: ${h.handoff.salientSummary ?? '(sin resumen)'}`);
+                    if (h.handoff.whatWasImplemented) this.print(`Implementado: ${h.handoff.whatWasImplemented}`);
+                    if (h.handoff.whatWasLeftUndone) this.print(`Pendiente: ${h.handoff.whatWasLeftUndone}`);
+                    const obsCmds = attempt.observed ?? [];
+                    const claimedCmds = h.handoff.verification?.commandsRun ?? [];
+                    this.print('Verificación observada:');
+                    if (obsCmds.length) {
+                      for (const obs of obsCmds) this.print(`  • [observado] ${obs.command} -> exit ${obs.exitCode}`);
+                    } else if (claimedCmds.length) {
+                      for (const claim of claimedCmds) this.print(`  • [declarado] ${claim.command} -> exit ${claim.exitCode}: ${claim.observation}`);
+                    } else {
+                      this.print('  (ninguna)');
+                    }
+                    const issues = h.handoff.discoveredIssues ?? [];
+                    this.print(`Issues detectados (${issues.length}):`);
+                    if (issues.length) {
+                      for (const iss of issues) this.print(`  • [${iss.severity}] ${iss.description}${iss.suggestedFix ? ` (fix: ${iss.suggestedFix})` : ''}`);
+                    } else {
+                      this.print('  (ninguno)');
+                    }
+                  } else {
+                    this.print('Sin handoff registrado para este worker.');
+                    if (attempt.observed?.length) {
+                      this.print('Verificación observada:');
+                      for (const obs of attempt.observed) this.print(`  • [observado] ${obs.command} -> exit ${obs.exitCode}`);
+                    }
+                  }
+                }
+              }
+              break;
+            }
+            case 'log': {
+              let missionDir = this.missionTracker.directory;
+              if (!missionDir && this.sessionId) {
+                try {
+                  const store = await SessionStore.create(this.sessionDir);
+                  const s = await store.inspect(this.sessionId);
+                  missionDir = s.mission?.directory;
+                } catch {}
+              }
+              if (!missionDir && this.sessionId) {
+                missionDir = resolve(this.sessionDir, '..', 'missions', this.sessionId);
+              }
+              if (!missionDir) {
+                this.print('Sin registro de progreso (progress_log.jsonl no existe en esta misión).');
+                break;
+              }
+              const logFile = join(missionDir, 'progress_log.jsonl');
+              try {
+                const content = await readFile(logFile, 'utf8');
+                const count = Math.min(200, Math.max(1, Number(subArg) || 50));
+                const lines = content.split('\n').filter(Boolean).slice(-count);
+                if (!lines.length) {
+                  this.print('El registro de progreso está vacío.');
+                } else {
+                  this.print(`Últimas ${lines.length} entradas de progress_log.jsonl:`);
+                  for (const l of lines) {
+                    try {
+                      const obj = JSON.parse(l);
+                      this.print(`[${obj.timestamp ?? ''}] ${obj.type ?? ''}: ${JSON.stringify(obj)}`);
+                    } catch {
+                      this.print(l);
+                    }
+                  }
+                }
+              } catch {
+                this.print('Sin registro de progreso (progress_log.jsonl no existe en esta misión).');
+              }
+              break;
+            }
+            case 'list': {
+              const store = await SessionStore.create(this.sessionDir);
+              const { readdir } = await import('node:fs/promises');
+              let entries: any[] = [];
+              try {
+                entries = (await readdir(this.sessionDir, { withFileTypes: true })).filter(e => e.isFile() && /^[\w-]{1,100}\.json$/.test(e.name));
+              } catch {}
+              const missionSessions: Array<{ id: string; title: string; state: string; updatedAt: number }> = [];
+              for (const entry of entries) {
+                const id = entry.name.slice(0, -5);
+                try {
+                  const s = await store.inspect(id);
+                  if (s.cwd === this.cwd && s.mission) {
+                    missionSessions.push({
+                      id: s.id,
+                      title: s.mission.title ?? s.title ?? s.id,
+                      state: s.mission.state ?? s.status,
+                      updatedAt: s.updatedAt ?? 0,
+                    });
+                  }
+                } catch {}
+              }
+              missionSessions.sort((a, b) => b.updatedAt - a.updatedAt);
+              if (!missionSessions.length) {
+                this.print('No se encontraron sesiones con misión en esta carpeta.');
+                break;
+              }
+              const choices = missionSessions.map(m => `${m.id} · ${m.title} · estado: ${m.state}`);
+              const chosenIndex = await this.io.select('Seleccionar misión para reanudar', choices, this.active?.signal);
+              if (chosenIndex === undefined) break;
+              const chosen = missionSessions[chosenIndex];
+              if (chosen) {
+                await this.resume(chosen.id);
+              }
+              break;
+            }
+            default:
+              throw new Error(`Subcomando desconocido: /mission ${sub}. Subcomandos disponibles: status, pause, resume, workers, log, list`);
+          }
+          break;
+        }
         case 'cwd':
           if (!arg) { this.print(this.cwd); break; }
           { const cwd = await realpath(resolve(this.cwd, arg));
@@ -398,7 +642,7 @@ export class ChatController {
         case 'limits': this.print(JSON.stringify({ timeoutMs: this.options.agent?.timeoutMs ?? 1200000, maxTurns: this.options.agent?.maxTurns ?? 128,
           maxContextTokens: this.options.agent?.maxContextTokens ?? 32000, lastUsage: this.lastResult?.usage, billing: 'Sin límites de crédito de Factory' }, null, 2)); break;
         case 'diagnostics': { const sandbox = await detectSandbox(); this.print(JSON.stringify({ sandbox, executionPolicy: this.executionPolicy, networkPolicy: this.config.networkPolicy ?? 'auto', cwd: this.cwd, configuredModels: this.modelIds, mcpConfigured: Object.keys(this.mcpServers) }, null, 2)); break; }
-        case 'terminal-setup': this.print('/: paleta con descripción y origen · ↑↓: sugerencias o historial · Tab: completar /comando; fuera de / cambia razonamiento · Enter sobre sugerencia elegida: rellenar · Esc: cerrar paleta · Shift+Tab: auto/spec (mission solo con high) · Ctrl+N: siguiente modelo · Ctrl+L: autonomía · Ctrl+O: ampliar diff · Ctrl+C: cancelar · Ctrl+D: salir'); break;
+        case 'terminal-setup': this.print('/: paleta con descripción y origen · ↑↓: sugerencias o historial · Tab: completar /comando; fuera de / cambia razonamiento · Enter sobre sugerencia elegida: rellenar · Esc: cerrar paleta · Shift+Tab: auto/spec (mission solo con high) · Ctrl+N: siguiente modelo · Ctrl+L: autonomía · Ctrl+O: ampliar diff · Ctrl+T: panel misión · Ctrl+C: cancelar · Ctrl+D: salir'); break;
         case 'init': await this.runPrompt('Inspect this repository and prepare contributor guidance in AGENTS.md. Preserve existing guidance; ask before replacing unrelated content. ' + arg); break;
         default:
           if (this.customNames.includes(name) && !commandFor(name)) await this.invokeResource(name, arg);

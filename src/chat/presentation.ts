@@ -3,10 +3,11 @@ import { fit, MarkdownStream, renderDiff, type FileChange } from './render.ts';
 import { terminalText } from './config.ts';
 import { modeLine, resourceLine, type Resources } from './chrome.ts';
 
-export interface StatusState { permissionMode?: string; yoloSuspended?: boolean; model: string; mode: string; autonomy: string; inputTokens: number; outputTokens: number; contextTokens: number; maxContextTokens: number; reasoning?: 'low' | 'medium' | 'high'; resources?: Resources; modelLabel?: string }
+export interface StatusState { permissionMode?: string; yoloSuspended?: boolean; model: string; mode: string; autonomy: string; inputTokens: number; outputTokens: number; contextTokens: number; maxContextTokens: number; reasoning?: 'low' | 'medium' | 'high'; resources?: Resources; modelLabel?: string; missionSummary?: string }
 export function statusLine(state: StatusState, width: number) {
   const percent = Math.round(100 * state.contextTokens / Math.max(1, state.maxContextTokens));
-  return fit(`${state.yoloSuspended ? 'YOLO suspendido · ' : state.permissionMode === 'yolo' ? 'YOLO · ' : ''}${state.model}${state.reasoning ? ` (${state.reasoning})` : ''} · ${state.mode}/${state.autonomy} · in ${state.inputTokens} / out ${state.outputTokens} · ctx ~${percent}%`, Math.max(0, width - 1));
+  const mission = state.missionSummary ? ` · ${state.missionSummary}` : '';
+  return fit(`${state.yoloSuspended ? 'YOLO suspendido · ' : state.permissionMode === 'yolo' ? 'YOLO · ' : ''}${state.model}${state.reasoning ? ` (${state.reasoning})` : ''} · ${state.mode}/${state.autonomy}${mission} · in ${state.inputTokens} / out ${state.outputTokens} · ctx ~${percent}%`, Math.max(0, width - 1));
 }
 /** Two reserved rows; cursor save/restore never writes into the readline or streaming row. */
 export class TerminalPresentation {
