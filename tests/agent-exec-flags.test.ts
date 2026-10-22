@@ -80,6 +80,28 @@ test('positivo: --add-tools suma una herramienta eliminada por defecto y un sele
   expect(mcpEcho.currentlyAllowed).toBe(true);
 });
 
+test('positivo: catalog incluye WaitForScript con id wait-for-script no condicional', async () => {
+  const cwd = await temp();
+  const child = Bun.spawn([
+    process.execPath, '--no-env-file', entry, 'exec',
+    '--list-tools', '-o', 'json',
+  ], {
+    cwd,
+    stdin: 'ignore',
+    stdout: 'pipe',
+    stderr: 'pipe',
+  });
+  const [code, out, err] = await Promise.all([child.exited, new Response(child.stdout).text(), new Response(child.stderr).text()]);
+  expect(code).toBe(0);
+  expect(err).toBe('');
+  const tools = JSON.parse(out);
+  const wf = tools.find((t: any) => t.id === 'wait-for-script');
+  expect(wf).toBeDefined();
+  expect(wf.llmId).toBe('WaitForScript');
+  expect(wf.conditional).toBe(false);
+  expect(wf.currentlyAllowed).toBe(true);
+});
+
 test('positivo: selector MCP:local en --only-tools y en --remove-tools', async () => {
   const cwd = await temp();
   const settingsPath = join(cwd, 'settings.json');
