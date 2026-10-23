@@ -4,9 +4,14 @@ Historial detallado de versiones de `sw-factory` desde la etiqueta base `c3eff63
 
 ---
 
-## [Sin publicar] — 2026-10-22 (`c4fa16e`)
+## [Sin publicar] — 2026-10-22 (`bbfaba1`)
 
 ### Novedades
+- **Aliases y routing de modelos:** `modelAliases` (cadenas sin ciclos, máx. 8 saltos) en `-m`, flags de rol y `/model`; `modelRouting` con cadena `fallback` ante `rate_limit`, `server_error`, `timeout` o `context_length`, sin cambiar de modelo si ya se entregó texto del stream; evento `model_fallback` (`src/agent/providers/router.ts`).
+- **Estado MCP visible:** `fab exec --list-tools --with-mcp-status` devuelve `{ tools, mcpServers }` con `connected | connecting | needs authentication | failed` y `authorizeUrl`; cada servidor se carga por separado para que uno que falla no oculte a los demás. `/mcp` en `fab chat`.
+- **Hooks en `fab chat` y RPC:** `--hooks` o `hooks.enabled` activan los mismos hooks que exec; `/hooks` lista los cargados. En `stream-jsonrpc`, `initialize_session.hooks` o el valor por defecto de la invocación.
+- **RPC MCP:** `droid.list_mcp_servers`, `droid.list_mcp_tools`, `droid.authenticate_mcp_server` y `mcpServers` por sesión.
+- **SDK de fab (`fabrica/sdk`):** `tool()`, `createSdkMcpServer()` (servidor MCP loopback con bearer aleatorio, validación JSON Schema, 60 s por llamada), `createSession()`/`resumeSession()` sobre `fab exec` RPC con `send`, `stream`, estado y autenticación MCP (`src/sdk/`).
 - **`--input-format stream-json`:** modo multi-turno por stdin (líneas `user`, `interrupt`, `end`), misma sesión persistida entre turnos y evento `turn_end`; exige `-o stream-json`, avisa de deprecación y rechaza prompt, `-f` y `--mission` (`src/agent/stream-input.ts`).
 - **Journal y reconciliación tras caída:** registro JSONL con fsync por herramienta y turno; el lock guarda `{pid, startedAt}` y solo se reclama cuando el pid ya no existe; las escrituras y ejecuciones interrumpidas reciben un resultado sintético de efecto incierto y se emite `reconciled`. Una misión con worker caído queda `paused` con `Interrupted by crash` y se reanuda con `resumeWorkerSessionId` (`src/agent/journal.ts`, `session.ts`, `mission.ts`).
 - **Hooks opt-in:** `fab exec --hooks` o `hooks.enabled` en settings leen `$FABRICA_HOME/hooks.json` y `.fab/hooks.json`; eventos SessionStart, UserPromptSubmit, PreToolUse, PostToolUse, Stop, SessionEnd; `allow|deny|ask`, `updatedInput`, contexto adicional. Los hooks corren con la misma política de ejecución (sandbox, sin red), timeout ≤ 60 s, 8 por evento, y `allow` nunca anula red, spec, rutas protegidas ni techos de settings (`src/agent/hooks.ts`).
