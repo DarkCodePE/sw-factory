@@ -9,6 +9,7 @@ import { loadChatConfig } from '../src/chat/config.ts';
 import { listSessions } from '../src/chat/sessions.ts';
 import { TerminalInput } from '../src/chat/terminal.ts';
 import { SessionStore } from '../src/agent/session.ts';
+import { McpRuntime } from '../src/agent/mcp.ts';
 import type { AgentOptions, AgentResult, ModelProvider, ModelTurn } from '../src/agent/types.ts';
 
 const dirs: string[] = [];
@@ -205,4 +206,124 @@ test('terminal shortcuts preserve the next command and parse split Shift+Tab wit
     input.write('\x1b'); input.end(); await Bun.sleep(60);
     await expect(terminal.question('closed')).rejects.toThrow('cerrada');
   } finally { terminal.close(); input.destroy(); output.destroy(); }
+});
+
+test('--hooks dispara SessionStart, UserPromptSubmit y PreToolUse en un turno con run real', async () => {
+  const dir = await mkdtemp(join(tmpdir(), 'fab-chat-hooks-')); dirs.push(dir);
+  const cwd = join(dir, 'workspace'), home = join(dir, 'home');
+  await mkdir(cwd); await mkdir(home);
+  await mkdir(join(cwd, '.fab'));
+
+  const marker = join(cwd, 'pretool.marker');
+  const hooksConfig = {
+    SessionStart: [{ hooks: [{ type: 'command', command: 'echo start-hook-data' }] }],
+    UserPromptSubmit: [{ hooks: [{ type: 'command', command: 'echo submit-hook-data' }] }],
+    PreToolUse: [{ hooks: [{ type: 'command', command: `echo pretool-hook-executed > "${marker}"` }] }],
+  };
+  await writeFile(join(cwd, '.fab', 'hooks.json'), JSON.stringify(hooksConfig));
+  await writeFile(join(cwd, 'file.txt'), 'content');
+
+  const requests: any[] = [];
+  const turns: ModelTurn[] = [
+    call('read1', 'Read', { file_path: join(cwd, 'file.txt') }),
+    final('Done'),
+  ];
+  const provider: ModelProvider = {
+    id: 'test-prov',
+    async complete(req) {
+      requests.push(structuredClone(req));
+      return turns.shift() ?? final();
+    },
+  };
+
+  const io = new IO();
+  const app = new ChatController({
+    cwd,
+    home,
+    providerFor: () => provider,
+    config: { model: 'fixture', autonomy: 'high', mode: 'auto', theme: 'plain' },
+    agent: {
+      hooks: true,
+      permissionMode: 'standard',
+      sandbox: 'best-effort',
+    },
+  }, io);
+
+  await app.submit('iniciar tarea');
+  expect(io.output).toContain('Done');
+
+  // Verify SessionStart and UserPromptSubmit context were injected into the conversation
+  const firstReq = requests[0];
+  expect(firstReq).toBeDefined();
+  const messagesText = firstReq.messages.map((m: any) => typeof m.content === 'string' ? m.content : JSON.stringify(m.content)).join('\n');
+  expect(messagesText).toContain('start-hook-data');
+  expect(messagesText).toContain('submit-hook-data');
+
+  // Verify PreToolUse hook actually ran and wrote the marker file
+  expect(await Bun.file(marker).exists()).toBe(true);
+  expect((await Bun.file(marker).text()).trim()).toBe('pretool-hook-executed');
+});
+
+test('/hooks renderiza hooks configurados y su origen o mensaje de ausencia', async () => {
+  const f = await fixture();
+  // Without hooks file
+  await f.app.submit('/hooks');
+  expect(f.io.output).toContain('Sin hooks configurados en ~/.fabrica/hooks.json ni .fab/hooks.json');
+
+  // With .fab/hooks.json
+  await mkdir(join(f.cwd, '.fab'));
+  await writeFile(join(f.cwd, '.fab', 'hooks.json'), JSON.stringify({
+    PreToolUse: [{ matcher: 'Read', hooks: [{ type: 'command', command: 'echo check-read' }] }],
+  }));
+
+  f.io.output = '';
+  await f.app.submit('/hooks');
+  expect(f.io.output).toContain('.fab/hooks.json:');
+  expect(f.io.output).toContain('PreToolUse: echo check-read [matcher: Read]');
+});
+
+test('/mcp renderiza estado por servidor y authorizeUrl si needs authentication', async () => {
+  const f = await fixture();
+  McpRuntime.clear();
+  McpRuntime.setStatus('oauthServer', {
+    server: 'oauthServer',
+    state: 'needs authentication',
+    transport: 'http',
+    fingerprint: 'http://auth.example.com',
+    authorizeUrl: 'http://auth.example.com/authorize?state=xyz',
+  });
+  McpRuntime.setStatus('stdioServer', {
+    server: 'stdioServer',
+    state: 'connected',
+    transport: 'stdio',
+    fingerprint: 'local',
+  });
+
+  (f.app as any).settings = {
+    mcpServers: {
+      oauthServer: { url: 'http://auth.example.com' },
+      stdioServer: { command: 'echo' },
+    },
+  };
+
+  await f.app.submit('/mcp');
+  expect(f.io.output).toContain('oauthServer [http]: needs authentication · http://auth.example.com/authorize?state=xyz');
+  expect(f.io.output).toContain('stdioServer [stdio]: connected');
+
+  McpRuntime.clear();
+});
+
+test('/model acepta y lista aliases', async () => {
+  const f = await fixture();
+  (f.app as any).settings = {
+    customModels: [{ id: 'm1', model: 'mock-1', provider: 'generic-chat-completion-api' }],
+    modelAliases: {
+      'fast-alias': 'm1',
+    },
+  };
+
+  expect(f.app.modelIds).toContain('fast-alias');
+  await f.app.submit('/model fast-alias');
+  expect(f.app.config.model).toBe('fast-alias');
+  expect(f.app.modelLabel).toContain('fast-alias (m1)');
 });

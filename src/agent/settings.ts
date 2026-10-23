@@ -6,8 +6,14 @@ import { createAnthropicProvider } from './providers/anthropic.ts';
 import { validateExtraHeaders } from './providers/auth.ts';
 import { createOpenAIResponsesProvider } from './providers/openai.ts';
 import { createOpenAICompatibleProvider } from './provider.ts';
-import type { ModelProvider } from './types.ts';
+import type { AgentEvent, ModelProvider } from './types.ts';
 import { networkPolicy, type NetworkPolicy } from './network-policy.ts';
+import { createRoutedProvider, type FallbackReason } from './providers/router.ts';
+
+export interface ModelRoutingConfig {
+  fallback: string[];
+  on?: FallbackReason[];
+}
 
 export interface CustomModelConfig {
   id: string;
@@ -32,6 +38,8 @@ export interface ExecSettings {
   worktreeDirectory?: string;
   customModels?: CustomModelConfig[];
   mcpServers?: Record<string, McpConfig>;
+  modelAliases?: Record<string, string>;
+  modelRouting?: Record<string, ModelRoutingConfig>;
 }
 
 const object = (v: unknown): v is Record<string, any> => v !== null && typeof v === 'object' && !Array.isArray(v);
@@ -72,12 +80,14 @@ export async function loadExecSettings(path?: string): Promise<ExecSettings> {
       raw.streamIdleMs !== undefined && (!Number.isSafeInteger(raw.streamIdleMs) || raw.streamIdleMs < 0 || raw.streamIdleMs > 2147483647) ||
       raw.worktreeDirectory !== undefined && (typeof raw.worktreeDirectory !== 'string' || !raw.worktreeDirectory.trim()) ||
       raw.customModels !== undefined && (!Array.isArray(raw.customModels) || raw.customModels.length > 32) ||
-      raw.mcpServers !== undefined && !object(raw.mcpServers)) {
+      raw.mcpServers !== undefined && !object(raw.mcpServers) ||
+      raw.modelAliases !== undefined && !object(raw.modelAliases) ||
+      raw.modelRouting !== undefined && !object(raw.modelRouting)) {
     throw new Error('Invalid settings schema');
   }
 
   for (const key of Object.keys(raw)) {
-    if (!['modelId', 'customModels', 'mcpServers', 'streamIdleMs', 'sandboxNetwork', 'worktreeDirectory'].includes(key)) {
+    if (!['modelId', 'customModels', 'mcpServers', 'streamIdleMs', 'sandboxNetwork', 'worktreeDirectory', 'modelAliases', 'modelRouting'].includes(key)) {
       throw new Error(`Unsupported settings field: ${key}`);
     }
   }
@@ -148,12 +158,72 @@ export async function loadExecSettings(path?: string): Promise<ExecSettings> {
     }
   }
 
+  if (settings.modelAliases !== undefined) {
+    if (!object(settings.modelAliases)) throw new Error('Invalid modelAliases');
+    for (const [alias, target] of Object.entries(settings.modelAliases)) {
+      if (typeof alias !== 'string' || !alias.trim() || typeof target !== 'string' || !target.trim()) {
+        throw new Error('Invalid modelAliases entry');
+      }
+    }
+    for (const [alias] of Object.entries(settings.modelAliases)) {
+      const resolved = resolveModelAlias(alias, settings.modelAliases);
+      if (!ids.has(resolved)) {
+        throw new Error(`Model alias '${alias}' points to unknown model '${resolved}'`);
+      }
+    }
+  }
+
+  const VALID_ROUTING_ON = new Set<FallbackReason>(['rate_limit', 'server_error', 'timeout', 'context_length']);
+  if (settings.modelRouting !== undefined) {
+    if (!object(settings.modelRouting)) throw new Error('Invalid modelRouting');
+    for (const [key, config] of Object.entries(settings.modelRouting)) {
+      if (typeof key !== 'string' || !key.trim()) throw new Error('Invalid modelRouting key');
+      const resolvedKey = resolveModelAlias(key, settings.modelAliases);
+      if (!ids.has(resolvedKey)) {
+        throw new Error(`Model routing key '${key}' points to unknown model '${resolvedKey}'`);
+      }
+      if (!object(config) || !Array.isArray(config.fallback) || config.fallback.length === 0) {
+        throw new Error(`Invalid modelRouting fallback for '${key}'`);
+      }
+      for (const fb of config.fallback) {
+        if (typeof fb !== 'string' || !fb.trim()) {
+          throw new Error(`Invalid modelRouting fallback entry in '${key}'`);
+        }
+        const resolvedFb = resolveModelAlias(fb, settings.modelAliases);
+        if (!ids.has(resolvedFb)) {
+          throw new Error(`Model routing fallback '${fb}' points to unknown model '${resolvedFb}'`);
+        }
+      }
+      if (config.on !== undefined) {
+        if (!Array.isArray(config.on) || config.on.length === 0 || config.on.some((r: any) => !VALID_ROUTING_ON.has(r))) {
+          throw new Error(`Invalid model routing 'on' reason in '${key}'`);
+        }
+      }
+    }
+  }
+
   return settings;
+}
+
+export function resolveModelAlias(name: string, aliases?: Record<string, string>): string {
+  if (!aliases || !Object.hasOwn(aliases, name)) return name;
+  let current = name;
+  const visited = new Set<string>([current]);
+  let hops = 0;
+  while (Object.hasOwn(aliases, current)) {
+    hops++;
+    if (hops > 8) throw new Error('Model alias chain exceeds 8 hops');
+    current = aliases[current]!;
+    if (visited.has(current)) throw new Error(`Cycle detected in model alias '${current}'`);
+    visited.add(current);
+  }
+  return current;
 }
 
 export function configuredProviders(
   settings: ExecSettings,
   fallback: { model: string; baseUrl?: string; apiKey?: string; reasoningEffort?: string },
+  onEvent?: (event: AgentEvent) => void,
 ): {
   providers: Record<string, ModelProvider>;
   defaultModelId: string;
@@ -205,37 +275,68 @@ export function configuredProviders(
     }
   }
 
-  const selected = settings.modelId ?? fallback.model;
-  if (!Object.hasOwn(providers, selected)) {
-    if (selected.startsWith('custom:')) throw new Error('Unknown configured custom model');
-    if (selected.startsWith('chatgpt:')) {
-      providers[selected] = createChatGPTProvider({
-        model: selected.slice('chatgpt:'.length),
+  const rawSelected = settings.modelId ?? fallback.model;
+  const resolvedSelected = resolveModelAlias(rawSelected, settings.modelAliases);
+  if (!Object.hasOwn(providers, resolvedSelected)) {
+    if (resolvedSelected.startsWith('custom:')) throw new Error('Unknown configured custom model');
+    if (resolvedSelected.startsWith('chatgpt:')) {
+      providers[resolvedSelected] = createChatGPTProvider({
+        model: resolvedSelected.slice('chatgpt:'.length),
         reasoningEffort: fallback.reasoningEffort,
         streamIdleMs: settings.streamIdleMs,
       });
-    } else if (selected.startsWith('anthropic:')) {
-      providers[selected] = createAnthropicProvider({
-        model: selected.slice('anthropic:'.length),
+    } else if (resolvedSelected.startsWith('anthropic:')) {
+      providers[resolvedSelected] = createAnthropicProvider({
+        model: resolvedSelected.slice('anthropic:'.length),
         reasoningEffort: fallback.reasoningEffort,
         streamIdleMs: settings.streamIdleMs,
         apiKey: fallback.apiKey,
       });
-    } else if (selected.startsWith('openai:')) {
-      providers[selected] = createOpenAIResponsesProvider({
-        model: selected.slice('openai:'.length),
+    } else if (resolvedSelected.startsWith('openai:')) {
+      providers[resolvedSelected] = createOpenAIResponsesProvider({
+        model: resolvedSelected.slice('openai:'.length),
         reasoningEffort: fallback.reasoningEffort,
         streamIdleMs: settings.streamIdleMs,
         apiKey: fallback.apiKey,
       });
     } else {
-      providers[selected] = createOpenAICompatibleProvider({
+      providers[resolvedSelected] = createOpenAICompatibleProvider({
         ...fallback,
-        model: selected,
+        model: resolvedSelected,
         streamIdleMs: settings.streamIdleMs,
       });
     }
   }
 
-  return { providers, defaultModelId: selected };
+  if (settings.modelRouting) {
+    for (const [routeKey, routeConfig] of Object.entries(settings.modelRouting)) {
+      const primaryId = resolveModelAlias(routeKey, settings.modelAliases);
+      const primaryProvider = providers[primaryId];
+      if (!primaryProvider) continue;
+
+      const fallbackTargets = routeConfig.fallback.map(fb => {
+        const resolvedFb = resolveModelAlias(fb, settings.modelAliases);
+        const fbProv = providers[resolvedFb];
+        if (!fbProv) throw new Error(`Fallback model '${fb}' (resolved: '${resolvedFb}') not found`);
+        return { id: resolvedFb, provider: fbProv };
+      });
+
+      const routed = createRoutedProvider(primaryProvider, fallbackTargets, { on: routeConfig.on }, onEvent);
+      providers[primaryId] = routed;
+      if (routeKey !== primaryId) {
+        providers[routeKey] = routed;
+      }
+    }
+  }
+
+  if (settings.modelAliases) {
+    for (const [alias] of Object.entries(settings.modelAliases)) {
+      const targetId = resolveModelAlias(alias, settings.modelAliases);
+      if (providers[targetId]) {
+        providers[alias] = providers[targetId]!;
+      }
+    }
+  }
+
+  return { providers, defaultModelId: rawSelected };
 }

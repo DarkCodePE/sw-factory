@@ -169,6 +169,7 @@ export function parseExecArgs(argv: string[]) {
       sandbox: { type: 'string' },
       'sandbox-network': { type: 'string' },
       'list-tools': { type: 'boolean' },
+      'with-mcp-status': { type: 'boolean' },
       help: { type: 'boolean', short: 'h' },
       'require-status': { type: 'boolean' },
     },
@@ -207,6 +208,7 @@ export function parseExecArgs(argv: string[]) {
 export function buildProviders(
   v: ReturnType<typeof parseExecArgs>['v'],
   settings: ExecSettings,
+  onEvent?: (event: import('./types.ts').AgentEvent) => void,
 ) {
   if (v.model) settings.modelId = v.model;
   const fallbackModel = process.env.FABRICA_LLM_MODEL ?? 'qwen3.5-32k';
@@ -218,7 +220,7 @@ export function buildProviders(
     baseUrl,
     apiKey,
     reasoningEffort: v['reasoning-effort'],
-  });
+  }, onEvent);
   const provider = configured.providers[configured.defaultModelId]!;
 
   // Build specProvider if in spec mode and spec model/reasoning specified
@@ -230,7 +232,7 @@ export function buildProviders(
       baseUrl,
       apiKey,
       reasoningEffort: v['spec-reasoning-effort'] ?? v['reasoning-effort'],
-    });
+    }, onEvent);
     specProvider = specConfigured.providers[specConfigured.defaultModelId];
   }
 
@@ -243,7 +245,7 @@ export function buildProviders(
       baseUrl,
       apiKey,
       reasoningEffort: effort ?? v['reasoning-effort'],
-    });
+    }, onEvent);
     return roleConfigured.providers[roleConfigured.defaultModelId];
   };
 

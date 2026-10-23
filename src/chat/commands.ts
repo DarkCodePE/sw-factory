@@ -12,6 +12,7 @@ export const CHAT_COMMANDS: ChatCommand[] = [
   { name: 'themes', group: 'Configuración', help: 'Elegir color o plain' },
   { name: 'cwd', aliases: ['cd'], group: 'Configuración', help: 'Ver o cambiar carpeta; abre conversación nueva' },
   { name: 'mcp', group: 'Capacidades', help: 'Servidores configurados y exclusión local por sesión' },
+  { name: 'hooks', group: 'Capacidades', help: 'Hooks cargados y su origen (~/.fabrica/hooks.json o .fab/hooks.json)' },
   { name: 'tools', group: 'Capacidades', help: 'Catálogo de herramientas y filtros only/remove/reset' },
   { name: 'skills', group: 'Capacidades', help: 'Listar skills del proyecto o leer una por nombre' },
   { name: 'skill', group: 'Capacidades', help: 'Invocar una skill local: /skill nombre argumentos' },
@@ -43,7 +44,6 @@ export const CHAT_COMMANDS: ChatCommand[] = [
   { name: 'detect-overlapping-workstreams', group: 'Sin backend', help: 'Detectar objetivos duplicados en workstreams de Factory', unavailable: 'La detección entre workstreams de Factory requiere su catálogo remoto; no está disponible.' },
   ...[
     ['plugins', 'No existe un gestor propio de plugins/marketplaces.'],
-    ['hooks', 'No se ejecutan hooks de shell configurados por el proyecto.'],
     ['fast', 'El transporte no dispone de un contrato de fast mode.'],
     ['language', 'La interfaz propia está disponible en español.'],
     ['statusline', 'La línea de estado es interna; no ejecuta comandos externos.'],

@@ -4,6 +4,7 @@ import { readFile, realpath } from 'node:fs/promises';
 import { resolve } from 'node:path';
 import { parseArgs } from 'node:util';
 import { configuredProviders, loadExecSettings } from './agent/settings.ts';
+import { hookSettings } from './agent/hooks.ts';
 import { AUTONOMIES, chatHome, loadChatConfig, terminalText } from './chat/config.ts';
 import { ChatController } from './chat/controller.ts';
 import { TerminalInput } from './chat/terminal.ts';
@@ -27,7 +28,7 @@ export async function chatMain(argv: string[]): Promise<number> {
   try {
     const { values: v, positionals } = parseArgs({ args, allowPositionals: true, options: {
       cwd: { type: 'string' }, settings: { type: 'string' }, model: { type: 'string', short: 'm' }, auto: { type: 'string' },
-      yolo: { type: 'boolean' }, 'use-spec': { type: 'boolean' }, mission: { type: 'boolean' }, resume: { type: 'string', short: 'r' },
+      yolo: { type: 'boolean' }, hooks: { type: 'boolean' }, 'use-spec': { type: 'boolean' }, mission: { type: 'boolean' }, resume: { type: 'string', short: 'r' },
       last: { type: 'boolean' }, fork: { type: 'string' }, 'session-id': { type: 'string' },
       worktree: { type: 'string', short: 'w' }, 'worktree-dir': { type: 'string' },
       'append-system-prompt': { type: 'string' }, 'append-system-prompt-file': { type: 'string' },
@@ -41,7 +42,9 @@ export async function chatMain(argv: string[]): Promise<number> {
     const folder = !v.cwd && positionals.length === 1 && existsSync(positionals[0]!) && statSync(positionals[0]!).isDirectory() ? positionals.pop() : undefined;
     let cwd = await realpath(resolve(v.cwd ?? folder ?? process.cwd()));
     if (!statSync(cwd).isDirectory()) throw new Error('--cwd requiere un directorio');
-    const settings = await loadExecSettings(v.settings ?? process.env.FABRICA_AGENT_SETTINGS);
+    const loaded = await hookSettings(v.settings ?? process.env.FABRICA_AGENT_SETTINGS, loadExecSettings);
+    const settings = loaded.settings;
+    const hooksEnabled = !!(v.hooks || loaded.enabled);
 
     if (v.worktree !== undefined) {
       if (v['worktree-dir']) console.error('Warning: --worktree-dir is deprecated; set worktreeDirectory in settings instead');
@@ -86,6 +89,7 @@ export async function chatMain(argv: string[]): Promise<number> {
       timeoutMs: number('timeout-ms'), maxTurns: number('max-turns'), maxContextTokens: number('max-context-tokens'),
       sandbox: v.sandbox as 'required' | 'best-effort' | undefined, appendSystemPrompt: append,
       onlyTools: toolSel.onlyTools, removeTools: toolSel.removeTools,
+      hooks: hooksEnabled,
     } }, io);
     io.controller = app;
     await app.syncHistory(); io.update(app.statusState);

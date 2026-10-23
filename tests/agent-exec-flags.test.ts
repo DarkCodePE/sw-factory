@@ -719,3 +719,103 @@ test('fab chat acepta --worktree y --add-tools con la misma semántica', async (
   expect(code).toBe(0);
   expect(err).toContain('Worktree: branch main-wt at');
 });
+
+test('fab exec --list-tools --with-mcp-status -o json con fixture stdio muestra connected', async () => {
+  const cwd = await temp();
+  const settingsPath = join(cwd, 'settings.json');
+  await writeFile(settingsPath, JSON.stringify({
+    mcpServers: {
+      stdioServer: {
+        command: process.execPath,
+        args: ['--no-env-file', mcpFixture],
+        readOnlyTools: ['echo'],
+      },
+    },
+  }));
+
+  const p = Bun.spawn([
+    process.execPath, '--no-env-file', entry, 'exec',
+    '--cwd', cwd,
+    '--settings', settingsPath,
+    '--list-tools',
+    '--with-mcp-status',
+    '-o', 'json',
+  ], {
+    cwd,
+    stdout: 'pipe',
+    stderr: 'pipe',
+  });
+
+  const [code, out] = await Promise.all([p.exited, new Response(p.stdout).text()]);
+  expect(code).toBe(0);
+  const parsed = JSON.parse(out);
+  expect(Array.isArray(parsed.tools)).toBe(true);
+  expect(Array.isArray(parsed.mcpServers)).toBe(true);
+  const st = parsed.mcpServers.find((s: any) => s.server === 'stdioServer');
+  expect(st).toBeDefined();
+  expect(st.state).toBe('connected');
+  expect(st.transport).toBe('stdio');
+});
+
+test('fab exec --list-tools --with-mcp-status -o json con --oauth muestra needs authentication y authorizeUrl', async () => {
+  const cwd = await temp();
+  const home = await temp();
+
+  const proc = Bun.spawn([process.execPath, mcpFixture, '--oauth'], {
+    stdout: 'pipe',
+    stderr: 'inherit',
+  });
+  const reader = (proc.stdout as ReadableStream<Uint8Array>).getReader();
+  const decoder = new TextDecoder();
+  let buffer = '';
+  let port = 0;
+  for (;;) {
+    const { done, value } = await reader.read();
+    if (done) break;
+    buffer += decoder.decode(value);
+    const match = /http:\/\/127\.0\.0\.1:(\d+)/.exec(buffer);
+    if (match) {
+      port = Number(match[1]);
+      break;
+    }
+  }
+  reader.releaseLock();
+  expect(port).toBeGreaterThan(0);
+
+  try {
+    const settingsPath = join(cwd, 'settings.json');
+    await writeFile(settingsPath, JSON.stringify({
+      mcpServers: {
+        oauthServer: {
+          url: `http://127.0.0.1:${port}/mcp`,
+        },
+      },
+    }));
+
+    const p = Bun.spawn([
+      process.execPath, '--no-env-file', entry, 'exec',
+      '--cwd', cwd,
+      '--settings', settingsPath,
+      '--list-tools',
+      '--with-mcp-status',
+      '-o', 'json',
+    ], {
+      cwd,
+      env: { PATH: process.env.PATH ?? '', HOME: home, FABRICA_HOME: home },
+      stdout: 'pipe',
+      stderr: 'pipe',
+    });
+
+    const [code, out] = await Promise.all([p.exited, new Response(p.stdout).text()]);
+    expect(code).toBe(0);
+    const parsed = JSON.parse(out);
+    expect(Array.isArray(parsed.tools)).toBe(true);
+    expect(Array.isArray(parsed.mcpServers)).toBe(true);
+    const st = parsed.mcpServers.find((s: any) => s.server === 'oauthServer');
+    expect(st).toBeDefined();
+    expect(st.state).toBe('needs authentication');
+    expect(st.authorizeUrl).toContain(`http://127.0.0.1:${port}/authorize`);
+  } finally {
+    try { proc.kill(); } catch {}
+  }
+});

@@ -3,11 +3,12 @@ import { serveStreamInput } from './stream-input.ts';
 import { resolveExecutionPolicy, YOLO_NOTICE } from './execution-policy.ts';
 import { readFile } from 'node:fs/promises';
 import { resolve } from 'node:path';
-import { listConfiguredToolCatalog, runCodingAgent } from './engine.ts';
+import { listAgentTools, listConfiguredToolCatalog, runCodingAgent } from './engine.ts';
 import { loadExecSettings } from './settings.ts';
 import { serveExecRpc } from './rpc.ts';
 import { describeTool } from './catalog.ts';
-import type { Autonomy } from './types.ts';
+import { McpManager, McpRuntime } from './mcp.ts';
+import type { AgentTool, Autonomy } from './types.ts';
 import { validateReportStatus } from '../prompts.ts';
 import { networkPolicy } from './network-policy.ts';
 import { buildProviders, hasToolPrefixSelector, parseExecArgs, resolveToolSelection } from './exec-flags.ts';
@@ -28,7 +29,7 @@ const HELP = `fab exec — independent coding-agent runtime
     [--disable-builtin-skills]
     [--timeout-ms N] [--max-turns N] [--max-context-tokens N]
     [--sandbox required|best-effort] [--sandbox-network auto|ask|deny]
-    [--settings file] [--list-tools] [--require-status]
+    [--settings file] [--list-tools] [--with-mcp-status] [--require-status]
 YOLO: no approvals, host execution and network; invocation-only.
 Network auto: Execute requests are approved automatically only at --auto high; otherwise approval is required.
 Model settings: FABRICA_LLM_MODEL, FABRICA_LLM_BASE_URL, FABRICA_LLM_API_KEY.
@@ -54,7 +55,11 @@ export async function execMain(argv: string[]): Promise<number> {
     const policy = resolveExecutionPolicy(execution);
     if (v.yolo) console.error(YOLO_NOTICE);
 
-    const { configured, provider, specProvider, mission } = buildProviders(v, settings);
+    const emitEvent = format === 'stream-json'
+      ? (e: import('./types.ts').AgentEvent) => console.log(JSON.stringify(e))
+      : undefined;
+
+    const { configured, provider, specProvider, mission } = buildProviders(v, settings, emitEvent);
     const settingsPolicy = { modelIds: Object.keys(configured.providers), maxAutonomy: policy.effectiveAutonomy, networkPolicy: executionNetwork };
 
     let effectiveCwd = resolve(v.cwd ?? process.cwd());
@@ -116,32 +121,76 @@ export async function execMain(argv: string[]): Promise<number> {
       let availableToolNames: string[] | undefined;
       if (hasToolPrefixSelector(v['only-tools'], v['add-tools'], v['remove-tools'])) {
         const mode = v.mission ? 'mission' : v['use-spec'] ? 'spec' : 'auto';
-        const fullCatalog = await listConfiguredToolCatalog({
-          ...execution,
-          prompt: '',
-          cwd: effectiveCwd,
-          provider,
-          mcpServers: settings.mcpServers,
-          settingsPolicy,
-          interactionMode: mode,
-        }, controller.signal);
-        availableToolNames = fullCatalog.map(t => t.schema.function.name);
+        try {
+          const fullCatalog = await listConfiguredToolCatalog({
+            ...execution,
+            prompt: '',
+            cwd: effectiveCwd,
+            provider,
+            mcpServers: settings.mcpServers,
+            settingsPolicy,
+            interactionMode: mode,
+          }, controller.signal);
+          availableToolNames = fullCatalog.map(t => t.schema.function.name);
+        } catch {
+          availableToolNames = listAgentTools({
+            ...execution,
+            prompt: '',
+            cwd: effectiveCwd,
+            provider,
+            mcpServers: settings.mcpServers,
+            settingsPolicy,
+            interactionMode: mode,
+          }).map(t => t.schema.function.name);
+        }
       }
       const toolSel = resolveToolSelection(v['only-tools'], v['add-tools'], v['remove-tools'], availableToolNames);
 
       if (v['list-tools']) {
         const mode = v.mission ? 'mission' : v['use-spec'] ? 'spec' : 'auto';
-        const catalogTools = await listConfiguredToolCatalog({
-          ...execution,
-          prompt: '',
-          cwd: effectiveCwd,
-          provider,
-          mcpServers: settings.mcpServers,
-          settingsPolicy,
-          onlyTools: toolSel.onlyTools,
-          removeTools: toolSel.removeTools,
-          interactionMode: mode,
-        }, controller.signal);
+        let mcpStatuses: import('./mcp-oauth.ts').McpServerStatus[] = [];
+        let catalogTools: Array<Pick<AgentTool, 'schema' | 'effect'>> = [];
+
+        if (settings.mcpServers && Object.keys(settings.mcpServers).length > 0) {
+          const manager = new McpManager(settings.mcpServers, {
+            cwd: effectiveCwd,
+            signal: controller.signal,
+            autonomy: 'off',
+            interactionMode: 'spec',
+            sandbox: 'required',
+          }, { only: toolSel.onlyTools, remove: toolSel.removeTools });
+          let remote: AgentTool[] = [];
+          try {
+            remote = await manager.tools();
+          } catch {
+            // Mcp servers might require OAuth or fail to connect
+          }
+          mcpStatuses = McpRuntime.status();
+          catalogTools = listAgentTools({
+            ...execution,
+            prompt: '',
+            cwd: effectiveCwd,
+            provider,
+            mcpServers: settings.mcpServers,
+            tools: remote,
+            settingsPolicy,
+            onlyTools: toolSel.onlyTools,
+            removeTools: toolSel.removeTools,
+            interactionMode: mode,
+          }).map(({ schema, effect }) => ({ schema, effect }));
+          await manager.close();
+        } else {
+          catalogTools = listAgentTools({
+            ...execution,
+            prompt: '',
+            cwd: effectiveCwd,
+            provider,
+            settingsPolicy,
+            onlyTools: toolSel.onlyTools,
+            removeTools: toolSel.removeTools,
+            interactionMode: mode,
+          }).map(({ schema, effect }) => ({ schema, effect }));
+        }
 
         let tools = catalogTools.map(t => describeTool(
           t,
@@ -155,6 +204,17 @@ export async function execMain(argv: string[]): Promise<number> {
 
         if (v['disable-builtin-skills']) {
           tools = tools.map(t => ({ ...t, builtinSkills: false }));
+        }
+
+        if (v['with-mcp-status']) {
+          if (format === 'text') {
+            const toolLines = tools.map(t => `${t.id}\t${t.category}`);
+            const mcpLines = mcpStatuses.map(s => `mcp\t${s.server}\t${s.state}`);
+            console.log([...toolLines, ...mcpLines].join('\n'));
+          } else {
+            console.log(JSON.stringify({ tools, mcpServers: mcpStatuses }));
+          }
+          return 0;
         }
 
         if (format === 'text') console.log(tools.map(t => `${t.id}\t${t.category}`).join('\n'));

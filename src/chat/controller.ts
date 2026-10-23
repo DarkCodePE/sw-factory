@@ -21,6 +21,7 @@ import type { FileChange } from './render.ts';
 import type { StatusState } from './presentation.ts';
 import { handleMissionCommand } from './mission-commands.ts';
 import { MissionTracker, formatMissionEvent } from './mission-view.ts';
+import { handleHooksCommand, handleMcpCommand } from './status-commands.ts';
 
 export interface ChatIO {
   write(text: string): void;
@@ -35,7 +36,7 @@ export interface ChatIO {
 }
 export interface ChatOptions {
   cwd: string; home: string; settings?: ExecSettings; config?: ChatConfig;
-  agent?: Pick<AgentOptions, 'allowExitSpecMode' | 'requireReadBeforeEdit' | 'settingsPolicy' | 'permissionMode' | 'timeoutMs' | 'maxTurns' | 'maxContextTokens' | 'sandbox' | 'appendSystemPrompt' | 'onlyTools' | 'removeTools'>;
+  agent?: Pick<AgentOptions, 'allowExitSpecMode' | 'requireReadBeforeEdit' | 'settingsPolicy' | 'permissionMode' | 'timeoutMs' | 'maxTurns' | 'maxContextTokens' | 'sandbox' | 'appendSystemPrompt' | 'onlyTools' | 'removeTools' | 'hooks'>;
   providerFor?: (model: string, reasoning?: string) => ModelProvider;
   run?: typeof runCodingAgent;
 }
@@ -81,8 +82,17 @@ export class ChatController {
   get permissionLabel() { return this.executionPolicy.permissionMode === 'yolo' ? 'YOLO' : this.yoloAuthorized ? 'YOLO suspendido' : this.config.autonomy; }
   get sessionDir() { return join(this.options.home, 'agent-sessions'); }
   get busy() { return !!this.active; }
-  get modelIds() { return [...new Set([this.config.model, ...this.settings.customModels?.map(m => m.id) ?? []])]; }
-  get modelLabel() { const model = this.settings.customModels?.find(m => m.id === this.config.model); return model?.displayName ?? model?.model ?? this.config.model; }
+  get modelIds() {
+    const aliases = Object.keys(this.settings.modelAliases ?? {});
+    return [...new Set([this.config.model, ...aliases, ...this.settings.customModels?.map(m => m.id) ?? []])];
+  }
+  get modelLabel() {
+    if (this.settings.modelAliases && Object.hasOwn(this.settings.modelAliases, this.config.model)) {
+      return `${this.config.model} (${this.settings.modelAliases[this.config.model]})`;
+    }
+    const model = this.settings.customModels?.find(m => m.id === this.config.model);
+    return model?.displayName ?? model?.model ?? this.config.model;
+  }
   get customCommands() { return this.customNames; }
   get palette() { return paletteCatalog(this.projectResources); }
   get mcpServers() { return Object.fromEntries(Object.entries(this.settings.mcpServers ?? {}).filter(([name]) => !this.disabledMcp.has(name))); }
@@ -253,6 +263,7 @@ export class ChatController {
         this.io.update?.(this.statusState);
       }
       else if (event.type === 'compaction') this.print('(contexto compactado)');
+      else if ((event.type as string) === 'model_fallback') this.print(`Fallback de modelo: de ${event.from} a ${event.to} (${event.reason})`);
       else if (event.type === 'network_permission' && event.decision === 'allowed_automatically' && !this.yoloAuthorized) this.print('Red autorizada automáticamente para esta llamada (auto high).');
       else if (event.type.startsWith('mission_')) {
         this.missionTracker.handleEvent(event as Record<string, any>);
@@ -435,15 +446,8 @@ export class ChatController {
           { const cwd = await realpath(resolve(this.cwd, arg));
             if (!(await stat(cwd)).isDirectory()) throw new Error('La carpeta no existe');
             this.resetStagedSettings(); this.cwd = cwd; this.sessionId = undefined; await this.refreshCommands(); this.print(this.status()); } break;
-        case 'mcp': {
-          const [action, server] = arg.split(/\s+/);
-          if (action && action !== 'list') {
-            if (!['enable', 'disable'].includes(action) || !server || !Object.hasOwn(this.settings.mcpServers ?? {}, server)) throw new Error('/mcp [list|enable <nombre>|disable <nombre>]');
-            if (action === 'disable') this.disabledMcp.add(server); else this.disabledMcp.delete(server);
-          }
-          Object.keys(this.settings.mcpServers ?? {}).forEach(n => this.print(`${n}: ${this.disabledMcp.has(n) ? 'excluido' : 'configurado'} (conectividad no comprobada)`));
-          if (!Object.keys(this.settings.mcpServers ?? {}).length) this.print('Sin MCP configurados. Usa --settings con mcpServers.'); break;
-        }
+        case 'mcp': handleMcpCommand(this.settings.mcpServers, this.disabledMcp, arg, msg => this.print(msg)); break;
+        case 'hooks': await handleHooksCommand(this.cwd, msg => this.print(msg)); break;
         case 'tools': {
           const [action, ...rest] = arg.split(/\s+/); const names = rest.join('').split(',').filter(Boolean);
           if (action === 'reset') { this.only = undefined; this.removed = undefined; }
