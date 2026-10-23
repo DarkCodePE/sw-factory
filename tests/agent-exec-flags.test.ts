@@ -789,6 +789,8 @@ test('fab exec --list-tools --with-mcp-status -o json con --oauth muestra needs 
         oauthServer: {
           url: `http://127.0.0.1:${port}/mcp`,
         },
+        // Regression: a server that needs OAuth must not hide the others.
+        local: { command: process.execPath, args: ['--no-env-file', mcpFixture] },
       },
     }));
 
@@ -815,6 +817,8 @@ test('fab exec --list-tools --with-mcp-status -o json con --oauth muestra needs 
     expect(st).toBeDefined();
     expect(st.state).toBe('needs authentication');
     expect(st.authorizeUrl).toContain(`http://127.0.0.1:${port}/authorize`);
+    expect(parsed.mcpServers.find((s: any) => s.server === 'local')?.state).toBe('connected');
+    expect(parsed.tools.some((t: any) => t.llmId === 'local___echo')).toBe(true);
   } finally {
     try { proc.kill(); } catch {}
   }

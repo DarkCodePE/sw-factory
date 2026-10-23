@@ -152,19 +152,29 @@ export async function execMain(argv: string[]): Promise<number> {
         let catalogTools: Array<Pick<AgentTool, 'schema' | 'effect'>> = [];
 
         if (settings.mcpServers && Object.keys(settings.mcpServers).length > 0) {
-          const manager = new McpManager(settings.mcpServers, {
-            cwd: effectiveCwd,
-            signal: controller.signal,
-            autonomy: 'off',
-            interactionMode: 'spec',
-            sandbox: 'required',
-          }, { only: toolSel.onlyTools, remove: toolSel.removeTools });
-          let remote: AgentTool[] = [];
-          try {
-            remote = await manager.tools();
-          } catch {
-            // Mcp servers might require OAuth or fail to connect
+          // One manager per server: a server that needs OAuth or fails must not hide the others.
+          const managers: McpManager[] = [];
+          const remote: AgentTool[] = [];
+          for (const [name, config] of Object.entries(settings.mcpServers)) {
+            const one = new McpManager({ [name]: config }, {
+              cwd: effectiveCwd,
+              signal: controller.signal,
+              autonomy: 'off',
+              interactionMode: 'spec',
+              sandbox: 'required',
+            }, { only: toolSel.onlyTools, remove: toolSel.removeTools });
+            managers.push(one);
+            try {
+              remote.push(...await one.tools());
+            } catch (error) {
+              const known = McpRuntime.status().find(s => s.server === name);
+              if (!known || known.state === 'connecting') {
+                McpRuntime.setStatus(name, { ...(known ?? { server: name, transport: config.type ?? (config.url ? 'http' : 'stdio'), fingerprint: '' }), state: 'failed' } as import('./mcp-oauth.ts').McpServerStatus);
+              }
+              if (!v['with-mcp-status']) console.error(`MCP server ${name}: ${(error as Error).message}`);
+            }
           }
+          const manager = { close: async () => { await Promise.allSettled(managers.map(m => m.close())); } };
           mcpStatuses = McpRuntime.status();
           catalogTools = listAgentTools({
             ...execution,
