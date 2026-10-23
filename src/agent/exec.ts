@@ -92,7 +92,6 @@ export async function execMain(argv: string[]): Promise<number> {
       }
 
       if (format === 'stream-jsonrpc') {
-        if (v.hooks || loaded.enabled) throw new Error('Hooks are supported by exec text/json/stream-json; RPC hook lifecycle integration is pending');
         if (v.file || positionals.length || v['session-id'] || v.fork || v.auto || v['use-spec'] || v.mission ||
             v['only-tools'] || v['add-tools'] || v['remove-tools'] || v['require-status'] ||
             v['spec-model'] || v['spec-reasoning-effort'] || v['worker-reasoning-effort'] || v['validator-reasoning-effort'] ||
@@ -105,6 +104,7 @@ export async function execMain(argv: string[]): Promise<number> {
           defaultModelId: configured.defaultModelId,
           providers: configured.providers,
           signal: controller.signal,
+          hooksDefault: !!(v.hooks || loaded.enabled),
           agent: {
             permissionMode: execution.permissionMode,
             mcpServers: settings.mcpServers,

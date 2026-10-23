@@ -25,6 +25,8 @@ export interface RpcOptions {
   providers: Record<string, ModelProvider>;
   agent?: Pick<AgentOptions, 'allowExitSpecMode' | 'requireReadBeforeEdit' | 'settingsPolicy' | 'permissionMode' | 'sandbox' | 'networkPolicy' | 'timeoutMs' | 'maxTurns' | 'maxContextTokens' | 'tools' | 'beforeTool' | 'afterTool' | 'permissionHandler' | 'askUserHandler' | 'mcpServers' | 'hooks'>;
   signal?: AbortSignal;
+  /** Invocation default for hooks when a request omits `hooks` (from --hooks or hooks.enabled). */
+  hooksDefault?: boolean;
 }
 
 /** Own implementation of the observed exec RPC envelope and session lifecycle.
@@ -249,7 +251,7 @@ export class ExecRpc {
           const requested = this.validateMcpServers(p.mcpServers ?? {});
           this.mcpServers = { ...configured, ...requested };
           this.catalog = undefined;
-          if (p.hooks === true) {
+          if ((p.hooks ?? this.options.hooksDefault) === true) {
             const policy = resolveExecutionPolicy({ ...this.options.agent, autonomy: this.autonomy });
             this.hooks = this.options.agent?.hooks instanceof Hooks ? this.options.agent.hooks : await new Hooks(this.cwd, this.sessionId, policy, this.event).load();
             this.hooks.restrictWorkspace(this.mode === 'spec');
@@ -345,7 +347,7 @@ export class ExecRpc {
           this.messages = state.messages.filter(m => m.role !== 'system').map((m, index) => ({ id: `saved-${index}`, role: m.role,
             content: typeof m.content === 'string' ? [{ type: 'text', text: m.content }] : m.content ?? [] }));
           if (p.hooks !== undefined && typeof p.hooks !== 'boolean') throw new RpcError(-32602, 'params.hooks must be a boolean');
-          if (p.hooks === true) {
+          if ((p.hooks ?? this.options.hooksDefault) === true) {
             const policy = resolveExecutionPolicy({ ...this.options.agent, autonomy: this.autonomy });
             this.hooks = await new Hooks(this.cwd, sessionId, policy, this.event).load();
             this.hooks.restrictWorkspace(this.mode === 'spec');
