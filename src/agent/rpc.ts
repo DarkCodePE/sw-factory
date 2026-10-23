@@ -5,6 +5,8 @@ import { abortable } from './engine.ts';
 import { SessionStore } from './session.ts';
 import { builtinTools } from './tools.ts';
 import { describeTool, selectToolNames } from './catalog.ts';
+import { Hooks } from './hooks.ts';
+import { authenticateMcpServer, McpManager, McpRuntime, type McpConfig } from './mcp.ts';
 import type { AgentEvent, AgentOptions, Autonomy, InteractionMode, ModelProvider, PermissionRequest, ToolContext, UserAnswers } from './types.ts';
 
 const ENVELOPE = { jsonrpc: '2.0', factoryApiVersion: '1.0.0', factoryProtocolVersion: '1.269.0' };
@@ -21,7 +23,7 @@ export interface RpcOptions {
   sessionDir: string;
   defaultModelId: string;
   providers: Record<string, ModelProvider>;
-  agent?: Pick<AgentOptions, 'allowExitSpecMode' | 'requireReadBeforeEdit' | 'settingsPolicy' | 'permissionMode' | 'sandbox' | 'networkPolicy' | 'timeoutMs' | 'maxTurns' | 'maxContextTokens' | 'tools' | 'beforeTool' | 'afterTool' | 'permissionHandler' | 'askUserHandler' | 'mcpServers'>;
+  agent?: Pick<AgentOptions, 'allowExitSpecMode' | 'requireReadBeforeEdit' | 'settingsPolicy' | 'permissionMode' | 'sandbox' | 'networkPolicy' | 'timeoutMs' | 'maxTurns' | 'maxContextTokens' | 'tools' | 'beforeTool' | 'afterTool' | 'permissionHandler' | 'askUserHandler' | 'mcpServers' | 'hooks'>;
   signal?: AbortSignal;
 }
 
@@ -44,6 +46,11 @@ export class ExecRpc {
   private turnId?: string;
   private seenIds = new Set<string>();
   private catalog?: Awaited<ReturnType<typeof listConfiguredToolCatalog>>;
+  private hooks?: Hooks;
+  private hookContext: string[] = [];
+  private mcpServers: Record<string, McpConfig> = {};
+  private mcpManager?: McpManager;
+  private mcpAuth = new Map<string, Promise<void>>();
   private pending = new Map<string, { resolve(value: unknown): void; reject(error: Error): void }>();
   closed = false;
   constructor(private readonly options: RpcOptions, private readonly write: (frame: unknown) => void) {
@@ -97,9 +104,56 @@ export class ExecRpc {
   private idle() { if (this.active) throw new RpcError(-32000, 'Session is busy'); }
   private initialized() { if (!this.sessionId) throw new RpcError(-32000, 'Session is not initialized'); }
   private async toolCatalog() {
-    if (!this.catalog) this.catalog = await listConfiguredToolCatalog({ ...this.options.agent, prompt: '', cwd: this.cwd,
+    if (!this.catalog) this.catalog = await listConfiguredToolCatalog({ ...this.options.agent, hooks: undefined, mcpServers: this.mcpServers, prompt: '', cwd: this.cwd,
       provider: this.options.providers[this.modelId]!, ...this.executionOptions(), settingsPolicy: this.settingsPolicy() }, this.options.signal);
     return this.catalog;
+  }
+  private validateMcpServers(value: unknown): Record<string, McpConfig> {
+    if (!object(value) || Object.keys(value).length > 8) throw new RpcError(-32602, 'Invalid mcpServers: expected at most 8 named servers');
+    const result: Record<string, McpConfig> = {};
+    const allowed = new Set(['command', 'args', 'env', 'allowNetwork', 'url', 'headers', 'type', 'connectTimeout', 'disabled', 'readOnlyTools', 'readPaths', 'timeoutMs', 'oauth']);
+    for (const [name, raw] of Object.entries(value)) {
+      if (!/^[\w-]{1,32}$/.test(name) || !object(raw) || Object.keys(raw).some(key => !allowed.has(key))) throw new RpcError(-32602, `Invalid MCP server configuration: ${name}`);
+      const config = raw as unknown as McpConfig;
+      const hasCommand = typeof config.command === 'string' && !!config.command;
+      const hasUrl = typeof config.url === 'string' && !!config.url;
+      if (hasCommand === hasUrl || config.type !== undefined && !['stdio', 'http', 'sse'].includes(config.type) ||
+          config.disabled !== undefined && typeof config.disabled !== 'boolean' ||
+          config.connectTimeout !== undefined && (!Number.isSafeInteger(config.connectTimeout) || config.connectTimeout < 1 || config.connectTimeout > 120_000) ||
+          config.timeoutMs !== undefined && (!Number.isSafeInteger(config.timeoutMs) || config.timeoutMs < 1 || config.timeoutMs > 2_147_483_647) ||
+          config.readOnlyTools !== undefined && (!Array.isArray(config.readOnlyTools) || config.readOnlyTools.some(x => typeof x !== 'string')) ||
+          config.readPaths !== undefined && (!Array.isArray(config.readPaths) || config.readPaths.some(x => typeof x !== 'string'))) throw new RpcError(-32602, `Invalid MCP server configuration: ${name}`);
+      if (hasCommand && (config.url !== undefined || config.args !== undefined && (!Array.isArray(config.args) || config.args.length > 128 || config.args.some(x => typeof x !== 'string' || x.includes('\0'))) ||
+          config.env !== undefined && (!object(config.env) || Object.entries(config.env).some(([k, v]) => !k || /[=\0]/.test(k) || typeof v !== 'string' || v.includes('\0'))))) throw new RpcError(-32602, `Invalid MCP stdio configuration: ${name}`);
+      if (hasUrl) {
+        let url: URL;
+        try { url = new URL(config.url!); } catch { throw new RpcError(-32602, `Invalid MCP URL: ${name}`); }
+        if (!['http:', 'https:'].includes(url.protocol) || url.username || url.password || url.hash || config.command !== undefined ||
+            config.headers !== undefined && (!object(config.headers) || Object.values(config.headers).some(v => typeof v !== 'string'))) throw new RpcError(-32602, `Invalid MCP HTTP configuration: ${name}`);
+      }
+      result[name] = config;
+    }
+    return result;
+  }
+  private mcpStatus() {
+    const configured = new Set(Object.keys(this.mcpServers));
+    const servers = McpRuntime.status().filter(status => configured.has(status.server));
+    return { servers, summary: { connected: servers.filter(s => s.state === 'connected').length,
+      failed: servers.filter(s => s.state === 'failed').length, needsAuth: servers.filter(s => s.state === 'needs authentication').length } };
+  }
+  private async discoverMcpTools() {
+    this.mcpManager ??= new McpManager(this.mcpServers, { cwd: this.cwd,
+      signal: this.options.signal ?? new AbortController().signal, autonomy: this.autonomy, interactionMode: this.mode,
+      sandbox: this.options.agent?.sandbox ?? 'required' });
+    return this.mcpManager.tools();
+  }
+  private async mcpTools() {
+    const tools = await this.discoverMcpTools();
+    return tools.flatMap(item => {
+      const fullName = item.schema.function.name, split = fullName.indexOf('___');
+      if (split < 1) return [];
+      return [{ server: fullName.slice(0, split), name: fullName.slice(split + 3), description: item.schema.function.description ?? '' }];
+    });
   }
   private async call(method: string, params: unknown, signal: AbortSignal) {
     signal.throwIfAborted();
@@ -161,6 +215,7 @@ export class ExecRpc {
       this.notify({ type: 'tool_result', toolUseId: event.id, messageId: crypto.randomUUID(), isError: event.isError, content: typeof event.value === 'string' ? event.value : JSON.stringify(event.value) });
     } else if (event.type === 'compaction') this.notify({ type: 'context_compacted', estimatedTokens: event.estimatedTokens });
     else if (event.type === 'network_permission') this.notify({ type: 'fab_network_permission', toolUseId: event.toolUseId, policy: event.policy, decision: event.decision, access: event.access, scope: event.scope });
+    else if (event.type === 'hook') this.notify({ type: 'hook_executed', event: event.event, command: event.command, exitCode: event.exitCode, decision: event.decision, durationMs: event.durationMs });
     else if (event.type.startsWith('mission_')) { const { sessionId, ...notification } = event; this.notify(notification); }
   };
   async accept(value: unknown): Promise<void> {
@@ -187,14 +242,63 @@ export class ExecRpc {
         case 'droid.initialize_session': {
           this.idle(); if (this.sessionId) throw new RpcError(-32000, 'Session already initialized');
           required(p, 'machineId');
+          if (p.hooks !== undefined && typeof p.hooks !== 'boolean') throw new RpcError(-32602, 'params.hooks must be a boolean');
           const cwd = await realpath(p.cwd ?? this.options.cwd); this.update(p); this.cwd = cwd;
           this.sessionId = crypto.randomUUID();
+          const configured = this.validateMcpServers(this.options.agent?.mcpServers ?? {});
+          const requested = this.validateMcpServers(p.mcpServers ?? {});
+          this.mcpServers = { ...configured, ...requested };
+          this.catalog = undefined;
+          if (p.hooks === true) {
+            const policy = resolveExecutionPolicy({ ...this.options.agent, autonomy: this.autonomy });
+            this.hooks = this.options.agent?.hooks instanceof Hooks ? this.options.agent.hooks : await new Hooks(this.cwd, this.sessionId, policy, this.event).load();
+            this.hooks.restrictWorkspace(this.mode === 'spec');
+            const opening = await this.hooks.start(this.options.signal ?? new AbortController().signal);
+            if (opening.block || opening.deny) throw new RpcError(-32000, opening.reason ?? 'Session blocked by hook');
+            this.hookContext.push(...opening.context);
+          }
           this.notify({ type: 'settings_updated', settings: this.settings() });
           this.response(id, { sessionId: this.sessionId, hostId: p.machineId, session: { messages: [] }, settings: this.settings(), availableModels: this.models() });
           return;
         }
         case 'droid.list_models': this.response(id, { models: this.models() }); return;
         case 'droid.list_tools': this.response(id, { tools: (await this.toolCatalog()).map(t => describeTool(t, this.autonomy, this.mode, selectToolNames(this.only), selectToolNames(this.removed), resolveExecutionPolicy(this.executionOptions()))) }); return;
+        case 'droid.list_mcp_servers': {
+          this.initialized();
+          if (Object.keys(this.mcpServers).length) { try { await this.discoverMcpTools(); } catch { /* Status still reports failed or auth-required servers. */ } }
+          this.response(id, this.mcpStatus()); return;
+        }
+        case 'droid.list_mcp_tools': {
+          this.initialized();
+          try { this.response(id, await this.mcpTools()); }
+          catch (error) { if (this.mcpStatus().servers.some(s => s.state === 'needs authentication' || s.state === 'failed')) this.response(id, []); else throw error; }
+          return;
+        }
+        case 'droid.authenticate_mcp_server': {
+          this.initialized(); const serverName = required(p, 'serverName');
+          if (!Object.hasOwn(this.mcpServers, serverName)) throw new RpcError(-32602, `Unknown MCP server: ${serverName}`);
+          let status = McpRuntime.status().find(s => s.server === serverName);
+          if (status?.state === 'connected') throw new RpcError(-32602, `MCP server "${serverName}" does not need authentication`);
+          if (!status?.authorizeUrl) {
+            try { await this.discoverMcpTools(); } catch { /* OAuth startup records needs-auth status and URL. */ }
+            status = McpRuntime.status().find(s => s.server === serverName);
+          }
+          if (!status || status.state !== 'needs authentication' || !status.authorizeUrl) throw new RpcError(-32602, `MCP server "${serverName}" does not need authentication`);
+          const authorizeUrl = status.authorizeUrl;
+          this.notify({ type: 'mcp_auth_required', serverName, authorizeUrl });
+          if (!this.mcpAuth.has(serverName)) {
+            const work = authenticateMcpServer(serverName).then(async () => {
+              this.catalog = undefined;
+              try { await this.discoverMcpTools(); } catch { /* Status records any reconnect failure. */ }
+              const current = McpRuntime.status().find(s => s.server === serverName);
+              this.notify({ type: 'mcp_server_status_changed', serverName, status: current });
+            }).catch(error => this.notify({ type: 'mcp_server_status_changed', serverName,
+              status: McpRuntime.status().find(s => s.server === serverName), error: error instanceof Error ? error.message : String(error) }))
+              .finally(() => this.mcpAuth.delete(serverName));
+            this.mcpAuth.set(serverName, work);
+          }
+          this.response(id, { authorizeUrl }); return;
+        }
         case 'droid.update_session_settings':
           this.initialized(); this.idle(); this.update(p); this.notify({ type: 'settings_updated', requestId: id, settings: this.settings() }); this.response(id, {}); return;
         case 'droid.add_user_message': {
@@ -208,7 +312,8 @@ export class ExecRpc {
           const active = { controller, done: Promise.resolve() }; this.active = active;
           active.done = (async () => {
             try {
-              const result = await runCodingAgent({ ...this.options.agent, cwd: this.cwd, prompt: text,
+              const prompt = this.hookContext.length ? `${text}\n\nHook context (data): ${this.hookContext.splice(0).join('\n')}` : text;
+              const result = await runCodingAgent({ ...this.options.agent, cwd: this.cwd, prompt, hooks: this.hooks, mcpServers: this.mcpServers,
                 permissionHandler: this.options.agent?.permissionHandler ?? this.permission,
                 askUserHandler: this.options.agent?.askUserHandler ?? this.askUser,
                 sessionDir: this.options.sessionDir, ...(this.persisted ? { sessionId: this.sessionId } : { newSessionId: this.sessionId }),
@@ -239,10 +344,21 @@ export class ExecRpc {
           this.cwd = state.cwd; this.modelId = model; this.sessionId = sessionId; this.persisted = true;
           this.messages = state.messages.filter(m => m.role !== 'system').map((m, index) => ({ id: `saved-${index}`, role: m.role,
             content: typeof m.content === 'string' ? [{ type: 'text', text: m.content }] : m.content ?? [] }));
+          if (p.hooks !== undefined && typeof p.hooks !== 'boolean') throw new RpcError(-32602, 'params.hooks must be a boolean');
+          if (p.hooks === true) {
+            const policy = resolveExecutionPolicy({ ...this.options.agent, autonomy: this.autonomy });
+            this.hooks = await new Hooks(this.cwd, sessionId, policy, this.event).load();
+            this.hooks.restrictWorkspace(this.mode === 'spec');
+            const opening = await this.hooks.start(this.options.signal ?? new AbortController().signal);
+            if (opening.block || opening.deny) throw new RpcError(-32000, opening.reason ?? 'Session blocked by hook');
+            this.hookContext.push(...opening.context);
+          }
           this.response(id, { sessionId, session: { messages: this.messages }, settings: this.settings(), availableModels: this.models() }); return;
         }
         case 'droid.close_session':
           this.active?.controller.abort(new Error('Session closed')); await this.active?.done;
+          await this.hooks?.close(); this.hooks = undefined;
+          await this.mcpManager?.close(); this.mcpManager = undefined;
           this.closed = true; this.response(id, {}); return;
         default: throw new RpcError(-32601, 'Method not found');
       }
@@ -252,7 +368,7 @@ export class ExecRpc {
     }
   }
   parseError() { this.response(null, undefined, { code: -32700, message: 'Parse error' }); }
-  async shutdown() { this.active?.controller.abort(new Error('RPC transport closed')); await this.active?.done; this.closed = true; }
+  async shutdown() { this.active?.controller.abort(new Error('RPC transport closed')); await this.active?.done; await this.hooks?.close(); this.hooks = undefined; await this.mcpManager?.close(); this.mcpManager = undefined; this.closed = true; }
 }
 
 export async function serveExecRpc(input: AsyncIterable<Uint8Array>, write: (line: string) => void, opts: RpcOptions) {

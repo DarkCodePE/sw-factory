@@ -7,6 +7,9 @@
   "bin": {
     "fab": "./src/cli.ts"
   },
+  "exports": {
+    "./sdk": "./src/sdk/index.ts"
+  },
   "scripts": {
     "fab": "bun ./src/cli.ts",
     "test": "bun test tests",
