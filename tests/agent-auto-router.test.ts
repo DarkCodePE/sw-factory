@@ -26,7 +26,7 @@ const sig = () => new AbortController().signal;
 function setup(opts: { providers?: Record<string, ModelProvider>; decision?: Partial<RoutingDecision>; surface?: RoutingContext['surface'] } = {}) {
   const events: AgentEvent[] = [], contexts: RoutingContext[] = [];
   const providers = { cls: stub('cls'), cheap: stub('cheap'), mid: stub('mid'), big: stub('big'), ...opts.providers };
-  const route = async (_c: AutoRouterConfig, _p: ModelProvider, ctx: RoutingContext): Promise<RoutingDecision> => {
+  const route = async (_c: AutoRouterConfig, _p: ModelProvider | undefined, ctx: RoutingContext): Promise<RoutingDecision> => {
     contexts.push(ctx);
     const base = { modelId: ctx.imagesPresent ? 'mid' : 'cheap', reason: 'routine' as const, fallbacks: ['mid', 'big'].filter(m => m !== (ctx.imagesPresent ? 'mid' : 'cheap')),
       scores: {}, classifierMs: 1, ...opts.decision };

@@ -17,13 +17,39 @@ export function validateAutoRouterConfig(raw: unknown, knownModelIds: Set<string
 
   const obj = raw as Record<string, unknown>;
 
-  if (typeof obj.classifierModel !== 'string' || !obj.classifierModel.trim()) {
-    throw new Error('classifierModel must be a non-empty string');
+  let classifier: AutoRouterConfig['classifier'];
+  if (obj.classifier !== undefined) {
+    if (!obj.classifier || typeof obj.classifier !== 'object' || Array.isArray(obj.classifier)) {
+      throw new Error('classifier must be an object');
+    }
+    const rawClassifier = obj.classifier as Record<string, unknown>;
+    if (rawClassifier.kind !== 'jev') throw new Error("classifier.kind must be 'jev'");
+    if (rawClassifier.model !== undefined && (typeof rawClassifier.model !== 'string' || !rawClassifier.model.trim())) {
+      throw new Error('classifier.model must be a non-empty string');
+    }
+    if (rawClassifier.baseUrl !== undefined && (typeof rawClassifier.baseUrl !== 'string' || !rawClassifier.baseUrl.trim())) {
+      throw new Error('classifier.baseUrl must be a non-empty string');
+    }
+    if (rawClassifier.timeoutMs !== undefined && (typeof rawClassifier.timeoutMs !== 'number' || !Number.isFinite(rawClassifier.timeoutMs) || rawClassifier.timeoutMs <= 0)) {
+      throw new Error('classifier.timeoutMs must be a positive number');
+    }
+    classifier = {
+      kind: 'jev',
+      ...(typeof rawClassifier.model === 'string' ? { model: rawClassifier.model.trim() } : {}),
+      ...(typeof rawClassifier.baseUrl === 'string' ? { baseUrl: rawClassifier.baseUrl.trim() } : {}),
+      ...(typeof rawClassifier.timeoutMs === 'number' ? { timeoutMs: rawClassifier.timeoutMs } : {}),
+    };
   }
-  const classifierModel = obj.classifierModel.trim();
 
-  if (!knownModelIds.has(classifierModel)) {
-    throw new Error(`classifierModel "${classifierModel}" is unknown`);
+  let classifierModel: string | undefined;
+  if (!classifier) {
+    if (typeof obj.classifierModel !== 'string' || !obj.classifierModel.trim()) {
+      throw new Error('classifierModel must be a non-empty string');
+    }
+    classifierModel = obj.classifierModel.trim();
+    if (!knownModelIds.has(classifierModel)) {
+      throw new Error(`classifierModel "${classifierModel}" is unknown`);
+    }
   }
 
   if (!Array.isArray(obj.candidates) || obj.candidates.length === 0) {
@@ -168,7 +194,7 @@ export function validateAutoRouterConfig(raw: unknown, knownModelIds: Set<string
 
   return {
     candidates,
-    classifierModel,
+    ...(classifier ? { classifier } : { classifierModel }),
     threshold,
     routineShare,
     classifierTimeoutMs,

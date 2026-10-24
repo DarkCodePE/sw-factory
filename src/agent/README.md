@@ -509,6 +509,8 @@ Opt-in en exec con --hooks o settings hooks.enabled=true; archivos `$FABRICA_HOM
     { "modelId": "potente", "description": "refactors y depuración difícil", "relativeCost": 4, "supportsImages": true, "upgradeTo": "potente" } ] } }
 ```
 
+Para usar Jev como clasificador remoto, sustituye `classifierModel` por `"classifier": { "kind": "jev" }` y define `JEV_API_KEY` o `TYPESAFE_API_KEY` en el entorno.
+
 - **Decisión fija:** se toma en el primer turno y se conserva. Solo cambia por rotación ante error, un turno con imágenes cuyo modelo no las soporta (`vision`) o `UpgradeSessionModel` (`self_upgrade`).
 - **Errores:** 429/5xx/inactividad se reintentan `retriesPerModel` veces con espera exponencial y jitter, y luego pasan al siguiente respaldo (`retry_exhausted`); 400/404 rotan al instante (`model_specific`). Longitud de contexto, autenticación y abort se propagan. Un corte tras emitir texto es un error del turno. Agotados todos los modelos, el error no es reintentable.
 - **Escalado:** `UpgradeSessionModel` solo existe en sesiones `auto` mientras haya un escalón superior.

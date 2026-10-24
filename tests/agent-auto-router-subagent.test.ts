@@ -62,7 +62,7 @@ test('auto subagent classifies independently and emits only tagged routing event
   } };
   const childModel: ModelProvider = { id: 'child-model', async complete() { return done('HIJO'); } };
   const providers = { classifier: { id: 'classifier', async complete() { return done(); } }, 'parent-model': parentModel, 'child-model': childModel };
-  const route = async (_config: AutoRouterConfig, _classifier: ModelProvider, ctx: RoutingContext): Promise<RoutingDecision> => {
+  const route = async (_config: AutoRouterConfig, _classifier: ModelProvider | undefined, ctx: RoutingContext): Promise<RoutingDecision> => {
     contexts.push(ctx);
     return { modelId: ctx.isSubagent ? 'child-model' : 'parent-model', reason: 'routine', fallbacks: [], scores: {}, classifierMs: 1 };
   };

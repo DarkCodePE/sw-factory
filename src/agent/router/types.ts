@@ -20,7 +20,9 @@ export interface RouterCandidate {
 export interface AutoRouterConfig {
   candidates: RouterCandidate[];
   /** Configured model used to score candidates. Must not be routed itself. */
-  classifierModel: string;
+  classifierModel?: string;
+  /** External decision classifier. When set, classifierModel is not used. */
+  classifier?: { kind: 'jev'; model?: string; baseUrl?: string; timeoutMs?: number };
   /** Score a candidate needs to count as able to do the task. Default 0.7. */
   threshold?: number;
   /** Share of candidates that must clear the threshold to call the task routine. Default 0.75. */

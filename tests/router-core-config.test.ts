@@ -65,6 +65,21 @@ describe('validateAutoRouterConfig', () => {
     expect(valid.retriesPerModel).toBe(5);
   });
 
+  test('Jev classifier replaces classifierModel and accepts optional settings', () => {
+    const valid = validateAutoRouterConfig({
+      classifier: { kind: 'jev', model: 'jev-latest', baseUrl: 'https://example.test', timeoutMs: 2500 },
+      candidates: baseCandidates,
+    }, known);
+    expect(valid.classifier).toEqual({ kind: 'jev', model: 'jev-latest', baseUrl: 'https://example.test', timeoutMs: 2500 });
+    expect(valid.classifierModel).toBeUndefined();
+  });
+
+  test('validates Jev classifier configuration', () => {
+    for (const classifier of [null, [], { kind: 'other' }, { kind: 'jev', model: '' }, { kind: 'jev', baseUrl: '' }, { kind: 'jev', timeoutMs: 0 }]) {
+      expect(() => validateAutoRouterConfig({ classifier, candidates: baseCandidates }, known)).toThrow(/classifier/i);
+    }
+  });
+
   test('throws on non-object config', () => {
     expect(() => validateAutoRouterConfig(null, known)).toThrow(/must be an object/i);
     expect(() => validateAutoRouterConfig([], known)).toThrow(/must be an object/i);

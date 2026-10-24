@@ -5,7 +5,7 @@ import { abortable } from '../cancellation.ts';
 import * as routerCore from '../router/index.ts';
 
 /** Signatures fixed by the router contract; declared here so this file compiles before the core is merged. */
-export type RouteFn = (config: AutoRouterConfig, classifierProvider: ModelProvider, ctx: RoutingContext, signal: AbortSignal) => Promise<RoutingDecision>;
+export type RouteFn = (config: AutoRouterConfig, classifierProvider: ModelProvider | undefined, ctx: RoutingContext, signal: AbortSignal) => Promise<RoutingDecision>;
 export type UpgradeFn = (current: string, cands: RouterCandidate[], available: Set<string>) => string | undefined;
 export interface RouterCore { route: RouteFn; upgradeTarget: UpgradeFn; validateAutoRouterConfig: (raw: unknown, knownModelIds: Set<string>) => AutoRouterConfig }
 
@@ -119,8 +119,8 @@ export function createAutoProvider(opts: AutoProviderOptions): AutoProvider {
   };
 
   async function decide(ctx: RoutingContext, signal: AbortSignal): Promise<RoutingDecision> {
-    const classifier = providers[config.classifierModel];
-    if (!classifier) throw new ProviderError(`Auto router classifier model '${config.classifierModel}' is not configured`);
+    const classifier = config.classifier?.kind === 'jev' ? undefined : providers[config.classifierModel ?? ''];
+    if (!config.classifier && !classifier) throw new ProviderError(`Auto router classifier model '${config.classifierModel}' is not configured`);
     let decision: RoutingDecision;
     try {
       decision = await opts.route(config, classifier, ctx, signal);

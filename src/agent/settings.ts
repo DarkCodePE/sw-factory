@@ -357,9 +357,10 @@ export function configuredProviders(
     const config = settings.autoRouter;
     const resolve = (id: string) => resolveModelAlias(id, settings.modelAliases);
     // Candidates and classifier may be named by alias; the router sees configured IDs only.
-    const normalized: AutoRouterConfig = { ...config, classifierModel: resolve(config.classifierModel),
+    const normalized: AutoRouterConfig = { ...config, ...(config.classifierModel ? { classifierModel: resolve(config.classifierModel) } : {}),
       candidates: config.candidates.map(c => ({ ...c, modelId: resolve(c.modelId), ...(c.upgradeTo ? { upgradeTo: resolve(c.upgradeTo) } : {}) })) };
-    for (const id of [normalized.classifierModel, ...normalized.candidates.map(c => c.modelId)]) {
+    const referencedModels = [...(normalized.classifierModel ? [normalized.classifierModel] : []), ...normalized.candidates.map(c => c.modelId)];
+    for (const id of referencedModels) {
       if (!Object.hasOwn(providers, id)) throw new Error(`autoRouter references unconfigured model '${id}'`);
     }
     providers[AUTO_MODEL_ID] = createAutoProvider({ config: normalized, providers, ...core, surface: 'exec', onEvent });

@@ -1,11 +1,13 @@
 import type { ModelProvider } from '../types.ts';
 import { classify } from './classifier.ts';
+import { classifyWithJev } from './jev.ts';
 import { eligibleCandidates, selectModel } from './select.ts';
 import type { AutoRouterConfig, RoutingContext, RoutingDecision } from './types.ts';
 
 export * from './types.ts';
 export * from './config.ts';
 export * from './classifier.ts';
+export * from './jev.ts';
 export * from './select.ts';
 export * from './ladder.ts';
 
@@ -21,7 +23,7 @@ export * from './ladder.ts';
  */
 export async function route(
   config: AutoRouterConfig,
-  classifierProvider: ModelProvider,
+  classifierProvider: ModelProvider | undefined,
   ctx: RoutingContext,
   signal: AbortSignal,
 ): Promise<RoutingDecision> {
@@ -46,7 +48,29 @@ export async function route(
   // Classify multiple candidates
   const timeoutMs = config.classifierTimeoutMs ?? 10_000;
   const t0 = Date.now();
-  const classification = await classify(classifierProvider, eligible, ctx, { timeoutMs, signal });
+  let classification;
+  if (config.classifier?.kind === 'jev') {
+    const apiKey = process.env.JEV_API_KEY ?? process.env.TYPESAFE_API_KEY;
+    if (!apiKey) {
+      if (!warnedMissingJevKey) {
+        warnedMissingJevKey = true;
+        console.warn('Auto router Jev classifier unavailable: set JEV_API_KEY or TYPESAFE_API_KEY to enable it.');
+      }
+      classification = undefined;
+    } else {
+      classification = await classifyWithJev(eligible, ctx, {
+        apiKey,
+        model: config.classifier.model,
+        baseUrl: config.classifier.baseUrl,
+        timeoutMs: config.classifier.timeoutMs ?? timeoutMs,
+        signal,
+      });
+    }
+  } else {
+    classification = classifierProvider
+      ? await classify(classifierProvider, eligible, ctx, { timeoutMs, signal })
+      : undefined;
+  }
   const classifierMs = Date.now() - t0;
 
   const decision = selectModel(eligible, classification?.scores, {
@@ -61,3 +85,5 @@ export async function route(
     classifierMs,
   };
 }
+
+let warnedMissingJevKey = false;
