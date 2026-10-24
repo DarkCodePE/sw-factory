@@ -7,6 +7,7 @@ import { fetchUrlTool, parseFetch } from './fetch-url.ts';
 import { sessionTools } from './session-tools.ts';
 import { parsePatch } from './patch.ts';
 import { abortable } from './cancellation.ts';
+import { isAutoProvider } from './providers/auto.ts';
 import { readWorkspaceFile } from './files.ts';
 import { formatAnswers, parseQuestionnaire, permissionRequest } from './interaction.ts';
 import { ToolScheduler } from './scheduler.ts';
@@ -69,6 +70,7 @@ export class ToolRuntime {
     const yolo = context.executionPolicy?.permissionMode === 'yolo';
     const owned = this.owned;
     const available = (name: string) => (!opts.onlyTools || opts.onlyTools.includes(name)) && !opts.removeTools?.includes(name) &&
+      (name !== 'UpgradeSessionModel' || isAutoProvider(opts.provider) && opts.provider.canUpgrade()) &&
       (name !== 'ExitSpecMode' || context.interactionMode === 'spec' && opts.allowExitSpecMode !== false && !opts.missionWorker);
     this.available = available;
     const settingsPolicy = Object.freeze({
@@ -86,6 +88,16 @@ export class ToolRuntime {
     add(fetchUrlTool());
     for (const t of sessionTools(opts, context, settingsPolicy, () => { this.exitQueued = true; }, state.id ?? '')) add(t);
     for (const t of opts.tools ?? []) add(t);
+    const auto = opts.provider;
+    if (isAutoProvider(auto)) {
+      add(tool('UpgradeSessionModel', 'read', {}, [], async () => {
+        const moved = auto.upgrade();
+        if (!moved) throw new Error('No higher model tier is available');
+        return { from: moved.from, to: moved.to, note: 'The next model turn runs on the higher tier.' };
+      }, 'Move this session to the next more capable (and more expensive) model for the rest of the session. ' +
+        'Call it only when the current model has clearly stalled: the same step failed repeatedly, it keeps misreading the code, or the task needs deeper reasoning than it shows. ' +
+        'Do not call it for routine work or after a single failure.'));
+    }
     const maxProcesses = limits.maxBackgroundProcesses ?? opts.maxBackgroundProcesses ?? opts.subagents?.maxProcessConcurrency ?? 4;
     const maxOutputBytes = limits.maxProcessOutputBytes ?? opts.maxProcessOutputBytes ?? opts.subagents?.maxProcessOutputBytes ?? 1024 * 1024;
     const tasks = new TaskManager(opts, context, lineage, runChild, limits.maxDepth, limits.agentConcurrency, maxProcesses, maxOutputBytes, opts.sessionDir, state);

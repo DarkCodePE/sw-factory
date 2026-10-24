@@ -1,3 +1,4 @@
+import { isAutoProvider, type AutoProvider } from '../agent/providers/auto.ts';
 import { validateSettingsChanges, type SettingsPolicy, type SettingsProposal } from '../agent/staged-settings.ts';
 import { resolveExecutionPolicy, scopedExecutionOptions, YOLO_NOTICE, type ExecutionPolicy } from '../agent/execution-policy.ts';
 import { readFile, realpath, stat } from 'node:fs/promises';
@@ -97,8 +98,8 @@ export class ChatController {
   get palette() { return paletteCatalog(this.projectResources); }
   get mcpServers() { return Object.fromEntries(Object.entries(this.settings.mcpServers ?? {}).filter(([name]) => !this.disabledMcp.has(name))); }
   print(value: unknown) { this.io.write(terminalText(value) + '\n'); }
-  status() { return `${this.yoloAuthorized ? (this.config.mode === 'spec' || this.agentExitedSpec) ? 'YOLO suspendido · sandbox requerido · sin red · ' : YOLO_NOTICE + ' · ' : ''}${this.config.model} (${this.config.reasoning ?? 'predeterminado'}) · ${this.config.mode} · auto ${this.executionPolicy.effectiveAutonomy} · red ${this.executionOptions().networkPolicy ?? 'auto'} · ${this.cwd} · sesión ${this.sessionId ?? '(nueva)'}`; }
-  get statusState(): StatusState { return { model: this.config.model, mode: this.config.mode, autonomy: this.executionPolicy.effectiveAutonomy, permissionMode: this.executionPolicy.permissionMode, yoloSuspended: this.yoloAuthorized && (this.config.mode === 'spec' || this.agentExitedSpec),
+  status() { return `${this.yoloAuthorized ? (this.config.mode === 'spec' || this.agentExitedSpec) ? 'YOLO suspendido · sandbox requerido · sin red · ' : YOLO_NOTICE + ' · ' : ''}${this.modelShown} (${this.config.reasoning ?? 'predeterminado'}) · ${this.config.mode} · auto ${this.executionPolicy.effectiveAutonomy} · red ${this.executionOptions().networkPolicy ?? 'auto'} · ${this.cwd} · sesión ${this.sessionId ?? '(nueva)'}`; }
+  get statusState(): StatusState { return { model: this.modelShown, mode: this.config.mode, autonomy: this.executionPolicy.effectiveAutonomy, permissionMode: this.executionPolicy.permissionMode, yoloSuspended: this.yoloAuthorized && (this.config.mode === 'spec' || this.agentExitedSpec),
     inputTokens: this.tokens.inputTokens + this.turnUsage.inputTokens, outputTokens: this.tokens.outputTokens + this.turnUsage.outputTokens,
     contextTokens: this.contextTokens, maxContextTokens: this.options.agent?.maxContextTokens ?? 32000, reasoning: this.config.reasoning, modelLabel: this.modelLabel,
     missionSummary: this.missionTracker.summary,
@@ -132,8 +133,15 @@ export class ChatController {
     const configured = configuredProviders({ ...this.settings, modelId: config.model }, {
       model: config.model, baseUrl: process.env.FABRICA_LLM_BASE_URL, apiKey: process.env.FABRICA_LLM_API_KEY, reasoningEffort: config.reasoning,
     });
-    return configured.providers[configured.defaultModelId]!;
+    const provider = configured.providers[configured.defaultModelId]!;
+    if (!isAutoProvider(provider)) { this.autoProvider = undefined; return provider; }
+    // One auto provider per chat so the routed model stays fixed across turns.
+    provider.setSurface('chat');
+    return this.autoProvider ??= provider;
   }
+  private autoProvider?: AutoProvider;
+  /** `auto → model` once the router has chosen; plain model id otherwise. */
+  private get modelShown() { const now = this.autoProvider?.currentModelId; return this.config.model === 'auto' && now ? `auto → ${now}` : this.config.model; }
   async refreshCommands() {
     const catalog = await projectCatalog(this.cwd);
     this.projectResources = catalog.resources; this.customNames = catalog.resources.filter(r => !commandFor(r.name.toLowerCase())).map(r => r.name.toLowerCase());
@@ -169,6 +177,7 @@ export class ChatController {
     }
     const previous = this.config.model; this.config.model = id;
     try { this.provider(); } catch (e) { this.config.model = previous; throw e; }
+    this.autoProvider = undefined;
     delete this.savedOverrides.model; this.persist(); this.print(this.status());
   }
   private requireSession() { if (!this.sessionId) throw new Error('No hay una sesión guardada; envía primero una tarea'); return this.sessionId; }
@@ -242,6 +251,13 @@ export class ChatController {
         if (this.config.autonomy !== autonomy && !Object.hasOwn(this.savedOverrides, 'autonomy')) this.savedOverrides.autonomy = this.config.autonomy;
         this.config.autonomy = autonomy;
         this.agentExitedSpec = true; this.config.mode = 'auto'; this.print('Modo auto para el próximo turno; autonomía conservada.');
+        this.io.update?.(this.statusState);
+      } else if (event.type === 'model_routed' && !side) {
+        const d = event.decision as { modelId: string; reason: string; fallbacks: string[] };
+        this.print(`Modelo elegido: ${d.modelId} (${d.reason})${d.fallbacks.length ? ` · respaldos: ${d.fallbacks.join(', ')}` : ''}`);
+        this.io.update?.(this.statusState);
+      } else if (event.type === 'model_transition' && !side) {
+        this.print(`Cambio de modelo: ${event.from} → ${event.to} (${event.source})`);
         this.io.update?.(this.statusState);
       } else if (event.type === 'provider_retry') {
         if (streamed) assistant('', true); streamed = '';

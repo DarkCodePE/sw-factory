@@ -8,6 +8,7 @@ import { ProviderError, estimatedTokens, validateTurn } from './provider.ts';
 import { readWorkspaceFile } from './files.ts';
 import { abortable } from './cancellation.ts';
 import { ToolRuntime } from './registry.ts';
+import { isAutoProvider } from './providers/auto.ts';
 import { McpManager } from './mcp.ts';
 import { networkPolicy } from './network-policy.ts';
 import { AgentBudget, type AgentLineage } from './tasks.ts';
@@ -47,6 +48,8 @@ export async function runCodingAgent(opts: AgentOptions, inherited?: AgentLineag
   if (opts.signal?.aborted) onAbort();
   const emit = (type: Parameters<NonNullable<AgentOptions['onEvent']>>[0]['type'], fields: Record<string, unknown> = {}) =>
     opts.onEvent?.({ type, sessionId: id, ...fields });
+  // An auto provider reports routing decisions through the session's event sink so they carry the session id.
+  if (isAutoProvider(opts.provider)) opts.provider.bindEvents(e => opts.onEvent?.({ ...e, sessionId: id }));
   let executionPolicy: ExecutionPolicy | undefined;
   let timer: ReturnType<typeof setTimeout> | undefined;
   const result = (ok: boolean, text: string, error?: AgentResult['error']): AgentResult => ({

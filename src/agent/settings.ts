@@ -9,6 +9,8 @@ import { createOpenAICompatibleProvider } from './provider.ts';
 import type { AgentEvent, ModelProvider } from './types.ts';
 import { networkPolicy, type NetworkPolicy } from './network-policy.ts';
 import { createRoutedProvider, type FallbackReason } from './providers/router.ts';
+import { AUTO_MODEL_ID, createAutoProvider, lazyRouterCore, loadRouterCore, type RouterCore } from './providers/auto.ts';
+import type { AutoRouterConfig } from './router/types.ts';
 
 export interface ModelRoutingConfig {
   fallback: string[];
@@ -40,6 +42,8 @@ export interface ExecSettings {
   mcpServers?: Record<string, McpConfig>;
   modelAliases?: Record<string, string>;
   modelRouting?: Record<string, ModelRoutingConfig>;
+  /** Candidates and classifier for `modelId: "auto"`. */
+  autoRouter?: AutoRouterConfig;
 }
 
 const object = (v: unknown): v is Record<string, any> => v !== null && typeof v === 'object' && !Array.isArray(v);
@@ -82,12 +86,13 @@ export async function loadExecSettings(path?: string): Promise<ExecSettings> {
       raw.customModels !== undefined && (!Array.isArray(raw.customModels) || raw.customModels.length > 32) ||
       raw.mcpServers !== undefined && !object(raw.mcpServers) ||
       raw.modelAliases !== undefined && !object(raw.modelAliases) ||
-      raw.modelRouting !== undefined && !object(raw.modelRouting)) {
+      raw.modelRouting !== undefined && !object(raw.modelRouting) ||
+      raw.autoRouter !== undefined && !object(raw.autoRouter)) {
     throw new Error('Invalid settings schema');
   }
 
   for (const key of Object.keys(raw)) {
-    if (!['modelId', 'customModels', 'mcpServers', 'streamIdleMs', 'sandboxNetwork', 'worktreeDirectory', 'modelAliases', 'modelRouting'].includes(key)) {
+    if (!['modelId', 'customModels', 'mcpServers', 'streamIdleMs', 'sandboxNetwork', 'worktreeDirectory', 'modelAliases', 'modelRouting', 'autoRouter'].includes(key)) {
       throw new Error(`Unsupported settings field: ${key}`);
     }
   }
@@ -202,6 +207,12 @@ export async function loadExecSettings(path?: string): Promise<ExecSettings> {
     }
   }
 
+  if (settings.autoRouter !== undefined) {
+    const known = new Set(ids);
+    for (const alias of Object.keys(settings.modelAliases ?? {})) known.add(alias);
+    settings.autoRouter = (await loadRouterCore()).validateAutoRouterConfig(settings.autoRouter, known);
+  }
+
   return settings;
 }
 
@@ -224,6 +235,7 @@ export function configuredProviders(
   settings: ExecSettings,
   fallback: { model: string; baseUrl?: string; apiKey?: string; reasoningEffort?: string },
   onEvent?: (event: AgentEvent) => void,
+  core: Pick<RouterCore, 'route' | 'upgradeTarget'> = lazyRouterCore(),
 ): {
   providers: Record<string, ModelProvider>;
   defaultModelId: string;
@@ -277,7 +289,10 @@ export function configuredProviders(
 
   const rawSelected = settings.modelId ?? fallback.model;
   const resolvedSelected = resolveModelAlias(rawSelected, settings.modelAliases);
-  if (!Object.hasOwn(providers, resolvedSelected)) {
+  if (resolvedSelected === AUTO_MODEL_ID && !settings.autoRouter) {
+    throw new Error("Model 'auto' requires an autoRouter section in the settings file");
+  }
+  if (!Object.hasOwn(providers, resolvedSelected) && resolvedSelected !== AUTO_MODEL_ID) {
     if (resolvedSelected.startsWith('custom:')) throw new Error('Unknown configured custom model');
     if (resolvedSelected.startsWith('chatgpt:')) {
       providers[resolvedSelected] = createChatGPTProvider({
@@ -336,6 +351,18 @@ export function configuredProviders(
         providers[alias] = providers[targetId]!;
       }
     }
+  }
+
+  if (settings.autoRouter) {
+    const config = settings.autoRouter;
+    const resolve = (id: string) => resolveModelAlias(id, settings.modelAliases);
+    // Candidates and classifier may be named by alias; the router sees configured IDs only.
+    const normalized: AutoRouterConfig = { ...config, classifierModel: resolve(config.classifierModel),
+      candidates: config.candidates.map(c => ({ ...c, modelId: resolve(c.modelId), ...(c.upgradeTo ? { upgradeTo: resolve(c.upgradeTo) } : {}) })) };
+    for (const id of [normalized.classifierModel, ...normalized.candidates.map(c => c.modelId)]) {
+      if (!Object.hasOwn(providers, id)) throw new Error(`autoRouter references unconfigured model '${id}'`);
+    }
+    providers[AUTO_MODEL_ID] = createAutoProvider({ config: normalized, providers, ...core, surface: 'exec', onEvent });
   }
 
   return { providers, defaultModelId: rawSelected };

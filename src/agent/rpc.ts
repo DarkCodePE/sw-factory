@@ -1,4 +1,5 @@
 import { resolveExecutionPolicy, scopedExecutionOptions, type ExecutionPolicy } from './execution-policy.ts';
+import { isAutoProvider } from './providers/auto.ts';
 import { realpath } from 'node:fs/promises';
 import { listConfiguredToolCatalog, runCodingAgent } from './engine.ts';
 import { abortable } from './engine.ts';
@@ -190,6 +191,11 @@ export class ExecRpc {
       parentId: this.messages.at(-1)?.id ?? 'root' };
     this.messages.push(message); this.notify({ type: 'create_message', message, ...(requestId ? { requestId } : {}) });
   }
+  private rpcProvider(): ModelProvider {
+    const provider = this.options.providers[this.modelId]!;
+    if (isAutoProvider(provider)) provider.setSurface('rpc');
+    return provider;
+  }
   private event = (event: AgentEvent) => {
     if (event.type === 'init') this.notify({ type: 'fab_execution_policy', policy: event.executionPolicy });
     else if (event.type === 'mode_changed') {
@@ -197,6 +203,8 @@ export class ExecRpc {
       this.notify({ type: 'fab_mode_changed', interactionMode: 'auto', autonomyLevel: event.autonomy });
     }
     else if (event.type === 'settings_staged') this.notify({ type: 'fab_settings_staged', proposal: event.proposal });
+    else if (event.type === 'model_routed') this.notify({ type: 'fab_model_routed', decision: event.decision });
+    else if (event.type === 'model_transition') this.notify({ type: 'fab_model_transition', from: event.from, to: event.to, source: event.source, detail: event.detail });
     else if (event.type === 'permission_bypass') this.notify({ type: 'fab_permission_bypass', toolUseId: event.toolUseId, toolName: event.toolName, permissionMode: event.permissionMode });
     else if (event.type === 'assistant_delta') {
       this.assistantId ??= crypto.randomUUID();
@@ -319,7 +327,7 @@ export class ExecRpc {
                 permissionHandler: this.options.agent?.permissionHandler ?? this.permission,
                 askUserHandler: this.options.agent?.askUserHandler ?? this.askUser,
                 sessionDir: this.options.sessionDir, ...(this.persisted ? { sessionId: this.sessionId } : { newSessionId: this.sessionId }),
-                provider: this.options.providers[this.modelId]!, ...this.executionOptions(),
+                provider: this.rpcProvider(), ...this.executionOptions(),
                 settingsPolicy: this.settingsPolicy(),
                 onlyTools: selectToolNames(this.only), removeTools: selectToolNames(this.removed), signal, onEvent: this.event });
               this.persisted = true;
