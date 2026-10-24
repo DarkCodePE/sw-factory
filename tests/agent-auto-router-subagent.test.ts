@@ -41,8 +41,8 @@ test('Task snapshots a tracked file larger than the normal workspace read limit 
   expect((await readFile(join(childCwd, 'large.json'))).byteLength).toBe(1_100_000);
 });
 
-test('auto subagent classifies independently and emits model_routed with its own sessionId', async () => {
-  const cwd = await repo(); let parentTurns = 0, childSessionId = '';
+test('auto subagent classifies independently and emits only tagged routing events to the parent', async () => {
+  const cwd = await repo(); let parentTurns = 0, childSessionId = '', childAgentId = '';
   const events: AgentEvent[] = [], contexts: RoutingContext[] = [];
   const config: AutoRouterConfig = { classifierModel: 'classifier', candidates: [
     { modelId: 'parent-model', description: 'parent', relativeCost: 2, supportsImages: true },
@@ -51,7 +51,11 @@ test('auto subagent classifies independently and emits model_routed with its own
   const parentModel: ModelProvider = { id: 'parent-model', async complete(request) {
     if (parentTurns++) {
       const toolResult = request.messages.at(-1)?.content;
-      if (typeof toolResult === 'string') childSessionId = JSON.parse(toolResult).result.sessionId;
+      if (typeof toolResult === 'string') {
+        const task = JSON.parse(toolResult);
+        childSessionId = task.result.sessionId;
+        childAgentId = task.agentId;
+      }
       return done('parent complete');
     }
     return calls(['Task', { prompt: 'Return the child response' }]);
@@ -75,4 +79,10 @@ test('auto subagent classifies independently and emits model_routed with its own
   const childRoute = routed.find(e => e.sessionId !== parentSessionId);
   expect(childRoute).toBeDefined();
   expect(childRoute!.sessionId).toBe(childSessionId);
+  expect(childRoute!.agentId).toBe(childAgentId);
+  const childEvents = events.filter(e => e.sessionId === childSessionId);
+  expect(childEvents.some(e => e.type === 'assistant_delta')).toBe(false);
+  expect(childEvents.some(e => e.type === 'result')).toBe(false);
+  expect(childEvents.every(e => e.type === 'model_routed' || e.type === 'model_transition')).toBe(true);
+  expect(events.filter(e => e.type === 'result' && e.sessionId === parentSessionId)).toHaveLength(1);
 });

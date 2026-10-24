@@ -242,7 +242,12 @@ export class ChatController {
     const assistant = (text: string, final = false) => this.io.assistant ? this.io.assistant(text, final) : this.io.write(text + (final ? '\n' : ''));
     this.io.work?.('Modelo');
     const onEvent = (event: AgentEvent) => {
-      if (event.type === 'settings_staged' && !side) {
+      if ((event.type === 'model_routed' || event.type === 'model_transition') && typeof event.agentId === 'string') {
+        const route = event.type === 'model_routed'
+          ? `auto → ${(event.decision as { modelId: string }).modelId}`
+          : `${event.from} → ${event.to}`;
+        this.print(`↳ subagente: ${route}`);
+      } else if (event.type === 'settings_staged' && !side) {
         if (proposals.length < 64) proposals.push(event.proposal as SettingsProposal);
         else this.print('Límite de propuestas de ajustes: se descarta esta propuesta');
       } else if (event.type === 'mode_changed' && !side) {

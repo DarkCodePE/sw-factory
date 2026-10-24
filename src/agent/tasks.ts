@@ -482,8 +482,12 @@ export class TaskManager {
           // A child of an auto session classifies on its own instead of inheriting the parent's model.
           provider: isAutoProvider(this.parent.provider) ? this.parent.provider.forSubagent() : this.parent.provider,
           sessionId: undefined, newSessionId: undefined, fork: false,
-          // A separate child lock/session and no closure-based host capabilities.
-          tools: [], images: undefined, onEvent: this.parent.onEvent, beforeTool: this.parent.beforeTool, afterTool: this.parent.afterTool,
+          // The child has a separate session; only its routing events are forwarded.
+          tools: [], images: undefined, onEvent: event => {
+            if (event.type === 'model_routed' || event.type === 'model_transition') {
+              this.parent.onEvent?.({ ...event, agentId: id });
+            }
+          }, beforeTool: this.parent.beforeTool, afterTool: this.parent.afterTool,
           mission: undefined, missionWorker: undefined, allowExitSpecMode: false,
           onlyTools: this.parent.onlyTools?.filter(n => !['ProposeMission', 'StartMissionRun', 'EndFeatureRun', 'DismissHandoffItems'].includes(n)),
           removeTools: this.parent.removeTools?.filter(n => !['ProposeMission', 'StartMissionRun', 'EndFeatureRun', 'DismissHandoffItems'].includes(n)),

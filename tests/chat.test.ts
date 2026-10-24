@@ -33,6 +33,22 @@ async function fixture(turns: ModelTurn[] = [final()]) {
   return { dir, cwd, home, requests, io, app, provider };
 }
 
+test('chat renders a subagent routing decision on its own line', async () => {
+  const f = await fixture();
+  const result: AgentResult = { ok: true, text: 'Respuesta del padre', sessionId: 'parent-session', turns: 1, toolCalls: 1,
+    durationMs: 1, usage: { inputTokens: 0, outputTokens: 0 } };
+  const app = new ChatController({ cwd: f.cwd, home: f.home, providerFor: () => f.provider,
+    config: { ...f.app.config }, run: async opts => {
+      opts.onEvent?.({ type: 'model_routed', sessionId: 'child-session', agentId: 'child-agent',
+        decision: { modelId: 'hermes', reason: 'routine', fallbacks: [] } });
+      return result;
+    } }, f.io);
+  await app.submit('delegar');
+  expect(f.io.output).toContain('↳ subagente: auto → hermes');
+  expect(f.io.output).not.toContain('Modelo elegido: hermes');
+  expect(f.io.output).toContain('Respuesta del padre');
+});
+
 test('command registry exposes local capabilities, aliases and explicit backend gaps', () => {
   expect(parseInput('/')).toEqual({ kind: 'command', name: 'help', arg: '' });
   expect(parseInput('/rename  título con espacios')).toEqual({ kind: 'command', name: 'rename', arg: 'título con espacios' });
