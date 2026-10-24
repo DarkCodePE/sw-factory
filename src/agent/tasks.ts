@@ -5,12 +5,14 @@ import { mkdir, mkdtemp, readFile, symlink } from 'node:fs/promises';
 import { spawn } from 'node:child_process';
 import { tmpdir } from 'node:os';
 import { isAbsolute, join, relative, resolve, sep } from 'node:path';
-import { atomicReplace, readWorkspaceFile, unlinkAnchored, withWorkspaceFile } from './files.ts';
+import { atomicReplace, readAnchored, readWorkspaceFile, unlinkAnchored, withWorkspaceFile } from './files.ts';
 import { runProcess } from './process.ts';
 import { wrapCommand } from '../sandbox/index.ts';
 import { inputObject, stringArg, tool } from './tools.ts';
 import type { AgentOptions, AgentResult, AgentTool, ToolContext } from './types.ts';
 import type { SessionState } from './session.ts';
+
+const SNAPSHOT_MAX_FILE_BYTES = 16 * 1024 * 1024;
 
 export class AgentBudget {
   agents = 0;
@@ -140,7 +142,8 @@ async function snapshotWorkspace(cwd: string, signal: AbortSignal): Promise<{ cw
   for (const path of files) {
     signal.throwIfAborted();
     try {
-      const source = await readWorkspaceFile(cwd, path); bytes += source.data.byteLength;
+      const source = await withWorkspaceFile(cwd, path, false, (parent, name) => readAnchored(parent, name, SNAPSHOT_MAX_FILE_BYTES));
+      bytes += source.data.byteLength;
       if (bytes > 32 * 1024 * 1024) throw new Error('Subagent snapshot exceeds 32 MiB');
       contents.push({ path, data: source.data, mode: source.mode });
     } catch (e: any) { if (e.code !== 'ENOENT') throw e; contents.push({ path }); }
@@ -153,7 +156,8 @@ async function snapshotWorkspace(cwd: string, signal: AbortSignal): Promise<{ cw
     signal.throwIfAborted();
     try {
       if (!data) { const error = new Error('Deleted source path'); Object.assign(error, { code: 'ENOENT' }); throw error; }
-      await withWorkspaceFile(destination, path, true, (parent, name) => atomicReplace(parent, name, data, signal, mode));
+      await withWorkspaceFile(destination, path, true, (parent, name) =>
+        atomicReplace(parent, name, data, signal, mode, false, SNAPSHOT_MAX_FILE_BYTES));
     } catch (e: any) {
       // Deleted tracked paths must be deleted in the child too. Other failures,
       // including symlinks and oversized files, fail closed without a stale copy.
@@ -479,7 +483,7 @@ export class TaskManager {
           provider: isAutoProvider(this.parent.provider) ? this.parent.provider.forSubagent() : this.parent.provider,
           sessionId: undefined, newSessionId: undefined, fork: false,
           // A separate child lock/session and no closure-based host capabilities.
-          tools: [], images: undefined, onEvent: undefined, beforeTool: this.parent.beforeTool, afterTool: this.parent.afterTool,
+          tools: [], images: undefined, onEvent: this.parent.onEvent, beforeTool: this.parent.beforeTool, afterTool: this.parent.afterTool,
           mission: undefined, missionWorker: undefined, allowExitSpecMode: false,
           onlyTools: this.parent.onlyTools?.filter(n => !['ProposeMission', 'StartMissionRun', 'EndFeatureRun', 'DismissHandoffItems'].includes(n)),
           removeTools: this.parent.removeTools?.filter(n => !['ProposeMission', 'StartMissionRun', 'EndFeatureRun', 'DismissHandoffItems'].includes(n)),
