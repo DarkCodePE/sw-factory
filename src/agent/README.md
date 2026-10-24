@@ -497,3 +497,20 @@ Opt-in en exec con --hooks o settings hooks.enabled=true; archivos `$FABRICA_HOM
 `initialize_session` acepta `hooks` y `mcpServers`; RPC ejecuta el ciclo de hooks y ofrece `list_mcp_servers`, `list_mcp_tools` y `authenticate_mcp_server`.
 ## SDK
 `fabrica/sdk` exporta sesiones y servidores MCP locales autenticados; `close()` termina el proceso y cierra los servidores creados por el SDK.
+
+## Router `auto` de modelos
+
+`-m auto` (o `modelId: "auto"` en settings) delega la elección de modelo en un router. Requiere la sección `autoRouter`:
+
+```json
+{ "autoRouter": { "classifierModel": "barato",
+  "candidates": [
+    { "modelId": "barato", "description": "ediciones pequeñas", "relativeCost": 1, "supportsImages": false },
+    { "modelId": "potente", "description": "refactors y depuración difícil", "relativeCost": 4, "supportsImages": true, "upgradeTo": "potente" } ] } }
+```
+
+- **Decisión fija:** se toma en el primer turno y se conserva. Solo cambia por rotación ante error, un turno con imágenes cuyo modelo no las soporta (`vision`) o `UpgradeSessionModel` (`self_upgrade`).
+- **Errores:** 429/5xx/inactividad se reintentan `retriesPerModel` veces con espera exponencial y jitter, y luego pasan al siguiente respaldo (`retry_exhausted`); 400/404 rotan al instante (`model_specific`). Longitud de contexto, autenticación y abort se propagan. Un corte tras emitir texto es un error del turno. Agotados todos los modelos, el error no es reintentable.
+- **Escalado:** `UpgradeSessionModel` solo existe en sesiones `auto` mientras haya un escalón superior.
+- **Subagentes:** cada uno clasifica por su cuenta (`surface: 'subagent'`).
+- **Eventos:** `model_routed` (decisión, razón, respaldos, puntuaciones) y `model_transition` (`from`, `to`, `source`); en RPC como `fab_model_routed` y `fab_model_transition`; en `fab chat`, como línea y en el estado (`auto → modelo`). `init` sigue mostrando `auto`.
