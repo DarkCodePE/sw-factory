@@ -136,4 +136,54 @@ describe('Jev classifier', () => {
       else process.env.TYPESAFE_API_KEY = previousTypeSafe;
     }
   });
+
+  test('removes its abort listener after resolving, so a later abort rejects nothing', async () => {
+    const controller = new AbortController();
+    const live = new Set<EventListenerOrEventListenerObject>();
+    const add = controller.signal.addEventListener.bind(controller.signal);
+    const remove = controller.signal.removeEventListener.bind(controller.signal);
+    controller.signal.addEventListener = ((type: string, listener: EventListenerOrEventListenerObject, opts?: unknown) => {
+      if (type === 'abort') live.add(listener);
+      add(type, listener, opts as AddEventListenerOptions);
+    }) as typeof controller.signal.addEventListener;
+    controller.signal.removeEventListener = ((type: string, listener: EventListenerOrEventListenerObject, opts?: unknown) => {
+      if (type === 'abort') live.delete(listener);
+      remove(type, listener, opts as EventListenerOptions);
+    }) as typeof controller.signal.removeEventListener;
+
+    const unhandled: unknown[] = [];
+    const onUnhandled = (reason: unknown) => { unhandled.push(reason); };
+    process.on('unhandledRejection', onUnhandled);
+    try {
+      for (let turn = 0; turn < 3; turn++) {
+        const result = await classifyWithJev(candidates, context, {
+          apiKey: 'secret',
+          signal: controller.signal,
+          fetch: (async () => response({ answers: { candidate_0: { type: 'noul', noul: 0.9 }, candidate_1: { type: 'noul', noul: 0.2 } } })) as unknown as typeof fetch,
+          timeoutMs: 100,
+        });
+        expect(result?.scores.hermes).toBe(0.9);
+      }
+      expect(live.size).toBe(0);
+
+      controller.abort(new Error('session closed'));
+      await new Promise(resolve => setTimeout(resolve, 20));
+      expect(unhandled).toEqual([]);
+    } finally {
+      process.off('unhandledRejection', onUnhandled);
+    }
+  });
+
+  test('still rejects with the external reason when aborted mid-request', async () => {
+    const controller = new AbortController();
+    const pending = classifyWithJev(candidates, context, {
+      apiKey: 'secret',
+      signal: controller.signal,
+      fetch: (() => new Promise<Response>(() => {})) as unknown as typeof fetch,
+      timeoutMs: 1000,
+    });
+    const reason = new Error('ctrl-c');
+    controller.abort(reason);
+    await expect(pending).rejects.toBe(reason);
+  });
 });

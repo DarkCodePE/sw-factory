@@ -36,20 +36,23 @@ export async function classifyWithJev(
 
   const controller = new AbortController();
   let timer: ReturnType<typeof setTimeout> | undefined;
-  const onAbort = () => controller.abort(options.signal.reason);
-  options.signal.addEventListener('abort', onAbort, { once: true });
-
   const timeout = new Promise<undefined>(resolve => {
     timer = setTimeout(() => {
       controller.abort(new DOMException('Classifier timeout exceeded', 'TimeoutError'));
       resolve(undefined);
     }, options.timeoutMs);
   });
+  // One listener cancels the request and rejects `aborted`; the finally below always removes it.
+  let onAbort: () => void = () => {};
   const aborted = new Promise<never>((_, reject) => {
-    options.signal.addEventListener('abort', () => {
+    onAbort = () => {
+      controller.abort(options.signal.reason);
       reject(options.signal.reason ?? new DOMException('The operation was aborted', 'AbortError'));
-    }, { once: true });
+    };
   });
+  // Nobody may be racing it any more when it rejects; never leave that rejection unhandled.
+  aborted.catch(() => {});
+  options.signal.addEventListener('abort', onAbort, { once: true });
 
   const request = (async () => {
     try {
