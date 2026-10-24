@@ -1,10 +1,10 @@
 # Registro de Cambios (`CHANGELOG.md`)
 
-Historial detallado de versiones de `sw-factory` desde la etiqueta base `c3eff63` hasta la versión actual `main` `f023e47` (v0.1.0-rc.9).
+Historial detallado de versiones de `sw-factory` desde la etiqueta base `c3eff63` hasta la versión actual (v0.1.0-rc.10).
 
 ---
 
-## [Sin publicar] — 2026-10-22 (`bbfaba1`)
+## [v0.1.0-rc.10] — 2026-10-24
 
 ### Novedades
 - **Router `auto` de modelos:** `-m auto` (o `modelId: "auto"`) elige modelo por sesión entre los candidatos de `autoRouter` en settings, según la puntuación de un clasificador; la decisión queda fija y solo cambia por rotación ante error (429/5xx tras `retriesPerModel` intentos, 400/404 al instante), imágenes con un modelo sin visión o la tool `UpgradeSessionModel`. Un corte tras emitir texto es error del turno, sin reintento ni rotación. Los subagentes clasifican por su cuenta. Eventos `model_routed` y `model_transition` en `stream-json`, notificaciones RPC `fab_model_routed`/`fab_model_transition` y línea en `fab chat` (`src/agent/providers/auto.ts`).
@@ -23,6 +23,15 @@ Historial detallado de versiones de `sw-factory` desde la etiqueta base `c3eff63
 - **Mission Control:** el motor de misiones emite `mission_feature_updated`, `mission_milestone_validated`, `mission_paused` y `mission_progress` con un `MissionProgressSnapshot` (features por milestone, validadores, workers con tokens y duración); el host puede pausar un run con `mission.pauseSignal` sin abortar el turno del orquestador (`src/agent/mission.ts`, `src/agent/mission-pause.ts`, `src/agent/mission-progress.ts`).
 - **TUI `/mission`:** panel de orquestación (`status`), `pause [mensaje]` a mitad de run desde la terminal, `resume [mensaje]`, `workers [id]`, `log [n]`, `list` para reanudar misiones pasadas; Ctrl+T alterna el panel y la barra de estado muestra `misión: <estado> <hechas>/<total>` (`src/chat/mission-view.ts`, `src/chat/mission-commands.ts`).
 - Catálogo de herramientas completado tras la captura REA con login (30 ids): ExitSpecMode, StageSettingsChanges, ApplyPatch, Execute en segundo plano, Loop, FetchUrl, WebSearch.
+- **Clasificador Jev para el router `auto`:** `autoRouter.classifier: { kind: "jev" }` puntúa cada candidato con una pregunta sí/no al servicio remoto de TypeSafe (clave en `JEV_API_KEY` o `TYPESAFE_API_KEY`); sin clave o ante error el router usa el primer candidato y avisa una vez. Opcional: el clasificador local sigue siendo el predeterminado (`src/agent/router/jev.ts`).
+- **`retry-after`:** los proveedores `openai`, `anthropic` y compatibles exponen la cabecera en el error, y el router `auto` espera al menos ese tiempo antes de reintentar.
+
+### Correcciones
+- `UpgradeSessionModel` se ofrece antes de la primera decisión del router y desaparece cuando el modelo elegido ya no tiene escalón superior.
+- El clasificador recibe el número de turno de usuario correcto (antes contaba mensajes).
+- Los subagentes copian archivos del workspace de hasta 16 MiB (antes 1 MiB, lo que hacía fallar `Task` en repos con archivos grandes); solo sus eventos de enrutado llegan al padre, marcados con `agentId`, y en `fab chat` se muestran como `↳ subagente: …`.
+- El clasificador Jev ya no deja listeners de cancelación ni rechazos no manejados al abortar la sesión.
+
 
 ---
 
