@@ -70,7 +70,7 @@ export class ToolRuntime {
     const yolo = context.executionPolicy?.permissionMode === 'yolo';
     const owned = this.owned;
     const available = (name: string) => (!opts.onlyTools || opts.onlyTools.includes(name)) && !opts.removeTools?.includes(name) &&
-      (name !== 'UpgradeSessionModel' || isAutoProvider(opts.provider) && opts.provider.canUpgrade()) &&
+      (name !== 'UpgradeSessionModel' || isAutoProvider(opts.provider) && (opts.provider.currentModelId === undefined || opts.provider.canUpgrade())) &&
       (name !== 'ExitSpecMode' || context.interactionMode === 'spec' && opts.allowExitSpecMode !== false && !opts.missionWorker);
     this.available = available;
     const settingsPolicy = Object.freeze({

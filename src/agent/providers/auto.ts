@@ -36,6 +36,7 @@ export type AutoProvider = ModelProvider & {
 };
 
 export const AUTO_MODEL_ID = 'auto';
+export const UPGRADE_TOOL = 'UpgradeSessionModel';
 
 export function isAutoProvider(p: ModelProvider | undefined): p is AutoProvider {
   return !!p && typeof (p as Partial<AutoProvider>).bindEvents === 'function' && typeof (p as Partial<AutoProvider>).canUpgrade === 'function';
@@ -154,10 +155,12 @@ export function createAutoProvider(opts: AutoProviderOptions): AutoProvider {
       }
       for (;;) {
         const model = current!, target = providers[model]!;
+        // The tool list is fixed before routing; drop the upgrade tool once the routed model has no higher tier.
+        const tools = provider.canUpgrade() ? request.tools : request.tools?.filter(t => t.function.name !== UPGRADE_TOOL);
         for (let attempt = 1; ; attempt++) {
           let streamed = false;
           try {
-            return await target.complete(request, signal, delta ? t => { if (t.length > 0) streamed = true; delta(t); } : undefined);
+            return await target.complete(tools === request.tools ? request : { ...request, tools }, signal, delta ? t => { if (t.length > 0) streamed = true; delta(t); } : undefined);
           } catch (err) {
             if (signal.aborted) throw signal.reason ?? err;
             const message = err instanceof Error ? err.message : String(err);
