@@ -2,6 +2,7 @@ import type { AgentEvent, Message, ModelProvider, ModelRequest, ModelTurn } from
 import type { AutoRouterConfig, RouterCandidate, RoutingContext, RoutingDecision, TransitionSource } from '../router/types.ts';
 import { ProviderError } from '../transport.ts';
 import { abortable } from '../cancellation.ts';
+import * as routerCore from '../router/index.ts';
 
 /** Signatures fixed by the router contract; declared here so this file compiles before the core is merged. */
 export type RouteFn = (config: AutoRouterConfig, classifierProvider: ModelProvider, ctx: RoutingContext, signal: AbortSignal) => Promise<RoutingDecision>;
@@ -40,29 +41,13 @@ export function isAutoProvider(p: ModelProvider | undefined): p is AutoProvider 
   return !!p && typeof (p as Partial<AutoProvider>).bindEvents === 'function' && typeof (p as Partial<AutoProvider>).canUpgrade === 'function';
 }
 
-/**
- * Loads the routing core lazily so settings validation and the provider share one seam.
- * TODO(integration): replace with a static `import { route, upgradeTarget, validateAutoRouterConfig } from '../router/index.ts'`
- * once the core branch is merged; the computed specifier only exists so this branch typechecks without it.
- */
-let core: RouterCore | undefined;
+/** The routing core; kept behind these helpers so tests can inject fakes. */
 export async function loadRouterCore(): Promise<RouterCore> {
-  const specifier = '../router/index' + '.ts';
-  try {
-    return core ??= await import(specifier) as RouterCore;
-  } catch (e) {
-    throw new Error(`The auto router core is not available: ${e instanceof Error ? e.message : String(e)}`);
-  }
+  return routerCore;
 }
 
 export function lazyRouterCore(): { route: RouteFn; upgradeTarget: UpgradeFn } {
-  return {
-    route: async (...args) => (await loadRouterCore()).route(...args),
-    upgradeTarget: (...args) => {
-      if (!core) throw new Error('Router core is not loaded');
-      return core.upgradeTarget(...args);
-    },
-  };
+  return { route: routerCore.route, upgradeTarget: routerCore.upgradeTarget };
 }
 
 const BASE_DELAY_MS = 500, MAX_DELAY_MS = 8000;

@@ -1,6 +1,6 @@
 import { decodeResponses, responsesBody } from '../chatgpt.ts';
 import { ProviderError, streamIdleFromEnv } from '../provider.ts';
-import { withIdleResponse } from '../transport.ts';
+import { withIdleResponse, retryAfterMs } from '../transport.ts';
 import type { ModelProvider } from '../types.ts';
 import { resolveCredential, validateExtraHeaders, type CredentialOptions } from './auth.ts';
 
@@ -75,6 +75,7 @@ export function createOpenAIResponsesProvider(opts: OpenAIResponsesOptions): Mod
                 `OpenAI HTTP ${response.status}${detail ? `: ${detail}` : ''}`,
                 response.status === 429 || response.status >= 500,
                 isLimit,
+                retryAfterMs(response.headers.get('retry-after')),
               );
             }
             if (!response.body) {

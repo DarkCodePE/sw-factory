@@ -1,7 +1,15 @@
 import { abortable } from './cancellation.ts';
 
 export class ProviderError extends Error {
-  constructor(message: string, public readonly retryable = false, public readonly contextLimit = false) { super(message); }
+  constructor(message: string, public readonly retryable = false, public readonly contextLimit = false, public readonly retryAfterMs?: number) { super(message); }
+}
+/** Parses a `retry-after` header (seconds or HTTP date) into milliseconds. */
+export function retryAfterMs(value: string | null, now = Date.now()): number | undefined {
+  if (!value) return undefined;
+  const seconds = Number(value.trim());
+  if (Number.isFinite(seconds) && seconds >= 0) return Math.min(seconds * 1000, 120_000);
+  const at = Date.parse(value);
+  return Number.isNaN(at) ? undefined : Math.min(Math.max(0, at - now), 120_000);
 }
 export const DEFAULT_STREAM_IDLE_MS = 120_000;
 export function streamIdleFromEnv(value?: number): number {

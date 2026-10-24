@@ -1,5 +1,5 @@
 import { ProviderError, sseData, streamIdleFromEnv, validateTurn } from '../provider.ts';
-import { withIdleResponse } from '../transport.ts';
+import { withIdleResponse, retryAfterMs } from '../transport.ts';
 import type { Message, ModelProvider, ModelRequest, ModelTurn, ToolCall } from '../types.ts';
 import { resolveCredential, validateExtraHeaders, type CredentialOptions } from './auth.ts';
 
@@ -345,6 +345,7 @@ export function createAnthropicProvider(opts: AnthropicOptions): ModelProvider {
                 `Anthropic HTTP ${response.status}${detail ? `: ${detail}` : ''}`,
                 response.status === 429 || response.status >= 500,
                 isLimit,
+                retryAfterMs(response.headers.get('retry-after')),
               );
             }
             if (!response.body) {
