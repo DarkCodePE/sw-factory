@@ -113,6 +113,32 @@ test('positive: launch background process, peek partial output, await completion
   expect(final.stdout).toContain('step-two');
 });
 
+test('offline network errors in a background Execute include the per-call retry hint', async () => {
+  const f = await fixture();
+  let capturedTaskId = '';
+  const turns: Array<() => ModelTurn> = [
+    () => call('Execute', { command: "printf 'getaddrinfo ENOTFOUND jira.example' >&2; exit 1", background: true }),
+    () => call('TaskOutput', { task_id: capturedTaskId, block: true }),
+  ];
+  const events: AgentEvent[] = [];
+  const result = await runCodingAgent({
+    cwd: f.cwd,
+    sessionDir: f.sessionDir,
+    prompt: 'check background network hint',
+    autonomy: 'high',
+    provider: { id: 'fixture', complete: async () => turns.shift()?.() ?? doneTurn },
+    onEvent: event => {
+      events.push(event);
+      if (event.type === 'tool_result' && (event.value as any)?.taskId) capturedTaskId = (event.value as any).taskId;
+    },
+  });
+  expect(result.ok).toBe(true);
+  const toolResults = events.filter(event => event.type === 'tool_result').map(event => event.value as any);
+  expect(toolResults[1].status).toBe('failed');
+  expect(toolResults[1].stderr).toContain('el comando corrió sin red; repítelo con network: true si la necesita');
+  expect(toolResults[1].output).toContain('el comando corrió sin red; repítelo con network: true si la necesita');
+});
+
 test('TaskStop terminates a long-running process with SIGTERM/SIGKILL', async () => {
   const f = await fixture();
   let capturedTaskId = '';

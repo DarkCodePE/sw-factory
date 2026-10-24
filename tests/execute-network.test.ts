@@ -1,5 +1,5 @@
 import { afterEach, expect, test } from 'bun:test';
-import { mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
+import { mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { ToolRuntime } from '../src/agent/registry.ts';
@@ -49,6 +49,85 @@ test('Execute stays offline by default, even at high; an explicit high request u
     expect(online.network).toEqual({ requested: true, enabled: true }); expect(e.requests()).toBe(1);
     expect(f.events.at(-1)).toMatchObject({ type: 'network_permission', decision: 'allowed_automatically', scope: 'this_call' });
   } finally { e.server.stop(true); }
+});
+
+test('Execute interprets assignments, export, env and cd chains in one shell', async () => {
+  const f = await fixture();
+  const script = `process.stdout.write(process.env.JIRA_ENV_FILE ?? 'missing')`;
+  const commands = [
+    `JIRA_ENV_FILE=assignment ${quote(process.execPath)} -e ${quote(script)}`,
+    `export JIRA_ENV_FILE=exported && ${quote(process.execPath)} -e ${quote(script)}`,
+    `env JIRA_ENV_FILE=env ${quote(process.execPath)} -e ${quote(script)}`,
+  ];
+  for (const [index, command] of commands.entries()) {
+    const result: any = await f.runtime.dispatch('Execute', { command });
+    expect(result.exitCode).toBe(0);
+    expect(result.stdout).toBe(['assignment', 'exported', 'env'][index]);
+  }
+
+  const nested = join(f.cwd, 'nested');
+  await mkdir(nested);
+  await writeFile(join(nested, 'marker'), 'nested-cwd');
+  const readNested = `process.stdout.write(process.env.JIRA_ENV_FILE + ':' + require('fs').readFileSync('marker','utf8'))`;
+  const result: any = await f.runtime.dispatch('Execute', {
+    command: `cd ${quote(nested)} && export JIRA_ENV_FILE=cd-chain && ${quote(process.execPath)} -e ${quote(readNested)}`,
+  });
+  expect(result.exitCode).toBe(0);
+  expect(result.stdout).toBe('cd-chain:nested-cwd');
+});
+
+test('Execute network:true preserves shell cd semantics in the sandbox', async () => {
+  const f = await fixture(), e = endpoint();
+  try {
+    const script = `fetch(${JSON.stringify(e.server.url.href)}).then(async r=>process.stdout.write(await r.text())).catch(e=>{console.error(e);process.exitCode=1})`;
+    const result: any = await f.runtime.dispatch('Execute', {
+      command: `cd ${quote(f.cwd)} && ${quote(process.execPath)} -e ${quote(script)}`,
+      network: true,
+    });
+    expect(result.exitCode).toBe(0);
+    expect(result.stdout).toContain('network-proof');
+    expect(result.network).toEqual({ requested: true, enabled: true });
+    expect(e.requests()).toBe(1);
+  } finally { e.server.stop(true); }
+});
+
+test('Execute shell sequences preserve the writable Git metadata grant', async () => {
+  const f = await fixture();
+  await writeFile(join(f.cwd, 'tracked.txt'), 'tracked');
+  expect(Bun.spawnSync(['git', 'init'], { cwd: f.cwd }).exitCode).toBe(0);
+  expect(Bun.spawnSync(['git', 'config', 'user.email', 'fixture@example.test'], { cwd: f.cwd }).exitCode).toBe(0);
+  expect(Bun.spawnSync(['git', 'config', 'user.name', 'Fixture'], { cwd: f.cwd }).exitCode).toBe(0);
+  const result: any = await f.runtime.dispatch('Execute', {
+    command: 'git add tracked.txt && git diff --cached --name-only',
+  });
+  expect(result.exitCode).toBe(0);
+  expect(result.stdout.trim()).toBe('tracked.txt');
+
+  await writeFile(join(f.cwd, 'background.txt'), 'background');
+  const launched: any = await f.runtime.dispatch('Execute', {
+    command: 'git add background.txt && git diff --cached --name-only',
+    background: true,
+  });
+  const background: any = await f.runtime.dispatch('TaskOutput', { task_id: launched.taskId, block: true });
+  expect(background.exitCode).toBe(0);
+  expect(background.stdout.trim()).toContain('background.txt');
+});
+
+test('offline network errors return a short per-call retry hint', async () => {
+  const f = await fixture();
+  const script = `console.error('getaddrinfo ENOTFOUND jira.example'); process.exit(1)`;
+  const result: any = await f.runtime.dispatch('Execute', {
+    command: `${quote(process.execPath)} -e ${quote(script)}`,
+  });
+  expect(result.exitCode).toBe(1);
+  expect(result.network.enabled).toBe(false);
+  expect(result.stderr).toContain('el comando corrió sin red; repítelo con network: true si la necesita');
+});
+
+test('Execute documentation explains per-call networking and retry requests', () => {
+  const execute = builtinTools().find(tool => tool.schema.function.name === 'Execute')!;
+  expect(execute.schema.function.description).toContain('network:true on every command');
+  expect((execute.schema.function.parameters.properties as any).network.description).toContain('per Execute call');
 });
 
 test('off/low/medium ask before starting anything; one approval combines command and network authority', async () => {

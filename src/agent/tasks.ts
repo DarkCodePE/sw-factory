@@ -8,7 +8,7 @@ import { isAbsolute, join, relative, resolve, sep } from 'node:path';
 import { atomicReplace, readAnchored, readWorkspaceFile, unlinkAnchored, withWorkspaceFile } from './files.ts';
 import { runProcess } from './process.ts';
 import { wrapCommand } from '../sandbox/index.ts';
-import { inputObject, stringArg, tool } from './tools.ts';
+import { inputObject, offlineNetworkHint, stringArg, tool } from './tools.ts';
 import type { AgentOptions, AgentResult, AgentTool, ToolContext } from './types.ts';
 import type { SessionState } from './session.ts';
 
@@ -234,7 +234,7 @@ export class TaskManager {
     if ('kind' in t && t.kind === 'process') {
       if (block) await t.done;
       const stdout = await t.readStdout();
-      const stderr = await t.readStderr();
+      const stderr = offlineNetworkHint(stdout, await t.readStderr(), t.exitCode, t.network?.enabled === true);
       return {
         task_id: t.id,
         taskId: t.id,

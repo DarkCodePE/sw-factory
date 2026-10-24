@@ -68,6 +68,7 @@ La política de ejecución se resuelve al inicializar el agente y devuelve un ob
 ### 2. Red Opt-in para la Herramienta `Execute` (`src/agent/network-policy.ts`)
 Por defecto, la ejecución en sandbox carece de interfaces de red externas (`--unshare-net`):
 - El modelo puede emitir `Execute` con el parámetro `network: true`. Este parámetro es una **solicitud**, no una concesión automática.
+- La red se concede por llamada a `Execute`: cada comando y cada reintento que necesite acceso remoto debe incluir `network: true`; una aprobación previa no se hereda.
 - La política de red (`--sandbox-network` o comando `/network` en TUI) decide:
   - `deny`: Bloquea permanentemente todo intento de red para el comando.
   - `ask`: Solicita aprobación interactiva al usuario antes del spawn del subproceso.

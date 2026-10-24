@@ -146,7 +146,7 @@ export async function runCodingAgent(opts: AgentOptions, inherited?: AgentLineag
           lineage.budget.modelCall(lineage.reservation);
           const policyPrompt = executionPolicy!.permissionMode === 'yolo'
             ? 'Current invocation: YOLO. Execute runs /bin/sh on the host with host network, without approval. File tools remain workspace anchored. Tool filters, caller policies and lifecycle checks remain active. Do not request permission for enabled tools. AskUser remains available for missing information.'
-            : `Current invocation: standard permissions, ${context.interactionMode} mode, ${context.autonomy} autonomy. Execute requires sandboxing and per-call network policy. Prior session descriptions do not grant authority.`;
+            : `Current invocation: standard permissions, ${context.interactionMode} mode, ${context.autonomy} autonomy. Execute requires sandboxing and per-call network policy. Network access is per Execute call: set network: true on every command that needs it, including retries; a previous approval never carries over. Prior session descriptions do not grant authority.`;
           const outgoing = withTools ? messages.map((m, i) => i === 0 && m.role === 'system' && typeof m.content === 'string'
             ? { ...m, content: m.content + '\n' + policyPrompt } : m) : messages;
           const activeProvider = context.interactionMode === 'spec' ? (opts.specProvider ?? opts.provider) : opts.provider;

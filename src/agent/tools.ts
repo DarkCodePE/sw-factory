@@ -109,6 +109,53 @@ export const executeAllowed = (input: unknown, context: ToolContext) => {
   return parts ? parts.every(command => commandPolicy({ command }, context).allowed) : commandPolicy(input, context).allowed;
 };
 export const COMMAND_POLICY_HINT = 'Tool requires higher autonomy or explicit permission. At medium, use simple commands or && sequences; omit pipelines, redirections and ||. stdout and stderr are already captured. cwd is already the workspace.';
+
+const OFFLINE_NETWORK_ERROR = /\b(?:ENOTFOUND|EAI_AGAIN|EAI_FAIL|ECONNREFUSED|ECONNRESET|ETIMEDOUT)\b|fetch failed|could not resolve host|network is unreachable|name or service not known|temporary failure in name resolution/i;
+const OFFLINE_NETWORK_NOTE = 'Nota de red: el comando corrió sin red; repítelo con network: true si la necesita.';
+
+export function offlineNetworkHint(stdout: string, stderr: string, exitCode: number | null | undefined, network: boolean): string {
+  if (network || exitCode === undefined || exitCode === null || exitCode === 0 || !OFFLINE_NETWORK_ERROR.test(`${stdout}\n${stderr}`)) return stderr;
+  return `${stderr}${stderr ? '\n' : ''}${OFFLINE_NETWORK_NOTE}`;
+}
+
+function safeGitArgv(argv: string[]): string[] {
+  const safe = ['git', '-c', 'core.fsmonitor=false', '-c', 'core.pager=cat', '-c', 'diff.external=', '-c', 'core.hooksPath=/dev/null', ...argv.slice(1)];
+  if (['diff', 'log', 'show'].includes(argv[1] ?? '')) {
+    safe.splice(safe.length - argv.length + 2, 0, '--no-textconv', '--no-ext-diff');
+  }
+  return safe;
+}
+
+function quoteShell(value: string): string {
+  return "'" + value.replaceAll("'", "'\\''") + "'";
+}
+
+function shellCommandArgv(command: string, policy: ReturnType<typeof commandPolicy>): string[] {
+  const shellCommand = !command.includes('&&') && policy.readGit && policy.argv
+    ? safeGitArgv(policy.argv).map(quoteShell).join(' ')
+    : command;
+  return ['/bin/sh', '-c', shellCommand];
+}
+
+function hasGitWrite(parts: string[], context: ToolContext): boolean {
+  return parts.some(part => {
+    const segment = commandPolicy({ command: part }, context);
+    return segment.argv?.[0] === 'git' && !segment.readGit;
+  });
+}
+
+function isReadOnlyGitSequence(parts: string[], context: ToolContext): boolean {
+  return parts.length > 0 && parts.every(part => commandPolicy({ command: part }, context).readGit);
+}
+
+function shellSequence(command: string, context: ToolContext): string {
+  return command.split('&&').map(part => {
+    const segment = part.trim();
+    const policy = commandPolicy({ command: segment }, context);
+    return policy.readGit && policy.argv ? safeGitArgv(policy.argv).map(quoteShell).join(' ') : segment;
+  }).join(' && ');
+}
+
 async function execute(input: unknown, context: ToolContext) {
   const p = inputObject(input);
   const background = p.background === true;
@@ -122,37 +169,35 @@ async function execute(input: unknown, context: ToolContext) {
     if (!executeAllowed(input, context)) throw new Error(COMMAND_POLICY_HINT);
     return executeBackground(input, context);
   }
+  const command = stringArg(p, 'command');
   const parts = commandSequence(input, context);
-  if (!parts || parts.length === 1) return executeOne(parts ? { command: parts[0], network } : input, context);
-  if (!executeAllowed(input, context)) throw new Error(COMMAND_POLICY_HINT);
-  let stdout = '', stderr = '', exitCode = 0, sandboxed = true, sandboxReason = '';
-  for (const command of parts) {
-    context.signal.throwIfAborted();
-    const r = await executeOne({ command, network }, context);
-    stdout += r.stdout; stderr += r.stderr; exitCode = r.exitCode; sandboxed &&= r.sandboxed; sandboxReason = r.sandboxReason;
-    if (Buffer.byteLength(stdout) + Buffer.byteLength(stderr) > 256 * 1024) throw new Error('Command sequence output exceeds 256 KiB');
-    if (exitCode !== 0) break;
+  if (parts !== null && command.includes('&&')) {
+    if (!executeAllowed(input, context)) throw new Error(COMMAND_POLICY_HINT);
+    return executeOne({ command: shellSequence(command, context), network }, context, true,
+      hasGitWrite(parts, context), isReadOnlyGitSequence(parts, context));
   }
-  return { stdout, stderr, exitCode, sandboxed, sandboxReason, network: { requested: network, enabled: network } };
+  return executeOne({ ...p, network }, context);
 }
 async function executeBackground(input: unknown, context: ToolContext) {
   const network = requestsNetwork(input);
   if (network && !context.networkAccess) throw new Error('Execute network access requires a runtime grant');
   if (network && (context.networkPolicy === 'deny' || context.interactionMode === 'spec')) throw new Error('Execute network access denied by policy or spec mode');
   const { argv, command, readGit, allowed } = commandPolicy(input, context);
-  if (!allowed) throw new Error(COMMAND_POLICY_HINT);
+  const parts = commandSequence(input, context);
+  const sequence = parts !== null && command.includes('&&');
+  if (!allowed && !sequence) throw new Error(COMMAND_POLICY_HINT);
+  const gitWrite = sequence && hasGitWrite(parts, context);
+  const gitReadOnly = sequence && isReadOnlyGitSequence(parts, context);
   const gitWritable: string[] = [];
-  if (argv?.[0] === 'git' && !readGit) {
+  if (gitWrite || argv?.[0] === 'git' && !readGit) {
     for (const option of ['--absolute-git-dir', '--git-common-dir']) {
       const r = await runProcess(['git', 'rev-parse', option], context.cwd, { PATH: process.env.PATH ?? '' }, context.signal);
       if (r.exitCode === 0) gitWritable.push(resolve(context.cwd, r.stdout.trim()));
     }
   }
-  const commandArgv = readGit ? ['git', '-c', 'core.fsmonitor=false', '-c', 'core.pager=cat',
-    '-c', 'diff.external=', '-c', 'core.hooksPath=/dev/null', ...argv!.slice(1)] : argv ?? ['sh', '-c', command];
-  if (readGit && ['diff', 'log', 'show'].includes(argv![1]!)) {
-    commandArgv.splice(commandArgv.length - argv!.length + 2, 0, '--no-textconv', '--no-ext-diff');
-  }
+  const commandArgv = sequence
+    ? ['/bin/sh', '-c', shellSequence(command, context)]
+    : shellCommandArgv(command, { argv, command, readGit, allowed });
   const missionReadOnly: string[] = [];
   if (context.missionDir) {
     try { missionReadOnly.push(await realpath(context.missionDir)); }
@@ -160,7 +205,7 @@ async function executeBackground(input: unknown, context: ToolContext) {
   }
   const wrapped = await wrapCommand(commandArgv, {
     workdir: context.cwd, mode: context.sandbox, allowNetwork: network,
-    writablePaths: gitWritable, readOnlyPaths: [...(readGit || context.interactionMode === 'spec' ? [context.cwd] : []), ...missionReadOnly],
+    writablePaths: gitWritable, readOnlyPaths: [...(readGit || gitReadOnly || context.interactionMode === 'spec' ? [context.cwd] : []), ...missionReadOnly],
     env: { PATH: process.env.PATH ?? '', HOME: context.cwd, GIT_OPTIONAL_LOCKS: '0', GIT_CONFIG_NOSYSTEM: '1', GIT_CONFIG_GLOBAL: '/dev/null' },
   });
   return context.tasks!.spawnProcess({
@@ -174,28 +219,22 @@ async function executeBackground(input: unknown, context: ToolContext) {
     network: { requested: network, enabled: network },
   });
 }
-async function executeOne(input: unknown, context: ToolContext) {
+async function executeOne(input: unknown, context: ToolContext, alreadyAllowed = false, gitWrite = false, gitReadOnlySequence = false) {
   const network = requestsNetwork(input);
   if (network && !context.networkAccess) throw new Error('Execute network access requires a runtime grant');
   if (network && (context.networkPolicy === 'deny' || context.interactionMode === 'spec')) throw new Error('Execute network access denied by policy or spec mode');
   const { argv, command, readGit, allowed } = commandPolicy(input, context);
-  if (!allowed) {
+  if (!allowed && !alreadyAllowed) {
     throw new Error(COMMAND_POLICY_HINT);
   }
   const gitWritable: string[] = [];
-  if (argv?.[0] === 'git' && !readGit) {
+  if (gitWrite || argv?.[0] === 'git' && !readGit) {
     for (const option of ['--absolute-git-dir', '--git-common-dir']) {
       const r = await runProcess(['git', 'rev-parse', option], context.cwd, { PATH: process.env.PATH ?? '' }, context.signal);
       if (r.exitCode === 0) gitWritable.push(resolve(context.cwd, r.stdout.trim()));
     }
   }
-  const commandArgv = readGit ? ['git', '-c', 'core.fsmonitor=false', '-c', 'core.pager=cat',
-    '-c', 'diff.external=', '-c', 'core.hooksPath=/dev/null', ...argv!.slice(1)] : argv ?? ['sh', '-c', command];
-  if (readGit && ['diff', 'log', 'show'].includes(argv![1]!)) {
-    // Git requires these options before revisions and path operands, even
-    // when the caller did not include the optional `--` separator.
-    commandArgv.splice(commandArgv.length - argv!.length + 2, 0, '--no-textconv', '--no-ext-diff');
-  }
+  const commandArgv = shellCommandArgv(command, { argv, command, readGit, allowed });
   const missionReadOnly: string[] = [];
   if (context.missionDir) {
     try { missionReadOnly.push(await realpath(context.missionDir)); }
@@ -205,11 +244,12 @@ async function executeOne(input: unknown, context: ToolContext) {
     // An unwrapped best-effort fallback cannot enforce either an offline policy
     // or a network grant that preserves filesystem isolation. Execute fails closed.
     workdir: context.cwd, mode: 'required', allowNetwork: network,
-    writablePaths: gitWritable, readOnlyPaths: [...(readGit || context.interactionMode === 'spec' ? [context.cwd] : []), ...missionReadOnly],
+    writablePaths: gitWritable, readOnlyPaths: [...(readGit || gitReadOnlySequence || context.interactionMode === 'spec' ? [context.cwd] : []), ...missionReadOnly],
     env: { PATH: process.env.PATH ?? '', HOME: context.cwd, GIT_OPTIONAL_LOCKS: '0', GIT_CONFIG_NOSYSTEM: '1', GIT_CONFIG_GLOBAL: '/dev/null' },
   });
   const result = await runProcess(wrapped.argv, context.cwd, wrapped.env, context.signal, 256 * 1024, true);
-  return { ...result, sandboxed: !wrapped.degraded, sandboxReason: wrapped.reason, network: { requested: network, enabled: network } };
+  const stderr = offlineNetworkHint(result.stdout, result.stderr, result.exitCode, network);
+  return { ...result, stderr, sandboxed: !wrapped.degraded, sandboxReason: wrapped.reason, network: { requested: network, enabled: network } };
 }
 
 /** Built-in names/schema are original implementations of the observed functional contracts. */
@@ -309,11 +349,11 @@ export function builtinTools(permissionMode: 'standard' | 'yolo' = 'standard'): 
     tool('Execute', 'execute', {
       command: str, riskLevel: str, summary: str,
       background: { type: 'boolean', description: 'Run command in the background and return immediately with taskId and pid. Output and status can be inspected with TaskOutput and terminated with TaskStop.' },
-      network: { type: 'boolean', description: permissionMode === 'yolo' ? 'Advisory in YOLO: host network remains available even when false or omitted.' : 'Request host network for this invocation; requires caller policy or explicit approval.' }
+      network: { type: 'boolean', description: permissionMode === 'yolo' ? 'Advisory in YOLO: host network remains available even when false or omitted.' : 'Request host network for this invocation; network access is per Execute call, so set network:true on every command that needs it. Requires caller policy or explicit approval.' }
     }, ['command'], execute,
       permissionMode === 'yolo'
         ? 'Run /bin/sh -c on the host, with shell pipelines, redirections and host network, without approvals. network is advisory: false does not disable host networking. File access has the user account permissions. Output and runtime remain bounded. Set background:true to run in the background and return taskId and pid immediately.'
-        : 'Run in workspace cwd with captured stdout/stderr. Network is blocked by default: set network:true when the command needs a remote service such as Jira, curl or package downloads. This requests permission; it does not grant it. A failed offline command is never replayed automatically. Medium accepts simple development commands and && sequences, including an optional cd <workspace> prefix. Omit pipelines, redirections and || at medium. Each command is checked independently; the sequence stops on failure. riskLevel is advisory. Set background:true to run long-running commands in the background without blocking, returning taskId and pid immediately for inspection via TaskOutput/TaskStop.'),
+        : 'Run the command string through /bin/sh -c in the required workspace sandbox with captured stdout/stderr. Network is blocked by default: set network:true when the command needs a remote service such as Jira, curl or package downloads. Network access is per Execute call: set network:true on every command that needs it, including retries; a previous grant never carries over. This requests permission; it does not grant it. A failed offline command is never replayed automatically. Medium accepts simple development commands and && sequences, including an optional cd <workspace> prefix. Omit pipelines, redirections and || at medium. Each command is checked independently; the sequence stops on failure. riskLevel is advisory. Set background:true to run long-running commands in the background without blocking, returning taskId and pid immediately for inspection via TaskOutput/TaskStop.'),
     webSearchTool(),
   ];
 }
