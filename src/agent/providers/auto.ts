@@ -80,9 +80,21 @@ export function buildRoutingContext(request: ModelRequest, surface: RoutingConte
   }
   const user = last >= 0 ? messages[last]! : undefined;
   const after = last >= 0 ? messages.slice(last + 1) : [];
+  let turnNumber = 0;
+  let inUser = false;
+  for (const m of messages) {
+    if (m.role === 'user' && m.contextKind !== 'summary') {
+      if (!inUser) {
+        turnNumber++;
+        inUser = true;
+      }
+    } else if (m.role === 'assistant') {
+      inUser = false;
+    }
+  }
   return {
     userMessage: user ? text(user.content) : '',
-    turnNumber: messages.filter(m => m.role === 'user' && m.contextKind !== 'summary').length,
+    turnNumber,
     surface, isSubagent,
     imagesPresent: Array.isArray(user?.content) && user.content.some(p => p.type === 'image_url'),
     hasFailedToolCalls: after.some(m => m.role === 'tool' && typeof m.content === 'string' && /^Error\b/.test(m.content)),

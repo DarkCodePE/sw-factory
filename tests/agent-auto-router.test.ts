@@ -17,8 +17,8 @@ const config: AutoRouterConfig = {
 };
 const req = (content: ModelRequest['messages'][number]['content'] = 'hola', extra: ModelRequest['messages'] = []): ModelRequest =>
   ({ messages: [{ role: 'user', content }, ...extra], tools: [], maxOutputTokens: 100 });
-const stub = (id: string, fn: () => Promise<ModelTurn> | ModelTurn = () => turn): ModelProvider & { calls: number } => {
-  const p = { id, calls: 0, async complete() { p.calls++; return fn(); } };
+const stub = (id: string, fn: () => Promise<ModelTurn> | ModelTurn = () => turn): ModelProvider & { calls: number; lastRequest?: ModelRequest } => {
+  const p = { id, calls: 0, lastRequest: undefined as ModelRequest | undefined, async complete(r: ModelRequest) { p.calls++; p.lastRequest = r; return fn(); } };
   return p;
 };
 const sig = () => new AbortController().signal;
@@ -121,13 +121,40 @@ describe('auto provider', () => {
   });
 
   test('UpgradeSessionModel is visible only while an upgrade exists', async () => {
-    const { auto } = setup();
+    const { auto, providers } = setup();
     const names = () => listAgentTools({ prompt: '', cwd: process.cwd(), provider: auto }).map(t => t.schema.function.name);
-    expect(names()).not.toContain('UpgradeSessionModel');
-    await auto.complete(req(), sig());
+    // Offered before the router decides
+    expect(auto.currentModelId).toBeUndefined();
     expect(names()).toContain('UpgradeSessionModel');
+
+    const toolWithUpgrade = { type: 'function' as const, function: { name: 'UpgradeSessionModel', description: '', parameters: {} } };
+    const readTool = { type: 'function' as const, function: { name: 'Read', description: '', parameters: {} } };
+    const reqWithUpgrade: ModelRequest = {
+      messages: [{ role: 'user', content: 'hola' }],
+      tools: [toolWithUpgrade, readTool],
+      maxOutputTokens: 100,
+    };
+
+    // Offered after routing to a model that can upgrade
+    await auto.complete(reqWithUpgrade, sig());
+    expect(auto.currentModelId).toBe('cheap');
+    expect(auto.canUpgrade()).toBe(true);
+    expect(names()).toContain('UpgradeSessionModel');
+    expect(providers.cheap!.lastRequest?.tools?.map(t => t.function.name)).toContain('UpgradeSessionModel');
+
+    // Reaching the top tier
     auto.upgrade(); auto.upgrade();
+    expect(auto.currentModelId).toBe('big');
+    expect(auto.canUpgrade()).toBe(false);
+
+    // Registry drops it once at top
     expect(names()).not.toContain('UpgradeSessionModel');
+
+    // And provider drops it from request.tools sent to the top model
+    await auto.complete(reqWithUpgrade, sig());
+    expect(providers.big!.lastRequest?.tools?.map(t => t.function.name)).not.toContain('UpgradeSessionModel');
+    expect(providers.big!.lastRequest?.tools?.map(t => t.function.name)).toContain('Read');
+
     expect(listAgentTools({ prompt: '', cwd: process.cwd(), provider: stub('x') }).map(t => t.schema.function.name)).not.toContain('UpgradeSessionModel');
   });
 
@@ -146,6 +173,36 @@ describe('auto provider', () => {
       { role: 'user', content: 'a' }, { role: 'assistant', content: null }, { role: 'user', content: 'b' },
       { role: 'tool', tool_call_id: '1', content: 'Error: boom' }], tools: [{ type: 'function', function: { name: 'Read', description: '', parameters: {} } }], maxOutputTokens: 1 }, 'chat', false);
     expect(ctx).toMatchObject({ userMessage: 'b', turnNumber: 2, surface: 'chat', hasFailedToolCalls: true, toolNames: ['Read'], imagesPresent: false });
+  });
+
+  test('turnNumber counts user turns rather than individual user messages', () => {
+    // Initial turn with workspace setup user message + prompt user message: turnNumber must be 1
+    const ctx1 = buildRoutingContext({
+      messages: [
+        { role: 'system', content: 'system instructions' },
+        { role: 'user', content: 'Workspace: /home/repo\nMode: auto; autonomy: high.' },
+        { role: 'user', content: 'List files in current directory' },
+      ],
+      tools: [],
+      maxOutputTokens: 100,
+    }, 'exec', false);
+    expect(ctx1.turnNumber).toBe(1);
+    expect(ctx1.userMessage).toBe('List files in current directory');
+
+    // Turn 2 after assistant response: turnNumber must be 2
+    const ctx2 = buildRoutingContext({
+      messages: [
+        { role: 'system', content: 'system instructions' },
+        { role: 'user', content: 'Workspace: /home/repo' },
+        { role: 'user', content: 'First message' },
+        { role: 'assistant', content: 'Files listed.' },
+        { role: 'user', content: 'Now delete file.txt' },
+      ],
+      tools: [],
+      maxOutputTokens: 100,
+    }, 'exec', false);
+    expect(ctx2.turnNumber).toBe(2);
+    expect(ctx2.userMessage).toBe('Now delete file.txt');
   });
 });
 
