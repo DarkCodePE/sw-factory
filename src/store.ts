@@ -17,6 +17,14 @@ import {
   TERMINAL_ACTIVITY,
   WORKSTREAM_TRANSITIONS,
 } from './enums.ts';
+import {
+  VALIDATOR_KINDS,
+  type ValidatorKind,
+  type ValidationResult,
+  type ValidationSummary,
+  type ValidationVerdict,
+} from './connectors/types.ts';
+import { parseVerdict } from './validators/verdict.ts';
 
 export interface Workstream {
   id: string;
@@ -62,6 +70,7 @@ export interface Activity {
   status: ActivityStatus;
   reviewStatus: string | null;
   reviewComment: string | null;
+  validator: ValidatorKind | null;
   workerId: string | null;
   result: string | null;
   error: string | null;
@@ -96,7 +105,8 @@ CREATE TABLE IF NOT EXISTS changes (
 CREATE TABLE IF NOT EXISTS activities (
   id TEXT PRIMARY KEY, workstream_id TEXT NOT NULL REFERENCES workstreams(id) ON DELETE CASCADE,
   change_id TEXT NOT NULL REFERENCES changes(id) ON DELETE CASCADE, parent_activity_id TEXT,
-  kind TEXT NOT NULL, status TEXT NOT NULL, review_status TEXT, review_comment TEXT, worker_id TEXT,
+  kind TEXT NOT NULL, status TEXT NOT NULL, review_status TEXT, review_comment TEXT,
+  validator TEXT, worker_id TEXT,
   result TEXT, error TEXT, retry_count INTEGER NOT NULL DEFAULT 0, created_at TEXT NOT NULL,
   started_at TEXT, completed_at TEXT);
 CREATE INDEX IF NOT EXISTS idx_activities_claim ON activities(workstream_id, status, created_at);
@@ -161,6 +171,7 @@ function toActivity(r: Row): Activity {
     status: r.status as ActivityStatus,
     reviewStatus: (r.review_status as string | null) ?? null,
     reviewComment: (r.review_comment as string | null) ?? null,
+    validator: (r.validator as ValidatorKind | null) ?? null,
     workerId: (r.worker_id as string | null) ?? null,
     result: (r.result as string | null) ?? null,
     error: (r.error as string | null) ?? null,
@@ -189,6 +200,14 @@ export class Store {
     this.db = new Database(path, { create: true, strict: true });
     this.db.exec('PRAGMA journal_mode = WAL; PRAGMA foreign_keys = ON; PRAGMA busy_timeout = 5000;');
     this.db.exec(SCHEMA);
+    this.migrate();
+  }
+
+  private migrate(): void {
+    const cols = this.db.query('PRAGMA table_info(activities)').all() as { name: string }[];
+    if (!cols.some((c) => c.name === 'validator')) {
+      this.db.exec('ALTER TABLE activities ADD COLUMN validator TEXT;');
+    }
   }
 
   close(): void {
@@ -345,16 +364,17 @@ export class Store {
     parentId: string | null,
     kind: ActivityKind,
     status: ActivityStatus,
-    reviewStatus: string | null
+    reviewStatus: string | null,
+    validator: ValidatorKind | null = null
   ): string {
     const id = randomUUID();
     const t = now();
     this.db
       .query(
         `INSERT INTO activities (id, workstream_id, change_id, parent_activity_id, kind, status, review_status,
-         created_at, completed_at) VALUES (?,?,?,?,?,?,?,?,?)`
+         validator, created_at, completed_at) VALUES (?,?,?,?,?,?,?,?,?,?)`
       )
-      .run(id, workstreamId, changeId, parentId, kind, status, reviewStatus, t, status === 'completed' ? t : null);
+      .run(id, workstreamId, changeId, parentId, kind, status, reviewStatus, validator, t, status === 'completed' ? t : null);
     return id;
   }
 
@@ -408,17 +428,92 @@ export class Store {
         .run(workerId, now(), r.id);
       if (res.changes !== 1) return null;
       const a = this.getActivity(r.id);
-      this.setChangeStatus(a.changeId, 'in_progress');
-      this.event(ws.id, 'info', `${a.kind} claimed by ${workerId}`, a.changeId, a.id);
+      if (!a.validator) {
+        this.setChangeStatus(a.changeId, 'in_progress');
+      }
+      this.event(ws.id, 'info', `${a.validator ? `validator ${a.validator}` : a.kind} claimed by ${workerId}`, a.changeId, a.id);
       return a;
     })();
+  }
+
+  /**
+   * Request validation on an implemented change. Queues a pending change_review activity
+   * for each requested validator (no duplicates if already pending or in progress).
+   * The change remains in implemented status.
+   */
+  requestValidation(changeId: string, validators: ValidatorKind[]): Activity[] {
+    const change = this.getChange(changeId);
+    if (change.status !== 'implemented') {
+      throw new StoreError('invalid_transition', `change ${changeId} is ${change.status}, not implemented`);
+    }
+    return this.db.transaction(() => {
+      const existing = this.listActivities({ changeId });
+      const created: Activity[] = [];
+      for (const v of validators) {
+        if (!VALIDATOR_KINDS.includes(v)) {
+          throw new StoreError('invalid_input', `unknown validator "${v}"`);
+        }
+        const alreadyQueued =
+          existing.some((a) => a.validator === v && (a.status === 'pending' || a.status === 'in_progress')) ||
+          created.some((a) => a.validator === v);
+        if (alreadyQueued) continue;
+        const id = this.insertActivity(change.workstreamId, change.id, null, 'change_review', 'pending', null, v);
+        this.event(change.workstreamId, 'info', `validation requested: ${v}`, change.id, id);
+        created.push(this.getActivity(id));
+      }
+      return created;
+    })();
+  }
+
+  /**
+   * Summarizes the latest validation results for a change.
+   */
+  validationSummary(changeId: string): ValidationSummary {
+    this.getChange(changeId);
+    const acts = this.listActivities({ changeId }).filter((a) => a.validator !== null);
+    const lastByValidator = new Map<ValidatorKind, Activity>();
+    for (const a of acts) {
+      if (a.validator) {
+        lastByValidator.set(a.validator, a);
+      }
+    }
+    const results: ValidationResult[] = [];
+    for (const [v, a] of lastByValidator.entries()) {
+      let verdict: ValidationVerdict | undefined = undefined;
+      if (a.status === 'completed') {
+        if (a.reviewStatus === 'approved') verdict = 'pass';
+        else if (a.reviewStatus === 'declined') verdict = 'fail';
+        else if (a.reviewStatus === 'commented') verdict = 'needs_human';
+      }
+      results.push({
+        validator: v,
+        activityId: a.id,
+        verdict,
+        summary: a.reviewComment ?? '',
+      });
+    }
+    const pending = Array.from(lastByValidator.values()).some(
+      (a) => a.status === 'pending' || a.status === 'in_progress'
+    );
+    const passed = results.length > 0 && !pending && results.every((r) => r.verdict === 'pass');
+    return {
+      changeId,
+      results,
+      passed,
+      pending,
+    };
   }
 
   /**
    * Record a worker's result. Only the claiming worker can complete an in-progress activity.
    * The workstream's approval gate alone decides whether an investigation waits for review.
    */
-  completeActivity(activityId: string, workerId: string, result: string): Activity {
+  completeActivity(
+    activityId: string,
+    workerId: string,
+    result: string,
+    reviewOpts?: { reviewStatus?: string; reviewComment?: string }
+  ): Activity {
     return this.db.transaction(() => {
       const a = this.getActivity(activityId);
       const res = this.db
@@ -429,7 +524,24 @@ export class Store {
         .run(result, now(), activityId, workerId);
       if (res.changes !== 1) throw new StoreError('conflict', `activity ${activityId} is not held by ${workerId}`);
       const ws = this.getWorkstream(a.workstreamId);
-      if (a.kind === 'investigation') {
+      if (a.validator) {
+        // A validator change_review activity does NOT close the change; change stays implemented.
+        let reviewStatus = reviewOpts?.reviewStatus;
+        let reviewComment = reviewOpts?.reviewComment;
+        if (!reviewStatus) {
+          const parsed = parseVerdict(result);
+          if (parsed) {
+            reviewStatus = parsed.verdict === 'pass' ? 'approved' : parsed.verdict === 'fail' ? 'declined' : 'commented';
+            reviewComment = parsed.summary;
+          }
+        }
+        if (reviewStatus !== undefined) {
+          this.db
+            .query(`UPDATE activities SET review_status = ?, review_comment = ? WHERE id = ?`)
+            .run(reviewStatus, reviewComment ?? null, activityId);
+        }
+        this.event(ws.id, 'info', `validator ${a.validator} completed: ${reviewStatus ?? 'no verdict'}`, a.changeId, a.id);
+      } else if (a.kind === 'investigation') {
         if (ws.requireApproval) {
           this.db.query(`UPDATE activities SET review_status = 'awaiting' WHERE id = ?`).run(activityId);
           this.setChangeStatus(a.changeId, 'in_review');
@@ -461,7 +573,9 @@ export class Store {
         )
         .run(retry ? 'pending' : 'failed', error, retryCount, retry ? null : now(), activityId, workerId);
       if (res.changes !== 1) throw new StoreError('conflict', `activity ${activityId} is not held by ${workerId}`);
-      this.setChangeStatus(a.changeId, retry ? 'pending' : 'failed');
+      if (!a.validator) {
+        this.setChangeStatus(a.changeId, retry ? 'pending' : 'failed');
+      }
       this.event(
         a.workstreamId,
         retry ? 'warning' : 'error',
