@@ -10,7 +10,7 @@ interface PromptInput {
   branch: string;
 }
 
-function historyBlock(history: Activity[]): string {
+export function historyBlock(history: Activity[]): string {
   if (history.length === 0) return 'No earlier work on this change.';
   return history
     .map((h) => {
