@@ -15,5 +15,5 @@ export const DEFAULT_VALIDATORS = VALIDATOR_KINDS;
 
 export { parseVerdict } from './verdict.ts';
 export { buildValidatorPrompt } from './prompts.ts';
-export { validationMarkdown, publishValidation } from './publish.ts';
+export { validationMarkdown, publishValidation, mergeBlocker } from './publish.ts';
 export { validateMain } from './cli.ts';

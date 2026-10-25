@@ -6,7 +6,7 @@ import { createGhGateway, repoSlugFromRemote, runCommand, validateBranch, valida
 import { createJiraGateway, loadJiraEnv, validateJiraKey } from './jira.ts';
 import { ChangeLinkStore } from './links.ts';
 import { importIssue, issueToSignal, pullRequestBody, ticketComment } from './intake.ts';
-import type { PullRequestGateway, TicketGateway } from './types.ts';
+import { VALIDATOR_KINDS, type PullRequestGateway, type TicketGateway } from './types.ts';
 
 export interface ConnectorDeps {
   store?: Store;
@@ -25,7 +25,7 @@ const HELP = `Conectores SDLC de fab
   fab jira show <KEY>
   fab jira import <KEY> --ws <slug> [--triage] [--dry-run]
   fab jira comment <changeId> [--dry-run]
-  fab pr open <changeId> [--base main] [--draft] [--repo owner/name] [--dry-run]
+  fab pr open <changeId> [--base main] [--draft] [--repo owner/name] [--validate] [--dry-run]
   fab pr show <changeId>
 
 --dry-run muestra los comandos y cuerpos sin publicar ni modificar signals o enlaces.`;
@@ -47,7 +47,7 @@ export async function connectorsMain(cmd: 'jira' | 'pr', argv: string[], deps: C
     try {
       parsed = parseArgs({ args: argv, allowPositionals: true, options: {
         ws: { type: 'string' }, triage: { type: 'boolean' }, 'dry-run': { type: 'boolean' },
-        base: { type: 'string' }, draft: { type: 'boolean' }, repo: { type: 'string' }, help: { type: 'boolean', short: 'h' },
+        base: { type: 'string' }, draft: { type: 'boolean' }, repo: { type: 'string' }, validate: { type: 'boolean' }, help: { type: 'boolean', short: 'h' },
       } });
     } catch { throw new Error(`Argumentos inválidos.\n${HELP}`); }
     const { values, positionals } = parsed;
@@ -55,7 +55,7 @@ export async function connectorsMain(cmd: 'jira' | 'pr', argv: string[], deps: C
     const [action, id] = positionals;
     const valid = cmd === 'jira' ? ['show', 'import', 'comment'] : ['show', 'open'];
     if (!valid.includes(action!) || !id || positionals.length !== 2) throw new Error(`Uso inválido.\n${HELP}`);
-    const allowed = action === 'import' ? ['ws', 'triage', 'dry-run'] : action === 'open' ? ['base', 'draft', 'repo', 'dry-run'] : action === 'comment' ? ['dry-run'] : [];
+    const allowed = action === 'import' ? ['ws', 'triage', 'dry-run'] : action === 'open' ? ['base', 'draft', 'repo', 'validate', 'dry-run'] : action === 'comment' ? ['dry-run'] : [];
     if (Object.keys(values).some(key => !allowed.includes(key))) throw new Error(`Opciones incompatibles con ${cmd} ${action}`);
     const dry = values['dry-run'] === true;
     function getStore(): Store {
@@ -136,6 +136,7 @@ export async function connectorsMain(cmd: 'jira' | 'pr', argv: string[], deps: C
       log(`DRY-RUN · ${JSON.stringify(['gh', 'pr', 'view', change.branch, '--repo', repo, '--json', 'number,url,headRefName,baseRefName,state'])}`);
       log(`DRY-RUN · si no existe: ${JSON.stringify(['gh', 'pr', 'create', '--repo', repo, '--head', change.branch, '--base', base, '--title', change.title, '--body-file', '<archivo temporal>', ...(values.draft ? ['--draft'] : [])])}\n${body}`);
       if (linked?.source) log(`DRY-RUN · comentario en ${linked.source.key}: enlace al PR resultante\n${ticketComment('pr_opened', change, linked, 'PR: <URL resultante>')}`);
+      if (values.validate) log(`DRY-RUN · encolaría validadores: ${VALIDATOR_KINDS.join(', ')}`);
       return 0;
     }
     // Resolve Jira credentials before pushing, but publish only after persisting the PR.
@@ -145,6 +146,10 @@ export async function connectorsMain(cmd: 'jira' | 'pr', argv: string[], deps: C
     getLinks(true)!.setPullRequest(change.id, pr);
     if (linked?.source) await getTickets().comment(linked.source.key, ticketComment('pr_opened', change, { ...linked, pr }));
     log(`PR enlazado: ${pr.url}${linked?.source ? ` · HU ${linked.source.key} comentada` : ''}`);
+    if (values.validate) {
+      const queued = getStore().requestValidation(change.id, [...VALIDATOR_KINDS]);
+      log(`Validadores encolados: ${queued.length} (${VALIDATOR_KINDS.join(', ')}); ejecútalos con fab run`);
+    }
     return 0;
   } catch (err) {
     const message = err instanceof StoreError ? ({ not_found: 'No se encontró el recurso local solicitado', invalid_transition: 'Transición local no permitida', conflict: 'El estado local cambió; vuelve a consultar', limit_reached: 'El workstream alcanzó su límite de changes', invalid_input: 'Entrada local inválida' }[err.code]) : err instanceof Error ? err.message : 'Error de conector';

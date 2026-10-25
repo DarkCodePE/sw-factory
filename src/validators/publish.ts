@@ -23,6 +23,16 @@ export function validationMarkdown(summary: ValidationSummary): string {
 }
 
 /**
+ * Why `fab merge` must stop: validators pending/running or any `fail` verdict.
+ * Changes that never requested validation merge as before.
+ */
+export function mergeBlocker(summary: ValidationSummary): string | undefined {
+  if (summary.pending) return 'hay validadores pendientes o en curso';
+  const failed = summary.results.filter((r) => r.verdict === 'fail').map((r) => r.validator);
+  return failed.length ? `validadores en fail: ${failed.join(', ')}` : undefined;
+}
+
+/**
  * Publishes the validation summary as a comment on the linked Pull Request.
  */
 export async function publishValidation(
