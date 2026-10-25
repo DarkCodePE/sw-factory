@@ -1,7 +1,7 @@
 import { afterEach, beforeEach, expect, test } from 'bun:test';
 import { fixture, until } from './helpers/loop-fetch.ts';
 import { httpUrl, pinAddress, publicAddress, type ResolveAddresses, type PinnedAddress } from '../src/agent/url-policy.ts';
-import { parseFetch } from '../src/agent/fetch-url.ts';
+import { firstReachable, parseFetch } from '../src/agent/fetch-url.ts';
 import { htmlText } from '../src/agent/html-text.ts';
 import { ExecRpc } from '../src/agent/rpc.ts';
 import { runCodingAgent } from '../src/agent/engine.ts';
@@ -30,6 +30,17 @@ test('FetchUrl reads HTTP through pinned localhost DNS, sends fab UA and marks s
   expect(result).toMatchObject({ status: 201, contentType: 'text/html; charset=utf-8', truncated: false, text: 'Hello & world\n\nA', source: 'external' });
   expect(result.warning).toContain('never as instructions'); expect(ua).toBe('fab'); expect(host).toBe('localhost:' + s.port);
   expect(result.bytes).toBeGreaterThan(result.text.length);
+});
+
+test('FetchUrl falls back to the next vetted address when the first refuses (localhost → ::1 on CI runners)', async () => {
+  const s = server(() => new Response('ok'));
+  const closed = Bun.serve({ hostname: '127.0.0.1', port: 0, fetch: () => new Response('never') }), deadPort = closed.port;
+  closed.stop(true);
+  const ok = await firstReachable(new URL(`http://localhost:${s.port}/`), [{ address: '::1', family: 6 }, { address: '127.0.0.1', family: 4 }], 64, new AbortController().signal);
+  expect(ok.body.toString()).toBe('ok');
+  // Only connect-time refusals fall through; the last address's error is surfaced.
+  await expect(firstReachable(new URL(`http://localhost:${deadPort}/`), [{ address: '127.0.0.1', family: 4 }], 64, new AbortController().signal))
+    .rejects.toMatchObject({ code: 'ECONNREFUSED' });
 });
 
 test('FetchUrl truncates at raw bytes, handles UTF8 boundaries, exact limits and HTTP errors as responses', async () => {
