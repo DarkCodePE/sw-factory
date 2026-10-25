@@ -20,6 +20,7 @@ import { runScriptWorker } from './script-runtime/worker.ts';
 import { SCRIPT_WORKER_COMMAND } from './script-runtime/run.ts';
 import pkg from '../package.json' with { type: 'json' };
 import { updateMain } from './update/index.ts';
+import { connectorsMain } from './connectors/cli.ts';
 
 const STATE_DIR = resolve(process.env.FABRICA_HOME ?? resolve(process.env.HOME ?? '.', '.fabrica'));
 
@@ -34,6 +35,10 @@ const HELP = `fab — agente de código y fábrica de software local
   fab --cwd <path> [prompt]     conversación, --use-spec o --mission --auto high
   fab --version
   fab update [--channel stable|prerelease] [--check]
+  fab jira show <KEY> | import <KEY> --ws <slug> [--triage] [--dry-run]
+  fab jira comment <changeId> [--dry-run]
+  fab pr open <changeId> [--base main] [--draft] [--repo owner/name] [--dry-run]
+  fab pr show <changeId>
 
   fab ws create <slug> --repo <path> --goal <text> [--agent ${AGENT_NAMES.join('|')}]
                 [--concurrency N] [--task-limit N] [--no-change-approval] [--no-spec-approval]
@@ -80,6 +85,7 @@ function allChanges(store: Store) {
 }
 
 async function main(argv: string[]): Promise<number> {
+  if (argv[0] === 'jira' || argv[0] === 'pr') return connectorsMain(argv[0], argv.slice(1));
   if (argv[0] === 'exec') return execMain(argv.slice(1));
   if (argv[0] === 'update') return updateMain(argv.slice(1));
   if (argv[0] === '--version' || argv[0] === '-v') { console.log(`fab ${pkg.version}`); return 0; }
