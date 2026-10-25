@@ -5,6 +5,7 @@ import { assert, hashFile, run, writeJson } from './common.mjs';
 import { verifyCandidate } from './seal.mjs';
 import { smoke } from './smoke.mjs';
 import { binaryPath, platformAsset } from '../../packaging/npm/runtime.mjs';
+import { npmViewDist } from './npm-view.mjs';
 const directory = resolve('dist/candidate'), { manifest, receipt } = await verifyCandidate(directory, { metadataOnly: true });
 const temporary = await mkdtemp(join(tmpdir(), 'fab-public-')), name = platformAsset();
 const channel = process.argv.includes('--github-only') ? 'github' : 'npm';
@@ -23,7 +24,7 @@ try {
     run('sh', [installer, '--version', receipt.tag, '--install-dir', prefix], { env: { PATH: process.env.PATH ?? '', HOME: home } });
     executable = join(prefix, 'fab'); digest = await hashFile(executable);
   } else {
-    const metadata = JSON.parse(run('npm', ['view', `${receipt.package.name}@${receipt.version}`, 'dist', '--json']));
+    const metadata = JSON.parse(await npmViewDist(receipt.package.name, receipt.version));
     assert(new URL(metadata.tarball).hostname === 'registry.npmjs.org', 'Unexpected npm artifact origin');
     const tarball = join(temporary, 'published.tgz'); await download(metadata.tarball, tarball);
     assert(await hashFile(tarball) === receipt.package.sha256, 'npm bytes differ from preflight seal');
