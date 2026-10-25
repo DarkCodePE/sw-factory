@@ -1,6 +1,6 @@
 import { request as httpRequest, type IncomingMessage, type RequestOptions } from 'node:http';
 import { request as httpsRequest } from 'node:https';
-import { httpUrl, pinAddress, type PinnedAddress } from './url-policy.ts';
+import { httpUrl, pinAddresses, type PinnedAddress } from './url-policy.ts';
 import { htmlText } from './html-text.ts';
 import { inputObject, tool } from './tools.ts';
 import type { ToolContext } from './types.ts';
@@ -13,6 +13,17 @@ export function parseFetch(input: unknown): FetchInput {
   if (!Number.isSafeInteger(maxBytes) || Number(maxBytes) < 1 || Number(maxBytes) > 1024 * 1024) throw new Error('FetchUrl maxBytes must be 1..1048576');
   if (!Number.isSafeInteger(timeoutMs) || Number(timeoutMs) < 1 || Number(timeoutMs) > 30_000) throw new Error('FetchUrl timeoutMs must be 1..30000');
   return { url, maxBytes: Number(maxBytes), timeoutMs: Number(timeoutMs) };
+}
+// Connect-time failures only: no byte was exchanged, so trying the next vetted address is safe.
+const UNREACHABLE = new Set(['ECONNREFUSED', 'EHOSTUNREACH', 'ENETUNREACH', 'EADDRNOTAVAIL']);
+/** Tries each vetted address in resolver order (e.g. `localhost` → ::1 then 127.0.0.1); every one already passed the policy. */
+export async function firstReachable(url: URL, addresses: PinnedAddress[], maxBytes: number, signal: AbortSignal): Promise<Page> {
+  for (const [i, pinned] of addresses.entries()) {
+    try { return await page(url, pinned, maxBytes, signal); } catch (err) {
+      if (i === addresses.length - 1 || signal.aborted || !UNREACHABLE.has((err as NodeJS.ErrnoException).code ?? '')) throw err;
+    }
+  }
+  throw new Error('FetchUrl has no address to connect to');
 }
 interface Page { status: number; contentType: string; bytes: number; truncated: boolean; body: Buffer; location?: string }
 function page(url: URL, pinned: PinnedAddress, maxBytes: number, signal: AbortSignal): Promise<Page> {
@@ -69,8 +80,7 @@ async function fetchUrl(input: unknown, c: ToolContext) {
     let url = p.url;
     for (let redirects = 0; ; redirects++) {
       signal.throwIfAborted();
-      const pinned = await pinAddress(url, allowPrivate, signal);
-      const result = await page(url, pinned, p.maxBytes, signal);
+      const result = await firstReachable(url, await pinAddresses(url, allowPrivate, signal), p.maxBytes, signal);
       signal.throwIfAborted();
       if (result.location !== undefined) {
         if (redirects >= 5) throw new Error('FetchUrl exceeds 5 redirects');

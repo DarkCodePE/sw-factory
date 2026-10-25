@@ -33,11 +33,15 @@ export function publicAddress(address: string): boolean {
 export type PinnedAddress = { address: string; family: number };
 export type ResolveAddresses = (hostname: string, options: { all: true; verbatim: true }) => Promise<PinnedAddress[]>;
 export async function pinAddress(url: URL, allowPrivate: boolean, signal: AbortSignal, resolve: ResolveAddresses = lookup): Promise<PinnedAddress> {
+  return (await pinAddresses(url, allowPrivate, signal, resolve))[0]!;
+}
+/** Every resolved address, in resolver order, after all of them passed the destination policy. */
+export async function pinAddresses(url: URL, allowPrivate: boolean, signal: AbortSignal, resolve: ResolveAddresses = lookup): Promise<PinnedAddress[]> {
   signal.throwIfAborted();
   const hostname = url.hostname.replace(/^\[|\]$/g, '');
   const family = isIP(hostname);
   const addresses = family ? [{ address: hostname, family }] : await abortable(resolve(hostname, { all: true, verbatim: true }), signal);
   signal.throwIfAborted();
   if (!addresses.length || addresses.some(a => !isIP(a.address) || !allowPrivate && !publicAddress(a.address))) throw new Error('FetchUrl rejects private, local or reserved destinations');
-  return addresses[0]!;
+  return addresses;
 }
