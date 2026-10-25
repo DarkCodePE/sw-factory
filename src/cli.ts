@@ -20,6 +20,11 @@ import { runScriptWorker } from './script-runtime/worker.ts';
 import { SCRIPT_WORKER_COMMAND } from './script-runtime/run.ts';
 import pkg from '../package.json' with { type: 'json' };
 import { updateMain } from './update/index.ts';
+import { connectorsMain } from './connectors/cli.ts';
+import { createGhGateway } from './connectors/github.ts';
+import { ChangeLinkStore } from './connectors/links.ts';
+import { validateMain } from './validators/cli.ts';
+import { mergeBlocker } from './validators/publish.ts';
 
 const STATE_DIR = resolve(process.env.FABRICA_HOME ?? resolve(process.env.HOME ?? '.', '.fabrica'));
 
@@ -34,6 +39,11 @@ const HELP = `fab — agente de código y fábrica de software local
   fab --cwd <path> [prompt]     conversación, --use-spec o --mission --auto high
   fab --version
   fab update [--channel stable|prerelease] [--check]
+  fab jira show <KEY> | import <KEY> --ws <slug> [--triage] [--dry-run]
+  fab jira comment <changeId> [--dry-run]
+  fab pr open <changeId> [--base main] [--draft] [--repo owner/name] [--validate] [--dry-run]
+  fab pr show <changeId>
+  fab validate <changeId> [--only code_review,security_audit,qa] | status <changeId> | publish <changeId> [--dry-run]
 
   fab ws create <slug> --repo <path> --goal <text> [--agent ${AGENT_NAMES.join('|')}]
                 [--concurrency N] [--task-limit N] [--no-change-approval] [--no-spec-approval]
@@ -48,7 +58,7 @@ const HELP = `fab — agente de código y fábrica de software local
   fab tui <slug>                panel interactivo: changes, bandeja y eventos
   fab status <slug>
   fab show <changeId>
-  fab merge <changeId>          fusiona la rama fab/<id> en el repo y cierra el change
+  fab merge <changeId> [--force] fusiona la rama fab/<id> y cierra el change; --force ignora validadores pendientes o en fail
   fab retry <changeId>          re-encola la última actividad de un change fallido
   fab reject <changeId>         cancela el change y borra su worktree
   fab events <slug>
@@ -80,6 +90,16 @@ function allChanges(store: Store) {
 }
 
 async function main(argv: string[]): Promise<number> {
+  if (argv[0] === 'jira' || argv[0] === 'pr') return connectorsMain(argv[0], argv.slice(1));
+  if (argv[0] === 'validate') {
+    const store = openStore();
+    try {
+      const links = new ChangeLinkStore(store.db);
+      return await validateMain(argv.slice(1), { store, stateDir: STATE_DIR, lookup: links.lookup, prs: createGhGateway() });
+    } finally {
+      store.close();
+    }
+  }
   if (argv[0] === 'exec') return execMain(argv.slice(1));
   if (argv[0] === 'update') return updateMain(argv.slice(1));
   if (argv[0] === '--version' || argv[0] === '-v') { console.log(`fab ${pkg.version}`); return 0; }
@@ -108,6 +128,7 @@ async function main(argv: string[]): Promise<number> {
       comment: { type: 'string' },
       all: { type: 'boolean' },
       once: { type: 'boolean' },
+      force: { type: 'boolean' },
       help: { type: 'boolean', short: 'h' },
     },
   });
@@ -221,6 +242,9 @@ async function main(argv: string[]): Promise<number> {
         const c = findByPrefix(allChanges(store), sub ?? '', 'change');
         const ws = store.getWorkstream(c.workstreamId);
         if (c.status !== 'implemented') throw new StoreError('invalid_transition', `change is ${c.status}, not implemented`);
+        const blocked = mergeBlocker(store.validationSummary(c.id));
+        if (blocked && !values.force) throw new StoreError('invalid_transition', `${blocked}; usa --force para fusionar igualmente`);
+        if (blocked) console.log(`aviso: ${blocked}; se fusiona por --force`);
         console.log(await mergeAndCleanup(ws.repo, STATE_DIR, c.id));
         store.closeChange(c.id, 'completed');
         console.log(`change ${short(c.id)} completado`);

@@ -3,6 +3,8 @@
 import { getAgent, runAgent } from './agents.ts';
 import { buildWorkerPrompt, parseReportStatus } from './prompts.ts';
 import type { Activity, Store } from './store.ts';
+import { buildValidatorPrompt } from './validators/prompts.ts';
+import { parseVerdict } from './validators/verdict.ts';
 import { branchCommits, commitWorktree, ensureWorktree } from './worktrees.ts';
 
 export interface PoolOptions {
@@ -23,19 +25,56 @@ export async function processActivity(store: Store, activity: Activity, workerId
     const { activity: a, change, history } = store.activityContext(activity.id);
     const { path, branch } = await ensureWorktree(ws.repo, opts.stateDir, change.id);
     store.setChangeBranch(change.id, branch);
-    const prompt = buildWorkerPrompt({ workstream: ws, change, activity: a, history, worktree: path, branch }, { factoryCommits: agent.factoryCommits });
-    log(`[${workerId}] ${a.kind} "${change.title}" -> ${agent.name} in ${path}`);
-    const run = await runAgent(agent, prompt, path, undefined, { readOnly: a.kind === 'investigation' });
+    let diffStat = '';
+    if (a.validator) {
+      try {
+        const proc = Bun.spawn(['git', 'diff', '--stat', 'main...' + branch], { cwd: path, stdout: 'pipe', stderr: 'pipe' });
+        diffStat = (await new Response(proc.stdout).text()).trim();
+        if (!diffStat) {
+          const proc2 = Bun.spawn(['git', 'diff', '--stat', 'HEAD~1'], { cwd: path, stdout: 'pipe', stderr: 'pipe' });
+          diffStat = (await new Response(proc2.stdout).text()).trim();
+        }
+      } catch {
+        diffStat = '';
+      }
+    }
+    const prompt = a.validator
+      ? buildValidatorPrompt(a.validator, { change, diffStat, base: 'main', branch, worktree: path, history })
+      : buildWorkerPrompt({ workstream: ws, change, activity: a, history, worktree: path, branch }, { factoryCommits: agent.factoryCommits });
+    log(`[${workerId}] ${a.validator ?? a.kind} "${change.title}" -> ${agent.name} in ${path}`);
+    const readOnly = a.validator ? (a.validator !== 'qa') : (a.kind === 'investigation');
+    const run = await runAgent(agent, prompt, path, undefined, { readOnly });
     const status = parseReportStatus(run.output);
     if (!run.ok) {
       store.failActivity(a.id, workerId, `agent exit ${run.exitCode}: ${run.output.slice(-1000)}`);
-      log(`[${workerId}] ${a.kind} failed (exit ${run.exitCode})`);
+      log(`[${workerId}] ${a.validator ?? a.kind} failed (exit ${run.exitCode})`);
       return;
     }
     if (!status.done) {
       store.failActivity(a.id, workerId, `blocked: ${status.reason}\n\n${run.output.slice(-2000)}`);
-      log(`[${workerId}] ${a.kind} blocked: ${status.reason}`);
+      log(`[${workerId}] ${a.validator ?? a.kind} blocked: ${status.reason}`);
       return;
+    }
+    if (a.validator) {
+      const verdictResult = parseVerdict(run.output);
+      if (!verdictResult) {
+        store.failActivity(a.id, workerId, `report has no valid VERDICT line:\n\n${run.output.slice(-2000)}`);
+        log(`[${workerId}] ${a.validator} rejected: missing valid VERDICT`);
+        return;
+      }
+      if (a.validator === 'qa') {
+        let isDirty = false;
+        try {
+          const proc = Bun.spawn(['git', 'status', '--porcelain'], { cwd: path, stdout: 'pipe', stderr: 'pipe' });
+          const statusText = (await new Response(proc.stdout).text()).trim();
+          if (statusText.length > 0) isDirty = true;
+        } catch {}
+        if (isDirty) {
+          store.failActivity(a.id, workerId, 'qa dejó cambios en el worktree');
+          log(`[${workerId}] qa dejó cambios en el worktree`);
+          return;
+        }
+      }
     }
     if (a.kind === 'implementation') {
       // The commit is attributed to the factory and only records what the agent left on disk.
