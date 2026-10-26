@@ -3,6 +3,7 @@ import type { AutoRouterConfig, RouterCandidate, RoutingContext, RoutingDecision
 import { ProviderError } from '../transport.ts';
 import { abortable } from '../cancellation.ts';
 import * as routerCore from '../router/index.ts';
+import { isRoutingHandled, observeAttemptOutput, rethrowIfAborted, retryDelayMs } from './attempt-policy.ts';
 
 /** Signatures fixed by the router contract; declared here so this file compiles before the core is merged. */
 export type RouteFn = (config: AutoRouterConfig, classifierProvider: ModelProvider | undefined, ctx: RoutingContext, signal: AbortSignal) => Promise<RoutingDecision>;
@@ -51,8 +52,6 @@ export function lazyRouterCore(): { route: RouteFn; upgradeTarget: UpgradeFn } {
   return { route: routerCore.route, upgradeTarget: routerCore.upgradeTarget };
 }
 
-const BASE_DELAY_MS = 500, MAX_DELAY_MS = 8000;
-
 function statusOf(e: unknown): number | undefined {
   const any = e as { status?: unknown; message?: unknown };
   if (typeof any?.status === 'number') return any.status;
@@ -62,6 +61,7 @@ function statusOf(e: unknown): number | undefined {
 
 /** retry: same model again; rotate: this model cannot serve the request; fatal: surface as today. */
 function classifyFailure(e: unknown): 'retry' | 'rotate' | 'fatal' {
+  if (isRoutingHandled(e)) return 'fatal';
   if (!(e instanceof ProviderError) || e.contextLimit) return 'fatal';
   const status = statusOf(e);
   if (status === 401 || status === 403) return 'fatal';
@@ -170,20 +170,18 @@ export function createAutoProvider(opts: AutoProviderOptions): AutoProvider {
         // The tool list is fixed before routing; drop the upgrade tool once the routed model has no higher tier.
         const tools = provider.canUpgrade() ? request.tools : request.tools?.filter(t => t.function.name !== UPGRADE_TOOL);
         for (let attempt = 1; ; attempt++) {
-          let streamed = false;
+          const output = observeAttemptOutput(delta);
           try {
-            return await target.complete(tools === request.tools ? request : { ...request, tools }, signal, delta ? t => { if (t.length > 0) streamed = true; delta(t); } : undefined);
+            return await target.complete(tools === request.tools ? request : { ...request, tools }, signal, output.delta);
           } catch (err) {
-            if (signal.aborted) throw signal.reason ?? err;
+            rethrowIfAborted(signal, err);
             const message = err instanceof Error ? err.message : String(err);
             // Text already reached the user: a retry or rotation would duplicate it, and the turn is not a valid answer.
-            if (streamed) throw new ProviderError(`Model stream cut after output began (${model}): ${message}`);
+            if (output.committed) throw new ProviderError(`Model stream cut after output began (${model}): ${message}`);
             const kind = classifyFailure(err);
             if (kind === 'fatal') throw err;
             if (kind === 'retry' && attempt < retries) {
-              const backoff = Math.min(MAX_DELAY_MS, BASE_DELAY_MS * 2 ** (attempt - 1)) * (0.5 + random() / 2);
-              const retryAfter = Number((err as { retryAfterMs?: unknown }).retryAfterMs);
-              await sleep(Math.max(backoff, Number.isFinite(retryAfter) ? retryAfter : 0), signal);
+              await sleep(retryDelayMs(attempt, random, (err as { retryAfterMs?: unknown }).retryAfterMs), signal);
               continue;
             }
             const next = fallbacks.shift();
