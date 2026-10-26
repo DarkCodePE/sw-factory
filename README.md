@@ -71,7 +71,7 @@ Detecta el método de instalación original y actualiza a la última versión di
 ```bash
 fab update --check         # Comprueba si hay actualizaciones sin tocar el sistema
 fab update                 # Descarga e instala la última versión de tu canal
-fab update --channel next  # Cambia explícitamente de canal
+fab update --channel prerelease  # Cambia explícitamente de canal (stable | prerelease)
 ```
 
 ---
@@ -191,7 +191,7 @@ El ciclo de desarrollo en `fab` sigue un flujo determinista con compuertas de co
 
 ### 1. Conector de Jira (`fab jira`)
 
-Permite interactuar con Atlassian Jira Cloud utilizando las credenciales de entorno (`JIRA_HOST` o `JIRA_URL`, `JIRA_EMAIL` y `JIRA_API_TOKEN`):
+Permite interactuar con Atlassian Jira Cloud utilizando las credenciales de entorno (`JIRA_HOSTNAME`, `JIRA_USERNAME` y `JIRA_API_TOKEN`; se leen del entorno o de un `.env` en `$JIRA_ENV_FILE` o subiendo desde la carpeta actual, y `JIRA_ACCEPTANCE_FIELD` opcional para los criterios de aceptación):
 
 ```bash
 # Inspeccionar una issue de Jira en solo lectura
@@ -349,7 +349,7 @@ Permite ejecutar comandos directamente sobre el anfitrión sin confinamiento de 
 
 1. **Anthropic:** Implementación nativa de Messages API en streaming con `x-api-key` o `bearer`, mapeo de herramientas y soporte de bloques `thinking` configurables.
 2. **OpenAI / Suscripción ChatGPT:** Endpoints compatibles con Responses API y reutilización segura de la autenticación local de Codex CLI sin almacenar credenciales en texto plano.
-3. **Modelos locales (Ollama / vLLM):** Probado y validado con modelos locales como `qwen3.5-32k` y `LiquidAI/LFM2.5-2.6B`.
+3. **Cualquier endpoint compatible con OpenAI (`generic-chat-completion-api`):** Ollama, vLLM, OpenRouter o el endpoint OpenAI-compatible de Gemini, configurando `baseUrl` y `apiKey` en `customModels`. En las pruebas del flujo de fábrica, los modelos locales probados (`qwen3.5-32k`, `LiquidAI/LFM2.5-2.6B`) todavía no completan de forma fiable una tarea de varias etapas; OpenRouter y Gemini no se han verificado.
 4. **Auto-Router con clasificador (`-m auto`):** Selección dinámica del modelo más económico y adecuado para la tarea evaluando el prompt con clasificadores locales o remotos (TypeSafe Jev).
 
 ### Adaptadores externos para el pool de fábrica
