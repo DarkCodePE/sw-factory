@@ -32,6 +32,9 @@ const HELP = `fab exec — independent coding-agent runtime
     [--settings file] [--list-tools] [--with-mcp-status] [--require-status]
 YOLO: no approvals, host execution and network; invocation-only.
 Network auto: Execute requests are approved automatically only at --auto high; otherwise approval is required.
+Omni: -m omni --settings file requires omniRouter + customModels (OpenAI-compatible).
+Free eligible profiles first; paid requires allowPaid. ToS avoid is always excluded.
+Omni cannot be combined with autoRouter or modelRouting. Keys use \${ENV_NAME} references.
 Model settings: FABRICA_LLM_MODEL, FABRICA_LLM_BASE_URL, FABRICA_LLM_API_KEY.
 Unsupported Droid flags fail explicitly; the native runtime never invokes Droid.
 `;

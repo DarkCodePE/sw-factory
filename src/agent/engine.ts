@@ -8,6 +8,7 @@ import { ProviderError, estimatedTokens, validateTurn } from './provider.ts';
 import { readWorkspaceFile } from './files.ts';
 import { abortable } from './cancellation.ts';
 import { ToolRuntime } from './registry.ts';
+import { isOmniProvider } from './providers/omni.ts';
 import { isAutoProvider } from './providers/auto.ts';
 import { McpManager } from './mcp.ts';
 import { networkPolicy } from './network-policy.ts';
@@ -30,6 +31,13 @@ const budget = (v: number | undefined, fallback: number, name: string, min = 1) 
 export { abortable } from './cancellation.ts';
 
 export async function runCodingAgent(opts: AgentOptions, inherited?: AgentLineage): Promise<AgentResult> {
+  // Keep invocation capabilities bound to the original options object.
+  const invocationOptions = opts;
+  // Every engine invocation owns its Omni event sink, including concurrent role sessions.
+  if (isOmniProvider(opts.provider) || isOmniProvider(opts.specProvider)) opts = { ...opts,
+    provider: isOmniProvider(opts.provider) ? opts.provider.forSubagent() : opts.provider,
+    specProvider: isOmniProvider(opts.specProvider) ? opts.specProvider.forSubagent() : opts.specProvider,
+  };
   const start = Date.now(), id = opts.sessionId && !opts.fork ? opts.sessionId : opts.newSessionId ?? crypto.randomUUID();
   const usage = { inputTokens: 0, outputTokens: 0 };
   let store: SessionStore | undefined, state: SessionState | undefined;
@@ -48,8 +56,10 @@ export async function runCodingAgent(opts: AgentOptions, inherited?: AgentLineag
   if (opts.signal?.aborted) onAbort();
   const emit = (type: Parameters<NonNullable<AgentOptions['onEvent']>>[0]['type'], fields: Record<string, unknown> = {}) =>
     opts.onEvent?.({ type, sessionId: id, ...fields });
-  // An auto provider reports routing decisions through the session's event sink so they carry the session id.
-  if (isAutoProvider(opts.provider)) opts.provider.bindEvents(e => opts.onEvent?.({ ...e, sessionId: id }));
+  // A routed provider reports routing decisions through the session's event sink so they carry the session id.
+  for (const provider of new Set([opts.provider, opts.specProvider])) {
+    if (isAutoProvider(provider) || isOmniProvider(provider)) provider.bindEvents(e => opts.onEvent?.({ ...e, sessionId: id }));
+  }
   let executionPolicy: ExecutionPolicy | undefined;
   let timer: ReturnType<typeof setTimeout> | undefined;
   const result = (ok: boolean, text: string, error?: AgentResult['error']): AgentResult => ({
@@ -112,7 +122,7 @@ export async function runCodingAgent(opts: AgentOptions, inherited?: AgentLineag
       state = { version: 1, id, cwd, provider: opts.provider.id, messages, pending: [], status: 'running', turns: 0, tags: opts.tags ?? [] };
     }
     await store.save(state, !opts.sessionId || !!opts.fork);
-    saved = true; missionChildSessionSaved(opts);
+    saved = true; missionChildSessionSaved(invocationOptions);
     if (store.reconciled) emit('reconciled', store.reconciled);
     await store.journal?.append('session_start'); await store.journal?.append('turn_start');
     let hookContext: string[] = [];
@@ -303,7 +313,7 @@ export async function runCodingAgent(opts: AgentOptions, inherited?: AgentLineag
     if (saved && state && store) {
       // Only an invocation-bound host pause may balance interrupted calls AFTER all owned work drains.
       // Effects may be partial: record uncertainty, never claim cancellation undid them or replay them.
-      if (canReconcileMissionPause(opts)) {
+      if (canReconcileMissionPause(invocationOptions)) {
         for (const id of state.pending) state.messages.push({ role: 'tool', tool_call_id: id,
           content: 'Error: Interrupted by host mission pause. Execution may have partially completed. Inspect the workspace before retrying; prior calls will not be replayed.' });
         state.pending = [];

@@ -351,6 +351,13 @@ Permite ejecutar comandos directamente sobre el anfitrión sin confinamiento de 
 1. **Anthropic:** Implementación nativa de Messages API en streaming con `x-api-key` o `bearer`, mapeo de herramientas y soporte de bloques `thinking` configurables.
 2. **OpenAI / Suscripción ChatGPT:** Endpoints compatibles con Responses API y reutilización segura de la autenticación local de Codex CLI sin almacenar credenciales en texto plano.
 3. **Cualquier endpoint compatible con OpenAI (`generic-chat-completion-api`):** Ollama, vLLM, OpenRouter o el endpoint OpenAI-compatible de Gemini, configurando `baseUrl` y `apiKey` en `customModels`. En las pruebas del flujo de fábrica, los modelos locales probados (`qwen3.5-32k`, `LiquidAI/LFM2.5-2.6B`) todavía no completan de forma fiable una tarea de varias etapas; OpenRouter y Gemini no se han verificado.
+
+El agente nativo también admite `fab exec --model omni --settings settings.json`:
+un pool de cuentas OpenAI-compatible con fallback ante 429/cuota y salud
+compartida entre roles/subagentes. ToS `avoid` queda excluido siempre; pago solo
+con `allowPaid: true`, tools obligatorias cuando el turno las usa y claves por
+referencia ENV resueltas bajo demanda. No se combina con `autoRouter` ni
+`modelRouting`. Consulta la [configuración, límites y pruebas de Omni](docs/omni-provider.md).
 4. **Auto-Router con clasificador (`-m auto`):** Selección dinámica del modelo más económico y adecuado para la tarea evaluando el prompt con clasificadores locales o remotos (TypeSafe Jev).
 
 ### Adaptadores externos para el pool de fábrica

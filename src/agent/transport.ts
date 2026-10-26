@@ -1,7 +1,15 @@
 import { abortable } from './cancellation.ts';
 
+/** Bounded, sanitized HTTP metadata; never contains response bodies or credentials. */
+export interface SafeHttpFailure {
+  status: number;
+  code?: string;
+  retryAt?: number;
+  contextLimit: boolean;
+}
+
 export class ProviderError extends Error {
-  constructor(message: string, public readonly retryable = false, public readonly contextLimit = false, public readonly retryAfterMs?: number) { super(message); }
+  constructor(message: string, public readonly retryable = false, public readonly contextLimit = false, public readonly retryAfterMs?: number, public readonly http?: SafeHttpFailure) { super(message); }
 }
 /** Parses a `retry-after` header (seconds or HTTP date) into milliseconds. */
 export function retryAfterMs(value: string | null, now = Date.now()): number | undefined {
