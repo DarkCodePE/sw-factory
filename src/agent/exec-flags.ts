@@ -215,12 +215,13 @@ export function buildProviders(
   const baseUrl = v['base-url'] ?? process.env.FABRICA_LLM_BASE_URL;
   const apiKey = process.env.FABRICA_LLM_API_KEY;
 
+  const runtime: import('./omni/runtime.ts').ProviderRuntime = {};
   const configured = configuredProviders(settings, {
     model: fallbackModel,
     baseUrl,
     apiKey,
     reasoningEffort: v['reasoning-effort'],
-  }, onEvent);
+  }, onEvent, undefined, runtime);
   const provider = configured.providers[configured.defaultModelId]!;
 
   // Build specProvider if in spec mode and spec model/reasoning specified
@@ -232,7 +233,7 @@ export function buildProviders(
       baseUrl,
       apiKey,
       reasoningEffort: v['spec-reasoning-effort'] ?? v['reasoning-effort'],
-    }, onEvent);
+    }, onEvent, undefined, runtime);
     specProvider = specConfigured.providers[specConfigured.defaultModelId];
   }
 
@@ -245,7 +246,7 @@ export function buildProviders(
       baseUrl,
       apiKey,
       reasoningEffort: effort ?? v['reasoning-effort'],
-    }, onEvent);
+    }, onEvent, undefined, runtime);
     return roleConfigured.providers[roleConfigured.defaultModelId];
   };
 

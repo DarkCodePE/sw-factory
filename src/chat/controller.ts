@@ -85,7 +85,7 @@ export class ChatController {
   get busy() { return !!this.active; }
   get modelIds() {
     const aliases = Object.keys(this.settings.modelAliases ?? {});
-    return [...new Set([this.config.model, ...aliases, ...this.settings.customModels?.map(m => m.id) ?? []])];
+    return [...new Set([this.config.model, ...(this.settings.omniRouter ? ['omni'] : []), ...aliases, ...this.settings.customModels?.filter(m => !this.settings.omniRouter?.profiles.some(p => p.modelId === m.id)).map(m => m.id) ?? []])];
   }
   get modelLabel() {
     if (this.settings.modelAliases && Object.hasOwn(this.settings.modelAliases, this.config.model)) {
@@ -132,7 +132,7 @@ export class ChatController {
     if (this.options.providerFor) return this.options.providerFor(config.model, config.reasoning);
     const configured = configuredProviders({ ...this.settings, modelId: config.model }, {
       model: config.model, baseUrl: process.env.FABRICA_LLM_BASE_URL, apiKey: process.env.FABRICA_LLM_API_KEY, reasoningEffort: config.reasoning,
-    });
+    }, undefined, undefined, this.providerRuntime);
     const provider = configured.providers[configured.defaultModelId]!;
     if (!isAutoProvider(provider)) { this.autoProvider = undefined; return provider; }
     // One auto provider per chat so the routed model stays fixed across turns.
@@ -140,6 +140,7 @@ export class ChatController {
     return this.autoProvider ??= provider;
   }
   private autoProvider?: AutoProvider;
+  private providerRuntime: import('../agent/omni/runtime.ts').ProviderRuntime = {};
   /** `auto → model` once the router has chosen; plain model id otherwise. */
   private get modelShown() { const now = this.autoProvider?.currentModelId; return this.config.model === 'auto' && now ? `auto → ${now}` : this.config.model; }
   async refreshCommands() {

@@ -18,7 +18,7 @@ const CODE_SETS: ReadonlyArray<readonly [FailureKind, ReadonlySet<string>]> = [
   ['transient', TRANSIENT_CODES],
 ];
 /** Stable texts produced by fab itself (adapter prefixes, decoder contracts) and transport-level failures. */
-const TERMINAL_TEXT = /\b(?:malformed|truncated|invalid|unsupported|refus|safety|content policy|exceeds byte budget)\b/i;
+const TERMINAL_TEXT = /\b(?:malformed|truncated|invalid|unsupported|refus(?:al|ed)?|safety|content policy|exceeds byte budget|model returned an error in its stream)\b/i;
 const TRANSIENT_TEXT = /\b(?:socket hang up|fetch failed|connection (?:lost|closed|reset|refused)|econn[a-z_]+|network (?:error|failure)|timed out|timeout|stalled|bad gateway|service unavailable|gateway timeout)\b/i;
 
 type Bag = Record<string, unknown>;
@@ -82,6 +82,7 @@ function retryAtOf(http: SafeHttpFailure | undefined, error: unknown, now: numbe
 
 /** Metadata-first classification; `http` (set by the generic adapter) always wins over message text. */
 export const classifyOmniFailure: ClassifyOmniFailure = (error, now) => {
+  if (field(error, 'routingHandled') === true) return { kind: 'fatal', scope: 'turn' };
   const http = isRecord(error) ? (field(error, 'http') as SafeHttpFailure | undefined) : undefined;
   const message = textOf(error);
   const status = statusOf(http?.status) ?? statusOf(field(error, 'status')) ?? statusOf(/^(?:Model |Upstream )?HTTP (\d{3})\b/i.exec(message)?.[1]);
@@ -90,8 +91,12 @@ export const classifyOmniFailure: ClassifyOmniFailure = (error, now) => {
   const contextLimit = http?.contextLimit === true || field(error, 'contextLimit') === true;
   const structured = { status, code, retryAt };
 
+  const kind = code === undefined ? undefined : kindForCode(code);
+  if ([400, 403, 404, 422].includes(status ?? 0) && kind !== 'quota' && kind !== 'auth' &&
+      !([400, 422].includes(status!) && (contextLimit || kind === 'context'))) {
+    return build('fatal', { ...structured, scope: 'turn' });
+  }
   if (code !== undefined) {
-    const kind = kindForCode(code);
     // A Retry-After header is not a credit reset: v1 never reopens a quota group from it.
     if (kind === 'quota') return build('quota', { status, code });
     if (kind === 'auth') return build('auth', { status, code });
@@ -105,6 +110,8 @@ export const classifyOmniFailure: ClassifyOmniFailure = (error, now) => {
   if (status === 429) return build('rate_limit', structured);
   if (status !== undefined && status >= 500) return build('transient', structured);
   if (isAbort(error)) return build('fatal', { scope: 'turn' });
+  // Decoder prefixes outrank words supplied in an invalid finish_reason (e.g. "timeout").
+  if (message.startsWith('Unsupported model finish reason:')) return build('fatal', { ...structured, scope: 'turn' });
   if (field(error, 'name') === 'TimeoutError' || TRANSIENT_TEXT.test(message)) return build('transient', structured);
   if (TERMINAL_TEXT.test(message)) return build('fatal', { ...structured, scope: 'turn' });
   if (status !== undefined && status >= 400 && status < 500) return build('fatal', { ...structured, scope: 'turn' });

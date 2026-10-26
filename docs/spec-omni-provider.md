@@ -1,7 +1,8 @@
 # Spec: proveedor compuesto Omni para fab
 
-Estado: **propuesta lista para revisión, sin implementación**. No implica autorización
-para ejecutar los paquetes ni efectuar inferencia real. Base fab: `8321e259b0ed250d8ae1b91698a2d182af8b5168`
+Estado: **I0 y paquetes A/B/C implementados; integración I1/I2 local**. La
+especificación original se conserva abajo; la configuración operativa está en
+[omni-provider.md](omni-provider.md). No autoriza inferencia real. Base fab: `8321e259b0ed250d8ae1b91698a2d182af8b5168`
 (`origin/main`), rama de esta spec: `spec/omni-provider`. Fecha: 2026-10-26.
 
 ## 1. Objetivo y límites
@@ -435,3 +436,13 @@ configuradas; no es un gate de esta spec ni de las pruebas offline.
 Se entrega únicamente esta spec. No se añadieron runtime, registro, CLI, tests,
 catálogos o dependencias; los bloques anteriores son contratos de trabajo futuros.
 La clave y el token de la comprobación previa no están aquí ni forman parte del diseño.
+
+## 10. Integración I1/I2
+
+Se integran A `4733ab6`, B `2537b4f` y C `f80f20a` sobre I0 `7a16a50`.
+Las decisiones de contrato, la restricción de hojas privadas, la estimación de
+contexto y los comandos operativos están en [omni-provider.md](omni-provider.md).
+El validador de A mantiene los campos opcionales de credenciales sin resolverlos;
+B es el único clasificador; C consume sus decisiones a través del contrato.
+Los resultados exactos de los gates y el SHA de integración se registran en el
+informe de integración, fuera del repositorio. No se publica ni se hace push.

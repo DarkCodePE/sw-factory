@@ -104,6 +104,9 @@ export function buildRoutingContext(request: ModelRequest, surface: RoutingConte
 
 export function createAutoProvider(opts: AutoProviderOptions): AutoProvider {
   const { config, providers } = opts;
+  if (Object.values(providers).some(provider => provider.id === 'omni')) {
+    throw new Error('Omni cannot be composed with autoRouter');
+  }
   const retries = Math.max(1, config.retriesPerModel ?? 3);
   const sleep = opts.sleep ?? ((ms, signal) => abortable(Bun.sleep(ms), signal));
   const random = opts.random ?? Math.random;

@@ -10,6 +10,8 @@ import type { AgentEvent, ModelProvider } from './types.ts';
 import { networkPolicy, type NetworkPolicy } from './network-policy.ts';
 import { createRoutedProvider, type FallbackReason } from './providers/router.ts';
 import { AUTO_MODEL_ID, createAutoProvider, lazyRouterCore, loadRouterCore, type RouterCore } from './providers/auto.ts';
+import type { OmniConfig } from './omni/contracts.ts';
+import { configuredOmni, prepareOmniSettings, type ProviderRuntime } from './omni/runtime.ts';
 import type { AutoRouterConfig } from './router/types.ts';
 
 export interface ModelRoutingConfig {
@@ -44,6 +46,7 @@ export interface ExecSettings {
   modelRouting?: Record<string, ModelRoutingConfig>;
   /** Candidates and classifier for `modelId: "auto"`. */
   autoRouter?: AutoRouterConfig;
+  omniRouter?: OmniConfig;
 }
 
 const object = (v: unknown): v is Record<string, any> => v !== null && typeof v === 'object' && !Array.isArray(v);
@@ -87,12 +90,13 @@ export async function loadExecSettings(path?: string): Promise<ExecSettings> {
       raw.mcpServers !== undefined && !object(raw.mcpServers) ||
       raw.modelAliases !== undefined && !object(raw.modelAliases) ||
       raw.modelRouting !== undefined && !object(raw.modelRouting) ||
-      raw.autoRouter !== undefined && !object(raw.autoRouter)) {
+      raw.autoRouter !== undefined && !object(raw.autoRouter) ||
+      raw.omniRouter !== undefined && !object(raw.omniRouter)) {
     throw new Error('Invalid settings schema');
   }
 
   for (const key of Object.keys(raw)) {
-    if (!['modelId', 'customModels', 'mcpServers', 'streamIdleMs', 'sandboxNetwork', 'worktreeDirectory', 'modelAliases', 'modelRouting', 'autoRouter'].includes(key)) {
+    if (!['modelId', 'customModels', 'mcpServers', 'streamIdleMs', 'sandboxNetwork', 'worktreeDirectory', 'modelAliases', 'modelRouting', 'autoRouter', 'omniRouter'].includes(key)) {
       throw new Error(`Unsupported settings field: ${key}`);
     }
   }
@@ -100,6 +104,9 @@ export async function loadExecSettings(path?: string): Promise<ExecSettings> {
   if (raw.sandboxNetwork !== undefined) networkPolicy(raw.sandboxNetwork);
   const settings = raw as ExecSettings;
   const ids = new Set<string>();
+  const omni = prepareOmniSettings(settings, id => resolveModelAlias(id, settings.modelAliases));
+  if (omni) settings.omniRouter = omni;
+  const omniLeaves = new Set(omni?.profiles.map(p => p.modelId));
 
   for (const model of settings.customModels ?? []) {
     if (!object(model) || typeof model.id !== 'string' || !model.id || ids.has(model.id) ||
@@ -143,7 +150,7 @@ export async function loadExecSettings(path?: string): Promise<ExecSettings> {
     }
 
     ids.add(model.id);
-    model.apiKey = envValue(model.apiKey);
+    if (!omniLeaves.has(model.id)) model.apiKey = envValue(model.apiKey);
   }
 
   for (const server of Object.values(settings.mcpServers ?? {})) {
@@ -162,6 +169,8 @@ export async function loadExecSettings(path?: string): Promise<ExecSettings> {
       }
     }
   }
+
+  if (omni) ids.add('omni');
 
   if (settings.modelAliases !== undefined) {
     if (!object(settings.modelAliases)) throw new Error('Invalid modelAliases');
@@ -236,13 +245,21 @@ export function configuredProviders(
   fallback: { model: string; baseUrl?: string; apiKey?: string; reasoningEffort?: string },
   onEvent?: (event: AgentEvent) => void,
   core: Pick<RouterCore, 'route' | 'upgradeTarget'> = lazyRouterCore(),
+  runtime: ProviderRuntime = {},
 ): {
   providers: Record<string, ModelProvider>;
   defaultModelId: string;
 } {
   const providers: Record<string, ModelProvider> = Object.create(null);
+  const omni = prepareOmniSettings(settings, id => resolveModelAlias(id, settings.modelAliases));
+  if (omni) {
+    const current = configuredOmni(settings, omni, fallback.reasoningEffort, onEvent, undefined, runtime.omni?.health);
+    runtime.omni ??= current;
+    providers.omni = current.provider;
+  }
 
   for (const model of settings.customModels ?? []) {
+    if (omni?.profiles.some(p => p.modelId === model.id)) continue;
     if (model.provider === 'chatgpt') {
       providers[model.id] = createChatGPTProvider({
         model: model.model,
@@ -289,6 +306,12 @@ export function configuredProviders(
 
   const rawSelected = settings.modelId ?? fallback.model;
   const resolvedSelected = resolveModelAlias(rawSelected, settings.modelAliases);
+  if (omni?.profiles.some(p => p.modelId === resolvedSelected)) {
+    throw new Error('Omni profile leaves are private; select omni or an alias of omni');
+  }
+  if (resolvedSelected === 'omni' && !omni) {
+    throw new Error("Model 'omni' requires an omniRouter section in the settings file");
+  }
   if (resolvedSelected === AUTO_MODEL_ID && !settings.autoRouter) {
     throw new Error("Model 'auto' requires an autoRouter section in the settings file");
   }

@@ -1,4 +1,5 @@
 import { scopedExecutionOptions, resolveExecutionPolicy, type ExecutionPolicy, type PermissionMode } from './execution-policy.ts';
+import { isOmniProvider } from './providers/omni.ts';
 import { isAutoProvider } from './providers/auto.ts';
 import { createWriteStream } from 'node:fs';
 import { mkdir, mkdtemp, readFile, symlink } from 'node:fs/promises';
@@ -480,7 +481,7 @@ export class TaskManager {
         this.parent.onEvent?.({ type: 'agent_spawn', sessionId: this.parent.sessionId ?? '', agentId: id, executionPolicy: task.executionPolicy });
         task.result = await this.runChild({ ...this.parent, cwd: task.cwd, prompt, signal,
           // A child of an auto session classifies on its own instead of inheriting the parent's model.
-          provider: isAutoProvider(this.parent.provider) ? this.parent.provider.forSubagent() : this.parent.provider,
+          provider: (isAutoProvider(this.parent.provider) || isOmniProvider(this.parent.provider)) ? this.parent.provider.forSubagent() : this.parent.provider,
           sessionId: undefined, newSessionId: undefined, fork: false,
           // The child has a separate session; only its routing events are forwarded.
           tools: [], images: undefined, onEvent: event => {

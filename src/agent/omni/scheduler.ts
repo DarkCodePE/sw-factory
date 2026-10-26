@@ -93,7 +93,7 @@ export function createOmniScheduler(config: OmniConfig, deps: SchedulerDependenc
   const select = (ctx: AttemptContext): Choice => {
     const now = clock.now();
     const turn = rulesFor(ctx);
-    if (turn.terminal || ctx.remainingAttempts <= 0) return { kind: 'exhausted' };
+    if (now >= ctx.deadline || turn.terminal || ctx.remainingAttempts <= 0) return { kind: 'exhausted' };
     const candidates = orderedCandidates(ctx);
     if (!candidates.length) return { kind: 'exhausted' };
     let earliest: number | undefined;

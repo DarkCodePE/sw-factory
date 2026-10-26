@@ -63,6 +63,7 @@ export function retryAtFromHeader(value: string | null | undefined, now: number)
   const text = value?.trim();
   if (!text) return undefined;
   const seconds = Number(text);
+  if (seconds === Infinity && /^(?:\+?\d+(?:\.\d*)?|\+?\.\d+)(?:e[+-]?\d+)?$/i.test(text)) return UNREACHABLE_RETRY_AT;
   if (Number.isFinite(seconds)) {
     if (seconds < 0) return undefined;
     const delay = seconds * 1000;

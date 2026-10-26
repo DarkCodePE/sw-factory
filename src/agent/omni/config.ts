@@ -193,7 +193,7 @@ export function validateOmniConfig(raw: unknown, leaves: readonly LeafDescriptor
     try {
       parsedUrl = new URL(leaf.baseUrl);
     } catch {
-      throw new Error(`Leaf "${leaf.id}" has invalid baseUrl "${leaf.baseUrl}"`);
+      throw new Error(`Leaf "${leaf.id}" has invalid baseUrl`);
     }
 
     if (parsedUrl.protocol !== 'https:' && parsedUrl.protocol !== 'http:') {
@@ -215,16 +215,15 @@ export function validateOmniConfig(raw: unknown, leaves: readonly LeafDescriptor
     }
 
     // Key conventions on leaf
-    const leafAny = leaf as unknown as Record<string, unknown>;
-    if (leafAny.apiKeyHelper !== undefined) {
+    if (leaf.apiKeyHelper !== undefined) {
       throw new Error(`Leaf "${leaf.id}" must not use apiKeyHelper; Omni leaves require \${ENV_NAME}`);
     }
-    if (leafAny.authFile !== undefined) {
+    if (leaf.authFile !== undefined) {
       throw new Error(`Leaf "${leaf.id}" must not use authFile; Omni leaves require \${ENV_NAME}`);
     }
 
-    if (leafAny.apiKey !== undefined) {
-      if (typeof leafAny.apiKey !== 'string' || !/^\$\{([A-Za-z_][A-Za-z0-9_]*)\}$/.test(leafAny.apiKey)) {
+    if (leaf.apiKey !== undefined) {
+      if (typeof leaf.apiKey !== 'string' || !/^\$\{([A-Za-z_][A-Za-z0-9_]*)\}$/.test(leaf.apiKey)) {
         throw new Error(`Leaf "${leaf.id}" apiKey must use \${ENV_NAME} convention; literal keys are prohibited`);
       }
     } else {

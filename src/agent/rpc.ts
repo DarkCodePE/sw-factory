@@ -1,4 +1,5 @@
 import { resolveExecutionPolicy, scopedExecutionOptions, type ExecutionPolicy } from './execution-policy.ts';
+import { isOmniProvider } from './providers/omni.ts';
 import { isAutoProvider } from './providers/auto.ts';
 import { realpath } from 'node:fs/promises';
 import { listConfiguredToolCatalog, runCodingAgent } from './engine.ts';
@@ -88,7 +89,7 @@ export class ExecRpc {
   }
   private models() {
     return Object.keys(this.options.providers).map(id => ({ id, displayName: id, shortDisplayName: id,
-      modelProvider: 'generic-chat-completion-api', supportedReasoningEfforts: ['none'], defaultReasoningEffort: 'none', isCustom: true }));
+      modelProvider: isOmniProvider(this.options.providers[id]) ? 'omni' : 'generic-chat-completion-api', supportedReasoningEfforts: ['none'], defaultReasoningEffort: 'none', isCustom: true }));
   }
   private update(p: Record<string, any>) {
     this.rejectAuthority(p);
@@ -203,7 +204,7 @@ export class ExecRpc {
       this.notify({ type: 'fab_mode_changed', interactionMode: 'auto', autonomyLevel: event.autonomy });
     }
     else if (event.type === 'settings_staged') this.notify({ type: 'fab_settings_staged', proposal: event.proposal });
-    else if (event.type === 'model_routed') this.notify({ type: 'fab_model_routed', decision: event.decision });
+    else if (event.type === 'model_routed') this.notify({ type: 'fab_model_routed', ...(event.decision ? { decision: event.decision } : { from: event.from, to: event.to, reason: event.reason }) });
     else if (event.type === 'model_transition') this.notify({ type: 'fab_model_transition', from: event.from, to: event.to, source: event.source, detail: event.detail });
     else if (event.type === 'permission_bypass') this.notify({ type: 'fab_permission_bypass', toolUseId: event.toolUseId, toolName: event.toolName, permissionMode: event.permissionMode });
     else if (event.type === 'assistant_delta') {

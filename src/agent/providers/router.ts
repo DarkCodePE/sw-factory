@@ -56,6 +56,9 @@ export function createRoutedProvider(
     { id: primary.id, provider: primary },
     ...fallbacks!.map(f => 'provider' in f ? { id: f.id, provider: f.provider } : { id: f.id, provider: f }),
   ];
+  if (chain.some(target => target.provider.id === 'omni')) {
+    throw new Error('Omni cannot be composed with a static router');
+  }
   const allowedReasons = new Set<FallbackReason>(policy.on ?? ['rate_limit', 'server_error', 'timeout']);
 
   return {

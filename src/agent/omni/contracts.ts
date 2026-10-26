@@ -5,7 +5,7 @@ import type { SafeHttpFailure } from '../transport.ts';
 /** Frozen I0 contracts. No configuration, scheduling, credentials or HTTP implementation. */
 export type Tos = 'ok' | 'caution' | 'ambiguous' | 'avoid' | 'unknown';
 export type FailureKind = 'rate_limit' | 'quota' | 'auth' | 'transient' | 'context' | 'fatal';
-export interface LeafDescriptor { id: string; provider: string; baseUrl?: string; model: string; }
+export interface LeafDescriptor { id: string; provider: string; baseUrl?: string; model: string; apiKey?: string; apiKeyHelper?: unknown; authFile?: unknown; }
 export interface Profile {
   modelId: string; providerId: string; accountId: string; quotaGroup: string;
   costTier: 'free' | 'paid'; tos: Tos; acknowledgeTos?: boolean;
@@ -21,6 +21,7 @@ export interface SafeFailure {
   scope: 'turn' | 'model' | 'account' | 'group';
 }
 export interface Lease { id: string; profile: Profile; }
+/** attempted is a stable object for the entire invocation; entries are unique custom-model IDs (not upstream model names). */
 export interface AttemptContext { needs: Needs; attempted: ReadonlySet<string>; remainingAttempts: number; waitRemainingMs: number; deadline: number; }
 export type Choice = { kind: 'attempt'; lease: Lease } |
   { kind: 'wait'; until: number } | { kind: 'exhausted'; retryAt?: number };
@@ -32,6 +33,8 @@ export interface Scheduler {
 export interface Clock { now(): number; random(): number; sleep(ms: number, signal: AbortSignal): Promise<void>; }
 export interface OmniDependencies {
   scheduler: Scheduler; clock: Clock;
+  classify?: ClassifyOmniFailure;
+  eligible?: EligibleProfiles;
   resolveLeaf(modelId: string, signal: AbortSignal): Promise<ModelProvider>;
   estimateRequest(request: ModelRequest): Needs;
   emit?: (event: AgentEvent) => void;

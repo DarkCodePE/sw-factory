@@ -1,9 +1,11 @@
-import type { AgentEvent, ModelProvider, ModelRequest } from '../types.ts';
+import { abortable } from '../cancellation.ts';
+import type { ModelProvider, ModelRequest } from '../types.ts';
+import { classifyOmniFailure, canonicalCode } from './failures.ts';
 import { ProviderError, type SafeHttpFailure } from '../transport.ts';
 import { isRoutingHandled, rethrowIfAborted } from '../providers/attempt-policy.ts';
 import type {
-  AttemptContext, FailureKind, Lease, Needs, OmniConfig, OmniDependencies,
-  Profile, RoutedAttempt, RoutedAttemptPlan, SafeFailure, Scheduler,
+  AttemptContext, Lease, Needs, OmniConfig, OmniDependencies,
+  Profile, RoutedAttempt, RoutedAttemptPlan, SafeFailure,
 } from './contracts.ts';
 
 /** Hard ceiling from the spec: a misbehaving scheduler can never inspect more profiles. */
@@ -11,55 +13,10 @@ export const OMNI_MAX_PROFILE_INSPECTIONS = 32;
 /** A scheduler that keeps returning `wait` for "now" must not spin forever. */
 const MAX_EMPTY_WAITS = 8;
 
-const QUOTA_CODES = new Set(['insufficient_quota', 'billing_hard_limit_reached', 'credit_balance_too_low', 'quota_exceeded']);
-const AUTH_CODES = new Set(['invalid_api_key', 'authentication_error', 'account_deactivated', 'invalid_authentication']);
-/** Only allowlisted codes may survive into SafeFailure; raw upstream payloads never do. */
-const SAFE_CODES = new Set([...QUOTA_CODES, ...AUTH_CODES, 'rate_limit', 'context_length_exceeded']);
-/** Provider-independent decode failures: no recoverable code, so another key must not be tried. */
-const FATAL_PATTERNS = [
-  'malformed model sse json', 'malformed model json', 'truncated sse event',
-  'invalid model message', 'invalid model choice array', 'invalid model delta',
-  'invalid model text delta', 'invalid model tool index', 'invalid tool call id',
-  'unsupported tool type', 'data after model finish', 'multiple model finish signals',
-  'unsupported model finish reason',
-];
-
-/** Seam for package B `classifyOmniFailure`; the local map is a conservative fallback. */
-export type OmniClassifyFailure = (error: unknown, now: number) => SafeFailure;
-
-export interface OmniPlanInput {
-  config: OmniConfig;
-  scheduler: Scheduler;
-  clock: OmniDependencies['clock'];
-  resolveLeaf: OmniDependencies['resolveLeaf'];
-  estimateRequest: OmniDependencies['estimateRequest'];
-  emit?: (event: AgentEvent) => void;
-  classify?: OmniClassifyFailure;
-}
+export interface OmniPlanInput extends OmniDependencies { config: OmniConfig; }
 
 const finite = (value: unknown): number | undefined =>
   typeof value === 'number' && Number.isFinite(value) ? value : undefined;
-
-/** Messages are only inspected locally; they are never copied into a SafeFailure. */
-const messageOf = (error: unknown): string =>
-  error instanceof Error ? error.message : typeof error === 'string' ? error : '';
-
-function statusOf(error: unknown): number | undefined {
-  const http = (error as { http?: { status?: unknown } } | null)?.http;
-  const fromHttp = finite(http?.status);
-  if (fromHttp !== undefined) return fromHttp;
-  const direct = finite((error as { status?: unknown } | null)?.status);
-  if (direct !== undefined) return direct;
-  const match = /\bHTTP\s+(\d{3})\b/.exec(messageOf(error));
-  return match ? Number(match[1]) : undefined;
-}
-
-function codeOf(error: unknown): string | undefined {
-  const http = (error as { http?: { code?: unknown } } | null)?.http;
-  if (typeof http?.code === 'string') return http.code;
-  const direct = (error as { code?: unknown } | null)?.code;
-  return typeof direct === 'string' ? direct : undefined;
-}
 
 /** Bounded, sanitized HTTP metadata; equivalent to what package B returns. */
 function safeHttp(error: unknown): SafeHttpFailure | undefined {
@@ -71,69 +28,10 @@ function safeHttp(error: unknown): SafeHttpFailure | undefined {
   const retryAt = finite((http as { retryAt?: unknown }).retryAt);
   return {
     status,
-    ...(typeof code === 'string' && SAFE_CODES.has(code) ? { code } : {}),
+    ...(canonicalCode(code) ? { code: canonicalCode(code) } : {}),
     ...(retryAt !== undefined ? { retryAt } : {}),
     contextLimit: (http as { contextLimit?: unknown }).contextLimit === true,
   };
-}
-
-/** Local backoff: base 500 ms, 2^n growth, 8 s cap, non-negative jitter only. */
-function backoffMs(attempt: number, random: () => number): number {
-  const base = Math.min(8_000, 500 * 2 ** Math.max(0, attempt - 1));
-  const sample = Math.min(1, Math.max(0, random()));
-  return Math.round(base * (0.5 + sample / 2));
-}
-
-/**
- * Fallback classifier used until the integrator wires package B's
- * `classifyOmniFailure` through `OmniPlanInput.classify`.
- */
-export function classifyOmniError(error: unknown, now: number, attempt: number, random: () => number): SafeFailure {
-  if (isRoutingHandled(error)) return { kind: 'fatal', scope: 'turn' };
-  const status = statusOf(error);
-  const code = codeOf(error);
-  const http = safeHttp(error);
-  const message = messageOf(error).toLowerCase();
-  let kind: FailureKind;
-  if ((error as { contextLimit?: unknown } | null)?.contextLimit === true || http?.contextLimit === true ||
-      /context[ _-]?(?:length|window)|maximum context|too many tokens|token limit/.test(message)) {
-    kind = 'context';
-  } else if (status === 402 || (code !== undefined && QUOTA_CODES.has(code)) ||
-             (status === undefined && /insufficient[ _-]?quota|quota|credit|billing/.test(message))) {
-    kind = 'quota';
-  } else if (status === 401 || (code !== undefined && AUTH_CODES.has(code)) ||
-             (status === undefined && /unauthor|invalid api key|api key|credential|authentication/.test(message))) {
-    kind = 'auth';
-  } else if (status === 429 || (code !== undefined && code === 'rate_limit') ||
-             (status === undefined && /rate limit|too many requests/.test(message))) {
-    kind = 'rate_limit';
-  } else if (status === 400 || status === 403 || status === 404 || status === 422) {
-    kind = 'fatal';
-  } else if (status !== undefined && status >= 500) {
-    kind = 'transient';
-  } else if (FATAL_PATTERNS.some(pattern => message.includes(pattern))) {
-    kind = 'fatal';
-  } else {
-    kind = 'transient';
-  }
-  const scope: SafeFailure['scope'] = kind === 'auth' ? 'account'
-    : kind === 'quota' || kind === 'rate_limit' ? 'group'
-      : kind === 'fatal' ? 'turn' : 'model';
-  const failure: SafeFailure = {
-    kind,
-    ...(status !== undefined ? { status } : {}),
-    ...(code !== undefined && SAFE_CODES.has(code) ? { code } : {}),
-    scope,
-  };
-  if (kind !== 'fatal') {
-    const serverRetryAt = http?.retryAt;
-    const relative = finite((error as { retryAfterMs?: unknown } | null)?.retryAfterMs);
-    // An explicit server deadline is preserved verbatim (no 120 s truncation, no cap).
-    failure.retryAt = serverRetryAt !== undefined && serverRetryAt > 0
-      ? serverRetryAt
-      : relative !== undefined && relative > 0 ? now + relative : now + backoffMs(attempt, random);
-  }
-  return failure;
 }
 
 /** Hard per-turn requirements only; quota health and cooldowns belong to the scheduler. */
@@ -202,7 +100,6 @@ export function createOmniPlan(input: OmniPlanInput, request: ModelRequest): Rou
   const attempted = new Set<string>();
   const inspectedLeases = new Set<string>();
   let remainingAttempts = config.maxAttempts;
-  let attempts = 0;
   let inspections = 0;
   let waitedMs = 0;
   let emptyWaits = 0;
@@ -217,16 +114,16 @@ export function createOmniPlan(input: OmniPlanInput, request: ModelRequest): Rou
     deadline,
   });
 
-  const classify = (error: unknown, attempt: number): SafeFailure => input.classify
+  const classify = (error: unknown): SafeFailure => input.classify
     ? input.classify(error, clock.now())
-    : classifyOmniError(error, clock.now(), attempt, () => clock.random());
+    : classifyOmniFailure(error, clock.now());
 
   return {
     id: 'omni',
     async next(signal: AbortSignal): Promise<RoutedAttempt | undefined> {
       for (;;) {
         signal.throwIfAborted();
-        if (remainingAttempts <= 0 || inspections >= OMNI_MAX_PROFILE_INSPECTIONS) return undefined;
+        if (clock.now() >= deadline || remainingAttempts <= 0 || inspections >= OMNI_MAX_PROFILE_INSPECTIONS) return undefined;
         const choice = scheduler.select(context());
         if (choice.kind === 'exhausted') {
           if (choice.retryAt !== undefined) lastRetryAt = choice.retryAt;
@@ -252,14 +149,15 @@ export function createOmniPlan(input: OmniPlanInput, request: ModelRequest): Rou
         const lease: Lease = choice.lease;
         inspections += 1;
         if (inspectedLeases.has(lease.id) || attempted.has(lease.profile.modelId) ||
-            !hardEligible(lease.profile, needs, config)) {
+            !hardEligible(lease.profile, needs, config) ||
+            input.eligible && !input.eligible(config, needs).some(p => p.modelId === lease.profile.modelId)) {
           scheduler.release(lease);
           continue;
         }
         inspectedLeases.add(lease.id);
         let provider: ModelProvider;
         try {
-          provider = await resolveLeaf(lease.profile.modelId, signal);
+          provider = await abortable(resolveLeaf(lease.profile.modelId, signal), signal);
         } catch (error) {
           try {
             rethrowIfAborted(signal, error);
@@ -270,26 +168,30 @@ export function createOmniPlan(input: OmniPlanInput, request: ModelRequest): Rou
           }
           continue;
         }
-        if (signal.aborted) {
+        if (signal.aborted || clock.now() >= deadline) {
           scheduler.release(lease);
           signal.throwIfAborted();
+          return undefined;
         }
         attempted.add(lease.profile.modelId);
         remainingAttempts -= 1;
-        attempts += 1;
-        const attemptNumber = attempts;
         const from = previousModelId ?? 'omni';
         previousModelId = lease.profile.modelId;
-        emit?.({ type: 'model_routed', sessionId: '', from, to: lease.profile.modelId, reason: 'selection' });
+        try {
+          emit?.({ type: 'model_routed', sessionId: '', from, to: lease.profile.modelId, reason: 'selection' });
+        } catch (error) {
+          scheduler.release(lease);
+          throw error;
+        }
         return {
           id: lease.id,
-          provider: wrapLeaf(provider, lease.profile.modelId, error => classify(error, attemptNumber)),
+          provider: wrapLeaf(provider, lease.profile.modelId, error => classify(error)),
           settle: result => {
             if (result.ok) {
               scheduler.settle(lease, { ok: true });
               return;
             }
-            const failure = classify(result.error, attemptNumber);
+            const failure = classify(result.error);
             if (failure.retryAt !== undefined) lastRetryAt = failure.retryAt;
             scheduler.settle(lease, { ok: false, failure });
           },

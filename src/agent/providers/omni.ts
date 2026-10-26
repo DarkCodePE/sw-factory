@@ -28,6 +28,8 @@ export function createOmniProvider(config: OmniConfig, deps: OmniDependencies): 
         resolveLeaf: deps.resolveLeaf,
         estimateRequest: deps.estimateRequest,
         emit: event => sink.value?.(event),
+        classify: deps.classify,
+        eligible: deps.eligible,
       }, request);
       return createRoutedProvider(plan).complete(request, signal, delta);
     },
@@ -35,4 +37,9 @@ export function createOmniProvider(config: OmniConfig, deps: OmniDependencies): 
     forSubagent() { return build({ value: undefined }); },
   });
   return build({ value: deps.emit });
+}
+
+export function isOmniProvider(provider: import('../types.ts').ModelProvider | undefined): provider is OmniProvider {
+  const candidate = provider as Partial<OmniProvider> | undefined;
+  return candidate?.id === 'omni' && typeof candidate.bindEvents === 'function' && typeof candidate.forSubagent === 'function';
 }

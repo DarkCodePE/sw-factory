@@ -157,7 +157,7 @@ export function isAvoidEndpoint(endpoint: string | undefined): boolean {
   }
 
   // Remove bracket formatting for IPv6 if any
-  hostname = hostname.replace(/^\[|\]$/g, '');
+  hostname = hostname.replace(/^\[|\]$/g, '').replace(/\.+$/, '');
 
   for (const pattern of AVOID_HOSTS) {
     if (hostname === pattern || hostname.endsWith(`.${pattern}`)) {

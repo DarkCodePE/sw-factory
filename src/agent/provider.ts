@@ -1,3 +1,4 @@
+import type { ReadHttpFailure } from './omni/contracts.ts';
 import type { Message, ModelProvider, ModelRequest, ModelTurn, ToolCall } from './types.ts';
 import { ProviderError, streamIdleFromEnv, withIdleResponse } from './transport.ts';
 export { ProviderError, DEFAULT_STREAM_IDLE_MS, idleTimeout, streamIdleFromEnv } from './transport.ts';
@@ -10,6 +11,8 @@ export interface OpenAICompatibleOptions {
   maxOutputTokens?: number;
   /** Fail a stream that sends nothing for this long (default 120 s; 0 disables). */
   streamIdleMs?: number;
+  /** Optional metadata bridge for Omni; the legacy HTTP error path stays unchanged. */
+  readHttpFailure?: ReadHttpFailure;
 }
 
 function object(v: unknown): v is Record<string, any> {
@@ -147,6 +150,11 @@ export function createOpenAICompatibleProvider(opts: OpenAICompatibleOptions): M
         }),
       }, idleMs, async response => {
         if (!response.ok) {
+          if (opts.readHttpFailure) {
+            const http = await opts.readHttpFailure(response, Date.now());
+            throw new ProviderError(`Model HTTP ${response.status}`, response.status === 429 || response.status >= 500,
+              http.contextLimit, undefined, http);
+          }
           // Do not expose response bodies (which can echo keys, prompts, or provider internals).
           let contextLimit = response.status === 413;
           // Inspect at most 8 KiB locally; expose status only to callers/logs.
