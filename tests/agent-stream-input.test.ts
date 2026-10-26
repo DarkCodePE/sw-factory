@@ -13,7 +13,7 @@ async function fixture(extra: string[] = [], hookFile?: unknown, enabledSetting?
   const child = Bun.spawn([process.execPath, '--no-env-file', join(import.meta.dir, '../src/cli.ts'), 'exec', '--cwd', cwd, '--settings', settings, '--session-dir', join(root, 'sessions'), '--auto', 'high', '--input-format', 'stream-json', '-o', 'stream-json', ...extra], { cwd: root, env: { PATH: process.env.PATH!, HOME: root }, stdin: 'pipe', stdout: 'pipe', stderr: 'pipe' });
   const frames: any[] = [], output = (async () => { let buffer = ''; for await (const data of child.stdout) { buffer += new TextDecoder().decode(data); let end; while ((end = buffer.indexOf('\n')) >= 0) { const line = buffer.slice(0, end); buffer = buffer.slice(end + 1); if (line.trim()) frames.push(JSON.parse(line)); } } })();
   const error = new Response(child.stderr).text(); clean.push(async () => { child.kill('SIGKILL'); await child.exited; await output; });
-  return { root, cwd, child, frames, requests, error, async end() { child.stdin.end(); const status = await child.exited; await output; return status; } };
+  return { root, cwd, child, frames, requests, error, async end(closeStdin = true) { if (closeStdin) child.stdin.end(); const status = await child.exited; await output; return status; } };
 }
 async function until(check: () => boolean | Promise<boolean>) { const end = Date.now() + 5000; while (!await check()) { if (Date.now() > end) throw new Error('Wait timeout'); await Bun.sleep(4); } }
 const frame = (value: unknown) => JSON.stringify(value) + '\n';
@@ -47,7 +47,7 @@ test('interrupt drains Execute, reconciles this proven drained turn and accepts 
   await until(() => f.frames.filter(e => e.type === 'turn_end').length === 2);
   const turns = f.frames.filter(e => e.type === 'turn_end'); expect(turns.map(t => t.ok)).toEqual([false, true]); expect(turns[0].sessionId).toBe(turns[1].sessionId);
   expect(f.frames.some(e => e.type === 'reconciled')).toBe(true); expect(await readFile(join(f.cwd, 'count'), 'utf8')).toBe('x'); expect(await Bun.file(join(f.cwd, 'late')).exists()).toBe(false);
-  f.child.kill('SIGINT'); expect(await f.end()).toBe(130);
+  f.child.kill('SIGINT'); expect(await f.end(false)).toBe(130);
 });
 
 test('settings hooks.enabled activates hooks without --hooks', async () => {
