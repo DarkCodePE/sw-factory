@@ -10,6 +10,7 @@
 </p>
 
 <p align="center">
+  <a href="https://github.com/DarkCodePE/sw-factory/releases"><img src="https://img.shields.io/github/v/release/DarkCodePE/sw-factory?include_prereleases&label=release&logo=github&style=flat-square" alt="GitHub Release"></a>
   <a href="https://www.npmjs.com/package/@okuanb/fab"><img src="https://img.shields.io/npm/v/@okuanb/fab/next?label=@okuanb/fab@next&logo=npm&style=flat-square" alt="npm @okuanb/fab@next"></a>
   <a href="https://github.com/DarkCodePE/sw-factory/actions/workflows/ci.yml"><img src="https://img.shields.io/github/actions/workflow/status/DarkCodePE/sw-factory/ci.yml?branch=main&label=CI&logo=github&style=flat-square" alt="FAB CI"></a>
   <a href="https://bun.sh"><img src="https://img.shields.io/badge/Bun-%3E%3D1.1-black.svg?style=flat-square&logo=bun" alt="Bun >= 1.1"></a>

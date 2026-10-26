@@ -16,21 +16,28 @@ La RC.10 añade el router `auto` de modelos (clasificador local o Jev, rotación
 ante errores, escalado y subagentes), aliases/routing de modelos, SDK, hooks en
 chat/RPC y estado MCP.
 
-1. `release-candidate-preflight.yml` se ejecuta al subir una rama `release/**`. Todos los jobs usan el mismo SHA explícito, sin credenciales Git persistidas. Linux ejecuta TypeScript y la suite completa con JUnit; se rechazan cero pruebas, fallos y omisiones.
-2. Cuatro hosts compilan y ejecutan sus binarios nativos: Linux x64/ARM64 y macOS Intel/ARM64. Cada uno verifica YOLO con shell/red reales, efecto fuera del workspace, estado TUI y conflictos; también versión, ayuda, tarea Read → Edit → respuesta final con proveedor sintético local, respuestas de ambas herramientas, efecto real en archivo, tarea TUI seguida de `/rewind`, comandos TUI por pipe y listado MCP. Linux añade Script compilado, callback padre, sandbox requerido y timeout, tanto en el build como en el binario instalado por el wrapper npm o el instalador público. No se presenta macOS como equivalente al sandbox Linux.
-3. `pack.mjs` reúne únicamente artefactos comprobados, genera manifest/checksums y un tarball npm con seis archivos explícitos. El paquete público no incluye el código fuente del workspace, pruebas, credenciales, capturas REA ni dependencias de desarrollo.
-4. La cualificación instala ese tarball en homes/prefix nuevos y ejecuta su entrada `fab`. Antes de publicar se precarga únicamente el binario ya verificado en la caché, porque los assets de un draft GitHub no son públicos. Ese modo se declara en los recibos; no sustituye la prueba posterior de descarga real.
-5. `seal.mjs` liga versión, SHA de origen, tarball, manifest, instalador, JUnit y cualificación de las cuatro plataformas. El artefacto `fab-sealed-<SHA>` conserva metadata y paquete; los binarios permanecen en sus artefactos nativos para evitar varias copias grandes.
-6. Tras un preflight verde, se crea el tag de ese mismo commit. `protected-release.yml` busca un preflight exitoso de ese SHA y de una rama `release/**`; rechaza issues abiertos `release-blocker`. No acepta un run ID elegido por el caller ni reconstruye los binarios.
-7. El publicador crea un draft, descarga y compara cada asset, y solo después lo hace público. Un reintento puede completar un draft del mismo SHA; no sobrescribe bytes públicos. npm publica el tarball sellado con provenance desde Actions, mediante OIDC configurado o token de bootstrap. No se publica desde la consola local.
-8. Ambos canales se instalan después desde sus URLs públicas en los cuatro hosts. GitHub usa el script público; npm verifica el tarball del registro y ejecuta la instalación normal con postinstall. No hay caché precargada. Se comparan bytes instalados y se repiten las tareas/comandos.
+1. Para iniciar un ciclo de release, se crea la rama `release/<versión>` y se ejecuta `node scripts/release/prepare.mjs <versión>`. El script sube `package.json` a la versión indicada, extrae los PRs fusionados desde el tag anterior (vía `gh pr list --state merged` o `git log --merges`) y añade la sección correspondiente en `docs/CHANGELOG.md`. Finalmente, imprime el título y cuerpo sugeridos para abrir la Pull Request de release hacia `main`.
+2. `release-candidate-preflight.yml` se ejecuta al subir una rama `release/**`. Todos los jobs usan el mismo SHA explícito, sin credenciales Git persistidas. Linux ejecuta TypeScript y la suite completa con JUnit; se rechazan cero pruebas, fallos y omisiones.
+3. Cuatro hosts compilan y ejecutan sus binarios nativos: Linux x64/ARM64 y macOS Intel/ARM64. Cada uno verifica YOLO con shell/red reales, efecto fuera del workspace, estado TUI y conflictos; también versión, ayuda, tarea Read → Edit → respuesta final con proveedor sintético local, respuestas de ambas herramientas, efecto real en archivo, tarea TUI seguida de `/rewind`, comandos TUI por pipe y listado MCP. Linux añade Script compilado, callback padre, sandbox requerido y timeout, tanto en el build como en el binario instalado por el wrapper npm o el instalador público. No se presenta macOS como equivalente al sandbox Linux.
+4. `pack.mjs` reúne únicamente artefactos comprobados, genera manifest/checksums y un tarball npm con seis archivos explícitos. El paquete público no incluye el código fuente del workspace, pruebas, credenciales, capturas REA ni dependencias de desarrollo.
+5. La cualificación instala ese tarball en homes/prefix nuevos y ejecuta su entrada `fab`. Antes de publicar se precarga únicamente el binario ya verificado en la caché, porque los assets de un draft GitHub no son públicos. Ese modo se declara en los recibos; no sustituye la prueba posterior de descarga real.
+6. `seal.mjs` liga versión, SHA de origen, tarball, manifest, instalador, JUnit y cualificación de las cuatro plataformas. El artefacto `fab-sealed-<SHA>` conserva metadata y paquete; los binarios permanecen en sus artefactos nativos para evitar varias copias grandes.
+7. Tras un preflight verde y la fusión de la PR de release a `main`, se crea el tag `v<versión>` de ese mismo commit. `protected-release.yml` busca un preflight exitoso de ese SHA y de una rama `release/**`; rechaza issues abiertos `release-blocker`. No acepta un run ID elegido por el caller ni reconstruye los binarios.
+8. El publicador (`publish-github.mjs`) genera automáticamente las notas enriquecidas de la GitHub Release: sección extraída de `docs/CHANGELOG.md`, listado de PRs con enlaces y autores, enlace «Full Changelog: vA...vB» y comandos de instalación (npm e `install.sh`), preservando los recibos criptográficos del sello y notas de sandbox. Crea el draft con estas notas, descarga y compara cada asset con sus sumas SHA-256, y solo después lo hace público. npm publica el tarball sellado con provenance desde Actions, mediante OIDC configurado o token de bootstrap. No se publica desde la consola local.
+9. Ambos canales se instalan después desde sus URLs públicas en los cuatro hosts. GitHub usa el script público; npm verifica el tarball del registro y ejecuta la instalación normal con postinstall. No hay caché precargada. Se comparan bytes instalados y se repiten las tareas/comandos.
+
+Para backfill o regeneración de notas históricas de releases anteriores, se dispone de `node scripts/release/backfill-notes.mjs --dry-run` (modo lectura que imprime las notas calculadas para cada tag) y `--apply` (ejecutado por el integrador para aplicar los cambios a GitHub Releases existentes).
 
 `packaging/npm/runtime.mjs` selecciona SO/arquitectura, limita descargas al tamaño del manifest y a redirecciones GitHub HTTPS, verifica SHA-256 antes de ejecutar y reemplaza la caché de forma atómica. La caché también se revalida al lanzar. Node >=22 ejecuta el wrapper; el binario contiene Bun. Windows nativo y musl quedan fuera; WSL utiliza Linux glibc. Git, bubblewrap y el proveedor del modelo se configuran por separado.
 
 ## Operación
 
 ```sh
-# Ejecutar desde el checkout de la versión:
+# 1. Crear rama de release y preparar versión/changelog:
+git checkout -b release/0.1.0-rc.11
+node scripts/release/prepare.mjs 0.1.0-rc.11
+
+# 2. Validar suites y empaquetado localmente:
 bun install --frozen-lockfile
 bun test
 bunx --no-install tsc --noEmit -p .
@@ -38,12 +45,16 @@ FAB_TARGETS=bun-linux-x64 sh scripts/build.sh
 node scripts/release/smoke.mjs dist/fab-linux-x64 dist/fab-linux-x64.receipt.json
 node scripts/release/probe-update.mjs dist/fab-linux-x64 dist/fab-linux-x64.receipt.json
 
-# Subir el candidato y consultar su ejecución:
-git push origin HEAD:release/0.1.0-rc.10
+# 3. Commit y push de la rama candidata:
+git add package.json docs/CHANGELOG.md
+git commit -m "release: v0.1.0-rc.11"
+git push origin release/0.1.0-rc.11
+gh pr create --title "release: v0.1.0-rc.11" --body "<cuerpo emitido por prepare.mjs>"
 gh run list -R DarkCodePE/sw-factory --workflow release-candidate-preflight.yml
-# Solo tras preflight verde sobre el SHA exacto:
-git tag v0.1.0-rc.10 <SHA-verificado>
-git push origin v0.1.0-rc.10
+
+# 4. Tras preflight verde y fusión a main:
+git tag v0.1.0-rc.11 <SHA-verificado>
+git push origin v0.1.0-rc.11
 ```
 
 Una vez publicada y verificada la RC:
