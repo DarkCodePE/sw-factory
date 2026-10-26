@@ -1,5 +1,8 @@
 <p align="center">
-  <h1 align="center">sw-factory (fab)</h1>
+  <picture>
+    <source srcset="./docs/assets/brand/fab-logo-dark.svg" media="(prefers-color-scheme: dark)">
+    <img src="./docs/assets/brand/fab-logo-light.svg" alt="fab" width="280">
+  </picture>
 </p>
 
 <p align="center">
@@ -10,9 +13,7 @@
   <a href="https://www.npmjs.com/package/@okuanb/fab"><img src="https://img.shields.io/npm/v/@okuanb/fab/next?label=@okuanb/fab@next&logo=npm&style=flat-square" alt="npm @okuanb/fab@next"></a>
   <a href="https://github.com/DarkCodePE/sw-factory/actions/workflows/ci.yml"><img src="https://img.shields.io/github/actions/workflow/status/DarkCodePE/sw-factory/ci.yml?branch=main&label=CI&logo=github&style=flat-square" alt="FAB CI"></a>
   <a href="https://bun.sh"><img src="https://img.shields.io/badge/Bun-%3E%3D1.1-black.svg?style=flat-square&logo=bun" alt="Bun >= 1.1"></a>
-  <a href="https://www.typescriptlang.org"><img src="https://img.shields.io/badge/TypeScript-5.x-blue.svg?style=flat-square&logo=typescript" alt="TypeScript 5.x"></a>
-  <a href="LICENSE"><img src="https://img.shields.io/badge/License-MIT-green.svg?style=flat-square" alt="Licencia: MIT"></a>
-</p>
+  <a href="https://www.typescriptlang.org"><img src="https://img.shields.io/badge/TypeScript-5.x-blue.svg?style=flat-square&logo=typescript" alt="TypeScript 5.x"></a></p>
 
 ---
 
