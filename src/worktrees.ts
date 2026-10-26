@@ -51,12 +51,39 @@ export async function mergeAndCleanup(repo: string, stateDir: string, changeId: 
   const repoPath = resolve(repo);
   const branch = branchFor(changeId);
   const out = await git(repoPath, 'merge', '--no-edit', branch);
-  const path = resolve(stateDir, 'worktrees', changeId.slice(0, 8));
-  if (existsSync(path)) await git(repoPath, 'worktree', 'remove', '--force', path);
+  const shortId = typeof changeId === 'string' ? changeId.slice(0, 8) : '';
+  const path = resolve(stateDir, 'worktrees', shortId);
+  if (shortId && existsSync(path)) {
+    await git(repoPath, 'worktree', 'remove', '--force', path);
+  } else {
+    try { await git(repoPath, 'worktree', 'prune'); } catch {}
+  }
+  if (shortId && /^fab\/[A-Za-z0-9_-]+$/.test(branch)) {
+    try {
+      await git(repoPath, 'branch', '-d', branch);
+    } catch (err: any) {
+      const warning = `aviso: no se pudo borrar la rama ${branch}: ${err?.message ?? err}`;
+      return out ? `${out}\n${warning}` : warning;
+    }
+  }
   return out;
 }
 
 export async function removeWorktree(repo: string, stateDir: string, changeId: string): Promise<void> {
-  const path = resolve(stateDir, 'worktrees', changeId.slice(0, 8));
-  if (existsSync(path)) await git(resolve(repo), 'worktree', 'remove', '--force', path);
+  const repoPath = resolve(repo);
+  const shortId = typeof changeId === 'string' ? changeId.slice(0, 8) : '';
+  if (!shortId) return;
+  const path = resolve(stateDir, 'worktrees', shortId);
+  if (existsSync(path)) {
+    await git(repoPath, 'worktree', 'remove', '--force', path);
+  } else {
+    try { await git(repoPath, 'worktree', 'prune'); } catch {}
+  }
+  const branch = branchFor(changeId);
+  if (branch === `fab/${shortId}` && /^fab\/[A-Za-z0-9_-]+$/.test(branch)) {
+    const branches = await git(repoPath, 'branch', '--list', branch);
+    if (branches) {
+      await git(repoPath, 'branch', '-D', branch);
+    }
+  }
 }
