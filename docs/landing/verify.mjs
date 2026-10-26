@@ -12,10 +12,12 @@ const results = [];
 const check = (name, value) => { assert.ok(value, name); results.push(name); if(process.env.VERBOSE) console.error(name); };
 const errors = [];
 const external = [];
+const httpErrors = [];
 async function page() {
   const p = await browser.newPage();
   p.setDefaultTimeout(15000);
   p.setDefaultNavigationTimeout(15000);
+  p.on('response', response => { if(response.status() >= 400) httpErrors.push({url:response.url(),status:response.status()}); });
   p.on('pageerror', e => errors.push({ url: p.url(), message: String(e), stack: e.stack }));
   await p.setRequestInterception(true);
   p.on('request', r => {
@@ -169,8 +171,9 @@ try {
   check('Synthesized touch selects installer', await touch.$eval('#install-script', e => !e.hidden));
   check('No console JavaScript errors', errors.length === 0);
   check('No third-party requests', external.length === 0);
+  check('No missing public resources', httpErrors.length === 0);
   check('Theme forwarded to embedded diagram', await p.$eval('[data-diagram]', e => new URL(e.src).searchParams.get('theme') === (document.documentElement.dataset.mode || (matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light'))));
   const typography = await p.evaluate(() => Object.fromEntries(['body','h1','h2','h3'].map(selector => [selector, getComputedStyle(document.querySelector(selector)).fontSize])));
   const visibleWords = await p.evaluate(() => document.body.innerText.trim().split(/\s+/).length);
-  console.log(JSON.stringify({ typography, visibleWords, checks: results.length, passed: results, contrast, errors, external, browser: await browser.version() }, null, 2));
+  console.log(JSON.stringify({ typography, visibleWords, checks: results.length, passed: results, contrast, errors, external, httpErrors, browser: await browser.version() }, null, 2));
 } finally { await browser.close(); }

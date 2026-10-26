@@ -137,5 +137,6 @@
   "diagramArtifacts": {
     "site/diagrams/architecture.html": "a59f0d607cc010dd3fa370045f00f0a3135ed4443e34728bd9e33bc89afb6629",
     "site/diagrams/sdlc-workflow.html": "18e9001a8f6646473c975d539a4439d98b050ebc3ad7f5787651d481914b985d"
-  }
+  },
+  "alsoReproducedAt": "http://127.0.0.1:8770/sw-factory/"
 }
