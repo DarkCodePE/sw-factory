@@ -1,0 +1,128 @@
+{
+  "capturedAt": "2026-10-26T04:24:28.460936+00:00",
+  "source": "http://127.0.0.1:8769/",
+  "renderer": "Chrome/152.0.7977.82",
+  "method": "docs/landing/verify.mjs; real Chromium screenshots; emulated viewport, no compositing or image generation",
+  "brandAssets": {
+    "site/assets/brand/fab-icon-dark.svg": {
+      "sha256": "f963b8ab1737bd7b6ff017aaa146bde8251635a184f3305bdd6448c7b2692974",
+      "source": "/home/orlando/.cache/fab-brand/fab-icon-dark.svg",
+      "modified": false
+    },
+    "site/assets/brand/fab-icon-light.svg": {
+      "sha256": "96de95563c006b33fd39432bc5db85d32c389ac0115b1e6a91504dd3f8e623ae",
+      "source": "/home/orlando/.cache/fab-brand/fab-icon-light.svg",
+      "modified": false
+    },
+    "site/assets/brand/fab-logo-dark.svg": {
+      "sha256": "7163a2b843603b49109e118e1a473451586ac6f46b759320f8390e6eaf98ba56",
+      "source": "/home/orlando/.cache/fab-brand/fab-logo-dark.svg",
+      "modified": false
+    },
+    "site/assets/brand/fab-logo-light.svg": {
+      "sha256": "8e835953bf2397d27a7fa788d876eca23a4f0fbe285dcd445a34565dc026767b",
+      "source": "/home/orlando/.cache/fab-brand/fab-logo-light.svg",
+      "modified": false
+    },
+    "site/assets/brand/fab-mark.svg": {
+      "sha256": "01ea82a807d2a1dcc3aa57b64a76144909232907640f1eefccb11ca4b19bc2a3",
+      "source": "/home/orlando/.cache/fab-brand/fab-mark.svg",
+      "modified": false
+    },
+    "site/assets/brand/favicon.svg": {
+      "sha256": "d957c8b281fa421f055aed9c71586937c5d2f60ac56f366260d48874b68be093",
+      "source": "/home/orlando/.cache/fab-brand/favicon.svg",
+      "modified": false
+    }
+  },
+  "screenshots": [
+    {
+      "path": "site/screenshots/fab-dark-desktop-hero.png",
+      "mode": "dark",
+      "viewport": {
+        "width": 1440,
+        "height": 900
+      },
+      "fullPage": false,
+      "deviceScaleFactor": 1,
+      "sha256": "e5ed0e62a0e2552ee039a3a9cdfd812a8cc829ca0ea2c003b3975cd18b6bdc18"
+    },
+    {
+      "path": "site/screenshots/fab-dark-desktop.png",
+      "mode": "dark",
+      "viewport": {
+        "width": 1440,
+        "height": 900
+      },
+      "fullPage": true,
+      "deviceScaleFactor": 1,
+      "sha256": "d90a2cbd96d6c66d303903d5ca3b35805004f3959b0e422efc4b0e296300d1ee"
+    },
+    {
+      "path": "site/screenshots/fab-dark-phone-hero.png",
+      "mode": "dark",
+      "viewport": {
+        "width": 390,
+        "height": 844
+      },
+      "fullPage": false,
+      "deviceScaleFactor": 1,
+      "sha256": "eb10dffaa7baeadb900407fcb451cfff87a941969db9099f8be2231d68f80f0d"
+    },
+    {
+      "path": "site/screenshots/fab-dark-phone.png",
+      "mode": "dark",
+      "viewport": {
+        "width": 390,
+        "height": 844
+      },
+      "fullPage": true,
+      "deviceScaleFactor": 1,
+      "sha256": "a65267de50dd8c1442cdba49d0bc42cbd526533a3950f0985f678765962761f5"
+    },
+    {
+      "path": "site/screenshots/fab-light-desktop-hero.png",
+      "mode": "light",
+      "viewport": {
+        "width": 1440,
+        "height": 900
+      },
+      "fullPage": false,
+      "deviceScaleFactor": 1,
+      "sha256": "b33ec3540dc97aa92bc733e1e10c97f5d06671cdbb3c56e478a80b1b035373f2"
+    },
+    {
+      "path": "site/screenshots/fab-light-desktop.png",
+      "mode": "light",
+      "viewport": {
+        "width": 1440,
+        "height": 900
+      },
+      "fullPage": true,
+      "deviceScaleFactor": 1,
+      "sha256": "e927defb436d977559dea2fb8df46ae53945632550d17a32ad173d9d7c060fb5"
+    },
+    {
+      "path": "site/screenshots/fab-light-phone-hero.png",
+      "mode": "light",
+      "viewport": {
+        "width": 390,
+        "height": 844
+      },
+      "fullPage": false,
+      "deviceScaleFactor": 1,
+      "sha256": "32afa2f5ad2deae556e1f1a795917141740f05ffc4cf61cdedda3d9fd07dcbcf"
+    },
+    {
+      "path": "site/screenshots/fab-light-phone.png",
+      "mode": "light",
+      "viewport": {
+        "width": 390,
+        "height": 844
+      },
+      "fullPage": true,
+      "deviceScaleFactor": 1,
+      "sha256": "6e4694e9c7839fba46f3a37929dc4908579c4c005935bef6876ced10b897302c"
+    }
+  ]
+}
