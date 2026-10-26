@@ -1,0 +1,49 @@
+{
+  "schema_version": 1,
+  "diagram_type": "architecture",
+  "meta": {
+    "title": "Arquitectura del Sistema fab",
+    "output": "docs/diagrams/architecture.html",
+    "quality_profile": "showcase"
+  },
+  "components": [
+    { "id": "cli", "type": "frontend", "label": "CLI fab", "sublabel": "ws, jira, pr, validate, merge", "pos": [40, 50], "size": [150, 60] },
+    { "id": "tui", "type": "frontend", "label": "Interfaz TUI", "sublabel": "fab tui (Diffs, Paleta /)", "pos": [40, 150], "size": [150, 60] },
+    { "id": "exec", "type": "frontend", "label": "Headless Exec", "sublabel": "fab exec / JSON-RPC", "pos": [40, 250], "size": [150, 60] },
+
+    { "id": "db", "type": "database", "label": "SQLite Store", "sublabel": "~/.fabrica/fabrica.db", "pos": [260, 50], "size": [150, 60], "tag": "FABRICA_HOME" },
+    { "id": "pool", "type": "backend", "label": "Worker Pool", "sublabel": "Reclamo con lease y reintentos", "pos": [260, 150], "size": [150, 60] },
+    { "id": "adapters", "type": "backend", "label": "Adaptadores", "sublabel": "native, claude, codex, droid", "pos": [260, 250], "size": [150, 60] },
+
+    { "id": "router", "type": "backend", "label": "Auto-Router", "sublabel": "Selección y rotación de modelo", "pos": [480, 50], "size": [150, 60] },
+    { "id": "journal", "type": "database", "label": "Journal de Resiliencia", "sublabel": "Reconciliación tras caída", "pos": [480, 150], "size": [150, 60] },
+    { "id": "tools", "type": "backend", "label": "Herramientas y MCP", "sublabel": "Edit, ApplyPatch, Execute, MCP", "pos": [480, 250], "size": [150, 60] },
+
+    { "id": "llm", "type": "cloud", "label": "Proveedores LLM", "sublabel": "Anthropic, OpenAI, Local", "pos": [700, 50], "size": [150, 60] },
+    { "id": "bwrap", "type": "security", "label": "Sandbox bubblewrap", "sublabel": "Namespaces PID, IPC, Net", "pos": [700, 150], "size": [150, 60], "tag": "bwrap (Linux)" },
+    { "id": "worktrees", "type": "database", "label": "Git Worktrees", "sublabel": "Rama fab/<id> aislada", "pos": [700, 250], "size": [150, 60], "tag": "worktrees/" }
+  ],
+  "boundaries": [
+    { "kind": "region", "label": "Interfaces y Entradas", "wraps": ["cli", "tui", "exec"] },
+    { "kind": "region", "label": "Persistencia y Coordinación", "wraps": ["db", "pool", "adapters"] },
+    { "kind": "region", "label": "Motor de Agente Nativo", "wraps": ["router", "journal", "tools"] },
+    { "kind": "security-group", "label": "Aislamiento y Confinamiento", "wraps": ["bwrap", "worktrees"] }
+  ],
+  "connections": [
+    { "id": "cli-to-db", "from": "cli", "to": "db", "label": "comandos" },
+    { "id": "tui-to-pool", "from": "tui", "to": "pool", "label": "eventos" },
+    { "id": "exec-to-adapters", "from": "exec", "to": "adapters", "label": "prompt" },
+    { "id": "pool-to-db", "from": "pool", "to": "db", "label": "lease", "variant": "dashed", "fromSide": "top", "toSide": "bottom" },
+    { "id": "pool-to-adapters", "from": "pool", "to": "adapters", "variant": "default", "fromSide": "bottom", "toSide": "top" },
+    { "id": "adapters-to-journal", "from": "adapters", "to": "journal", "label": "logs", "variant": "dashed" },
+    { "id": "adapters-to-tools", "from": "adapters", "to": "tools", "label": "acciones" },
+    { "id": "router-to-llm", "from": "router", "to": "llm", "label": "inferencia" },
+    { "id": "tools-to-bwrap", "from": "tools", "to": "bwrap", "label": "confinamiento", "variant": "security" },
+    { "id": "bwrap-to-worktrees", "from": "bwrap", "to": "worktrees", "label": "montaje", "fromSide": "bottom", "toSide": "top" }
+  ],
+  "cards": [
+    { "dot": "cyan", "title": "Interfaces", "items": ["CLI y TUI interactiva Ink", "Modo headless fab exec y misiones"] },
+    { "dot": "emerald", "title": "Coordinación", "items": ["SQLite local ~/.fabrica/fabrica.db (FABRICA_HOME)", "Pool de workers con reintentos automáticos"] },
+    { "dot": "rose", "title": "Seguridad", "items": ["Sandbox bubblewrap con namespaces aislados", "Git worktrees dedicados por cambio"] }
+  ]
+}
