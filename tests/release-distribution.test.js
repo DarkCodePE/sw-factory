@@ -8,6 +8,7 @@ import { binaryPath, ensureBinary, platformAsset, validateManifest } from '../pa
 import { junit } from '../scripts/release/common.mjs';
 import { collectNative } from '../scripts/release/collect-native.mjs';
 import { npmPublishEnvironment } from '../scripts/release/npm-auth.mjs';
+import { npmViewDist } from '../scripts/release/npm-view.mjs';
 const directories = [];
 afterEach(async () => { for (const path of directories.splice(0)) await rm(path, { recursive: true, force: true }); });
 const payload = Buffer.from('verified native fixture');
@@ -17,6 +18,44 @@ function manifest() {
   }))) };
 }
 async function home() { const path = await mkdtemp(join(tmpdir(), 'fab-npm-test-')); directories.push(path); return path; }
+
+test('public npm metadata retries two E404 responses then returns the unchanged dist JSON', async () => {
+  let attempts = 0, time = 0;
+  const waits = [], metadata = JSON.stringify({ tarball: 'https://registry.npmjs.org/fixture/-/fixture-0.1.0-rc.10.tgz' });
+  const result = await npmViewDist('@fixture/fab', '0.1.0-rc.10', {
+    env: {}, now: () => time, wait: async ms => { waits.push(ms); time += ms; },
+    execute: (command, args) => {
+      expect(command).toBe('npm'); expect(args).toEqual(['view', '@fixture/fab@0.1.0-rc.10', 'dist', '--json']);
+      if (++attempts < 3) throw Object.assign(new Error('npm lookup failed'), { stderr: Buffer.from('npm error code E404\nnpm error 404 No match found for version 0.1.0-rc.10') });
+      return metadata;
+    },
+  });
+  expect(result).toBe(metadata); expect(attempts).toBe(3); expect(waits).toEqual([15_000, 15_000]);
+});
+test('public npm metadata exhausts the configured total budget and names package/version', async () => {
+  let attempts = 0, time = 0;
+  const waits = [], missing = Object.assign(new Error('No match found for version'), { stdout: JSON.stringify({ error: { code: 'E404' } }) });
+  const pending = npmViewDist('@fixture/fab', '0.1.0-rc.10', {
+    env: { FAB_NPM_VIEW_RETRY_INTERVAL_MS: '15', FAB_NPM_VIEW_RETRY_TIMEOUT_MS: '32' },
+    now: () => time, wait: async ms => { waits.push(ms); time += ms; },
+    execute: () => { attempts++; time += 2; throw missing; },
+  });
+  await expect(pending).rejects.toThrow('@fixture/fab@0.1.0-rc.10');
+  await expect(pending).rejects.toThrow('propagation timed out');
+  expect(attempts).toBe(2); expect(waits).toEqual([15, 13]); expect(time).toBe(32);
+});
+test('public npm metadata immediately propagates other errors without waiting or retrying', async () => {
+  for (const failure of [Object.assign(new Error('authentication failed'), { stderr: 'npm error code E401' }),
+    Object.assign(new Error('spawn npm ENOENT'), { code: 'ENOENT' }),
+    Object.assign(new Error('registry unavailable'), { stdout: JSON.stringify({ error: { code: 'E500', summary: 'E404 upstream' } }) }),
+    Object.assign(new Error('conflicting diagnostics'), { stdout: JSON.stringify({ error: { code: 'E500' } }), stderr: 'npm error code E404' })]) {
+    let attempts = 0, waits = 0;
+    await expect(npmViewDist('@fixture/fab', '0.1.0-rc.10', { env: {},
+      execute: () => { attempts++; throw failure; }, wait: async () => { waits++; },
+    })).rejects.toBe(failure);
+    expect(attempts).toBe(1); expect(waits).toBe(0);
+  }
+});
 
 test('npm publication trims pasted exterior CR/LF before constructing an HTTP authorization header', () => {
   const source = { NPM_TOKEN: ' \r\nnpm_fixture_valid\r\n\t', NODE_AUTH_TOKEN: 'setup-node-placeholder', PATH: '/fixture/bin' };
