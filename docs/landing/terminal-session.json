@@ -1,0 +1,369 @@
+{
+  "type": "hermetic-real-cli-capture",
+  "sourceHead": "4b73fb35f7f08580a048f2c178a6aa90dcf831b6",
+  "capturedAt": "2026-10-26T04:38:04.344Z",
+  "root": "/tmp/fab-replay-capture-TBDymn",
+  "repo": "/tmp/fab-replay-capture-TBDymn/repo",
+  "stateDir": "/tmp/fab-replay-capture-TBDymn/state",
+  "signal": "04dfa1a0",
+  "change": "951e7eb3",
+  "setup": [
+    {
+      "command": "fab ws create demo --repo /tmp/fab-replay-capture-TBDymn/repo --goal Sesión ilustrativa con fixtures --agent fake --concurrency 1 --no-change-approval --no-spec-approval",
+      "stdout": "workstream demo (8165b31e) creado en draft; actívalo con: fab ws state demo active\n",
+      "stderr": "",
+      "code": 0
+    },
+    {
+      "command": "fab ws state demo active",
+      "stdout": "demo -> active\n",
+      "stderr": "",
+      "code": 0
+    }
+  ],
+  "frames": [
+    {
+      "command": "fab jira import FAB-142 --ws demo",
+      "stdout": "HU importada: signal 04dfa1a0\n",
+      "stderr": "",
+      "code": 0,
+      "source": [
+        {
+          "path": "src/connectors/cli.ts",
+          "startLine": 95,
+          "endLine": 105
+        }
+      ],
+      "replayOutput": [
+        "HU importada: signal 04dfa1a0"
+      ],
+      "abbreviated": false,
+      "stream": "stdout",
+      "output": [
+        "HU importada: signal 04dfa1a0"
+      ]
+    },
+    {
+      "command": "fab triage 04dfa1a0",
+      "stdout": "signal 04dfa1a0 -> change 951e7eb3 (pending)\n",
+      "stderr": "",
+      "code": 0,
+      "source": [
+        {
+          "path": "src/cli.ts",
+          "startLine": 180,
+          "endLine": 188
+        },
+        {
+          "path": "src/store.ts",
+          "startLine": 289,
+          "endLine": 301
+        },
+        {
+          "path": "src/store.ts",
+          "startLine": 325,
+          "endLine": 333
+        }
+      ],
+      "replayOutput": [
+        "signal 04dfa1a0 -> change 951e7eb3 (pending)"
+      ],
+      "abbreviated": false,
+      "stream": "stdout",
+      "output": [
+        "signal 04dfa1a0 -> change 951e7eb3 (pending)"
+      ]
+    },
+    {
+      "command": "fab run demo --once",
+      "stdout": "[w1-440608] investigation \"FAB-142 Validar sesión\" -> fake in /tmp/fab-replay-capture-TBDymn/state/worktrees/951e7eb3\n[w1-440608] investigation done in 0s\n[w1-440608] implementation \"FAB-142 Validar sesión\" -> fake in /tmp/fab-replay-capture-TBDymn/state/worktrees/951e7eb3\n[w1-440608] implementation done in 0s\n",
+      "stderr": "",
+      "code": 0,
+      "source": [
+        {
+          "path": "src/cli.ts",
+          "startLine": 209,
+          "endLine": 211
+        },
+        {
+          "path": "src/pool.ts",
+          "startLine": 44,
+          "endLine": 46
+        },
+        {
+          "path": "src/pool.ts",
+          "startLine": 89,
+          "endLine": 90
+        },
+        {
+          "path": "src/store.ts",
+          "startLine": 544,
+          "endLine": 555
+        }
+      ],
+      "replayOutput": [
+        "[w1-440608] investigation done in 0s",
+        "[w1-440608] implementation done in 0s"
+      ],
+      "abbreviated": true,
+      "stream": "stdout",
+      "output": [
+        "[w1-440608] investigation done in 0s",
+        "[w1-440608] implementation done in 0s"
+      ]
+    },
+    {
+      "command": "fab validate 951e7eb3 --only qa",
+      "stdout": "Encolados 1 validadores para change 951e7eb3: qa\n",
+      "stderr": "",
+      "code": 0,
+      "source": [
+        {
+          "path": "src/validators/cli.ts",
+          "startLine": 98,
+          "endLine": 114
+        },
+        {
+          "path": "src/store.ts",
+          "startLine": 444,
+          "endLine": 464
+        }
+      ],
+      "replayOutput": [
+        "Encolados 1 validadores para change 951e7eb3: qa"
+      ],
+      "abbreviated": false,
+      "stream": "stdout",
+      "output": [
+        "Encolados 1 validadores para change 951e7eb3: qa"
+      ]
+    },
+    {
+      "command": "fab run demo --once",
+      "stdout": "[w1-440707] qa \"FAB-142 Validar sesión\" -> fake in /tmp/fab-replay-capture-TBDymn/state/worktrees/951e7eb3\n[w1-440707] change_review done in 0s\n",
+      "stderr": "",
+      "code": 0,
+      "source": [
+        {
+          "path": "src/pool.ts",
+          "startLine": 44,
+          "endLine": 46
+        },
+        {
+          "path": "src/pool.ts",
+          "startLine": 89,
+          "endLine": 90
+        },
+        {
+          "path": "src/store.ts",
+          "startLine": 527,
+          "endLine": 543
+        }
+      ],
+      "replayOutput": [
+        "[w1-440707] change_review done in 0s"
+      ],
+      "abbreviated": true,
+      "stream": "stdout",
+      "output": [
+        "[w1-440707] change_review done in 0s"
+      ]
+    },
+    {
+      "command": "fab validate status 951e7eb3",
+      "stdout": "### Validación de fab change `951e7eb3` [FALLIDO]\n\n| Validador | Veredicto | Resumen |\n| --- | --- | --- |\n| `qa` | **FAIL** | Fallo controlado del fixture QA. |\n",
+      "stderr": "",
+      "code": 0,
+      "source": [
+        {
+          "path": "src/validators/cli.ts",
+          "startLine": 55,
+          "endLine": 62
+        },
+        {
+          "path": "src/validators/publish.ts",
+          "startLine": 6,
+          "endLine": 24
+        }
+      ],
+      "replayOutput": [
+        "### Validación de fab change `951e7eb3` [FALLIDO]",
+        "",
+        "| Validador | Veredicto | Resumen |",
+        "| --- | --- | --- |",
+        "| `qa` | **FAIL** | Fallo controlado del fixture QA. |"
+      ],
+      "abbreviated": false,
+      "stream": "stdout",
+      "output": [
+        "### Validación de fab change `951e7eb3` [FALLIDO]",
+        "",
+        "| Validador | Veredicto | Resumen |",
+        "| --- | --- | --- |",
+        "| `qa` | **FAIL** | Fallo controlado del fixture QA. |"
+      ]
+    },
+    {
+      "command": "fab merge 951e7eb3",
+      "stdout": "",
+      "stderr": "error (invalid_transition): validadores en fail: qa; usa --force para fusionar igualmente\n",
+      "code": 1,
+      "source": [
+        {
+          "path": "src/cli.ts",
+          "startLine": 241,
+          "endLine": 246
+        },
+        {
+          "path": "src/cli.ts",
+          "startLine": 283,
+          "endLine": 285
+        },
+        {
+          "path": "src/validators/publish.ts",
+          "startLine": 31,
+          "endLine": 35
+        }
+      ],
+      "replayOutput": [
+        "error (invalid_transition): validadores en fail: qa; usa --force para fusionar igualmente"
+      ],
+      "abbreviated": false,
+      "stream": "stderr",
+      "output": [
+        "error (invalid_transition): validadores en fail: qa; usa --force para fusionar igualmente"
+      ]
+    },
+    {
+      "command": "fab validate 951e7eb3 --only qa",
+      "stdout": "Encolados 1 validadores para change 951e7eb3: qa\n",
+      "stderr": "",
+      "code": 0,
+      "source": [
+        {
+          "path": "src/validators/cli.ts",
+          "startLine": 98,
+          "endLine": 114
+        },
+        {
+          "path": "src/store.ts",
+          "startLine": 456,
+          "endLine": 460
+        }
+      ],
+      "replayOutput": [
+        "Encolados 1 validadores para change 951e7eb3: qa"
+      ],
+      "abbreviated": false,
+      "stream": "stdout",
+      "output": [
+        "Encolados 1 validadores para change 951e7eb3: qa"
+      ]
+    },
+    {
+      "command": "fab run demo --once",
+      "stdout": "[w1-440811] qa \"FAB-142 Validar sesión\" -> fake in /tmp/fab-replay-capture-TBDymn/state/worktrees/951e7eb3\n[w1-440811] change_review done in 0s\n",
+      "stderr": "",
+      "code": 0,
+      "source": [
+        {
+          "path": "src/pool.ts",
+          "startLine": 44,
+          "endLine": 46
+        },
+        {
+          "path": "src/pool.ts",
+          "startLine": 89,
+          "endLine": 90
+        },
+        {
+          "path": "src/store.ts",
+          "startLine": 527,
+          "endLine": 543
+        }
+      ],
+      "replayOutput": [
+        "[w1-440811] change_review done in 0s"
+      ],
+      "abbreviated": true,
+      "stream": "stdout",
+      "output": [
+        "[w1-440811] change_review done in 0s"
+      ]
+    },
+    {
+      "command": "fab validate status 951e7eb3",
+      "stdout": "### Validación de fab change `951e7eb3` [APROBADO]\n\n| Validador | Veredicto | Resumen |\n| --- | --- | --- |\n| `qa` | **PASS** | Fixture QA aprobado. |\n",
+      "stderr": "",
+      "code": 0,
+      "source": [
+        {
+          "path": "src/validators/cli.ts",
+          "startLine": 55,
+          "endLine": 62
+        },
+        {
+          "path": "src/validators/publish.ts",
+          "startLine": 6,
+          "endLine": 24
+        },
+        {
+          "path": "src/store.ts",
+          "startLine": 471,
+          "endLine": 498
+        }
+      ],
+      "replayOutput": [
+        "### Validación de fab change `951e7eb3` [APROBADO]",
+        "",
+        "| Validador | Veredicto | Resumen |",
+        "| --- | --- | --- |",
+        "| `qa` | **PASS** | Fixture QA aprobado. |"
+      ],
+      "abbreviated": false,
+      "stream": "stdout",
+      "output": [
+        "### Validación de fab change `951e7eb3` [APROBADO]",
+        "",
+        "| Validador | Veredicto | Resumen |",
+        "| --- | --- | --- |",
+        "| `qa` | **PASS** | Fixture QA aprobado. |"
+      ]
+    },
+    {
+      "command": "fab merge 951e7eb3",
+      "stdout": "Updating b0968c1..ac4f7c3\nFast-forward\n session-fixture.txt | 1 +\n 1 file changed, 1 insertion(+)\n create mode 100644 session-fixture.txt\nchange 951e7eb3 completado\n",
+      "stderr": "",
+      "code": 0,
+      "source": [
+        {
+          "path": "src/cli.ts",
+          "startLine": 241,
+          "endLine": 250
+        },
+        {
+          "path": "src/worktrees.ts",
+          "startLine": 50,
+          "endLine": 56
+        }
+      ],
+      "replayOutput": [
+        "change 951e7eb3 completado"
+      ],
+      "abbreviated": true,
+      "stream": "stdout",
+      "output": [
+        "change 951e7eb3 completado"
+      ]
+    }
+  ],
+  "method": "Actual CLI subprocesses; temporary Git+SQLite; Bun preload intercepts Jira fetch and replaces fake adapter command with local deterministic reports. No real connector/model/worker/network. QA changes only fixture report, not production source.",
+  "limitations": [
+    "Graph unavailable: no indexed Fab project; relevant source ranges read directly; graph coverage not asserted.",
+    "Jira and agent reports are deterministic fixtures. CLI dispatch, state transitions, stdout/stderr and local Git merge were executed.",
+    "Both workstream approval gates disabled for this controlled demonstration. No user repository files or metadata changed.",
+    "Both QA verdicts refer to controlled fixture reports; the capture does not demonstrate a production code fix.",
+    "Standalone fab triage after import does not attach Jira source change-link; this replay makes no later PR/Jira comment claim.",
+    "sourceHead CLI/connectors/validators files were byte-identical to fetched origin/main copies."
+  ]
+}

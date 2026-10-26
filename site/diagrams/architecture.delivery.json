@@ -1,0 +1,17 @@
+{
+  "schemaVersion": 1,
+  "receiptId": "1cfd85f6-585a-4c13-a2d1-db3ad37cc723",
+  "status": "current",
+  "command": "deliver",
+  "type": "architecture",
+  "input": "/home/orlando/Desktop/factory/sw-factory-codex/docs/landing/diagrams/architecture.json",
+  "output": "/home/orlando/Desktop/factory/sw-factory-codex/site/diagrams/architecture.html",
+  "specification": {
+    "sha256": "58cc99ee8c65b4ad9d0b98bb968ceeadbe2d44a1df0955e69c9fec1835da3240",
+    "bytes": 5776
+  },
+  "artifact": {
+    "sha256": "a59f0d607cc010dd3fa370045f00f0a3135ed4443e34728bd9e33bc89afb6629",
+    "bytes": 855916
+  }
+}

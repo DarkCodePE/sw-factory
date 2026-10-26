@@ -1,0 +1,313 @@
+{
+  "schema_version": 2,
+  "diagram_type": "workflow",
+  "meta": {
+    "title": "Flujo SDLC en fab: De Jira a Producción",
+    "output": "site/diagrams/sdlc-workflow.html",
+    "quality_profile": "showcase",
+    "locale": "es"
+  },
+  "lanes": [
+    {
+      "id": "external",
+      "label": "Sistemas Externos (Jira / GitHub)"
+    },
+    {
+      "id": "operator",
+      "label": "Operador (Aprobaciones y Control)"
+    },
+    {
+      "id": "factory",
+      "label": "Fábrica fab (Estado y Orquestación)"
+    },
+    {
+      "id": "workers",
+      "label": "Workers en Sandbox (Worktree fab/<id>)"
+    },
+    {
+      "id": "validators",
+      "label": "Validadores SDLC (CR, Sec, QA)"
+    }
+  ],
+  "phases": [
+    {
+      "id": "phase_ingesta",
+      "label": "1. Ingesta",
+      "fromCol": 0,
+      "toCol": 0
+    },
+    {
+      "id": "phase_triage",
+      "label": "2. Triage",
+      "fromCol": 1,
+      "toCol": 1
+    },
+    {
+      "id": "phase_investigacion",
+      "label": "3. Investigación",
+      "fromCol": 2,
+      "toCol": 2
+    },
+    {
+      "id": "phase_implementacion",
+      "label": "4. Implementación",
+      "fromCol": 3,
+      "toCol": 3
+    },
+    {
+      "id": "phase_validacion",
+      "label": "5. Validación",
+      "fromCol": 4,
+      "toCol": 4
+    },
+    {
+      "id": "phase_cierre",
+      "label": "6. Merge y Cierre",
+      "fromCol": 5,
+      "toCol": 5
+    }
+  ],
+  "mainPath": [
+    "jira",
+    "signal",
+    "triage",
+    "gate1",
+    "investigation",
+    "gate2",
+    "implementation",
+    "implemented",
+    "validate",
+    "merge",
+    "jira_comment"
+  ],
+  "nodes": [
+    {
+      "id": "jira",
+      "lane": "external",
+      "col": 0,
+      "type": "external",
+      "label": "Ticket Jira",
+      "sublabel": "Issue o reporte externo",
+      "width": 132
+    },
+    {
+      "id": "signal",
+      "lane": "factory",
+      "col": 0,
+      "type": "database",
+      "label": "Señal Técnica",
+      "sublabel": "fab jira import / signal add",
+      "tag": "estado: new",
+      "width": 132
+    },
+    {
+      "id": "triage",
+      "lane": "factory",
+      "col": 1,
+      "type": "backend",
+      "label": "fab triage",
+      "sublabel": "Crea unidad Change",
+      "tag": "fab/changeId",
+      "width": 132
+    },
+    {
+      "id": "gate1",
+      "lane": "operator",
+      "col": 1,
+      "type": "security",
+      "label": "Gate 1: Change",
+      "sublabel": "fab review approve",
+      "tag": "humano",
+      "width": 132
+    },
+    {
+      "id": "investigation",
+      "lane": "workers",
+      "col": 2,
+      "type": "backend",
+      "label": "Investigación",
+      "sublabel": "Worker en solo lectura",
+      "tag": "redacta spec",
+      "width": 132
+    },
+    {
+      "id": "gate2",
+      "lane": "operator",
+      "col": 2,
+      "type": "security",
+      "label": "Gate 2: Spec",
+      "sublabel": "fab review approve",
+      "tag": "humano",
+      "width": 132
+    },
+    {
+      "id": "implementation",
+      "lane": "workers",
+      "col": 3,
+      "type": "backend",
+      "label": "Implementación",
+      "sublabel": "Worktree aislado en sandbox",
+      "tag": "bwrap + git",
+      "width": 132
+    },
+    {
+      "id": "implemented",
+      "lane": "factory",
+      "col": 3,
+      "type": "database",
+      "label": "Commits Listos",
+      "sublabel": "Verificación de rama local",
+      "tag": "implemented",
+      "width": 132
+    },
+    {
+      "id": "validate",
+      "lane": "validators",
+      "col": 4,
+      "type": "backend",
+      "label": "fab validate",
+      "sublabel": "code_review, sec, qa",
+      "tag": "paralelo",
+      "width": 132
+    },
+    {
+      "id": "pr",
+      "lane": "external",
+      "col": 4,
+      "type": "cloud",
+      "label": "GitHub PR",
+      "sublabel": "fab pr open --validate",
+      "width": 132
+    },
+    {
+      "id": "merge",
+      "lane": "factory",
+      "col": 5,
+      "type": "security",
+      "label": "Gate 3: Merge",
+      "sublabel": "fab merge [--force]",
+      "tag": "bloqueo si fail",
+      "width": 132
+    },
+    {
+      "id": "jira_comment",
+      "lane": "external",
+      "col": 5,
+      "type": "external",
+      "label": "Comentario Jira",
+      "sublabel": "fab jira comment",
+      "tag": "ticket cerrado",
+      "width": 132
+    }
+  ],
+  "edges": [
+    {
+      "id": "jira-to-signal",
+      "from": "jira",
+      "to": "signal",
+      "label": "import",
+      "variant": "default"
+    },
+    {
+      "id": "signal-to-triage",
+      "from": "signal",
+      "to": "triage",
+      "variant": "default"
+    },
+    {
+      "id": "triage-to-gate1",
+      "from": "triage",
+      "to": "gate1",
+      "label": "revisión",
+      "variant": "security"
+    },
+    {
+      "id": "gate1-to-inv",
+      "from": "gate1",
+      "to": "investigation",
+      "label": "aprobado",
+      "variant": "emphasis"
+    },
+    {
+      "id": "inv-to-gate2",
+      "from": "investigation",
+      "to": "gate2",
+      "label": "spec",
+      "variant": "security"
+    },
+    {
+      "id": "gate2-to-impl",
+      "from": "gate2",
+      "to": "implementation",
+      "label": "aprobado",
+      "variant": "emphasis"
+    },
+    {
+      "id": "impl-to-done",
+      "from": "implementation",
+      "to": "implemented",
+      "label": "commits",
+      "variant": "default"
+    },
+    {
+      "id": "done-to-val",
+      "from": "implemented",
+      "to": "validate",
+      "label": "evaluar",
+      "variant": "emphasis"
+    },
+    {
+      "id": "done-to-pr",
+      "from": "implemented",
+      "to": "pr",
+      "label": "abrir PR",
+      "variant": "dashed"
+    },
+    {
+      "id": "val-to-merge",
+      "from": "validate",
+      "to": "merge",
+      "label": "veredicto",
+      "variant": "security"
+    },
+    {
+      "id": "pr-to-merge",
+      "from": "pr",
+      "to": "merge",
+      "variant": "dashed"
+    },
+    {
+      "id": "merge-to-jira",
+      "from": "merge",
+      "to": "jira_comment",
+      "label": "notificación",
+      "variant": "emphasis"
+    }
+  ],
+  "cards": [
+    {
+      "dot": "cyan",
+      "title": "Ingesta y Triage",
+      "items": [
+        "Importación desde Jira ADF a Markdown",
+        "Conversión de señales en unidades de cambio"
+      ]
+    },
+    {
+      "dot": "emerald",
+      "title": "Aislamiento y Workers",
+      "items": [
+        "Investigación en solo lectura para redactar spec",
+        "Implementación confinada en worktree y sandbox bwrap"
+      ]
+    },
+    {
+      "dot": "rose",
+      "title": "Puertas de Calidad",
+      "items": [
+        "Gates 1 y 2 con aprobación humana en fab inbox",
+        "Gate 3 bloquea el merge si los validadores no pasan"
+      ]
+    }
+  ]
+}

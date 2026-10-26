@@ -1,0 +1,27 @@
+{
+  "method": "Executed the exact Prepare public files run block parsed from pages.yml; no upload/deploy",
+  "fileCount": 14,
+  "files": {
+    "app.js": "221949f999622a0f736c6e023a76790724641799ca4110dda73abf4b4213c460",
+    "assets/brand/fab-icon-dark.svg": "f963b8ab1737bd7b6ff017aaa146bde8251635a184f3305bdd6448c7b2692974",
+    "assets/brand/fab-icon-light.svg": "96de95563c006b33fd39432bc5db85d32c389ac0115b1e6a91504dd3f8e623ae",
+    "assets/brand/fab-logo-dark.svg": "7163a2b843603b49109e118e1a473451586ac6f46b759320f8390e6eaf98ba56",
+    "assets/brand/fab-logo-light.svg": "8e835953bf2397d27a7fa788d876eca23a4f0fbe285dcd445a34565dc026767b",
+    "assets/brand/fab-mark.svg": "01ea82a807d2a1dcc3aa57b64a76144909232907640f1eefccb11ca4b19bc2a3",
+    "assets/brand/favicon.svg": "d957c8b281fa421f055aed9c71586937c5d2f60ac56f366260d48874b68be093",
+    "base.css": "49056f1c273364e5908a86b52031b10bd1f3f998de5ca42ac7b005f77921650e",
+    "demo-session.txt": "c094170354bf6525599657c11f1a7b3bd9dbb7a65d5ec37b9518737d7ad23a4f",
+    "diagrams/architecture.html": "a59f0d607cc010dd3fa370045f00f0a3135ed4443e34728bd9e33bc89afb6629",
+    "diagrams/sdlc-workflow.html": "18e9001a8f6646473c975d539a4439d98b050ebc3ad7f5787651d481914b985d",
+    "index.html": "b530d6cb8a0ac9b90c1e824bc1c30b7487b46bd204d9f226fcf6543733fa2207",
+    "styles.css": "5ea654dca644e1d2aeacc1fc59c8c31084716f956f2a69562fa7070b1c417451",
+    "tokens.css": "d6e0988332547bff7b246213d194bb76be462895e781e356b5bd4ddbf5780438"
+  },
+  "checks": [
+    "14 allowed public files only",
+    "No screenshots, README, caches, JSON receipts or work scripts",
+    "All published bytes equal source files",
+    "Optional CNAME copied from isolated fixture: 15 files",
+    "Missing required app.js fails before upload"
+  ]
+}

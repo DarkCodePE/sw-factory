@@ -1,0 +1,77 @@
+name: Publish fab landing
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'site/**'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+concurrency:
+  group: pages
+  cancel-in-progress: false
+
+jobs:
+  deploy:
+    if: github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        with:
+          persist-credentials: false
+      - name: Configure Pages
+        uses: actions/configure-pages@45bfe0192ca1faeb007ade9deae92b16b8254a0d # v6.0.0
+        with:
+          enablement: false
+      - name: Prepare public files
+        id: prepare
+        env:
+          PAGES_DIR: ${{ runner.temp }}/fab-pages
+        shell: bash
+        run: |
+          python3 - <<'PY'
+          import os
+          from pathlib import Path
+          import shutil
+
+          source = Path('site').resolve()
+          target = Path(os.environ['PAGES_DIR'])
+          # A fresh directory and explicit inventory prevent stale or work files.
+          target.mkdir(parents=True, exist_ok=False)
+          public = [
+              'index.html', 'app.js', 'styles.css', 'tokens.css', 'base.css',
+              'demo-session.txt', 'diagrams/sdlc-workflow.html',
+              'diagrams/architecture.html',
+              'assets/brand/fab-logo-light.svg', 'assets/brand/fab-logo-dark.svg',
+              'assets/brand/fab-mark.svg', 'assets/brand/fab-icon-light.svg',
+              'assets/brand/fab-icon-dark.svg', 'assets/brand/favicon.svg',
+          ]
+          if (source / 'CNAME').exists():
+              public.append('CNAME')
+          for relative in public:
+              original = source / relative
+              if original.is_symlink() or not original.is_file() or not original.resolve().is_relative_to(source):
+                  raise SystemExit(f'Invalid public asset: {relative}')
+              destination = target / relative
+              destination.parent.mkdir(parents=True, exist_ok=True)
+              shutil.copyfile(original, destination)
+          print(f'Prepared {len(public)} public files')
+          PY
+      - name: Upload Pages artifact
+        uses: actions/upload-pages-artifact@fc324d3547104276b827a68afc52ff2a11cc49c9 # v5.0.0
+        with:
+          path: ${{ runner.temp }}/fab-pages
+          retention-days: 1
+      - name: Deploy Pages
+        id: deployment
+        uses: actions/deploy-pages@368f82528645a54fb793d4d04e342629a3f51346 # v5.0.1

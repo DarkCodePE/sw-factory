@@ -1,0 +1,138 @@
+<!doctype html>
+<html lang="es">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="description" content="fab coordina agentes locales, worktrees y validaciones desde tu terminal. Instala el CLI y conoce su flujo de trabajo.">
+  <meta name="color-scheme" content="light dark">
+  <link rel="icon" type="image/svg+xml" href="./assets/brand/favicon.svg">
+  <title>fab | Agentes locales, un flujo común</title>
+  <script>try{const m=localStorage.getItem('fab-theme');if(m==='light'||m==='dark')document.documentElement.dataset.mode=m;}catch{}</script>
+  <link rel="stylesheet" href="./styles.css">
+  <script src="./app.js" defer></script>
+</head>
+<body>
+  <a class="skip-link" href="#contenido">Saltar al contenido</a>
+  <header class="site-header container">
+    <a class="brand-home" href="#inicio" aria-label="fab, inicio"><img class="brand-logo brand-logo-light" src="./assets/brand/fab-logo-light.svg" width="251" height="120" alt=""><img class="brand-logo brand-logo-dark" src="./assets/brand/fab-logo-dark.svg" width="251" height="120" alt=""></a>
+    <nav aria-label="Principal">
+      <a href="#flujo">El flujo</a><a href="#modelos">Modelos</a><a href="#planes">Planes</a>
+    </nav>
+    <button class="theme-button quiet-button" type="button" hidden aria-label="Cambiar al tema claro">
+      <svg viewBox="0 0 24 24" width="20" height="20" aria-hidden="true"><circle cx="12" cy="12" r="4"/><path d="M12 2v2m0 16v2M2 12h2m16 0h2M5 5l1.5 1.5m11 11L19 19M5 19l1.5-1.5m11-11L19 5"/></svg>
+      <span>Tema claro</span>
+    </button>
+  </header>
+  <main id="contenido" tabindex="-1">
+    <section class="hero" id="inicio" aria-labelledby="hero-title">
+      <div class="container hero-grid">
+        <div class="hero-intro">
+        <div class="hero-copy">
+          <h1 id="hero-title">Agentes locales.<br>Un flujo común.</h1>
+          <p class="lead">fab coordina agentes locales, worktrees y validaciones desde tu terminal.</p>
+        </div>
+        <div class="install-well" id="instalar" aria-label="Instalar fab">
+          <div class="install-tabs" role="tablist" aria-label="Método de instalación" hidden>
+            <button id="tab-npm" role="tab" type="button" aria-selected="true" aria-controls="install-npm" tabindex="0">npm</button>
+            <button id="tab-script" role="tab" type="button" aria-selected="false" aria-controls="install-script" tabindex="-1">install.sh</button>
+          </div>
+          <div class="command-panel" id="install-npm">
+            <p class="method-label">Con npm</p>
+            <code class="install-command" id="command-npm" tabindex="0">npm install -g @okuanb/fab@next</code>
+            <button class="copy-button primary-button" type="button" data-copy="command-npm" disabled>
+              <svg viewBox="0 0 24 24" width="20" height="20" aria-hidden="true"><path d="M8 8h12v12H8zM4 16V4h12"/></svg><span>Copiar</span>
+            </button>
+          </div>
+          <div class="command-panel" id="install-script">
+            <p class="method-label">Con el instalador</p>
+            <code class="install-command script-command" id="command-script" tabindex="0">curl -fsSL https://raw.githubusercontent.com/DarkCodePE/sw-factory/main/scripts/install.sh | sh</code>
+            <button class="copy-button primary-button" type="button" data-copy="command-script" disabled>
+              <svg viewBox="0 0 24 24" width="20" height="20" aria-hidden="true"><path d="M8 8h12v12H8zM4 16V4h12"/></svg><span>Copiar</span>
+            </button>
+          </div>
+          <p class="copy-status" role="status" aria-live="polite" aria-atomic="true"></p>
+          <noscript><p class="no-script">Selecciona un comando para copiarlo.</p></noscript>
+          <p class="install-caption">Preliminar <code>@next</code>.</p>
+        </div>
+        </div>
+        <div class="product-demo" id="demo" aria-labelledby="demo-title">
+          <div class="demo-toolbar"><p class="demo-title" id="demo-title">Sesión de fab</p><div class="demo-controls"><button class="quiet-button" type="button" data-demo-play hidden>Reproducir</button><button class="quiet-button" type="button" data-demo-end hidden>Resultado</button></div></div>
+          <div class="demo-screen" tabindex="0" role="region" aria-label="Transcripción de la sesión de ejemplo" aria-live="off">
+            <ol class="demo-frames"><li class="demo-frame" data-frame="0" data-result="normal"><p class="demo-command"><span aria-hidden="true">$ </span><code>fab jira import FAB-142 --ws demo</code></p><pre class="demo-output">HU importada: signal 04dfa1a0</pre></li><li class="demo-frame" data-frame="1" data-result="normal"><p class="demo-command"><span aria-hidden="true">$ </span><code>fab triage 04dfa1a0</code></p><pre class="demo-output">signal 04dfa1a0 -&gt; change 951e7eb3 (pending)</pre></li><li class="demo-frame" data-frame="2" data-result="normal"><p class="demo-command"><span aria-hidden="true">$ </span><code>fab run demo --once</code></p><pre class="demo-output">[w1-440608] investigation done in 0s
+[w1-440608] implementation done in 0s</pre></li><li class="demo-frame" data-frame="3" data-result="normal"><p class="demo-command"><span aria-hidden="true">$ </span><code>fab validate 951e7eb3 --only qa</code></p><pre class="demo-output">Encolados 1 validadores para change 951e7eb3: qa</pre></li><li class="demo-frame" data-frame="4" data-result="normal"><p class="demo-command"><span aria-hidden="true">$ </span><code>fab run demo --once</code></p><pre class="demo-output">[w1-440707] change_review done in 0s</pre></li><li class="demo-frame" data-frame="5" data-result="fail"><p class="demo-command"><span aria-hidden="true">$ </span><code>fab validate status 951e7eb3</code></p><pre class="demo-output">### Validación de fab change `951e7eb3` [FALLIDO]
+
+| Validador | Veredicto | Resumen |
+| --- | --- | --- |
+| `qa` | **FAIL** | Fallo controlado del fixture QA. |</pre></li><li class="demo-frame" data-frame="6" data-result="fail"><p class="demo-command"><span aria-hidden="true">$ </span><code>fab merge 951e7eb3</code></p><pre class="demo-output">error (invalid_transition): validadores en fail: qa; usa --force para fusionar igualmente</pre></li><li class="demo-frame" data-frame="7" data-result="normal"><p class="demo-command"><span aria-hidden="true">$ </span><code>fab validate 951e7eb3 --only qa</code></p><pre class="demo-output">Encolados 1 validadores para change 951e7eb3: qa</pre></li><li class="demo-frame" data-frame="8" data-result="normal"><p class="demo-command"><span aria-hidden="true">$ </span><code>fab run demo --once</code></p><pre class="demo-output">[w1-440811] change_review done in 0s</pre></li><li class="demo-frame" data-frame="9" data-result="pass"><p class="demo-command"><span aria-hidden="true">$ </span><code>fab validate status 951e7eb3</code></p><pre class="demo-output">### Validación de fab change `951e7eb3` [APROBADO]
+
+| Validador | Veredicto | Resumen |
+| --- | --- | --- |
+| `qa` | **PASS** | Fixture QA aprobado. |</pre></li><li class="demo-frame" data-frame="10" data-result="pass"><p class="demo-command"><span aria-hidden="true">$ </span><code>fab merge 951e7eb3</code></p><pre class="demo-output">change 951e7eb3 completado</pre></li></ol>
+          </div>
+          <div class="demo-caption"><p>Sesión capturada con Jira y workers simulados. <a href="./demo-session.txt">Transcripción</a>.</p><p class="demo-state" role="status" aria-live="polite">Sesión finalizada.</p></div>
+        </div>
+      </div>
+      <img class="hero-motif" src="./assets/brand/fab-mark.svg" width="120" height="120" alt="" aria-hidden="true">
+    </section>
+    <section class="local-section" aria-labelledby="local-title">
+      <div class="container local-grid">
+        <h2 id="local-title">Tu repositorio.<br>Tu máquina.</h2>
+        <div class="local-detail">
+          <p class="lead">TUI, ejecución sin interfaz y estado en SQLite local.</p>
+          <p>Los cambios de la fábrica usan worktrees independientes. En Linux, las herramientas tienen sandbox con bubblewrap; en macOS corren con los permisos del usuario.</p>
+          <code class="local-path">~/.fabrica/fabrica.db</code>
+        </div>
+      </div>
+    </section>
+    <section class="flow-section" id="flujo" aria-labelledby="flow-title">
+      <div class="container">
+        <h2 id="flow-title">De Jira a fab merge.</h2>
+        <div class="diagram-links"><a class="diagram-link" href="./diagrams/sdlc-workflow.html">Explorar el flujo interactivo</a><a href="./diagrams/architecture.html">Ver la arquitectura</a></div>
+        <iframe tabindex="0" class="workflow-embed" src="./diagrams/sdlc-workflow.html" title="Flujo SDLC interactivo de fab, generado con Archify" loading="lazy" data-diagram></iframe>
+        <p class="diagram-caption">Importación, aprobaciones humanas, workers y puerta de merge. El override explícito <code>--force</code> existe.</p>
+      </div>
+    </section>
+    <section class="capabilities-section" aria-labelledby="capabilities-title">
+      <div class="container">
+        <h2 id="capabilities-title">Implementa y valida con fab.</h2>
+        <ol class="capabilities">
+          <li><span class="case-number" aria-hidden="true">01</span><h3>Triage automático</h3><p class="availability">Próximamente</p><p>Clasificación de señales y detección de duplicados.</p></li>
+          <li><span class="case-number" aria-hidden="true">02</span><h3>Ticket a código</h3><p class="availability">Disponible hoy</p><p>Implementación de cambios en worktrees independientes.</p></li>
+          <li><span class="case-number" aria-hidden="true">03</span><h3>Revisión de código</h3><p class="availability">Disponible hoy</p><p>Un validador examina el diff antes del merge.</p></li>
+          <li><span class="case-number" aria-hidden="true">04</span><h3>QA y seguridad</h3><p class="availability">Disponible hoy</p><p>Validadores de calidad y auditoría de seguridad.</p></li>
+          <li><span class="case-number" aria-hidden="true">05</span><h3>Monitor</h3><p class="availability">Próximamente</p><p>Seguimiento de actividad e incidentes.</p></li>
+          <li><span class="case-number" aria-hidden="true">06</span><h3>AutoWiki</h3><p class="availability">Próximamente</p><p>Documentación del repositorio sincronizada.</p></li>
+        </ol>
+      </div>
+    </section>
+    <section class="models-section" id="modelos" aria-labelledby="models-title">
+      <div class="container">
+        <h2 id="models-title">Elige cómo conectar tu IA.</h2>
+        <div class="models-grid">
+          <div><h3>Workers externos</h3><p>Claude Code (<code>claude</code>), Codex (<code>codex</code>), Antigravity (<code>agy</code>) y Droid (<code>droid</code>).</p><p>Cada CLI usa su propio login o su API key por entorno.</p></div>
+          <div><h3>Agente nativo</h3><p><code>anthropic</code>, <code>openai</code>, <code>chatgpt</code> (login de Codex) y <code>generic-chat-completion-api</code>.</p><p><code>customModels</code>: <code>baseUrl</code> y <code>apiKey</code>.</p></div>
+        </div>
+        <p class="endpoint-note">OpenRouter y Gemini: compatibles vía endpoint OpenAI, integración no verificada. También puedes conectar endpoints locales de Ollama o vLLM.</p>
+      </div>
+    </section>
+    <section class="plans-section" id="planes" aria-labelledby="plans-title">
+      <div class="container">
+        <h2 id="plans-title">Local hoy. Gestionado, en estudio.</h2>
+        <p class="plans-intro lead">Propuesta de negocio en borrador.</p>
+        <div class="plans-grid">
+          <article><h3>fab CLI</h3><p class="plan-value">Gratis</p><p>Instálalo hoy. Tú aportas modelos y cómputo.</p></article>
+          <article><h3>Servicio gestionado</h3><p class="plan-value">Próximamente</p><p>Equipo: runners cloud/híbridos y panel web. Empresa: despliegue privado y SSO.</p></article>
+        </div>
+        <p class="business-note">Sin tarifas vigentes. Daemon y automatizaciones: en desarrollo.</p>
+      </div>
+    </section>
+  </main>
+  <footer class="site-footer">
+    <div class="container footer-grid">
+      <a class="brand-home" href="#inicio" aria-label="fab, volver al inicio"><img class="brand-logo brand-logo-light" src="./assets/brand/fab-logo-light.svg" width="251" height="120" alt=""><img class="brand-logo brand-logo-dark" src="./assets/brand/fab-logo-dark.svg" width="251" height="120" alt=""></a>
+      <nav aria-label="Recursos"><a href="https://github.com/DarkCodePE/sw-factory">Repositorio</a><a href="https://www.npmjs.com/package/@okuanb/fab">npm</a><a href="https://github.com/DarkCodePE/sw-factory#readme">Documentación</a><a href="https://github.com/DarkCodePE/sw-factory/blob/main/packaging/npm/README.md">Instalación</a></nav>
+      <p>Linux glibc y macOS, x64/arm64. npm requiere Node ≥22; el binario independiente no requiere Bun ni Node.</p>
+    </div>
+  </footer>
+</body>
+</html>
