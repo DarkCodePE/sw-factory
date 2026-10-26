@@ -123,60 +123,16 @@ fab merge <changeId>
 
 La arquitectura de `fab` desacopla las interfaces de usuario, la persistencia local, la orquestación concurrente de actividades y el confinamiento de ejecución:
 
-```mermaid
-flowchart TD
-  subgraph Interfaces["Interfaces de Usuario y CLI"]
-    CLI["CLI fab: fab ws, fab jira, fab pr, fab validate, fab merge"]
-    TUI["Interfaz TUI Interactiva: fab tui (Paleta /, Diffs Ctrl+O, Rewind)"]
-    EXEC["Agente Autónomo Headless: fab exec / JSON-RPC / SDK"]
-  end
-
-  subgraph Persistence["Persistencia y Estado Local"]
-    DB[("SQLite Store (~/.fabrica/fabrica.db): Workstreams, Signals, Changes, Activities, Links")]
-  end
-
-  subgraph Coordination["Orquestación y Pool de Workers"]
-    POOL["Pool de Workers Concurrente: Reclamo con lease, reintentos y recuperación"]
-    ADAPTERS["Adaptadores de Agente: native | claude | codex | agy | droid | fake"]
-  end
-
-  subgraph NativeEngine["Motor de Agente Nativo (native)"]
-    ROUTER["Auto-Router de Modelos: Enrutado dinámico, fallbacks y rotación"]
-    MISSION["Mission Control: Milestones, features, workers y validación"]
-    JOURNAL["Journal de Resiliencia: Registro JSONL y reconciliación tras caída"]
-    TOOLS["Catálogo de Herramientas: Edit, Create, ApplyPatch, Script durable, Execute, WebSearch"]
-    MCP["Cliente MCP: Stdio, Streamable HTTP, OAuth RFC 9728, SSE"]
-  end
-
-  subgraph LLMProviders["Proveedores de Modelos"]
-    ANTHROPIC["Anthropic: Messages API"]
-    OPENAI["OpenAI / ChatGPT: Responses API y Bearer"]
-    LOCAL["Modelos Locales: Ollama / vLLM"]
-    OPENAICOMPAT["Endpoints OpenAI-Compatible"]
-  end
-
-  subgraph ExecutionSandbox["Confinamiento y Áreas de Trabajo"]
-    BWRAP["Sandbox bubblewrap (bwrap): Root read-only, tmpfs privado, namespaces PID/IPC/UTS/Net"]
-    WORKTREES["Git Worktrees Dedicados: Rama fab/changeId aislada"]
-    NETPOLICY["Control de Red por Llamada: deny | ask | auto | --yolo"]
-  end
-
-  CLI --> DB
-  TUI --> DB
-  CLI --> POOL
-  TUI --> EXEC
-  EXEC --> NativeEngine
-  POOL --> DB
-  POOL --> ADAPTERS
-  ADAPTERS --> NativeEngine
-
-  ROUTER --> LLMProviders
-  NativeEngine --> BWRAP
-  TOOLS --> BWRAP
-  TOOLS --> MCP
-  BWRAP --> WORKTREES
-  BWRAP --> NETPOLICY
-```
+<p align="center">
+  <picture>
+    <source srcset="./docs/assets/architecture-dark.png" media="(prefers-color-scheme: dark)">
+    <source srcset="./docs/assets/architecture-light.png" media="(prefers-color-scheme: light)">
+    <img src="./docs/assets/architecture-light.png" alt="Arquitectura del Sistema fab: Interfaces CLI/TUI/Exec, SQLite Store, Worker Pool, Adaptadores, Motor Nativo, Sandbox bubblewrap y Git Worktrees" width="920">
+  </picture>
+</p>
+<p align="center">
+  <em>Ver <a href="./docs/diagrams/architecture.html">diagrama interactivo de arquitectura</a> (HTML autónomo con temas claro/oscuro y animación).</em>
+</p>
 
 ### Componentes principales
 
@@ -195,66 +151,16 @@ flowchart TD
 
 El ciclo de desarrollo en `fab` sigue un flujo determinista con compuertas de control humano y automatizado:
 
-```mermaid
-flowchart TD
-  subgraph Ingesta["1. Ingesta y Triage"]
-    JIRA["Jira / Issue Externa: Clave de ticket"]
-    IMPORT["fab jira import KEY --ws slug --triage"]
-    SIGNAL["Señal técnica (Signal): Estado new"]
-    TRIAGE["fab triage: Convierte Signal en Change"]
-    CHANGE["Unidad de Cambio (Change): fab/changeId"]
-  end
-
-  subgraph GatesInvestigacion["2. Aprobación e Investigación"]
-    GATE1{"Gate 1: Revisión de Change\n(fab inbox / fab review approve)"}
-    INV["Actividad: investigation\nWorker analiza código en solo lectura (spec)"]
-    GATE2{"Gate 2: Revisión de Spec\n(fab inbox / fab review approve)"}
-  end
-
-  subgraph Implementacion["3. Implementación Aislada"]
-    IMPL["Actividad: implementation\nWorker en Git Worktree dedicado (fab/changeId)\nSandbox bwrap y commits locales"]
-    CHECK{"Verificación de commits\nen rama fab/changeId"}
-    STATUS_IMP["Change: Estado implemented"]
-  end
-
-  subgraph ValidacionAutomatica["4. Batería de Validadores"]
-    VAL_REQ["fab validate changeId\n(o fab pr open --validate)"]
-    subgraph Validadores["Validadores de solo lectura"]
-      CR["code_review: Regresiones y estilo"]
-      SA["security_audit: Secretos y rutas"]
-      QA["qa: Ejecución de tests y criterios"]
-    end
-    VAL_SUMMARY["ValidationSummary: Veredictos pass | fail | needs_human"]
-  end
-
-  subgraph IntegracionCierre["5. Pull Request, Puerta de Merge y Cierre"]
-    PR["fab pr open changeId --validate\nAbre Pull Request en GitHub"]
-    PR_PUB["fab validate publish changeId\nComenta reporte de validadores en PR"]
-    GATE3{"Gate 3: Puerta de Validación (Merge Gate)\nBloquea si hay validadores pendientes o fail"}
-    MERGE["fab merge changeId [--force]\nFusiona rama en main, limpia worktree y cierra change"]
-    JIRA_COMMENT["fab jira comment changeId\nActualiza issue en Jira con resultado final"]
-  end
-
-  JIRA --> IMPORT
-  IMPORT --> SIGNAL
-  SIGNAL --> TRIAGE
-  TRIAGE --> CHANGE
-  CHANGE --> GATE1
-  GATE1 -->|Aprobado| INV
-  INV --> GATE2
-  GATE2 -->|Aprobado| IMPL
-  IMPL --> CHECK
-  CHECK -->|Commits válidos| STATUS_IMP
-  STATUS_IMP --> VAL_REQ
-  STATUS_IMP --> PR
-  VAL_REQ --> CR & SA & QA
-  CR & SA & QA --> VAL_SUMMARY
-  VAL_SUMMARY --> PR_PUB
-  PR --> GATE3
-  VAL_SUMMARY --> GATE3
-  GATE3 -->|Validadores pass o --force| MERGE
-  MERGE --> JIRA_COMMENT
-```
+<p align="center">
+  <picture>
+    <source srcset="./docs/assets/sdlc-workflow-dark.png" media="(prefers-color-scheme: dark)">
+    <source srcset="./docs/assets/sdlc-workflow-light.png" media="(prefers-color-scheme: light)">
+    <img src="./docs/assets/sdlc-workflow-light.png" alt="Flujo SDLC en fab: De Jira a Producción pasando por Triage, Gates humanos, Investigación, Implementación en Sandbox, Validadores y Puerta de Merge" width="920">
+  </picture>
+</p>
+<p align="center">
+  <em>Ver <a href="./docs/diagrams/sdlc-workflow.html">diagrama interactivo del flujo SDLC</a> (HTML autónomo con temas claro/oscuro y animación).</em>
+</p>
 
 ### Fases del ciclo:
 

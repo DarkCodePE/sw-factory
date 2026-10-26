@@ -1,0 +1,51 @@
+{
+  "schemaVersion": 1,
+  "ok": true,
+  "command": "finalize",
+  "status": "pass",
+  "type": "architecture",
+  "quality": "showcase",
+  "specification": {
+    "path": "/home/orlando/Desktop/factory/sw-factory-gemini/.archify/architecture-fab-20261025-224000/candidate.json",
+    "sha256": "752ebf7494c2e9adf094ca1ee890eb9ead27b98c475810a3562d32abb1624061",
+    "bytes": 3949
+  },
+  "artifact": {
+    "path": "/home/orlando/Desktop/factory/sw-factory-gemini/docs/diagrams/architecture.html",
+    "sha256": "c14069f4c5eaae959a330123fd293874e575cf3d5675e94d604af5707e217f22",
+    "bytes": 852998
+  },
+  "gates": {
+    "validate": "pass",
+    "deliver": "pass",
+    "check": "pass",
+    "browser-check": "pass"
+  },
+  "diagnostics": [],
+  "diagnosticSummary": {
+    "total": 0,
+    "shown": 0,
+    "truncated": false
+  },
+  "evidence": {
+    "receipt": "/home/orlando/Desktop/factory/sw-factory-gemini/docs/diagrams/architecture.finalize.json",
+    "summaryReceipt": "/home/orlando/Desktop/factory/sw-factory-gemini/docs/diagrams/architecture.finalize-summary.json",
+    "browserCheckReceipt": "/home/orlando/Desktop/factory/sw-factory-gemini/docs/diagrams/architecture.browser-check.json"
+  },
+  "update": {
+    "status": "current",
+    "installedVersion": "3.2.0",
+    "availableVersion": "3.2.0",
+    "releaseNotes": null,
+    "checkedAt": "2026-10-26T03:38:22.853Z",
+    "source": "cache",
+    "noticeRequired": false,
+    "noticeText": null
+  },
+  "visualReview": "not-requested",
+  "durationMs": 2014,
+  "browserCheck": {
+    "requested": true,
+    "ran": true
+  }
+}
