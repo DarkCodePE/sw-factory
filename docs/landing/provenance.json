@@ -1,8 +1,8 @@
 {
-  "capturedAt": "2026-10-26T04:24:28.460936+00:00",
+  "capturedAt": "2026-10-26T05:04:59.913149+00:00",
   "source": "http://127.0.0.1:8769/",
   "renderer": "Chrome/152.0.7977.82",
-  "method": "docs/landing/verify.mjs; real Chromium screenshots; emulated viewport, no compositing or image generation",
+  "method": "Actual Chromium at HTTP loopback; reduced-motion final state; iframe ready/fonts awaited; no compositing or image generation",
   "brandAssets": {
     "site/assets/brand/fab-icon-dark.svg": {
       "sha256": "f963b8ab1737bd7b6ff017aaa146bde8251635a184f3305bdd6448c7b2692974",
@@ -45,7 +45,7 @@
       },
       "fullPage": false,
       "deviceScaleFactor": 1,
-      "sha256": "e5ed0e62a0e2552ee039a3a9cdfd812a8cc829ca0ea2c003b3975cd18b6bdc18"
+      "sha256": "49439f44c80eef36db2cbf114936b4d8accc4cf653d4af845729631dd6065482"
     },
     {
       "path": "site/screenshots/fab-dark-desktop.png",
@@ -56,7 +56,7 @@
       },
       "fullPage": true,
       "deviceScaleFactor": 1,
-      "sha256": "d90a2cbd96d6c66d303903d5ca3b35805004f3959b0e422efc4b0e296300d1ee"
+      "sha256": "88fc95d9480145485c50a293c81d145ff44bec394787d22acaed3f85d114e0b4"
     },
     {
       "path": "site/screenshots/fab-dark-phone-hero.png",
@@ -67,7 +67,7 @@
       },
       "fullPage": false,
       "deviceScaleFactor": 1,
-      "sha256": "eb10dffaa7baeadb900407fcb451cfff87a941969db9099f8be2231d68f80f0d"
+      "sha256": "d5d0944160e062c506f904904795db2b634c1bd19c87d3c615d94691a3c6ad57"
     },
     {
       "path": "site/screenshots/fab-dark-phone.png",
@@ -78,7 +78,7 @@
       },
       "fullPage": true,
       "deviceScaleFactor": 1,
-      "sha256": "a65267de50dd8c1442cdba49d0bc42cbd526533a3950f0985f678765962761f5"
+      "sha256": "531fb75db33eef011f6b9cd90a8e2f9085213644c02e5a40771ea5d35d396f16"
     },
     {
       "path": "site/screenshots/fab-light-desktop-hero.png",
@@ -89,7 +89,7 @@
       },
       "fullPage": false,
       "deviceScaleFactor": 1,
-      "sha256": "b33ec3540dc97aa92bc733e1e10c97f5d06671cdbb3c56e478a80b1b035373f2"
+      "sha256": "ce152a33e67aafdd12121aa50d0f973878f2fa7dee581fb500b7dba40af3ba9a"
     },
     {
       "path": "site/screenshots/fab-light-desktop.png",
@@ -100,7 +100,7 @@
       },
       "fullPage": true,
       "deviceScaleFactor": 1,
-      "sha256": "e927defb436d977559dea2fb8df46ae53945632550d17a32ad173d9d7c060fb5"
+      "sha256": "2355d527d7aa174d2e5d0a0d6f8c7e6df87c6496e390137552d3fc597590951d"
     },
     {
       "path": "site/screenshots/fab-light-phone-hero.png",
@@ -111,7 +111,7 @@
       },
       "fullPage": false,
       "deviceScaleFactor": 1,
-      "sha256": "32afa2f5ad2deae556e1f1a795917141740f05ffc4cf61cdedda3d9fd07dcbcf"
+      "sha256": "62573d88dc0d97518de634939c4c620387cf3b62fa42e39c9ac6b79c2a3c1948"
     },
     {
       "path": "site/screenshots/fab-light-phone.png",
@@ -122,7 +122,20 @@
       },
       "fullPage": true,
       "deviceScaleFactor": 1,
-      "sha256": "6e4694e9c7839fba46f3a37929dc4908579c4c005935bef6876ced10b897302c"
+      "sha256": "f4f333547b289a524095f6465d2711a2f3fa09f18269b58c6bfff6fefb01bfe2"
     }
-  ]
+  ],
+  "diagramSource": {
+    "revision": "f0a42255ba574173985b1b9880969a1c4756b603",
+    "paths": [
+      "docs/diagrams/sdlc-workflow.json",
+      "docs/diagrams/architecture.json"
+    ],
+    "adaptation": "Topology preserved; output paths relocated under site/diagrams and locale es."
+  },
+  "terminalCapture": "docs/landing/terminal-session.json",
+  "diagramArtifacts": {
+    "site/diagrams/architecture.html": "a59f0d607cc010dd3fa370045f00f0a3135ed4443e34728bd9e33bc89afb6629",
+    "site/diagrams/sdlc-workflow.html": "18e9001a8f6646473c975d539a4439d98b050ebc3ad7f5787651d481914b985d"
+  }
 }

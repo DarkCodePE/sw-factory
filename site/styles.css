@@ -1,7 +1,9 @@
 /* Hallmark · shape: Split Studio · genre: modern-minimal · theme: Cobalt (deal 1/3, seed fab-instalar-cli-local-e1b6·33dd192f·2026-10-26·r0) · brand: fab official SVG and #14B8A6 (user supplied) · job: try · draw: 087591
- * hero: Stage · nav: ruled edge-aligned · footer: technical colophon · imagery: real commands · signature: install method and truthful clipboard control
- * axes: dark/grotesk-sans/teal · posture: restrained · modes: light+dark · contrast: checked in both modes · fold: action visible at 1280x800 · v2.0.0 */
+ * hero: Stage · nav: ruled edge-aligned · footer: technical colophon · imagery: captured CLI session and Archify workflow · signature: failing QA blocks merge, passing QA permits it
+ * axes: dark/grotesk-sans/teal · posture: restrained · modes: light+dark · contrast: checked in both modes · fold: pending second-pass capture · v2.0.0 */
 /* Hallmark · pre-emit critique: P8 H8 E8 S8 R8 V8 · weakest: evidence, show only real commands and label the roadmap */
+/* Hallmark · waive 59 · user requests less dead space · compact section rhythm is intentional. */
+/* Hallmark · waive 79 · actual CLI replay and install well fill the hero · text-only detector excludes the product region. */
 /* Hallmark · waive 44c · compact real-command hero by independent review · next section enters the fold; no invented visual to fill space. */
 /* Hallmark · waive 1 · system fonts explicitly required by the brief · no remote font dependency. */
 /* Hallmark · answered F1-F26 · one container and primary style; no image slots, reveals or forms; themed browser surfaces, semantic headings, responsive diagrams. */
@@ -86,14 +88,6 @@ h1 { max-width: none; }
 code { font-family: var(--font-outlier); overflow-wrap: anywhere; }
 .local-path { color: var(--color-ink-2); font-size: var(--text-sm); }
 .flow-section { padding-block: var(--section-gap-s); background: var(--color-paper-2); color: var(--color-ink); }
-.flow-figure { margin: var(--space-xl) 0 0; }
-.flow-desktop { width: 100%; height: auto; }
-.flow-mobile { display: none; width: min(100%, 300px); height: auto; margin-inline: auto; }
-.flow-node rect { fill: var(--color-paper); stroke: var(--color-control-edge); stroke-width: 1; }
-.flow-line { fill: none; stroke: var(--color-connector); stroke-width: 2; }
-.flow-figure marker path { fill: var(--color-connector); }
-.flow-label { fill: var(--color-ink); font-family: var(--font-body); font-size: 18px; }
-.flow-figure figcaption { max-width: 66ch; color: var(--color-ink-2); font-size: var(--text-sm); margin-top: var(--space-lg); }
 .capabilities-section { padding-block: var(--section-gap); }
 .capabilities { list-style: none; padding: 0; margin: var(--space-2xl) 0 0; display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: var(--gap-columns); }
 .capabilities li { border: 1px solid var(--color-rule-2); border-radius: var(--radius-card); padding: var(--space-lg); display: grid; align-content: start; grid-template-rows: auto auto auto 1fr; gap: var(--space-md); }
@@ -119,8 +113,6 @@ code { font-family: var(--font-outlier); overflow-wrap: anywhere; }
 .site-footer p { grid-column: 2; font-size: var(--text-sm); color: var(--color-ink-2); max-width: 74ch; justify-self: end; }
 @media (max-width: 64rem) {
   .capabilities { grid-template-columns: repeat(2, minmax(0, 1fr)); }
-  .flow-desktop { display: none; }
-  .flow-mobile { display: block; }
 }
 @media (max-width: 48rem) {
   .local-grid, .models-grid, .plans-grid { grid-template-columns: minmax(0, 1fr); }
@@ -132,3 +124,64 @@ code { font-family: var(--font-outlier); overflow-wrap: anywhere; }
   .site-footer nav { justify-content: flex-start; gap: var(--space-md); }
   .site-footer p { grid-column: auto; justify-self: start; }
 }
+
+/* Product-led refinement. The supplied mark and requested grid are deliberate brand material. */
+.hero { position: relative; isolation: isolate; padding-block: var(--hero-padding); }
+.hero-grid { grid-template-columns: minmax(0, .86fr) minmax(0, 1.14fr); gap: var(--space-xl); position: relative; z-index: var(--z-base); }
+.hero-intro { display: grid; gap: var(--space-lg); min-width: 0; }
+.hero-motif { position: absolute; left: var(--gutter); bottom: var(--space-lg); width: min(36%, 420px); height: auto; opacity: var(--texture-opacity); pointer-events: none; z-index: 0; }
+.hero-copy { gap: var(--space-md); }
+.hero-copy .lead { max-width: 36ch; }
+.install-well { padding-block: var(--space-md); }
+.install-tabs { margin-bottom: var(--space-md); }
+.command-panel { gap: var(--space-md); }
+.command-panel + .command-panel { margin-top: var(--space-lg); }
+.copy-status { margin-top: var(--space-sm); }
+.product-demo { min-width: 0; border: 1px solid var(--color-rule-2); border-radius: var(--radius-card); padding: var(--space-sm); background-color: var(--color-paper-2); background-image: linear-gradient(var(--color-grid) 1px, transparent 1px), linear-gradient(90deg, var(--color-grid) 1px, transparent 1px); background-size: 24px 24px; }
+.demo-toolbar { display: flex; align-items: center; justify-content: space-between; flex-wrap: wrap; gap: var(--space-sm); padding: var(--space-xs) var(--space-xs) var(--space-md); }
+.demo-title { font-size: var(--text-md); letter-spacing: 0; font-weight: 600; }
+.demo-controls { display: flex; flex-wrap: wrap; gap: var(--space-xs); }
+.demo-controls button { font-size: var(--text-sm); }
+.demo-screen { height: var(--terminal-height); overflow-y: auto; overflow-x: clip; overscroll-behavior: contain; scrollbar-gutter: stable; background: var(--color-paper); border: 1px solid var(--color-rule-2); border-radius: var(--radius-input); padding: var(--space-lg); }
+.demo-screen:focus-visible, .diagram-link:focus-visible { outline: 2px solid var(--color-focus); outline-offset: var(--space-2xs); }
+.demo-frames { list-style: none; margin: 0; padding: 0; }
+.demo-frame + .demo-frame { margin-top: var(--space-lg); }
+.demo-command, .demo-output { font-family: var(--font-outlier); font-size: var(--text-terminal); line-height: 1.6; overflow-wrap: anywhere; white-space: pre-wrap; max-width: none; }
+.demo-command { color: var(--color-ink); }
+.demo-command > span { color: var(--color-demo-pass); }
+.demo-output { color: var(--color-ink-2); margin: var(--space-xs) 0 0; }
+.demo-frame[data-result="fail"] .demo-output { color: var(--color-error); }
+.demo-frame[data-result="pass"] .demo-output { color: var(--color-demo-pass); }
+.demo-frame.is-current { animation: demo-arrival var(--dur-short) var(--ease-out); }
+.demo-caption { display: grid; gap: var(--space-xs); margin-top: var(--space-sm); padding-inline: var(--space-xs); color: var(--color-ink-2); font-size: var(--text-sm); }
+.demo-state { min-height: 1.55em; }
+@keyframes demo-arrival { from { opacity: .3; } to { opacity: 1; } }
+.local-section { padding-block: var(--space-xl); }
+.capabilities li { padding: var(--space-lg); }
+.case-number { margin-bottom: var(--space-sm); }
+.diagram-links { display: flex; flex-wrap: wrap; align-items: center; gap: var(--space-lg); margin-block: var(--space-lg); }
+.diagram-links a { min-height: var(--control-height); display: inline-flex; align-items: center; }
+.diagram-link { font-weight: 600; }
+.workflow-embed { display: block; width: 100%; height: 700px; border: 1px solid var(--color-rule-2); border-radius: var(--radius-card); background: var(--color-paper); }
+.diagram-caption { margin-top: var(--space-lg); color: var(--color-ink-2); max-width: 70ch; }
+@media (max-width: 64rem) {
+  .hero-grid { grid-template-columns: minmax(0, 1fr); }
+  .hero-intro { grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); gap: var(--gap-columns); align-items: center; }
+  .product-demo { width: 100%; }
+}
+@media (max-width: 48rem) {
+  .hero-intro { grid-template-columns: minmax(0, 1fr); }
+  .hero-motif { width: 70%; top: var(--space-xl); bottom: auto; }
+  .demo-screen { padding: var(--space-md); }
+  .workflow-embed { height: 620px; }
+  .demo-toolbar { padding-inline: 0; }
+  .demo-caption { padding-inline: 0; }
+}
+@media (prefers-reduced-motion: reduce) { .demo-frame.is-current { animation: none; } }
+
+.workflow-embed:focus, .workflow-embed:focus-visible { outline: 2px solid var(--color-focus); outline-offset: var(--space-2xs); }
+@media (max-width: 48rem) { .demo-screen { --terminal-height: 620px; } }
+
+@media (min-width: 64.01rem) { .hero-grid { min-height: calc(100svh - var(--nav-height) - 2 * var(--hero-padding)); } }
+.copy-status { font-variant-numeric: tabular-nums; }
+.workflow-embed.is-focused { outline: 2px solid var(--color-focus); outline-offset: var(--space-2xs); }

@@ -1,0 +1,51 @@
+{
+  "schemaVersion": 1,
+  "ok": true,
+  "command": "finalize",
+  "status": "pass",
+  "type": "architecture",
+  "quality": "showcase",
+  "specification": {
+    "path": "/home/orlando/Desktop/factory/sw-factory-codex/docs/landing/diagrams/architecture.json",
+    "sha256": "58cc99ee8c65b4ad9d0b98bb968ceeadbe2d44a1df0955e69c9fec1835da3240",
+    "bytes": 5776
+  },
+  "artifact": {
+    "path": "/home/orlando/Desktop/factory/sw-factory-codex/site/diagrams/architecture.html",
+    "sha256": "a59f0d607cc010dd3fa370045f00f0a3135ed4443e34728bd9e33bc89afb6629",
+    "bytes": 855916
+  },
+  "gates": {
+    "validate": "pass",
+    "deliver": "pass",
+    "check": "pass",
+    "browser-check": "pass"
+  },
+  "diagnostics": [],
+  "diagnosticSummary": {
+    "total": 0,
+    "shown": 0,
+    "truncated": false
+  },
+  "evidence": {
+    "receipt": "/home/orlando/Desktop/factory/sw-factory-codex/docs/landing/diagrams/receipts/architecture-final/architecture.finalize.json",
+    "summaryReceipt": "/home/orlando/Desktop/factory/sw-factory-codex/docs/landing/diagrams/receipts/architecture-final/architecture.finalize-summary.json",
+    "browserCheckReceipt": "/home/orlando/Desktop/factory/sw-factory-codex/docs/landing/diagrams/receipts/architecture-final/architecture.browser-check.json"
+  },
+  "update": {
+    "status": "current",
+    "installedVersion": "3.2.0",
+    "availableVersion": "3.2.0",
+    "releaseNotes": null,
+    "checkedAt": "2026-10-26T03:38:22.853Z",
+    "source": "cache",
+    "noticeRequired": false,
+    "noticeText": null
+  },
+  "visualReview": "not-requested",
+  "durationMs": 2042,
+  "browserCheck": {
+    "requested": true,
+    "ran": true
+  }
+}

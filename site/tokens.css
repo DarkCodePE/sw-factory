@@ -100,3 +100,17 @@
     --color-accent-key: #087C70;
   }
 }
+
+/* Second pass: stronger type, product canvas, tighter section rhythm. */
+:root {
+  --text-md: 1.125rem; --text-sm: .9375rem; --text-lead: clamp(1.25rem, .35vw + 1rem, 1.5rem);
+  --text-display: clamp(3.125rem, 4.6vw, 4.5rem); --text-display-mobile: clamp(3rem, 9.8vw, 4.5rem);
+  --hero-padding: 32px; --hero-content-height: 0px; --section-gap-s: 80px; --section-gap: 96px;
+  --text-terminal: .9375rem; --terminal-height: 476px; --texture-opacity: .045;
+  --color-grid: color-mix(in srgb, var(--color-ink-2) 11%, transparent);
+  --color-demo-pass: #087C70;
+}
+[data-mode="dark"] { --color-demo-pass: #14B8A6; }
+@media (prefers-color-scheme: dark) { :root:not([data-mode]) { --color-demo-pass: #14B8A6; } }
+
+:root { --terminal-height: 400px; --text-terminal: 1rem; }

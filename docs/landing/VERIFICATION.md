@@ -35,3 +35,8 @@ portapapeles del escritorio del usuario. Los enlaces externos no se navegan.
 
 El informe completo de la ronda vive fuera del worktree:
 `/home/orlando/Desktop/factory/doc/droid-re/report-codex-landing.md`.
+
+Segunda pasada: 49 controles, incluidos reproducción, pausa explícita y temporal
+por hover/foco, reanudación, resultado final y tema del iframe. Las capturas se
+toman con movimiento reducido para fijar el estado final, esperando el documento
+y las fuentes del iframe; eso evita publicar un hueco de carga como captura.

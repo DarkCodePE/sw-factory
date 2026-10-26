@@ -1,12 +1,12 @@
 {
   "typography": {
-    "body": "16px",
-    "h1": "71.68px",
+    "body": "18px",
+    "h1": "58.88px",
     "h2": "48px",
     "h3": "23.6px"
   },
-  "visibleWords": 298,
-  "checks": 42,
+  "visibleWords": 319,
+  "checks": 49,
   "passed": [
     "light 320: no horizontal overflow",
     "light 375: no horizontal overflow",
@@ -32,6 +32,12 @@
     "dark: official logo selected and loaded",
     "dark: WCAG AA text contrast",
     "dark: control and focus contrast",
+    "Reduced motion shows final merge without playback",
+    "Archify iframe and exploration links exist",
+    "Demo pauses and resumes from the same frame",
+    "Demo holds on hover",
+    "Demo holds on keyboard focus",
+    "Demo result control finishes the session",
     "Internal anchor destinations exist",
     "Six capabilities and exactly three future capabilities",
     "Keyboard tabs select installer",
@@ -49,12 +55,13 @@
     "Both install commands readable without JS",
     "Synthesized touch selects installer",
     "No console JavaScript errors",
-    "No third-party requests"
+    "No third-party requests",
+    "Theme forwarded to embedded diagram"
   ],
   "contrast": {
     "light": {
-      "count": 97,
-      "min": 7.807786480809001,
+      "count": 106,
+      "min": 4.878214946869041,
       "failures": [],
       "controlEdge": 4.588159121599164,
       "focus": 4.878214946869041,
@@ -62,7 +69,7 @@
       "buttonText": 7.807786480809001
     },
     "dark": {
-      "count": 97,
+      "count": 106,
       "min": 7.807786480809001,
       "failures": [],
       "controlEdge": 6.479145850006413,

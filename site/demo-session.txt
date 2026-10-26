@@ -1,0 +1,46 @@
+Sesión controlada de fab: Jira y workers simulados, Git/SQLite temporales.
+Salida abreviada capturada del CLI; no ejecuta comandos desde la landing.
+Las aprobaciones de change/spec se desactivaron solo en el workstream de fixtures.
+QA simulado cambia de FAIL a PASS; no demuestra la corrección de un fallo de producción.
+
+$ fab jira import FAB-142 --ws demo
+HU importada: signal 04dfa1a0
+
+$ fab triage 04dfa1a0
+signal 04dfa1a0 -> change 951e7eb3 (pending)
+
+$ fab run demo --once
+[w1-440608] investigation done in 0s
+[w1-440608] implementation done in 0s
+
+$ fab validate 951e7eb3 --only qa
+Encolados 1 validadores para change 951e7eb3: qa
+
+$ fab run demo --once
+[w1-440707] change_review done in 0s
+
+$ fab validate status 951e7eb3
+### Validación de fab change `951e7eb3` [FALLIDO]
+
+| Validador | Veredicto | Resumen |
+| --- | --- | --- |
+| `qa` | **FAIL** | Fallo controlado del fixture QA. |
+
+$ fab merge 951e7eb3
+error (invalid_transition): validadores en fail: qa; usa --force para fusionar igualmente
+
+$ fab validate 951e7eb3 --only qa
+Encolados 1 validadores para change 951e7eb3: qa
+
+$ fab run demo --once
+[w1-440811] change_review done in 0s
+
+$ fab validate status 951e7eb3
+### Validación de fab change `951e7eb3` [APROBADO]
+
+| Validador | Veredicto | Resumen |
+| --- | --- | --- |
+| `qa` | **PASS** | Fixture QA aprobado. |
+
+$ fab merge 951e7eb3
+change 951e7eb3 completado

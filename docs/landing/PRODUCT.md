@@ -65,3 +65,10 @@ disponible y futuro. El usuario confirmó borrador comercial sin captación.
 
 Teclado, foco visible, contraste, modos claro/oscuro, movimiento reducido,
 lectura y comandos disponibles sin JavaScript, móvil sin scroll horizontal.
+
+## Segunda pasada
+
+Demo del CLI capturada con Jira y workers simulados en Git/SQLite temporales.
+Muestra QA FAIL, merge bloqueado, QA PASS y merge permitido; no ejecuta comandos
+desde el navegador ni demuestra reparación de un fallo de producción. Se conservan
+las capacidades y estados del producto; el diagrama Archify reutiliza el de main.

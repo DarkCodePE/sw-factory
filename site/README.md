@@ -27,3 +27,9 @@ de escritorio/móvil. Los documentos de producto, diseño y verificación están
 
 Para repetir los controles del navegador, consulta
 [`docs/landing/VERIFICATION.md`](../docs/landing/VERIFICATION.md).
+
+La terminal reproduce salida capturada del CLI con fixtures de Jira y workers.
+Se pausa al pasar el puntero, entrar con teclado, ocultar la pestaña o salir de
+pantalla. Con movimiento reducido muestra el resultado final sin animar;
+[`demo-session.txt`](demo-session.txt) conserva la transcripción abreviada.
+El flujo y la arquitectura interactivos están en `diagrams/`, generados con Archify.

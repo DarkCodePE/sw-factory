@@ -70,3 +70,44 @@ Una ejecución anterior tuvo 601 pass y 1 fail en
 El mismo caso pasó aislado y después pasó la suite completa. No se modificaron
 ese test ni el código de MCP; se registra la incidencia observada, sin ocultarla
 ni atribuirle una causa demostrada.
+
+## Segunda pasada (sobre 4b73fb3)
+
+Cuerpo de 18px, terminal de 16px y composición de producto en el hero. Motivo con
+el símbolo oficial y cuadrícula de 24px solo en el marco de la terminal, ambos
+pedidos por el usuario. La animación finita reproduce salida realmente capturada
+del CLI con fixtures, sin comandos ni conexiones desde el navegador. QA FAIL
+bloquea merge; QA PASS permite el merge local capturado. Ambas aprobaciones de
+workstream estaban desactivadas solo en el fixture; no se demuestra un arreglo
+real de producción. La captura íntegra, exit codes y fuentes están en terminal-session.json.
+
+Archify 3.2.0 recompiló los dos JSON de origin/main 97accc4 con topología conservada,
+rutas locales y locale es. Los cuatro gates validate/deliver/check/browser-check
+pasan para ambos; son verificaciones del artefacto, no una nueva auditoría de toda
+la arquitectura. El iframe y ambos enlaces permiten explorar el flujo y componentes.
+
+Hallmark: **0 FAIL, 1 WARN** (95 palabras en una ventana por los mensajes reales
+requeridos), cinco ocurrencias dispensadas: fuentes de sistema (2), hero cuyo
+texto aislado no cuenta la terminal (44c/79), separación compacta pedida (59).
+La nota sobre estilo propio queda documentada en DESIGN.md. No se alteró el linter.
+
+Impeccable: flat-type-hierarchy sigue siendo falso positivo por imports; Chromium
+mide 18/58.88/48/23.6px (body/h1/h2/h3). Dos avisos informativos: cuadrícula expresa
+del usuario y '--' de opciones CLI, no guiones retóricos. Ambos conservados por
+requerimiento y fidelidad. Contraste mínimo normal medido: 4.88:1 en claro, 7.81:1
+oscuro. No hubo peticiones externas ni errores JavaScript en los 49 controles.
+
+La revisión independiente pidió repetir dos capturas por el iframe diferido y
+pausar autoplay al leer con hover/foco: corregido y comprobado. Retiró su objeción
+a los números de capacidades al verificar que el brief los exige expresamente
+(task-codex-landing.md:25; brief.md:29/138). Dictamen final **ship** para los cambios.
+Se actualizó el contrato persistente a la composición de segunda pasada.
+
+`bun test --max-concurrency=4`: 602 pass, 0 fail (203.28 s); TypeScript y diff limpios.
+
+El generador emitía 15 líneas vacías con espacios por HTML. Se usó una copia
+temporal de Archify con normalización de esas líneas antes de calcular la identidad
+del artefacto y ejecutar los cuatro gates, sin cambiar validadores ni el skill
+instalado. El parche mínimo reproducible está en diagrams/normalize-generator.patch;
+los recibos finales quedan en diagrams/receipts/*-final/. Los hashes corresponden
+a los HTML finales, y git diff --check queda limpio.

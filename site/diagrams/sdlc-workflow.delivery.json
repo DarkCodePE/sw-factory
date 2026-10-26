@@ -1,0 +1,17 @@
+{
+  "schemaVersion": 1,
+  "receiptId": "df72ea49-c7aa-4514-b698-f38d8f26929c",
+  "status": "current",
+  "command": "deliver",
+  "type": "workflow",
+  "input": "/home/orlando/Desktop/factory/sw-factory-codex/docs/landing/diagrams/sdlc-workflow.json",
+  "output": "/home/orlando/Desktop/factory/sw-factory-codex/site/diagrams/sdlc-workflow.html",
+  "specification": {
+    "sha256": "ec041a39c5b06e42fae466f630d7336fe827c71d839086f43449f165b4e62bd4",
+    "bytes": 6633
+  },
+  "artifact": {
+    "sha256": "18e9001a8f6646473c975d539a4439d98b050ebc3ad7f5787651d481914b985d",
+    "bytes": 857520
+  }
+}

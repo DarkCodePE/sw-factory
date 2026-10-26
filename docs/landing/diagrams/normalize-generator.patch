@@ -1,0 +1,11 @@
+--- a/bin/archify.mjs
++++ b/bin/archify.mjs
+@@ -4890,6 +4890,8 @@
+     const localeWarnings = [...await specificationLocaleDiagnostics(type, specification), ...(explainerBundle?.diagnostics.filter(entry => entry.severity === 'warning') || [])];
+     for (const warning of localeWarnings) process.stderr.write(`archify: ${warning.message}\n`);
+     try {
++      // Formatting only: normalize empty indented lines before artifact identity and all checks.
++      fs.writeFileSync(candidatePath, fs.readFileSync(candidatePath, 'utf8').replace(/^[ \t]+$/gm, ''));
+       const renderedCandidate = fs.readFileSync(candidatePath);
+       if (preparedDeliveryTargets.artifact.mode !== null) {
+         fs.chmodSync(candidatePath, preparedDeliveryTargets.artifact.mode);

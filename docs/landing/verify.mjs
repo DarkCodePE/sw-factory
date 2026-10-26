@@ -26,18 +26,26 @@ async function page() {
 }
 try {
   await mkdir('site/screenshots', { recursive: true });
+  await mkdir('site/.hallmark/shots', {recursive:true});
   const p = await page();
   const contrast = {};
   for (const mode of ['light', 'dark']) {
-    await p.emulateMediaFeatures([{ name: 'prefers-color-scheme', value: mode }]);
+    await p.emulateMediaFeatures([{ name: 'prefers-color-scheme', value: mode }, { name: 'prefers-reduced-motion', value: 'reduce' }]);
     await p.evaluateOnNewDocument(() => { try { localStorage.removeItem('fab-theme'); } catch { /* Intermediate browser documents can deny storage. */ } });
     for (const width of [320, 375, 390, 768, 1024, 1280, 1440, 1920]) {
-      await p.setViewport({ width, height: width < 500 ? 844 : 900, isMobile: width < 500, hasTouch: width < 500 });
+      await p.setViewport({ width, height: width === 1280 ? 800 : width === 1920 ? 1080 : width === 375 ? 812 : width < 500 ? 844 : 900, isMobile: width < 500, hasTouch: width < 500 });
       await p.goto(url, { waitUntil: 'networkidle0' });
       check(`${mode} ${width}: no horizontal overflow`, await p.evaluate(() => {
         const w = document.documentElement.clientWidth;
         return document.documentElement.scrollWidth <= w && [...document.querySelectorAll('body *')].filter(e => e.getClientRects().length).every(e => { const r = e.getBoundingClientRect(); return e.classList.contains('skip-link') || (r.left >= -1 && r.right <= innerWidth + 1); });
       }));
+      if(mode === 'dark' && [375,1280,1440,1920].includes(width)) {
+        const embedded = await (await p.$('[data-diagram]')).contentFrame();
+        await embedded.waitForFunction(() => document.readyState === 'complete');
+        await embedded.evaluate(() => document.fonts.ready);
+        if(width === 375 || width === 1440) await p.screenshot({path:`site/.hallmark/shots/index-${width === 1440 ? '1440-full' : '375'}.png`, fullPage:true});
+        if(width !== 375) await p.screenshot({path:`site/.hallmark/shots/index-${width}x${width===1280?800:width===1920?1080:900}.png`});
+      }
       if (width === 1280) check(`${mode}: hero action above fold`, await p.$eval('#install-npm .copy-button', e => e.getBoundingClientRect().bottom <= 800));
       if (width === 1440 || width === 390) {
         const size = width === 1440 ? 'desktop' : 'phone';
@@ -78,6 +86,34 @@ try {
     check(`${mode}: WCAG AA text contrast`, contrast[mode].failures.length === 0);
     check(`${mode}: control and focus contrast`, contrast[mode].controlEdge >= 3 && contrast[mode].focus >= 3 && contrast[mode].connector >= 3);
   }
+  check('Reduced motion shows final merge without playback', await p.evaluate(() => document.querySelector('[data-demo-play]').disabled && document.querySelector('.product-demo').dataset.playing === 'false' && !document.querySelector('[data-frame="10"]').hidden && document.querySelector('[data-frame="10"]').textContent.includes('completado')));
+  check('Archify iframe and exploration links exist', await p.evaluate(() => document.querySelector('[data-diagram]').src.includes('diagrams/sdlc-workflow.html') && !!document.querySelector('a[href="./diagrams/architecture.html"]')));
+  await p.emulateMediaFeatures([{name:'prefers-reduced-motion',value:'no-preference'}]);
+  await p.click('[data-demo-play]');
+  await p.evaluate(() => document.activeElement.blur()); await p.mouse.move(1,1);
+  await p.waitForFunction(() => Number(document.querySelector('.product-demo').dataset.frame) > 0);
+  await p.click('[data-demo-play]');
+  const pausedFrame = await p.$eval('.product-demo', e => e.dataset.frame);
+  await new Promise(r => setTimeout(r, 900));
+  check('Demo pauses and resumes from the same frame', await p.$eval('.product-demo', (e,f) => e.dataset.frame === f && e.dataset.playing === 'false', pausedFrame));
+  await p.click('[data-demo-play]');
+  await p.evaluate(() => document.activeElement.blur()); await p.mouse.move(1,1);
+  await p.waitForFunction(f => Number(document.querySelector('.product-demo').dataset.frame) > Number(f), {}, pausedFrame);
+  const demoBox = await (await p.$('.demo-screen')).boundingBox();
+  await p.mouse.move(demoBox.x + 20, demoBox.y + 20);
+  const hoveredFrame = await p.$eval('.product-demo', e => e.dataset.frame);
+  await new Promise(r => setTimeout(r, 1000));
+  check('Demo holds on hover', await p.$eval('.product-demo', (e,f) => e.dataset.frame === f && e.dataset.playing === 'false', hoveredFrame));
+  await p.mouse.move(1,1);
+  await p.waitForFunction(f => Number(document.querySelector('.product-demo').dataset.frame) > Number(f), {}, hoveredFrame);
+  await p.focus('.demo-screen');
+  const focusedFrame = await p.$eval('.product-demo', e => e.dataset.frame);
+  await new Promise(r => setTimeout(r, 1000));
+  check('Demo holds on keyboard focus', await p.$eval('.product-demo', (e,f) => e.dataset.frame === f && e.dataset.playing === 'false', focusedFrame));
+  await p.evaluate(() => document.activeElement.blur());
+  await p.waitForFunction(f => Number(document.querySelector('.product-demo').dataset.frame) > Number(f), {}, focusedFrame);
+  await p.click('[data-demo-end]');
+  check('Demo result control finishes the session', await p.$eval('.product-demo', e => e.dataset.frame === '10' && e.dataset.playing === 'false'));
   await p.setViewport({ width: 1280, height: 800 });
   await p.goto(url);
   check('Internal anchor destinations exist', await p.evaluate(() => [...document.querySelectorAll('a[href^="#"]')].every(a => document.getElementById(a.hash.slice(1)))));
@@ -133,6 +169,7 @@ try {
   check('Synthesized touch selects installer', await touch.$eval('#install-script', e => !e.hidden));
   check('No console JavaScript errors', errors.length === 0);
   check('No third-party requests', external.length === 0);
+  check('Theme forwarded to embedded diagram', await p.$eval('[data-diagram]', e => new URL(e.src).searchParams.get('theme') === (document.documentElement.dataset.mode || (matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light'))));
   const typography = await p.evaluate(() => Object.fromEntries(['body','h1','h2','h3'].map(selector => [selector, getComputedStyle(document.querySelector(selector)).fontSize])));
   const visibleWords = await p.evaluate(() => document.body.innerText.trim().split(/\s+/).length);
   console.log(JSON.stringify({ typography, visibleWords, checks: results.length, passed: results, contrast, errors, external, browser: await browser.version() }, null, 2));
