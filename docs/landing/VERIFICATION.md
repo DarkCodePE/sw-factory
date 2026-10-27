@@ -97,8 +97,15 @@ código 0: 8 pass, 0 fail, 51 expect (31,11 s). No se modificaron ni omitieron t
 Una segunda suite completa, sin la otra suite Bun, terminó con código 1:
 750 pass, 1 fail, 1 error, 4.160 expect, 751 pruebas en 77 archivos (221,93 s).
 Se repitió el mismo timeout y apareció un ENOENT posterior del journal temporal
-del caso vencido. El requisito de cero fallos queda bloqueado: `src/**` y `tests/**`
-están fuera del Contrato A. La rama no se subió y no se abrió PR en esta ronda.
+del caso vencido. No se modificaron `src/**` ni `tests/**` para resolverlo.
+
+El 2026-10-27 el orquestador repitió las pruebas en este worktree con los demás
+agentes quietos y comunicó estos resultados: `bun test tests/agent-journal.test.ts`
+dio 8 pass, 0 fail en 22,78 s; `bun test --max-concurrency=4` dio 751 pass, 0 fail,
+4.163 expect, código 0 en 202,95 s. Esta evidencia cumple el gate pendiente.
+El caso aislado conserva unos 7 s de margen contra su límite de 30 s: se registra
+como limitación conocida del gate local bajo carga. El orquestador también
+comprobó que los cuatro commits originales no modifican `src/**` ni `tests/**`.
 
 Esta ronda verifica Chromium local y viewports emulados. No verifica despliegue
 alojado en Pages, otros motores, dispositivos físicos ni lectores de pantalla.

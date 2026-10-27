@@ -8,6 +8,8 @@ node_modules/
 .claude-flow/
 .hallmark/
 .impeccable/
+/agentdb.rvf
+/agentdb.rvf.lock
 graft/
 .ignore
 /dist/
