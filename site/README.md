@@ -81,3 +81,15 @@ La mascota no está dibujada: `data-mascot-state="reserved"` reserva un hueco y
 usuario elija concepto y aporte el recurso, se podrá insertar la imagen aprobada
 en esa plantilla y clonarla dentro del hueco. Ajustar alt/aria-hidden según su
 función; no cargar recursos vacíos ni escoger un concepto automáticamente.
+
+## Posicionamiento: fábrica y agente
+
+`#fabrica` describe el flujo local con estado en SQLite y cambios en Git;
+`#agente` explica el runtime `fab exec` y la delegación del pool. La landing
+no es una consola de operación. `#modelos` distingue conexiones, `auto` con Jev
+y `omni` por cuenta/cuota; no promete gratuidad ni tarifas verificadas.
+La lista pública de workers externos es `claude`, `codex` y `agy`.
+
+Las fuentes, decisiones y figuras pendientes del Contrato D están en
+[`docs/landing/POSITIONING.md`](../docs/landing/POSITIONING.md). La evidencia
+de navegador actual está en `docs/landing/positioning-browser-checks.json`.

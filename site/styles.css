@@ -187,6 +187,39 @@ code { font-family: var(--font-outlier); overflow-wrap: anywhere; }
 .copy-status { font-variant-numeric: tabular-nums; }
 .workflow-embed.is-focused { outline: 2px solid var(--color-focus); outline-offset: var(--space-2xs); }
 
+/* Factory lifecycle and agent runtime have separate reading paths. */
+.factory-section, .agent-section { padding-block: var(--section-gap-s); border-top: 1px solid var(--color-rule); }
+.section-intro { display: grid; gap: var(--space-lg); }
+.section-intro .lead, .factory-location { color: var(--color-ink-2); }
+.factory-location { margin-top: var(--space-lg); max-width: 75ch; }
+.factory-flow { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: var(--gap-columns); margin: var(--space-xl) 0; padding: 0; list-style: none; counter-reset: factory-step; }
+.factory-flow li { border-top: 1px solid var(--color-rule-2); padding-top: var(--space-lg); counter-increment: factory-step; }
+.factory-flow h3 { font-size: var(--text-lg); }
+.factory-flow h3::before { content: counter(factory-step) ". "; color: var(--color-connector); }
+.factory-flow p { margin-top: var(--space-sm); color: var(--color-ink-2); font-size: var(--text-sm); }
+.merge-rule, .agent-grid, .model-route { display: grid; grid-template-columns: minmax(0, .8fr) minmax(0, 1.2fr); gap: var(--gap-columns); }
+.merge-rule { border-top: 1px solid var(--color-rule-2); padding-top: var(--space-lg); }
+.merge-rule p, .agent-entry p, .model-route p { color: var(--color-ink-2); }
+.merge-rule p + p, .model-route p + p { margin-top: var(--space-md); }
+.merge-rule a, .agent-entry a, .model-route a { display: inline-flex; align-items: center; min-height: var(--control-height); margin-top: var(--space-sm); }
+.agent-entry { display: grid; gap: var(--space-md); align-content: start; }
+.agent-entry h3:not(:first-child) { margin-top: var(--space-lg); }
+.runtime-command { display: block; border-block: 1px solid var(--color-rule-2); padding-block: var(--space-md); font-size: var(--text-xl); }
+.model-routes { margin-top: var(--space-xl); }
+.model-route { border-top: 1px solid var(--color-rule-2); padding-block: var(--space-xl); }
+.model-route:last-child { border-bottom: 1px solid var(--color-rule-2); }
+.model-route details { margin-top: var(--space-md); }
+.model-route summary { cursor: pointer; min-height: var(--control-height); align-content: center; }
+.model-route details p { margin-top: var(--space-sm); }
+.plans-grid a { justify-self: start; }
+@media (max-width: 64rem) {
+  .factory-flow { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+}
+@media (max-width: 48rem) {
+  .factory-flow, .merge-rule, .agent-grid, .model-route { grid-template-columns: minmax(0, 1fr); }
+  .hero h1 { max-width: 18ch; }
+}
+
 .demo-short-output { display: none; font: inherit; white-space: pre-wrap; overflow-wrap: anywhere; margin: 0; color: var(--color-demo-pass); }
 .is-summary [data-frame="9"] .demo-output { display: none; }
 .is-summary [data-frame="9"] .demo-short-output { display: block; }

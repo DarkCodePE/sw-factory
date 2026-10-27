@@ -111,3 +111,39 @@ Esta ronda verifica Chromium local y viewports emulados. No verifica despliegue
 alojado en Pages, otros motores, dispositivos físicos ni lectores de pantalla.
 Los informes anteriores de diseño y del verificador general se conservan como
 evidencia histórica; no se presentan como ejecuciones nuevas de esta ronda.
+
+## Contrato C: posicionamiento — 2026-10-27
+
+Rama nueva desde `origin/main` (`c8d4edd`). Las cuatro validaciones se ejecutaron
+en este worktree, comprobando su código de salida sin pipelines que lo oculten:
+
+| Comando | Resultado |
+| --- | --- |
+| `bun test --max-concurrency=4` | Código 0; 751 pass, 0 fail, 4.163 expect; 751 pruebas en 77 archivos, 206,23 s. |
+| `bunx tsc --noEmit -p .` | Código 0, sin salida. |
+| `git diff --check` | Código 0, sin salida; también diff completo contra la base. |
+| `node docs/landing/verify-v2.mjs` | Código 0; 92 controles, JavaScript combinado 9.076 bytes, sin errores JS, recursos fallidos ni solicitudes externas en la landing. |
+
+El sitio se sirvió con `python3 docs/landing/serve.py --prefix /sw-factory/ --port 8772`.
+El recibo está en `positioning-browser-checks.json`; cubre ambas apariencias a
+390/1440 px, separación del ciclo/runtime, navegación, enlaces internos, controles
+existentes, lectura sin JavaScript y límites del nuevo texto a 320 px al 100/200 %.
+Se inspeccionaron capturas de portada, fábrica, agente, modelos y cierre en
+1440 px claro y 390 px oscuro. Se actualizaron las capturas del verificador.
+
+Impeccable detect terminó con código 2: una advertencia de jerarquía estática y
+dos avisos de la cuadrícula preexistente de la terminal. Los tamaños computados
+de la nueva interfaz son body 18 px, h1/h2/h3 66,24/52/24,8 px a 1440 px y
+35,1/32/20 px a 390 px. La cuadrícula permanece como parte del diseño existente.
+El recibo histórico `architecture.delivery.json` se marcó stale: sus hashes
+preceden la corrección editorial de adaptadores; no se presenta una nueva entrega
+Archify. El fuente y el HTML tienen la misma lista, y el navegador comprueba las
+marcas excluidas en el diagrama.
+
+No hubo flake de journal en esta corrida. Sigue siendo una limitación conocida
+del gate bajo carga (medición anterior: 22,78 s aislado contra límite de 30 s).
+No se modificaron `src/**`, `tests/**`, el manifiesto ni el changelog.
+No se verificaron inferencia con cuentas reales, tarifas/cuotas de proveedores,
+lectores de pantalla, dispositivos físicos, otros motores ni despliegue remoto.
+Las figuras nuevas se especifican en POSITIONING.md para el Contrato D, después
+del merge de C; no se generaron en esta ronda.

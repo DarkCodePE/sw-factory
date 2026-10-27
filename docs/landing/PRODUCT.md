@@ -17,12 +17,14 @@ Desarrolladores y equipos técnicos que evalúan una fábrica local de software.
 
 ## Product Purpose
 
-Instalar fab y entender cómo coordina workers, worktrees y validaciones.
+Instalar fab y distinguir la fábrica que coordina el flujo del agente de código que ejecuta una tarea.
 
 ## Positioning
 
-Un flujo local de workstream, señal, change y actividades, con distintos CLIs
-de agentes y un motor nativo. El usuario aporta el acceso a sus modelos.
+La fábrica de software en tu terminal. La fábrica organiza workstreams, señales,
+changes y actividades; el agente de código ejecuta tareas. El estado es SQLite
+local y el código vive en Git. Esta web es explicativa, no una consola operativa.
+Los modelos pueden estar en endpoints locales o remotos; el usuario aporta su acceso.
 
 ## Operating Context
 
@@ -32,8 +34,8 @@ macOS ejecuta procesos de usuario sin aislamiento equivalente.
 
 ## Capabilities and Constraints
 
-Workers externos: Claude Code, Codex, Antigravity y Droid, cada CLI con su login
-o sus variables de entorno. Native admite anthropic, openai, chatgpt (login de
+Workers anunciados en la landing: `claude`, `codex` y `agy`, cada CLI con su login
+o sus variables de entorno. La decisión editorial no elimina otros adaptadores del runtime. Native admite anthropic, openai, chatgpt (login de
 Codex) y generic-chat-completion-api. OpenRouter y Gemini solo se presentan como
 compatibles vía endpoint OpenAI, sin afirmar pruebas; Ollama y vLLM son endpoints locales.
 
@@ -82,3 +84,11 @@ returns a specification report without guaranteeing a spec.md file. Sandbox clai
 apply to native tools on Linux, with local user processes on macOS and external
 CLIs retaining their own policies. No immutable signal or perfect-code claim.
 The mascot is intentionally unselected and has no generated asset.
+
+## Contrato C — 2026-10-27
+
+Base c8d4edd. Auto con Jev clasifica candidatos y usa relativeCost configurado,
+con reintentos y rotación antes de emitir texto. Omni enruta por cuenta/grupo de
+cuota con catálogo ToS y autorización de perfiles declarados de pago; costTier
+es una declaración operativa, no una tarifa verificada. Son configuraciones
+alternativas. Sin promesas de gratuidad. Evidencia y decisiones en POSITIONING.md.
