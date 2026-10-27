@@ -3,10 +3,10 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <meta name="description" content="Coordina agentes, aísla cambios y revisa resultados desde tu terminal. Instala el CLI y conoce su flujo de trabajo.">
+  <meta name="description" content="La fábrica de software en tu terminal. Organiza el trabajo, ejecuta agentes de código y decide qué cambios integrar con fab.">
   <meta name="color-scheme" content="light dark">
   <link rel="icon" type="image/svg+xml" href="./assets/brand/favicon.svg">
-  <title>fab | Agentes locales, un flujo común</title>
+  <title>fab | La fábrica de software en tu terminal</title>
   <script>try{const m=localStorage.getItem('fab-theme');if(m==='light'||m==='dark')document.documentElement.dataset.mode=m;}catch{}</script>
   <link rel="stylesheet" href="./styles.css">
   <script src="./app.js" defer></script>
@@ -17,7 +17,7 @@
   <header class="site-header container">
     <a class="brand-home" href="#inicio" aria-label="fab, inicio"><img class="brand-logo brand-logo-light" src="./assets/brand/fab-logo-light.svg" width="251" height="120" alt=""><img class="brand-logo brand-logo-dark" src="./assets/brand/fab-logo-dark.svg" width="251" height="120" alt=""></a>
     <nav aria-label="Principal">
-      <a href="#modulos">Módulos</a><a href="#sandbox">Sandbox</a><a href="#modelos">Modelos</a><a href="https://github.com/DarkCodePE/sw-factory">GitHub</a><a href="#instalar">Instalar</a>
+      <a href="#fabrica">Fábrica</a><a href="#agente">Agente</a><a href="#modelos">Modelos</a><a href="https://github.com/DarkCodePE/sw-factory">GitHub</a><a href="#instalar">Instalar</a>
     </nav>
     <button class="theme-button quiet-button" type="button" hidden aria-label="Cambiar al tema claro">
       <svg viewBox="0 0 24 24" width="20" height="20" aria-hidden="true"><circle cx="12" cy="12" r="4"/><path d="M12 2v2m0 16v2M2 12h2m16 0h2M5 5l1.5 1.5m11 11L19 19M5 19l1.5-1.5m11-11L19 5"/></svg>
@@ -29,8 +29,8 @@
       <div class="container hero-grid">
         <div class="hero-intro">
         <div class="hero-copy">
-          <h1 id="hero-title">Tu software.<br>Una fábrica local.</h1>
-          <p class="lead">Coordina agentes, aísla cambios y revisa resultados desde tu terminal.</p>
+          <h1 id="hero-title">La fábrica de software<br>en tu terminal.</h1>
+          <p class="lead">Organiza el trabajo, ejecuta agentes de código y decide qué cambios integrar.</p>
         </div>
         <div class="install-well" id="instalar" aria-label="Instalar fab">
           <div class="install-tabs" role="tablist" aria-label="Método de instalación" hidden>
@@ -76,12 +76,20 @@
       </div>
       <img class="hero-motif" src="./assets/brand/fab-mark.svg" width="120" height="120" alt="" aria-hidden="true">
     </section>
-    <section class="pillars-section" aria-label="Tres bases de fab"><div class="container pillars-grid">
-      <article><h2>Worktrees git</h2><p>Una rama y un directorio por change.</p></article>
-      <article><h2>Bubblewrap en Linux</h2><p>Contención de las herramientas nativas.</p></article>
-      <article><h2>Estado local</h2><p>SQLite en <code>~/.fabrica/fabrica.db</code>.</p></article>
-    </div></section>
-<section class="modules-section" id="flujo" aria-labelledby="flow-title"><div class="container"><div class="module-heading" id="modulos"><h2 id="flow-title">La fábrica, módulo a módulo.</h2><p>Explora qué pasa entre una señal y un merge.</p></div><div class="module-explorer"><div class="module-tabs" role="tablist" aria-label="Módulos de fab" aria-orientation="vertical" hidden>
+    <section class="factory-section" id="fabrica" aria-labelledby="factory-title">
+      <div class="container">
+        <div class="section-intro"><h2 id="factory-title">La fábrica coordina el trabajo.</h2><p class="lead">Un flujo con estado, revisiones humanas y cambios en Git.</p></div>
+        <p class="factory-location">La operas por CLI o TUI en tu máquina. El estado vive en <code>~/.fabrica/fabrica.db</code>; el código, en tu repositorio y sus worktrees. Este sitio explica el producto; la operación ocurre en tu terminal.</p>
+        <ol class="factory-flow" aria-label="Del objetivo a las actividades">
+          <li><h3>Workstream</h3><p>Define un objetivo, un repositorio, el agente y las aprobaciones requeridas.</p></li>
+          <li><h3>Signal</h3><p>Registra una entrada manual o importa un issue de Jira con su contexto.</p></li>
+          <li><h3>Change</h3><p>Promueve la señal a una propuesta de cambio. Si está configurado, espera tu aprobación antes de investigar.</p></li>
+          <li><h3>Activity</h3><p>El pool asigna investigación e implementación a workers. La revisión de la especificación también depende de tu configuración.</p></li>
+        </ol>
+        <div class="merge-rule"><h3>La integración tiene su puerta.</h3><div><p>Cada change usa una rama y un worktree. Si solicitas validadores, los pendientes o en FAIL bloquean <code>fab merge</code>. El override explícito <code>--force</code> permite omitir ese bloqueo.</p><p>El merge integra en la rama actual del repositorio y retira el worktree del change.</p><a href="#module-merge" data-open-module="merge">Explorar la puerta de merge</a></div></div>
+      </div>
+    </section>
+<section class="modules-section" id="flujo" aria-labelledby="flow-title"><div class="container"><div class="module-heading" id="modulos"><h2 id="flow-title">Del contexto al cambio integrado.</h2><p>Inspecciona las etapas y los ejecutores de la fábrica.</p></div><div class="module-explorer"><div class="module-tabs" role="tablist" aria-label="Módulos de fab" aria-orientation="vertical" hidden>
 <button type="button" class="module-tab" id="module-tab-jira" role="tab" aria-controls="module-jira" aria-selected="true" tabindex="0"><span class="module-ordinal">01</span>Jira a señal</button>
 <button type="button" class="module-tab" id="module-tab-triage" role="tab" aria-controls="module-triage" aria-selected="false" tabindex="-1"><span class="module-ordinal">02</span>Triage</button>
 <button type="button" class="module-tab" id="module-tab-investigation" role="tab" aria-controls="module-investigation" aria-selected="false" tabindex="-1"><span class="module-ordinal">03</span>Investigación</button>
@@ -125,46 +133,50 @@
 <div class="scenario-controls" aria-label="Sistema del sandbox" hidden><button class="quiet-button" type="button" data-platform="linux" aria-pressed="true">Linux</button><button class="quiet-button" type="button" data-platform="macos" aria-pressed="false">macOS</button></div><p class="module-note">required falla si no puede aislar. La política de red mostrada corresponde a Execute.</p>
 <div class="module-cli"><code>fab exec &quot;tarea&quot; --sandbox required --sandbox-network ask</code>
 </div></article>
-<article class="module-panel" id="module-workers" data-module="workers" data-step="3" data-playing="false" data-result="pass"><div class="module-intro"><h3>Elige quién hace el trabajo.</h3><p>CLIs externos con su acceso o el agente nativo con tus proveedores configurados.</p><p class="module-availability">Disponible hoy</p></div><svg class="module-scene" viewBox="0 0 680 310" role="img" aria-labelledby="scene-workers-title"><title id="scene-workers-title">Esquema ilustrativo: Workers y modelos</title><path class="module-wire " data-phase="1" d="M340 146V62H190"/><path class="module-wire " data-phase="1" d="M340 62H490"/><path class="module-wire " data-phase="2" d="M340 146H190V234"/><path class="module-wire " data-phase="3" d="M190 254H490"/><g class="module-node " data-phase="1" transform="translate(12 23)"><rect width="178" height="72" rx="8"/><text x="16" y="30">claude / codex</text><text class="node-detail" x="16" y="53">CLI + su acceso</text></g><g class="module-node " data-phase="2" transform="translate(490 23)"><rect width="178" height="72" rx="8"/><text x="16" y="30">agy / droid</text><text class="node-detail" x="16" y="53">CLI + su acceso</text></g><g class="module-node " data-phase="0" transform="translate(235 110)"><rect width="210" height="72" rx="8"/><text x="16" y="30">Pool de fab</text><text class="node-detail" x="16" y="53">actividades</text></g><g class="module-node " data-phase="3" transform="translate(12 218)"><rect width="178" height="72" rx="8"/><text x="16" y="30">native</text><text class="node-detail" x="16" y="53">customModels</text></g><g class="module-node " data-phase="3" transform="translate(490 218)"><rect width="178" height="72" rx="8"/><text x="16" y="30">Proveedores</text><text class="node-detail" x="16" y="53">tu configuración</text></g><text class="scene-note" x="230" y="281">Tu login o tus claves</text></svg>
+<article class="module-panel" id="module-workers" data-module="workers" data-step="3" data-playing="false" data-result="pass"><div class="module-intro"><h3>Elige quién hace el trabajo.</h3><p>CLIs externos con su acceso o el agente nativo con tus proveedores configurados.</p><p class="module-availability">Disponible hoy</p></div><svg class="module-scene" viewBox="0 0 680 310" role="img" aria-labelledby="scene-workers-title"><title id="scene-workers-title">Esquema ilustrativo: Workers y modelos</title><path class="module-wire " data-phase="1" d="M340 146V62H190"/><path class="module-wire " data-phase="1" d="M340 62H490"/><path class="module-wire " data-phase="2" d="M340 146H190V234"/><path class="module-wire " data-phase="3" d="M190 254H490"/><g class="module-node " data-phase="1" transform="translate(12 23)"><rect width="178" height="72" rx="8"/><text x="16" y="30">claude / codex</text><text class="node-detail" x="16" y="53">CLI + su acceso</text></g><g class="module-node " data-phase="2" transform="translate(490 23)"><rect width="178" height="72" rx="8"/><text x="16" y="30">agy</text><text class="node-detail" x="16" y="53">CLI + su acceso</text></g><g class="module-node " data-phase="0" transform="translate(235 110)"><rect width="210" height="72" rx="8"/><text x="16" y="30">Pool de fab</text><text class="node-detail" x="16" y="53">actividades</text></g><g class="module-node " data-phase="3" transform="translate(12 218)"><rect width="178" height="72" rx="8"/><text x="16" y="30">native</text><text class="node-detail" x="16" y="53">customModels</text></g><g class="module-node " data-phase="3" transform="translate(490 218)"><rect width="178" height="72" rx="8"/><text x="16" y="30">Proveedores</text><text class="node-detail" x="16" y="53">tu configuración</text></g><text class="scene-note" x="230" y="281">Tu login o tus claves</text></svg>
 <ol class="module-steps"><li value="1" data-step-label="0">Cola de actividades</li><li value="2" data-step-label="1">Adaptadores externos</li><li value="3" data-step-label="2">Agente nativo</li><li value="4" data-step-label="3">Tu login o tus claves</li></ol>
 <div class="module-cli"><code>fab run mi-proyecto --agent native --once</code>
 </div></article>
 </div></div><div class="module-playback" hidden><button class="quiet-button" type="button" data-module-play>Repetir pasos</button><button class="quiet-button" type="button" data-module-next>Paso siguiente</button><button class="quiet-button" type="button" data-module-end>Estado final</button><p class="module-state" role="status" aria-live="polite">Esquema ilustrativo. Estado final.</p></div><noscript><p>Los ocho módulos y sus pasos están disponibles sin JavaScript.</p></noscript></div></section>
     <section class="architecture-section" id="arquitectura" aria-labelledby="architecture-title">
       <div class="container">
-        <h2 id="architecture-title">Una fábrica en tu máquina.</h2><p class="architecture-copy">CLI y TUI, SQLite local, pool de workers y worktrees por change.</p><details class="architecture-detail"><summary>Explorar flujo y arquitectura con Archify</summary>
+        <h2 id="architecture-title">El estado y el código, en su sitio.</h2><p class="architecture-copy">SQLite conserva el flujo de la fábrica. Git conserva los cambios. El pool lanza un agente para ejecutar cada actividad.</p><details class="architecture-detail"><summary>Explorar flujo y arquitectura con Archify</summary>
         <div class="diagram-links"><a class="diagram-link" href="./diagrams/sdlc-workflow.html">Explorar el flujo interactivo</a><a href="./diagrams/architecture.html">Ver la arquitectura</a></div>
         <iframe tabindex="0" class="workflow-embed" src="./diagrams/sdlc-workflow.html" title="Flujo SDLC interactivo de fab, generado con Archify" loading="lazy" data-diagram></iframe>
         </details><p class="diagram-caption">Importación, aprobaciones humanas, workers y puerta de merge. El override explícito <code>--force</code> existe.</p>
       </div>
     </section>
-    <section class="sandbox-summary" id="sandbox" aria-labelledby="sandbox-title"><div class="container sandbox-summary-grid"><h2 id="sandbox-title">El aislamiento tiene límites.</h2><div><p>Linux usa bubblewrap cuando está disponible. <code>--sandbox required</code> exige ese aislamiento.</p><p>macOS ejecuta con permisos del usuario; los CLIs externos tienen sus propias políticas.</p><a href="#module-sandbox" data-open-module="sandbox">Explorar el sandbox</a></div></div></section>
+    <section class="agent-section" id="agente" aria-labelledby="agent-title">
+      <div class="container agent-grid"><div class="section-intro"><h2 id="agent-title">El agente de código ejecuta la tarea.</h2><p class="lead">Un runtime que trabaja desde tu terminal, con las herramientas y el acceso a modelos que configures.</p></div><div class="agent-entry"><h3>Úsalo directamente.</h3><code class="runtime-command">fab exec</code><p>El agente nativo puede trabajar por su cuenta. En la fábrica, el pool lo lanza para ejecutar una actividad dentro del worktree del change.</p><h3>O elige un worker externo.</h3><p>La fábrica también puede delegar en <code>claude</code>, <code>codex</code> o <code>agy</code>. Cada CLI gestiona su acceso y sus políticas de ejecución.</p><a href="https://github.com/DarkCodePE/sw-factory#readme">Consultar los comandos de fab</a></div></div>
+    </section>
+    <section class="sandbox-summary" id="sandbox" aria-labelledby="sandbox-title"><div class="container sandbox-summary-grid"><h2 id="sandbox-title">Controla dónde actúan las herramientas.</h2><div><p>Las herramientas nativas usan bubblewrap en Linux cuando está disponible. <code>--sandbox required</code> exige ese aislamiento.</p><p>En macOS corren con los permisos del usuario. Los CLIs externos conservan sus propias políticas; esta contención no se extiende a todos los workers.</p><a href="#module-sandbox" data-open-module="sandbox">Explorar los límites del sandbox</a></div></div></section>
     <section class="models-section" id="modelos" aria-labelledby="models-title">
       <div class="container">
-        <h2 id="models-title">Elige cómo conectar tu IA.</h2>
-        <div class="models-grid">
-          <div><h3>Workers externos</h3><p>Claude Code (<code>claude</code>), Codex (<code>codex</code>), Antigravity (<code>agy</code>) y Droid (<code>droid</code>).</p><p>Cada CLI usa su propio login o su API key por entorno.</p></div>
-          <div><h3>Agente nativo</h3><p><code>anthropic</code>, <code>openai</code>, <code>chatgpt</code> (sesión de Codex) y <code>generic-chat-completion-api</code>.</p><p><code>customModels</code>: <code>baseUrl</code> y <code>apiKey</code>.</p></div>
+        <div class="section-intro"><h2 id="models-title">Tus modelos, con rutas explícitas.</h2><p class="lead">El estado de la fábrica es local. La inferencia puede usar un endpoint local o un servicio remoto.</p></div>
+        <div class="model-routes">
+          <article class="model-route"><h3>Conecta el agente nativo.</h3><div><p>Admite <code>anthropic</code>, <code>openai</code>, <code>chatgpt</code> mediante sesión de Codex y <code>generic-chat-completion-api</code>. Declara tus destinos en <code>customModels</code>, con <code>baseUrl</code> y <code>apiKey</code> según el proveedor.</p><p>Un endpoint OpenAI-compatible permite conectar servicios remotos o servidores locales como Ollama y vLLM. La compatibilidad de protocolo no verifica una integración concreta.</p></div></article>
+          <article class="model-route" id="router-auto"><h3><code>auto</code>: modelo según la tarea.</h3><div><p>Con el clasificador Jev configurado, evalúa tus candidatos y elige el de menor <code>relativeCost</code> entre los que superan el umbral de aptitud. Ese coste relativo lo defines tú.</p><p>Reintenta fallos transitorios como 429 y 5xx, respeta <code>Retry-After</code> y rota a los candidatos de respaldo al agotar los intentos. Un 400 de modelo permite rotar; un 401/403 detiene el intento. Si ya empezó a emitir texto, no repite la salida.</p><details><summary>Qué necesita el clasificador</summary><p>Jev consulta un servicio remoto y requiere tu clave. Si el clasificador no está disponible, usa el primer candidato elegible sin respaldos. Si ninguno supera el umbral, elige el de mayor puntuación.</p></details></div></article>
+          <article class="model-route" id="router-omni"><h3><code>omni</code>: ruta por cuenta y cuota.</h3><div><p>Encadena tus endpoints OpenAI Chat Completions por modelo, cuenta y grupo de cuota. Ante límites o cuota agotada, busca otro destino elegible y respeta los tiempos de espera del proveedor. Los perfiles declarados de pago requieren <code>allowPaid</code> explícito.</p><p>El catálogo de términos de servicio (ToS) excluye destinos <code>avoid</code>; los no revisados quedan deshabilitados. Es una referencia de política, no una revisión legal en tiempo real. <code>costTier</code> es una declaración operativa, no una tarifa verificada.</p><a href="https://github.com/DarkCodePE/sw-factory/blob/main/docs/omni-provider.md">Configurar el router omni</a></div></article>
         </div>
-        <p class="endpoint-note">OpenRouter y Gemini: compatibles vía endpoint OpenAI, integración no verificada. También puedes conectar Ollama, vLLM o un proxy OpenAI-compatible como OmniRoute.</p>
+        <p class="endpoint-note"><code>auto</code> y <code>omni</code> son alternativas: no se combinan en la misma configuración. Tú aportas el acceso a los modelos; las cuotas y los cargos dependen de cada proveedor.</p>
       </div>
     </section>
     <section class="plans-section" id="planes" aria-labelledby="plans-title">
       <div class="container">
-        <h2 id="plans-title">Local hoy. Gestionado, en estudio.</h2>
-        <p class="plans-intro lead">Propuesta de negocio en borrador.</p>
+        <h2 id="plans-title">Empieza en tu repositorio.</h2>
+        <p class="plans-intro lead">Instala fab y prueba el flujo con un cambio que puedas revisar.</p>
         <div class="plans-grid">
-          <article><h3>fab CLI</h3><p class="plan-value">Gratis</p><p>Instálalo hoy. Tú aportas modelos y cómputo.</p></article>
-          <article><h3>Servicio gestionado</h3><p class="plan-value">Próximamente</p><p>Equipo: runners cloud/híbridos y panel web. Empresa: despliegue privado y SSO.</p></article>
+          <article><h3>Disponible hoy</h3><p>CLI, TUI, agentes, worktrees y validaciones. La operación y el estado están en tu máquina; tú eliges los modelos y aportas el cómputo.</p><a class="quiet-button" href="#instalar">Instalar fab</a></article>
+          <article><h3>Servicio gestionado, en estudio</h3><p>Un panel web y runners gestionados son una propuesta de negocio en borrador, sin tarifas vigentes ni contratación.</p></article>
         </div>
-        <p class="business-note">Sin tarifas vigentes ni captación. Daemon, automatizaciones, triage con IA, AutoWiki y Monitor: próximamente.</p>
+        <p class="business-note">Daemon, automatizaciones, triage con IA, AutoWiki y Monitor: próximamente. El clasificador de modelos de <code>auto</code> ya existe; no es el triage de señales.</p>
       </div>
     </section>
   </main>
   <footer class="site-footer">
     <div class="container footer-grid">
       <a class="brand-home" href="#inicio" aria-label="fab, volver al inicio"><img class="brand-logo brand-logo-light" src="./assets/brand/fab-logo-light.svg" width="251" height="120" alt=""><img class="brand-logo brand-logo-dark" src="./assets/brand/fab-logo-dark.svg" width="251" height="120" alt=""></a>
-      <nav aria-label="Recursos"><a href="#flujo">El flujo</a><a href="#planes">Planes</a><a href="https://github.com/DarkCodePE/sw-factory">Repositorio</a><a href="https://www.npmjs.com/package/@okuanb/fab">npm</a><a href="https://github.com/DarkCodePE/sw-factory#readme">Documentación</a><a href="https://github.com/DarkCodePE/sw-factory/blob/main/packaging/npm/README.md">Instalación</a></nav>
+      <nav aria-label="Recursos"><a href="#fabrica">Fábrica</a><a href="#agente">Agente</a><a href="https://github.com/DarkCodePE/sw-factory">Repositorio</a><a href="https://www.npmjs.com/package/@okuanb/fab">npm</a><a href="https://github.com/DarkCodePE/sw-factory#readme">Documentación</a><a href="https://github.com/DarkCodePE/sw-factory/blob/main/packaging/npm/README.md">Instalación</a></nav>
       <p>Linux glibc y macOS, x64/arm64. npm requiere Node ≥22; el binario independiente no requiere Bun ni Node.</p>
     </div>
   </footer>

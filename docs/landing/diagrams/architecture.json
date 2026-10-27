@@ -83,7 +83,7 @@
       "id": "adapters",
       "type": "backend",
       "label": "Adaptadores",
-      "sublabel": "native, claude, codex, droid",
+      "sublabel": "native, claude, codex, agy",
       "pos": [
         260,
         250

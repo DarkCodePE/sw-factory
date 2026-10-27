@@ -1,7 +1,7 @@
 {
   "schemaVersion": 1,
   "receiptId": "1cfd85f6-585a-4c13-a2d1-db3ad37cc723",
-  "status": "current",
+  "status": "stale",
   "command": "deliver",
   "type": "architecture",
   "input": "/home/orlando/Desktop/factory/sw-factory-codex/docs/landing/diagrams/architecture.json",
@@ -13,5 +13,6 @@
   "artifact": {
     "sha256": "a59f0d607cc010dd3fa370045f00f0a3135ed4443e34728bd9e33bc89afb6629",
     "bytes": 855916
-  }
+  },
+  "note": "Historical deliver receipt. Contract C changed only adapter labels in specification and HTML; recorded hashes describe the previous delivery. Browser rechecked in docs/landing/positioning-browser-checks.json."
 }
