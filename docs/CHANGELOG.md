@@ -1,6 +1,20 @@
 # Registro de Cambios (`CHANGELOG.md`)
 
-Historial detallado de versiones de `sw-factory` desde la etiqueta base `c3eff63` hasta la versión actual (v0.1.0-rc.10).
+Historial detallado de versiones de `sw-factory` desde la etiqueta base `c3eff63` hasta la versión actual (v0.1.0-rc.11).
+
+---
+
+## [v0.1.0-rc.11] — 2026-10-27
+
+### Cambios incluidos
+- fix(worktrees): delete fab/<id> branch on merge and reject ([#19](https://github.com/DarkCodePE/sw-factory/pull/19)) por @DarkCodePE
+- feat(omni): account-aware composite provider with free/paid routing ([#18](https://github.com/DarkCodePE/sw-factory/pull/18)) por @DarkCodePE
+- test(stream-input): avoid closing stdin concurrently with SIGINT ([#15](https://github.com/DarkCodePE/sw-factory/pull/15)) por @DarkCodePE
+- feat(site): fab landing page with GitHub Pages deployment ([#16](https://github.com/DarkCodePE/sw-factory/pull/16)) por @DarkCodePE
+- feat(release): release PRs, generated release notes and version badge ([#17](https://github.com/DarkCodePE/sw-factory/pull/17)) por @DarkCodePE
+- docs(readme): fix Jira variables, update channel and local model claims ([#14](https://github.com/DarkCodePE/sw-factory/pull/14)) por @DarkCodePE
+- docs(readme): rework README with logo, archify diagrams and SDLC commands ([#13](https://github.com/DarkCodePE/sw-factory/pull/13)) por @DarkCodePE
+- fix(release): retry npm view while a published version propagates ([#12](https://github.com/DarkCodePE/sw-factory/pull/12)) por @DarkCodePE
 
 ---
 
