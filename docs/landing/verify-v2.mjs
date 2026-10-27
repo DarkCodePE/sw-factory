@@ -21,6 +21,8 @@ try {
     for (const width of [390, 1440]) {
       await page.setViewport({ width, height: width < 500 ? 844 : 900, isMobile: width < 500, hasTouch: width < 500 });
       await page.goto(url, { waitUntil: 'networkidle0' });
+      check(`${mode} ${width}: factory lifecycle and coding runtime are separate sections`, await page.evaluate(() => document.querySelectorAll('#fabrica .factory-flow > li').length === 4 && document.querySelector('#agente .runtime-command').textContent === 'fab exec' && !document.querySelector('#fabrica #agente')));
+      check(`${mode} ${width}: new reading sections stay within viewport`, await page.evaluate(() => [...document.querySelectorAll('#fabrica *, #agente *, #sandbox *, #modelos *, #planes *')].filter(e => e.getClientRects().length).every(e => { const r = e.getBoundingClientRect(); return r.left >= -1 && r.right <= innerWidth + 1; })));
       check(`${mode} ${width}: one selected tab and visible panel`, await page.evaluate(() => document.querySelectorAll('.module-tab[aria-selected="true"]').length === 1 && [...document.querySelectorAll('[data-module]')].filter(p => !p.hidden).length === 1));
       check(`${mode} ${width}: reduced motion is final and replay disabled`, await page.evaluate(() => document.querySelector('[data-module-play]').disabled && document.querySelector('[data-module]:not([hidden])').dataset.step === '3'));
       await page.focus('.module-tab'); await page.keyboard.press('ArrowDown');
@@ -69,6 +71,23 @@ try {
   await page.click('.architecture-detail summary');
   const frame = await (await page.$('[data-diagram]')).contentFrame(); await frame.waitForFunction(() => document.readyState === 'complete');
   check('Archify interactive workflow loads under Pages prefix', frame.url().includes('/sw-factory/diagrams/sdlc-workflow.html'));
+  const noExcludedNames = text => !/\b(?:Factory|Droid|Warp|PI|TrueForge)\b/i.test(text);
+  check('Public page and workflow omit excluded reference brands', noExcludedNames(await page.$eval('body', e => e.innerText)) && noExcludedNames(await frame.$eval('body', e => e.innerText)));
+  check('All internal links have destinations', await page.evaluate(() => [...document.querySelectorAll('a[href^="#"]')].every(a => document.getElementById(a.hash.slice(1)))));
+  check('Model routes explain Jev, relative cost and operational costTier', await page.evaluate(() => document.querySelector('#router-auto').textContent.includes('Jev') && document.querySelector('#router-auto').textContent.includes('relativeCost') && document.querySelector('#router-omni').textContent.includes('no una tarifa verificada')));
+  check('No free pricing or token promise', !/\bgratis\b|gratuidad/i.test(await page.$eval('body', e => e.innerText)));
+  const architecture = await browser.newPage();
+  try {
+    await architecture.goto(new URL('diagrams/architecture.html', url).href);
+    check('Architecture does not advertise excluded workers', noExcludedNames(await architecture.$eval('body', e => e.innerText)));
+  } finally { await architecture.close(); }
+  for (const zoom of [1, 2]) {
+    await page.setViewport({ width: 320, height: 844 });
+    await page.evaluate(zoom => { document.documentElement.style.fontSize = `${zoom * 100}%`; }, zoom);
+    check(`320px at ${zoom * 100}% text: new sections remain readable`, await page.evaluate(() => [...document.querySelectorAll('#fabrica *, #agente *, #sandbox *, #modelos *, #planes *')].filter(e => e.getClientRects().length).every(e => { const r = e.getBoundingClientRect(); return r.left >= -1 && r.right <= innerWidth + 1; })));
+  }
+  await page.setJavaScriptEnabled(false); await page.goto(url);
+  check('Factory, agent and routing explanations remain readable without JavaScript', await page.evaluate(() => ['fabrica', 'agente', 'router-auto', 'router-omni'].every(id => document.getElementById(id).getBoundingClientRect().height > 0)));
   const js = (await readFile('site/app.js')).length + (await readFile('site/modules.js')).length;
   check('Combined served JavaScript stays below 10 KB', js < 10000);
   if (errors.length || failedRequests.length || external.length) console.error(JSON.stringify({errors,failedRequests,external}));
