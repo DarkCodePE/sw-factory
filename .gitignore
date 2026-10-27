@@ -4,6 +4,10 @@ node_modules/
 *.db-shm
 .fabrica/
 .serena/
+# Local tool state and design-session artifacts
+.claude-flow/
+.hallmark/
+.impeccable/
 graft/
 .ignore
 /dist/
