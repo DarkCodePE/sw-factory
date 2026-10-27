@@ -75,3 +75,13 @@ triage defaults to in_review; merge targets current branch; validation gates onl
 when requested, with --force; no spec.md guarantee; native-only Linux sandbox;
 Codex session for ChatGPT; generic endpoints are compatibility, not smoke claims.
 Phase 2 and managed factory remain future/draft without a form.
+
+## Contrato C: fábrica y agente
+
+Se conserva la identidad visual. La portada nombra la categoría de fab y el flujo
+se explica en #fabrica: workstream, signal, change, activity y puerta de merge.
+#agente distingue el runtime independiente de la asignación del pool. #modelos
+separa conexiones, auto/Jev y omni; #planes cierra con instalación y diferencia
+actualidad de propuesta gestionada, sin precio ni promesa de gratuidad.
+Figuras nuevas y animación quedan para el Contrato D después del merge de C;
+no se dejan huecos vacíos. Su entrada está en POSITIONING.md y en el PR.
