@@ -72,3 +72,13 @@ Demo del CLI capturada con Jira y workers simulados en Git/SQLite temporales.
 Muestra QA FAIL, merge bloqueado, QA PASS y merge permitido; no ejecuta comandos
 desde el navegador ni demuestra reparación de un fallo de producción. Se conservan
 las capacidades y estados del producto; el diagrama Archify reutiliza el de main.
+
+## V2 source review
+
+Main b7ded02 was checked against the v2 brief. Worktrees are per change, merge goes
+to the current branch, and pending/FAIL validators block only requested validation
+(unless --force). Triage is promotion, not an existing AI classifier. Investigation
+returns a specification report without guaranteeing a spec.md file. Sandbox claims
+apply to native tools on Linux, with local user processes on macOS and external
+CLIs retaining their own policies. No immutable signal or perfect-code claim.
+The mascot is intentionally unselected and has no generated asset.

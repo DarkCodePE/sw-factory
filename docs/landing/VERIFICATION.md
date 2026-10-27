@@ -71,3 +71,36 @@ ambos diff checks quedaron limpios. Una ejecución intermedia obtuvo 601/1 en
 `tests/agent-script-durable.test.ts:55` al recibir `completed` en vez de la
 observación parcial esperada; el caso pasó aislado y después pasó la suite completa.
 No se modificaron ni omitieron tests, ni se tocó el código del producto.
+
+## Ronda landing v2 — Contrato A (2026-10-26)
+
+La rama se sincronizó con `origin/main` (`f741712`) antes de validar. Para repetir
+la verificación propia del explorador, con Chrome y Puppeteer preparados como arriba:
+
+```sh
+python3 docs/landing/serve.py --prefix /sw-factory/ --port 8772
+node docs/landing/verify-v2.mjs
+```
+
+La ejecución local terminó con código 0: 76 controles, 9.076 bytes de JavaScript
+combinado, sin errores JS, respuestas fallidas ni solicitudes externas. El recibo
+actual está en `modules-browser-checks.json`; las capturas cubren claro/oscuro a
+390 y 1440 px. El inventario v2 de Pages contiene 16 archivos públicos.
+`bunx tsc --noEmit -p .` y `git diff --check` terminaron con código 0, sin salida.
+
+La primera suite `bun test --max-concurrency=4` terminó con código 1: 750 pass,
+1 fail, 4.160 expect, 751 pruebas en 77 archivos (225,98 s). El único fallo fue
+el timeout de 30 s en el caso de 10.000 registros de `tests/agent-journal.test.ts`.
+Había otra suite Bun ejecutándose en la máquina. El archivo pasó aislado con
+código 0: 8 pass, 0 fail, 51 expect (31,11 s). No se modificaron ni omitieron tests.
+
+Una segunda suite completa, sin la otra suite Bun, terminó con código 1:
+750 pass, 1 fail, 1 error, 4.160 expect, 751 pruebas en 77 archivos (221,93 s).
+Se repitió el mismo timeout y apareció un ENOENT posterior del journal temporal
+del caso vencido. El requisito de cero fallos queda bloqueado: `src/**` y `tests/**`
+están fuera del Contrato A. La rama no se subió y no se abrió PR en esta ronda.
+
+Esta ronda verifica Chromium local y viewports emulados. No verifica despliegue
+alojado en Pages, otros motores, dispositivos físicos ni lectores de pantalla.
+Los informes anteriores de diseño y del verificador general se conservan como
+evidencia histórica; no se presentan como ejecuciones nuevas de esta ronda.

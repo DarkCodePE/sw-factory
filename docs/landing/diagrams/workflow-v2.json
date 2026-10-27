@@ -1,0 +1,395 @@
+{
+  "schema_version": 2,
+  "diagram_type": "workflow",
+  "meta": {
+    "title": "Flujo local de fab: señal, cambio y merge",
+    "output": "site/diagrams/sdlc-workflow.html",
+    "quality_profile": "showcase",
+    "locale": "es",
+    "repository": {
+      "url": "https://github.com/DarkCodePE/sw-factory.git",
+      "revision": "b7ded0296ce9059bb8ff70f52715baeca67142a3"
+    }
+  },
+  "lanes": [
+    {
+      "id": "external",
+      "label": "Sistemas Externos (Jira / GitHub)"
+    },
+    {
+      "id": "operator",
+      "label": "Operador (Aprobaciones y Control)"
+    },
+    {
+      "id": "factory",
+      "label": "Fábrica fab (Estado y Orquestación)"
+    },
+    {
+      "id": "workers",
+      "label": "Workers y worktree del change"
+    },
+    {
+      "id": "validators",
+      "label": "Validadores SDLC (CR, Sec, QA)"
+    }
+  ],
+  "phases": [
+    {
+      "id": "phase_ingesta",
+      "label": "1. Ingesta",
+      "fromCol": 0,
+      "toCol": 0
+    },
+    {
+      "id": "phase_triage",
+      "label": "2. Triage",
+      "fromCol": 1,
+      "toCol": 1
+    },
+    {
+      "id": "phase_investigacion",
+      "label": "3. Investigación",
+      "fromCol": 2,
+      "toCol": 2
+    },
+    {
+      "id": "phase_implementacion",
+      "label": "4. Implementación",
+      "fromCol": 3,
+      "toCol": 3
+    },
+    {
+      "id": "phase_validacion",
+      "label": "5. Validación",
+      "fromCol": 4,
+      "toCol": 4
+    },
+    {
+      "id": "phase_cierre",
+      "label": "6. Merge y Cierre",
+      "fromCol": 5,
+      "toCol": 5
+    }
+  ],
+  "mainPath": [
+    "jira",
+    "signal",
+    "triage",
+    "gate1",
+    "investigation",
+    "gate2",
+    "implementation",
+    "implemented",
+    "validate",
+    "merge",
+    "jira_comment"
+  ],
+  "nodes": [
+    {
+      "id": "jira",
+      "lane": "external",
+      "col": 0,
+      "type": "external",
+      "label": "Ticket Jira",
+      "sublabel": "Issue o reporte externo",
+      "width": 132,
+      "sources": [
+        {
+          "path": "src/connectors/cli.ts",
+          "line": 90,
+          "end_line": 105
+        }
+      ]
+    },
+    {
+      "id": "signal",
+      "lane": "factory",
+      "col": 0,
+      "type": "database",
+      "label": "Señal local",
+      "sublabel": "Contexto y vínculo al origen",
+      "tag": "estado local",
+      "width": 132,
+      "sources": [
+        {
+          "path": "src/connectors/intake.ts",
+          "line": 16,
+          "end_line": 35
+        }
+      ]
+    },
+    {
+      "id": "triage",
+      "lane": "factory",
+      "col": 1,
+      "type": "backend",
+      "label": "fab triage",
+      "sublabel": "Crea unidad Change",
+      "tag": "fab/changeId",
+      "width": 132,
+      "sources": [
+        {
+          "path": "src/cli.ts",
+          "line": 184,
+          "end_line": 187
+        }
+      ]
+    },
+    {
+      "id": "gate1",
+      "lane": "operator",
+      "col": 1,
+      "type": "security",
+      "label": "Revisión del change",
+      "sublabel": "Si está configurada",
+      "tag": "humano",
+      "width": 132,
+      "sources": [
+        {
+          "path": "src/store.ts",
+          "line": 325,
+          "end_line": 350
+        }
+      ]
+    },
+    {
+      "id": "investigation",
+      "lane": "workers",
+      "col": 2,
+      "type": "backend",
+      "label": "Investigación",
+      "sublabel": "Informe y especificación",
+      "tag": "redacta spec",
+      "width": 132,
+      "sources": [
+        {
+          "path": "src/prompts.ts",
+          "line": 23,
+          "end_line": 34
+        }
+      ]
+    },
+    {
+      "id": "gate2",
+      "lane": "operator",
+      "col": 2,
+      "type": "security",
+      "label": "Revisión de la spec",
+      "sublabel": "Si está configurada",
+      "tag": "humano",
+      "width": 132,
+      "sources": [
+        {
+          "path": "src/store.ts",
+          "line": 591,
+          "end_line": 620
+        }
+      ]
+    },
+    {
+      "id": "implementation",
+      "lane": "workers",
+      "col": 3,
+      "type": "backend",
+      "label": "Implementación",
+      "sublabel": "Rama y worktree del change",
+      "tag": "bwrap + git",
+      "width": 132,
+      "sources": [
+        {
+          "path": "src/worktrees.ts",
+          "line": 18,
+          "end_line": 29
+        }
+      ]
+    },
+    {
+      "id": "implemented",
+      "lane": "factory",
+      "col": 3,
+      "type": "database",
+      "label": "Implementado",
+      "sublabel": "Commits de la rama local",
+      "tag": "implemented",
+      "width": 132,
+      "sources": [
+        {
+          "path": "src/worktrees.ts",
+          "line": 32,
+          "end_line": 46
+        }
+      ]
+    },
+    {
+      "id": "validate",
+      "lane": "validators",
+      "col": 4,
+      "type": "backend",
+      "label": "Validación opcional",
+      "sublabel": "Código, seguridad, QA",
+      "tag": "paralelo",
+      "width": 132,
+      "sources": [
+        {
+          "path": "src/validators/cli.ts",
+          "line": 105,
+          "end_line": 114
+        }
+      ]
+    },
+    {
+      "id": "pr",
+      "lane": "external",
+      "col": 4,
+      "type": "cloud",
+      "label": "GitHub PR",
+      "sublabel": "fab pr open --validate",
+      "width": 132,
+      "sources": [
+        {
+          "path": "src/connectors/cli.ts",
+          "line": 143,
+          "end_line": 151
+        }
+      ]
+    },
+    {
+      "id": "merge",
+      "lane": "factory",
+      "col": 5,
+      "type": "security",
+      "label": "Condición de merge",
+      "sublabel": "Pendientes o FAIL",
+      "tag": "bloqueo si fail",
+      "width": 132,
+      "sources": [
+        {
+          "path": "src/validators/publish.ts",
+          "line": 25,
+          "end_line": 32
+        }
+      ]
+    },
+    {
+      "id": "jira_comment",
+      "lane": "external",
+      "col": 5,
+      "type": "external",
+      "label": "Comentario Jira",
+      "sublabel": "fab jira comment",
+      "tag": "ticket cerrado",
+      "width": 132,
+      "sources": [
+        {
+          "path": "src/connectors/cli.ts",
+          "line": 76,
+          "end_line": 90
+        }
+      ]
+    }
+  ],
+  "edges": [
+    {
+      "id": "jira-to-signal",
+      "from": "jira",
+      "to": "signal",
+      "label": "import",
+      "variant": "default"
+    },
+    {
+      "id": "signal-to-triage",
+      "from": "signal",
+      "to": "triage",
+      "variant": "default"
+    },
+    {
+      "id": "triage-to-gate1",
+      "from": "triage",
+      "to": "gate1",
+      "label": "revisión",
+      "variant": "security"
+    },
+    {
+      "id": "gate1-to-inv",
+      "from": "gate1",
+      "to": "investigation",
+      "label": "aprobado",
+      "variant": "emphasis"
+    },
+    {
+      "id": "inv-to-gate2",
+      "from": "investigation",
+      "to": "gate2",
+      "label": "spec",
+      "variant": "security"
+    },
+    {
+      "id": "gate2-to-impl",
+      "from": "gate2",
+      "to": "implementation",
+      "label": "aprobado",
+      "variant": "emphasis"
+    },
+    {
+      "id": "impl-to-done",
+      "from": "implementation",
+      "to": "implemented",
+      "label": "commits",
+      "variant": "default"
+    },
+    {
+      "id": "done-to-val",
+      "from": "implemented",
+      "to": "validate",
+      "label": "solicitar",
+      "variant": "emphasis"
+    },
+    {
+      "id": "done-to-pr",
+      "from": "implemented",
+      "to": "pr",
+      "label": "abrir PR",
+      "variant": "dashed"
+    },
+    {
+      "id": "val-to-merge",
+      "from": "validate",
+      "to": "merge",
+      "label": "comprobar",
+      "variant": "security"
+    },
+    {
+      "id": "pr-to-merge",
+      "from": "pr",
+      "to": "merge",
+      "variant": "dashed"
+    },
+    {
+      "id": "merge-to-jira",
+      "from": "merge",
+      "to": "jira_comment",
+      "label": "notificación",
+      "variant": "emphasis"
+    }
+  ],
+  "cards": [
+    {
+      "dot": "emerald",
+      "title": "Control del operador",
+      "items": [
+        "Las aprobaciones de change y especificación dependen del workstream.",
+        "Si se solicita validación, pendientes y FAIL bloquean el merge salvo --force.",
+        "Sin validación solicitada no se exige un resultado unánime."
+      ]
+    },
+    {
+      "dot": "slate",
+      "title": "Ejecución local",
+      "items": [
+        "Investigación e implementación comparten un worktree por change.",
+        "El merge integra en la rama actual del repositorio.",
+        "Bubblewrap corresponde a herramientas nativas en Linux, no a todos los CLIs externos."
+      ]
+    }
+  ]
+}
