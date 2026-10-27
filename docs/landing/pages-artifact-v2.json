@@ -1,0 +1,23 @@
+{
+  "files": [
+    "index.html",
+    "app.js",
+    "modules.js",
+    "styles.css",
+    "modules.css",
+    "tokens.css",
+    "base.css",
+    "demo-session.txt",
+    "diagrams/sdlc-workflow.html",
+    "diagrams/architecture.html",
+    "assets/brand/fab-logo-light.svg",
+    "assets/brand/fab-logo-dark.svg",
+    "assets/brand/fab-mark.svg",
+    "assets/brand/fab-icon-light.svg",
+    "assets/brand/fab-icon-dark.svg",
+    "assets/brand/favicon.svg"
+  ],
+  "count": 16,
+  "screenshots": false,
+  "caches": false
+}

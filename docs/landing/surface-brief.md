@@ -49,3 +49,29 @@ explicit interaction. Both Jira and workers were simulated in a temporary reposi
 CLI dispatch, validation state and merge gate were executed. Only the last two
 frames are shown; the complete captured transcript is linked. Capability ordinals
 remain because the original brief explicitly requires six numbered cards.
+
+## V2: module workbench (supersedes the second-pass section order)
+
+User-pinned brief: `/home/orlando/Desktop/factory/doc/landing/brief-v2.md`.
+Preserve the established brand and code-first build; no new identity choice or mascot
+concept is inferred. The page now leads with install + captured terminal, then three
+pillars, eight inspectable module scenes, architecture, sandbox limits, model paths
+and the commercial draft. The eight modules replace the six capability boxes.
+
+The authored motion is a user-controlled four-state SVG sequence in one selected
+module. No simulated live metrics, no shell/provider calls. Reduced motion starts
+at the final state and disables spatial replay; manual state/scenario controls stay
+available. Ordinary tabs handle arrows/Home/End. Playback stops offscreen/hidden.
+The terminal resting summary combines captured blocked merge, captured QA PASS,
+and captured successful merge; full playback and transcript remain intact.
+
+Every module is readable with scripting off. SVG geometry is explanatory, never
+runtime evidence. Jira/triage/validate/merge sample lines match CLI source, with
+illustrative IDs. The original terminal remains an actual fixture capture.
+Mascot: an empty 72px slot and inert template, no image, no chosen concept.
+
+Truth corrections against main b7ded02: worktree per change; conditional approval;
+triage defaults to in_review; merge targets current branch; validation gates only
+when requested, with --force; no spec.md guarantee; native-only Linux sandbox;
+Codex session for ChatGPT; generic endpoints are compatibility, not smoke claims.
+Phase 2 and managed factory remain future/draft without a form.

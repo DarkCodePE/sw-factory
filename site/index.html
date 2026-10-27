@@ -3,20 +3,21 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <meta name="description" content="fab coordina agentes locales, worktrees y validaciones desde tu terminal. Instala el CLI y conoce su flujo de trabajo.">
+  <meta name="description" content="Coordina agentes, aísla cambios y revisa resultados desde tu terminal. Instala el CLI y conoce su flujo de trabajo.">
   <meta name="color-scheme" content="light dark">
   <link rel="icon" type="image/svg+xml" href="./assets/brand/favicon.svg">
   <title>fab | Agentes locales, un flujo común</title>
   <script>try{const m=localStorage.getItem('fab-theme');if(m==='light'||m==='dark')document.documentElement.dataset.mode=m;}catch{}</script>
   <link rel="stylesheet" href="./styles.css">
   <script src="./app.js" defer></script>
+  <script src="./modules.js" defer></script>
 </head>
 <body>
   <a class="skip-link" href="#contenido">Saltar al contenido</a>
   <header class="site-header container">
     <a class="brand-home" href="#inicio" aria-label="fab, inicio"><img class="brand-logo brand-logo-light" src="./assets/brand/fab-logo-light.svg" width="251" height="120" alt=""><img class="brand-logo brand-logo-dark" src="./assets/brand/fab-logo-dark.svg" width="251" height="120" alt=""></a>
     <nav aria-label="Principal">
-      <a href="#flujo">El flujo</a><a href="#modelos">Modelos</a><a href="#planes">Planes</a>
+      <a href="#modulos">Módulos</a><a href="#sandbox">Sandbox</a><a href="#modelos">Modelos</a><a href="https://github.com/DarkCodePE/sw-factory">GitHub</a><a href="#instalar">Instalar</a>
     </nav>
     <button class="theme-button quiet-button" type="button" hidden aria-label="Cambiar al tema claro">
       <svg viewBox="0 0 24 24" width="20" height="20" aria-hidden="true"><circle cx="12" cy="12" r="4"/><path d="M12 2v2m0 16v2M2 12h2m16 0h2M5 5l1.5 1.5m11 11L19 19M5 19l1.5-1.5m11-11L19 5"/></svg>
@@ -28,8 +29,8 @@
       <div class="container hero-grid">
         <div class="hero-intro">
         <div class="hero-copy">
-          <h1 id="hero-title">Agentes locales.<br>Un flujo común.</h1>
-          <p class="lead">fab coordina agentes locales, worktrees y validaciones desde tu terminal.</p>
+          <h1 id="hero-title">Tu software.<br>Una fábrica local.</h1>
+          <p class="lead">Coordina agentes, aísla cambios y revisa resultados desde tu terminal.</p>
         </div>
         <div class="install-well" id="instalar" aria-label="Instalar fab">
           <div class="install-tabs" role="tablist" aria-label="Método de instalación" hidden>
@@ -54,6 +55,7 @@
           <noscript><p class="no-script">Selecciona un comando para copiarlo.</p></noscript>
           <p class="install-caption">Preliminar <code>@next</code>.</p>
         </div>
+        <div class="mascot-slot" data-mascot-state="reserved" aria-hidden="true"><template id="fab-mascot-template"><picture data-mascot-asset></picture></template></div>
         </div>
         <div class="product-demo" id="demo" aria-labelledby="demo-title">
           <div class="demo-toolbar"><p class="demo-title" id="demo-title">Sesión de fab</p><div class="demo-controls"><button class="quiet-button" type="button" data-demo-play hidden>Reproducir</button><button class="quiet-button" type="button" data-demo-end hidden>Resultado</button></div></div>
@@ -67,52 +69,84 @@
 
 | Validador | Veredicto | Resumen |
 | --- | --- | --- |
-| `qa` | **PASS** | Fixture QA aprobado. |</pre></li><li class="demo-frame" data-frame="10" data-result="pass"><p class="demo-command"><span aria-hidden="true">$ </span><code>fab merge 951e7eb3</code></p><pre class="demo-output">change 951e7eb3 completado</pre></li></ol>
+| `qa` | **PASS** | Fixture QA aprobado. |</pre><pre class="demo-short-output">| `qa` | **PASS** | Fixture QA aprobado. |</pre></li><li class="demo-frame" data-frame="10" data-result="pass"><p class="demo-command"><span aria-hidden="true">$ </span><code>fab merge 951e7eb3</code></p><pre class="demo-output">change 951e7eb3 completado</pre></li></ol>
           </div>
           <div class="demo-caption"><p>Sesión capturada con Jira y workers simulados. <a href="./demo-session.txt">Transcripción</a>.</p><p class="demo-state" role="status" aria-live="polite">Sesión finalizada.</p></div>
         </div>
       </div>
       <img class="hero-motif" src="./assets/brand/fab-mark.svg" width="120" height="120" alt="" aria-hidden="true">
     </section>
-    <section class="local-section" aria-labelledby="local-title">
-      <div class="container local-grid">
-        <h2 id="local-title">Tu repositorio.<br>Tu máquina.</h2>
-        <div class="local-detail">
-          <p class="lead">TUI, ejecución sin interfaz y estado en SQLite local.</p>
-          <p>Los cambios de la fábrica usan worktrees independientes. En Linux, las herramientas tienen sandbox con bubblewrap; en macOS corren con los permisos del usuario.</p>
-          <code class="local-path">~/.fabrica/fabrica.db</code>
-        </div>
-      </div>
-    </section>
-    <section class="flow-section" id="flujo" aria-labelledby="flow-title">
+    <section class="pillars-section" aria-label="Tres bases de fab"><div class="container pillars-grid">
+      <article><h2>Worktrees git</h2><p>Una rama y un directorio por change.</p></article>
+      <article><h2>Bubblewrap en Linux</h2><p>Contención de las herramientas nativas.</p></article>
+      <article><h2>Estado local</h2><p>SQLite en <code>~/.fabrica/fabrica.db</code>.</p></article>
+    </div></section>
+<section class="modules-section" id="flujo" aria-labelledby="flow-title"><div class="container"><div class="module-heading" id="modulos"><h2 id="flow-title">La fábrica, módulo a módulo.</h2><p>Explora qué pasa entre una señal y un merge.</p></div><div class="module-explorer"><div class="module-tabs" role="tablist" aria-label="Módulos de fab" aria-orientation="vertical" hidden>
+<button type="button" class="module-tab" id="module-tab-jira" role="tab" aria-controls="module-jira" aria-selected="true" tabindex="0"><span class="module-ordinal">01</span>Jira a señal</button>
+<button type="button" class="module-tab" id="module-tab-triage" role="tab" aria-controls="module-triage" aria-selected="false" tabindex="-1"><span class="module-ordinal">02</span>Triage</button>
+<button type="button" class="module-tab" id="module-tab-investigation" role="tab" aria-controls="module-investigation" aria-selected="false" tabindex="-1"><span class="module-ordinal">03</span>Investigación</button>
+<button type="button" class="module-tab" id="module-tab-implementation" role="tab" aria-controls="module-implementation" aria-selected="false" tabindex="-1"><span class="module-ordinal">04</span>Implementación</button>
+<button type="button" class="module-tab" id="module-tab-validators" role="tab" aria-controls="module-validators" aria-selected="false" tabindex="-1"><span class="module-ordinal">05</span>Validadores</button>
+<button type="button" class="module-tab" id="module-tab-merge" role="tab" aria-controls="module-merge" aria-selected="false" tabindex="-1"><span class="module-ordinal">06</span>Merge gate</button>
+<button type="button" class="module-tab" id="module-tab-sandbox" role="tab" aria-controls="module-sandbox" aria-selected="false" tabindex="-1"><span class="module-ordinal">07</span>Sandbox</button>
+<button type="button" class="module-tab" id="module-tab-workers" role="tab" aria-controls="module-workers" aria-selected="false" tabindex="-1"><span class="module-ordinal">08</span>Workers y modelos</button>
+</div><div class="module-panels">
+<article class="module-panel" id="module-jira" data-module="jira" data-step="3" data-playing="false" data-result="pass"><div class="module-intro"><h3>De Jira a tu estado local.</h3><p>Importa el contexto del issue y conserva el vínculo de origen en SQLite.</p><p class="module-availability">Disponible hoy</p></div><svg class="module-scene" viewBox="0 0 680 310" role="img" aria-labelledby="scene-jira-title"><title id="scene-jira-title">Esquema ilustrativo: Jira a señal</title><path class="module-wire " data-phase="1" d="M198 144H270"/><path class="module-wire " data-phase="2" d="M420 144H478"/><g class="module-node " data-phase="0" transform="translate(20 108)"><rect width="178" height="72" rx="8"/><text x="16" y="30">FAB-142</text><text class="node-detail" x="16" y="53">Issue de Jira</text></g><g class="module-node " data-phase="1" transform="translate(270 108)"><rect width="150" height="72" rx="8"/><text x="16" y="30">fab</text><text class="node-detail" x="16" y="53">import</text></g><g class="module-node " data-phase="3" transform="translate(478 108)"><rect width="182" height="72" rx="8"/><text x="16" y="30">SQLite</text><text class="node-detail" x="16" y="53">signal 04dfa1a0</text></g><text class="scene-note" x="20" y="238">Origen y contexto conservados en local</text></svg>
+<ol class="module-steps"><li value="1" data-step-label="0">Issue de Jira</li><li value="2" data-step-label="1">Importación por CLI</li><li value="3" data-step-label="2">Contexto y origen</li><li value="4" data-step-label="3">Señal en SQLite</li></ol>
+<div class="module-cli"><code>fab jira import FAB-142 --ws mi-proyecto</code>
+<pre>HU importada: signal 04dfa1a0</pre>
+</div></article>
+<article class="module-panel" id="module-triage" data-module="triage" data-step="3" data-playing="false" data-result="pass"><div class="module-intro"><h3>De señal a change.</h3><p>Promueve la señal. La aprobación configurada decide si el cambio queda en revisión.</p><p class="module-availability">Base disponible; IA próximamente</p></div><svg class="module-scene" viewBox="0 0 680 310" role="img" aria-labelledby="scene-triage-title"><title id="scene-triage-title">Esquema ilustrativo: Triage</title><path class="module-wire " data-phase="1" d="M185 145H250"/><path class="module-wire " data-phase="2" d="M395 145H465"/><path class="module-wire " data-phase="3" d="M550 180V245H395"/><g class="module-node " data-phase="0" transform="translate(15 109)"><rect width="170" height="72" rx="8"/><text x="16" y="30">signal</text><text class="node-detail" x="16" y="53">04dfa1a0</text></g><g class="module-node " data-phase="1" transform="translate(250 109)"><rect width="145" height="72" rx="8"/><text x="16" y="30">Triage</text><text class="node-detail" x="16" y="53">promoción</text></g><g class="module-node " data-phase="2" transform="translate(465 109)"><rect width="200" height="72" rx="8"/><text x="16" y="30">change</text><text class="node-detail" x="16" y="53">in_review</text></g><text class="scene-note" x="225" y="270">Revisión humana si está configurada</text></svg>
+<ol class="module-steps"><li value="1" data-step-label="0">Señal recibida</li><li value="2" data-step-label="1">Promoción explícita</li><li value="3" data-step-label="2">Change en revisión</li><li value="4" data-step-label="3">Aprobación configurada</li></ol>
+<div class="module-cli"><code>fab triage 04dfa1a0</code>
+<pre>signal 04dfa1a0 -&gt; change 951e7eb3 (in_review)</pre>
+</div></article>
+<article class="module-panel" id="module-investigation" data-module="investigation" data-step="3" data-playing="false" data-result="pass"><div class="module-intro"><h3>Investiga antes de implementar.</h3><p>El worker analiza el repositorio y entrega la especificación en su informe.</p><p class="module-availability">Disponible hoy</p></div><svg class="module-scene" viewBox="0 0 680 310" role="img" aria-labelledby="scene-investigation-title"><title id="scene-investigation-title">Esquema ilustrativo: Investigación</title><path class="module-wire " data-phase="1" d="M145 70H230V148H280"/><path class="module-wire " data-phase="1" d="M145 222H230V148"/><path class="module-wire " data-phase="2" d="M420 148H480"/><g class="module-node " data-phase="0" transform="translate(10 34)"><rect width="135" height="72" rx="8"/><text x="16" y="30">src/</text><text class="node-detail" x="16" y="53">código</text></g><g class="module-node " data-phase="0" transform="translate(10 186)"><rect width="135" height="72" rx="8"/><text x="16" y="30">tests/</text><text class="node-detail" x="16" y="53">pruebas</text></g><g class="module-node " data-phase="1" transform="translate(280 112)"><rect width="140" height="72" rx="8"/><text x="16" y="30">Worker</text><text class="node-detail" x="16" y="53">investigation</text></g><g class="module-node " data-phase="3" transform="translate(480 112)"><rect width="190" height="72" rx="8"/><text x="16" y="30">Informe</text><text class="node-detail" x="16" y="53">informe Markdown</text></g></svg>
+<ol class="module-steps"><li value="1" data-step-label="0">Contexto del change</li><li value="2" data-step-label="1">Consulta del repositorio</li><li value="3" data-step-label="2">Análisis del worker</li><li value="4" data-step-label="3">Informe de especificación</li></ol>
+<div class="module-cli"><code>fab run mi-proyecto --once</code>
+</div></article>
+<article class="module-panel" id="module-implementation" data-module="implementation" data-step="3" data-playing="false" data-result="pass"><div class="module-intro"><h3>Un worktree por change.</h3><p>El worker implementa la especificación en una rama independiente del directorio principal.</p><p class="module-availability">Disponible hoy</p></div><svg class="module-scene" viewBox="0 0 680 310" role="img" aria-labelledby="scene-implementation-title"><title id="scene-implementation-title">Esquema ilustrativo: Implementación</title><path class="branch-line" d="M35 65H645"/><circle class="commit-node" cx="90" cy="65" r="8"/><text class="scene-note" x="120" y="48">Rama actual del repositorio</text><path class="module-wire " data-phase="1" d="M90 73V137Q90 183 145 183H220"/><path class="module-wire " data-phase="2" d="M445 183H490"/><g class="module-node " data-phase="1" transform="translate(220 147)"><rect width="225" height="72" rx="8"/><text x="16" y="30">fab/951e7eb3</text><text class="node-detail" x="16" y="53">worktree del change</text></g><g class="module-node " data-phase="3" transform="translate(490 147)"><rect width="170" height="72" rx="8"/><text x="16" y="30">Diff</text><text class="node-detail" x="16" y="53">implementación</text></g><text class="scene-note" x="35" y="275">La investigación y la implementación comparten worktree</text></svg>
+<ol class="module-steps"><li value="1" data-step-label="0">Repositorio de origen</li><li value="2" data-step-label="1">Rama del change</li><li value="3" data-step-label="2">Trabajo en su worktree</li><li value="4" data-step-label="3">Diff para revisión</li></ol>
+<div class="module-cli"><code>fab run mi-proyecto --once</code>
+</div></article>
+<article class="module-panel" id="module-validators" data-module="validators" data-step="3" data-playing="false" data-result="pass"><div class="module-intro"><h3>Código, seguridad y QA.</h3><p>Tres revisiones independientes. El pool las ejecuta según su concurrencia configurada.</p><p class="module-availability">Disponible hoy</p></div><svg class="module-scene" viewBox="0 0 680 310" role="img" aria-labelledby="scene-validators-title"><title id="scene-validators-title">Esquema ilustrativo: Validadores</title><path class="module-wire " data-phase="1" d="M150 150H205V52H250"/><path class="module-wire " data-phase="1" d="M205 150H250"/><path class="module-wire " data-phase="1" d="M205 150V248H250"/><path class="module-wire " data-phase="2" d="M470 52H510V150H550"/><path class="module-wire " data-phase="2" d="M470 150H550"/><path class="module-wire " data-phase="2" d="M470 248H510V150"/><g class="module-node " data-phase="0" transform="translate(10 114)"><rect width="140" height="72" rx="8"/><text x="16" y="30">Diff</text><text class="node-detail" x="16" y="53">change</text></g><g class="module-node " data-phase="1" transform="translate(250 16)"><rect width="220" height="72" rx="8"/><text x="16" y="30">code_review</text><text class="node-detail" x="16" y="53">revisión de código</text></g><g class="module-node " data-phase="1" transform="translate(250 114)"><rect width="220" height="72" rx="8"/><text x="16" y="30">security_audit</text><text class="node-detail" x="16" y="53">seguridad</text></g><g class="module-node " data-phase="1" transform="translate(250 212)"><rect width="220" height="72" rx="8"/><text x="16" y="30">qa</text><text class="node-detail" x="16" y="53">pruebas</text></g><g class="module-node " data-phase="3" transform="translate(550 114)"><rect width="120" height="72" rx="8"/><text x="16" y="30">Estado</text><text class="node-detail" x="16" y="53">veredictos</text></g></svg>
+<ol class="module-steps"><li value="1" data-step-label="0">Diff del change</li><li value="2" data-step-label="1">Validadores encolados</li><li value="3" data-step-label="2">Revisiones independientes</li><li value="4" data-step-label="3">Veredictos registrados</li></ol>
+<div class="module-cli"><code>fab validate 951e7eb3</code>
+<pre>Encolados 3 validadores para change 951e7eb3: code_review, security_audit, qa</pre>
+</div></article>
+<article class="module-panel" id="module-merge" data-module="merge" data-step="3" data-playing="false" data-result="pass"><div class="module-intro"><h3>El merge tiene condiciones.</h3><p>Con validación solicitada, pendientes y FAIL bloquean el merge. El override --force es explícito.</p><p class="module-availability">Disponible hoy</p></div><svg class="module-scene" viewBox="0 0 680 310" role="img" aria-labelledby="scene-merge-title"><title id="scene-merge-title">Esquema ilustrativo: Merge gate</title><path class="module-wire " data-phase="1" d="M180 146H280"/><path class="module-wire gate-wire" data-phase="3" d="M390 146H472"/><g class="module-node " data-phase="0" transform="translate(10 110)"><rect width="170" height="72" rx="8"/><text x="16" y="30">Change</text><text class="node-detail" x="16" y="53">validación solicitada</text></g><g class="module-node " data-phase="3" transform="translate(472 110)"><rect width="198" height="72" rx="8"/><text x="16" y="30">Rama actual</text><text class="node-detail" x="16" y="53">destino de merge</text></g><g class="merge-barrier"><rect x="320" y="83" width="14" height="125" rx="4"/><path d="M300 212H355"/></g><text class="gate-fail-label scene-note" x="255" y="259">QA FAIL: merge bloqueado</text><text class="gate-pass-label scene-note" x="240" y="259">QA PASS: merge permitido</text></svg><p class="scene-result"><span class="scene-result-fail">QA FAIL: merge bloqueado.</span><span class="scene-result-pass">QA PASS: merge permitido.</span></p>
+<ol class="module-steps"><li value="1" data-step-label="0">Change implementado</li><li value="2" data-step-label="1">Validación solicitada</li><li value="3" data-step-label="2">Comprobación de veredictos</li><li value="4" data-step-label="3">Resultado del gate</li></ol>
+<div class="scenario-controls" aria-label="Escenario del merge" hidden><button class="quiet-button" type="button" data-gate="fail" aria-pressed="false">Probar bloqueo</button><button class="quiet-button" type="button" data-gate="pass" aria-pressed="true">Probar pase</button></div><p class="module-note">Sin validación solicitada no se exige este gate. El merge va a la rama actual.</p>
+<div class="module-cli"><code>fab merge 951e7eb3</code>
+<pre>change 951e7eb3 completado</pre>
+</div></article>
+<article class="module-panel" id="module-sandbox" data-module="sandbox" data-step="3" data-playing="false" data-result="pass"><div class="module-intro"><h3>Contención para Execute.</h3><p>Bubblewrap aísla las herramientas nativas en Linux. macOS usa procesos con permisos del usuario.</p><p class="module-availability">Linux con bubblewrap</p></div><svg class="module-scene" viewBox="0 0 680 310" role="img" aria-labelledby="scene-sandbox-title"><title id="scene-sandbox-title">Esquema ilustrativo: Sandbox</title><rect class="sandbox-boundary" x="115" y="38" width="450" height="235" rx="12"/><text class="scene-note linux-label" x="137" y="67">Linux / bubblewrap</text><text class="scene-note macos-label" x="137" y="67">macOS / proceso de usuario</text><g class="module-node " data-phase="1" transform="translate(226 112)"><rect width="230" height="72" rx="8"/><text x="16" y="30">Execute</text><text class="node-detail" x="16" y="53">agente nativo</text></g><text class="scene-note" x="139" y="245">worktree: rw</text><text class="scene-note linux-label" x="375" y="245">raíz: ro</text><path class="module-wire " data-phase="2" d="M456 148H645"/><text class="scene-note" x="575" y="119">Red</text><text class="node-detail" x="520" y="188">auto / ask / deny</text></svg><dl class="scene-legend"><dt>Entorno</dt><dd><span class="linux-legend">Linux con bubblewrap disponible</span><span class="macos-legend">macOS: proceso de usuario</span></dd><dt>Archivos</dt><dd><span class="linux-legend">Raíz de solo lectura; worktree escribible</span><span class="macos-legend">Permisos del usuario local</span></dd><dt>Red</dt><dd>Política de Execute: auto, ask o deny</dd></dl>
+<ol class="module-steps"><li value="1" data-step-label="0">Entorno del host</li><li value="2" data-step-label="1">Proceso nativo</li><li value="3" data-step-label="2">Permisos de archivos</li><li value="4" data-step-label="3">Política de red de Execute</li></ol>
+<div class="scenario-controls" aria-label="Sistema del sandbox" hidden><button class="quiet-button" type="button" data-platform="linux" aria-pressed="true">Linux</button><button class="quiet-button" type="button" data-platform="macos" aria-pressed="false">macOS</button></div><p class="module-note">required falla si no puede aislar. La política de red mostrada corresponde a Execute.</p>
+<div class="module-cli"><code>fab exec &quot;tarea&quot; --sandbox required --sandbox-network ask</code>
+</div></article>
+<article class="module-panel" id="module-workers" data-module="workers" data-step="3" data-playing="false" data-result="pass"><div class="module-intro"><h3>Elige quién hace el trabajo.</h3><p>CLIs externos con su acceso o el agente nativo con tus proveedores configurados.</p><p class="module-availability">Disponible hoy</p></div><svg class="module-scene" viewBox="0 0 680 310" role="img" aria-labelledby="scene-workers-title"><title id="scene-workers-title">Esquema ilustrativo: Workers y modelos</title><path class="module-wire " data-phase="1" d="M340 146V62H190"/><path class="module-wire " data-phase="1" d="M340 62H490"/><path class="module-wire " data-phase="2" d="M340 146H190V234"/><path class="module-wire " data-phase="3" d="M190 254H490"/><g class="module-node " data-phase="1" transform="translate(12 23)"><rect width="178" height="72" rx="8"/><text x="16" y="30">claude / codex</text><text class="node-detail" x="16" y="53">CLI + su acceso</text></g><g class="module-node " data-phase="2" transform="translate(490 23)"><rect width="178" height="72" rx="8"/><text x="16" y="30">agy / droid</text><text class="node-detail" x="16" y="53">CLI + su acceso</text></g><g class="module-node " data-phase="0" transform="translate(235 110)"><rect width="210" height="72" rx="8"/><text x="16" y="30">Pool de fab</text><text class="node-detail" x="16" y="53">actividades</text></g><g class="module-node " data-phase="3" transform="translate(12 218)"><rect width="178" height="72" rx="8"/><text x="16" y="30">native</text><text class="node-detail" x="16" y="53">customModels</text></g><g class="module-node " data-phase="3" transform="translate(490 218)"><rect width="178" height="72" rx="8"/><text x="16" y="30">Proveedores</text><text class="node-detail" x="16" y="53">tu configuración</text></g><text class="scene-note" x="230" y="281">Tu login o tus claves</text></svg>
+<ol class="module-steps"><li value="1" data-step-label="0">Cola de actividades</li><li value="2" data-step-label="1">Adaptadores externos</li><li value="3" data-step-label="2">Agente nativo</li><li value="4" data-step-label="3">Tu login o tus claves</li></ol>
+<div class="module-cli"><code>fab run mi-proyecto --agent native --once</code>
+</div></article>
+</div></div><div class="module-playback" hidden><button class="quiet-button" type="button" data-module-play>Repetir pasos</button><button class="quiet-button" type="button" data-module-next>Paso siguiente</button><button class="quiet-button" type="button" data-module-end>Estado final</button><p class="module-state" role="status" aria-live="polite">Esquema ilustrativo. Estado final.</p></div><noscript><p>Los ocho módulos y sus pasos están disponibles sin JavaScript.</p></noscript></div></section>
+    <section class="architecture-section" id="arquitectura" aria-labelledby="architecture-title">
       <div class="container">
-        <h2 id="flow-title">De Jira a fab merge.</h2>
+        <h2 id="architecture-title">Una fábrica en tu máquina.</h2><p class="architecture-copy">CLI y TUI, SQLite local, pool de workers y worktrees por change.</p><details class="architecture-detail"><summary>Explorar flujo y arquitectura con Archify</summary>
         <div class="diagram-links"><a class="diagram-link" href="./diagrams/sdlc-workflow.html">Explorar el flujo interactivo</a><a href="./diagrams/architecture.html">Ver la arquitectura</a></div>
         <iframe tabindex="0" class="workflow-embed" src="./diagrams/sdlc-workflow.html" title="Flujo SDLC interactivo de fab, generado con Archify" loading="lazy" data-diagram></iframe>
-        <p class="diagram-caption">Importación, aprobaciones humanas, workers y puerta de merge. El override explícito <code>--force</code> existe.</p>
+        </details><p class="diagram-caption">Importación, aprobaciones humanas, workers y puerta de merge. El override explícito <code>--force</code> existe.</p>
       </div>
     </section>
-    <section class="capabilities-section" aria-labelledby="capabilities-title">
-      <div class="container">
-        <h2 id="capabilities-title">Implementa y valida con fab.</h2>
-        <ol class="capabilities">
-          <li><span class="case-number" aria-hidden="true">01</span><h3>Triage automático</h3><p class="availability">Próximamente</p><p>Clasificación de señales y detección de duplicados.</p></li>
-          <li><span class="case-number" aria-hidden="true">02</span><h3>Ticket a código</h3><p class="availability">Disponible hoy</p><p>Implementación de cambios en worktrees independientes.</p></li>
-          <li><span class="case-number" aria-hidden="true">03</span><h3>Revisión de código</h3><p class="availability">Disponible hoy</p><p>Un validador examina el diff antes del merge.</p></li>
-          <li><span class="case-number" aria-hidden="true">04</span><h3>QA y seguridad</h3><p class="availability">Disponible hoy</p><p>Validadores de calidad y auditoría de seguridad.</p></li>
-          <li><span class="case-number" aria-hidden="true">05</span><h3>Monitor</h3><p class="availability">Próximamente</p><p>Seguimiento de actividad e incidentes.</p></li>
-          <li><span class="case-number" aria-hidden="true">06</span><h3>AutoWiki</h3><p class="availability">Próximamente</p><p>Documentación del repositorio sincronizada.</p></li>
-        </ol>
-      </div>
-    </section>
+    <section class="sandbox-summary" id="sandbox" aria-labelledby="sandbox-title"><div class="container sandbox-summary-grid"><h2 id="sandbox-title">El aislamiento tiene límites.</h2><div><p>Linux usa bubblewrap cuando está disponible. <code>--sandbox required</code> exige ese aislamiento.</p><p>macOS ejecuta con permisos del usuario; los CLIs externos tienen sus propias políticas.</p><a href="#module-sandbox" data-open-module="sandbox">Explorar el sandbox</a></div></div></section>
     <section class="models-section" id="modelos" aria-labelledby="models-title">
       <div class="container">
         <h2 id="models-title">Elige cómo conectar tu IA.</h2>
         <div class="models-grid">
           <div><h3>Workers externos</h3><p>Claude Code (<code>claude</code>), Codex (<code>codex</code>), Antigravity (<code>agy</code>) y Droid (<code>droid</code>).</p><p>Cada CLI usa su propio login o su API key por entorno.</p></div>
-          <div><h3>Agente nativo</h3><p><code>anthropic</code>, <code>openai</code>, <code>chatgpt</code> (login de Codex) y <code>generic-chat-completion-api</code>.</p><p><code>customModels</code>: <code>baseUrl</code> y <code>apiKey</code>.</p></div>
+          <div><h3>Agente nativo</h3><p><code>anthropic</code>, <code>openai</code>, <code>chatgpt</code> (sesión de Codex) y <code>generic-chat-completion-api</code>.</p><p><code>customModels</code>: <code>baseUrl</code> y <code>apiKey</code>.</p></div>
         </div>
-        <p class="endpoint-note">OpenRouter y Gemini: compatibles vía endpoint OpenAI, integración no verificada. También puedes conectar endpoints locales de Ollama o vLLM.</p>
+        <p class="endpoint-note">OpenRouter y Gemini: compatibles vía endpoint OpenAI, integración no verificada. También puedes conectar Ollama, vLLM o un proxy OpenAI-compatible como OmniRoute.</p>
       </div>
     </section>
     <section class="plans-section" id="planes" aria-labelledby="plans-title">
@@ -123,14 +157,14 @@
           <article><h3>fab CLI</h3><p class="plan-value">Gratis</p><p>Instálalo hoy. Tú aportas modelos y cómputo.</p></article>
           <article><h3>Servicio gestionado</h3><p class="plan-value">Próximamente</p><p>Equipo: runners cloud/híbridos y panel web. Empresa: despliegue privado y SSO.</p></article>
         </div>
-        <p class="business-note">Sin tarifas vigentes. Daemon y automatizaciones: en desarrollo.</p>
+        <p class="business-note">Sin tarifas vigentes ni captación. Daemon, automatizaciones, triage con IA, AutoWiki y Monitor: próximamente.</p>
       </div>
     </section>
   </main>
   <footer class="site-footer">
     <div class="container footer-grid">
       <a class="brand-home" href="#inicio" aria-label="fab, volver al inicio"><img class="brand-logo brand-logo-light" src="./assets/brand/fab-logo-light.svg" width="251" height="120" alt=""><img class="brand-logo brand-logo-dark" src="./assets/brand/fab-logo-dark.svg" width="251" height="120" alt=""></a>
-      <nav aria-label="Recursos"><a href="https://github.com/DarkCodePE/sw-factory">Repositorio</a><a href="https://www.npmjs.com/package/@okuanb/fab">npm</a><a href="https://github.com/DarkCodePE/sw-factory#readme">Documentación</a><a href="https://github.com/DarkCodePE/sw-factory/blob/main/packaging/npm/README.md">Instalación</a></nav>
+      <nav aria-label="Recursos"><a href="#flujo">El flujo</a><a href="#planes">Planes</a><a href="https://github.com/DarkCodePE/sw-factory">Repositorio</a><a href="https://www.npmjs.com/package/@okuanb/fab">npm</a><a href="https://github.com/DarkCodePE/sw-factory#readme">Documentación</a><a href="https://github.com/DarkCodePE/sw-factory/blob/main/packaging/npm/README.md">Instalación</a></nav>
       <p>Linux glibc y macOS, x64/arm64. npm requiere Node ≥22; el binario independiente no requiere Bun ni Node.</p>
     </div>
   </footer>

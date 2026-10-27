@@ -1,0 +1,28 @@
+render tier: 10 screenshots in /home/orlando/Desktop/factory/sw-factory-codex/site/.hallmark/shots (1280x800, 1440x900, 1920x1080 folds; 1440 and 375 full pages)
+site/styles.css
+  WARN 25 :97 measure 28ch on .capabilities li > p:last-child (45-75ch range) | fix: Set prose measure between 45 and 75ch; a one-sentence lede or caption from 28ch
+  WARN 25 :123 measure 40ch on .capabilities li > p:last-child (45-75ch range)
+  NOTE waive :1 4 reflex gates waived (59, 79, 44c, 1): that is a house style, not a se… | fix: Lock it into a design.md so later pages inherit it instead of re-arguing it
+http://127.0.0.1:8772/sw-factory/
+  WARN 58 :1 [1440px] 90 words on one screen (from y=2550) | fix: Close to the 80-word screen budget
+  WARN F20 :1 [1440px] div.module-playback leaves one item alone on its last row (3 + 1) | fix: Change the count or the columns so the last row is not an orphan
+  WAIVED 44c :1 [1440px] hero ends at 408px of a 900px screen
+  WAIVED 59 :1 [1440px] smallest gap between sections is 65px (gaps: 65, 121, 160, 162, 160, 144)
+  WAIVED 79 :1 [1440px] 492px of nothing between the hero's last content (y 408) and the fold
+site/index.html
+  WARN 58 :1 935 visible words on the page (450 at most) | fix: Cut copy: one idea per screen, sections become objects
+  WARN 58 :1 [1440px] 90 words on one screen (from y=2550)
+  WARN F20 :1 [1440px] div.module-playback leaves one item alone on its last row (3 + 1)
+  WAIVED 44c :1 [1440px] hero ends at 408px of a 900px screen
+  WAIVED 59 :1 [1440px] smallest gap between sections is 65px (gaps: 65, 121, 160, 162, 160, 144)
+  WAIVED 79 :1 [1440px] 492px of nothing between the hero's last content (y 408) and the fold
+.hallmark/before.json
+  WARN kept :1 headings gone or reworded since the before record: agentes locales. un flujo común., tu repositorio. tu máquina., de jira a fab merge., implementa y valida con fab., triage automático, ticket a código, revisión de código, qa y seguridad and 2 more | fix: Restore it, or record it in the stamp: /* Hallmark · reworded "<old>" to "<new>" · <the gate that named it> */ or dropped <item> · <the reason>
+  WARN kept :1 ids gone or reworded since the before record: capabilities-title, local-title
+site/base.css
+  WAIVED 1 :8 display font "system-ui" (h1, h2, h3)
+site/tokens.css
+  WAIVED 1 :21 display font "system-ui" (--font-display)
+sloplint: 0 FAIL, 9 WARN, 8 WAIVED, 1 NOTE across 1 file(s) and 1 URL(s).
+kept: links 15/15, script hooks 14/14, headings 6/16; before 0 FAIL, 0 REFLEX, now 0 FAIL, 0 REFLEX
+compare: site/.hallmark/compare.html, .hallmark/compare.html shows before and after side by side

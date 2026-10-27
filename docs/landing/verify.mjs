@@ -42,9 +42,7 @@ try {
         return document.documentElement.scrollWidth <= w && [...document.querySelectorAll('body *')].filter(e => e.getClientRects().length).every(e => { const r = e.getBoundingClientRect(); return e.classList.contains('skip-link') || (r.left >= -1 && r.right <= innerWidth + 1); });
       }));
       if(mode === 'dark' && [375,1280,1440,1920].includes(width)) {
-        const embedded = await (await p.$('[data-diagram]')).contentFrame();
-        await embedded.waitForFunction(() => document.readyState === 'complete');
-        await embedded.evaluate(() => document.fonts.ready);
+        await p.evaluate(() => document.fonts.ready);
         if(width === 375 || width === 1440) await p.screenshot({path:`site/.hallmark/shots/index-${width === 1440 ? '1440-full' : '375'}.png`, fullPage:true});
         if(width !== 375) await p.screenshot({path:`site/.hallmark/shots/index-${width}x${width===1280?800:width===1920?1080:900}.png`});
       }
@@ -82,7 +80,7 @@ try {
       const bs = getComputedStyle(button);
       const controlEdge = ratio(rgb(getComputedStyle(document.querySelector('.quiet-button')).borderTopColor),background(document.querySelector('.quiet-button')));
       const focus = ratio(rgb(getComputedStyle(document.documentElement).getPropertyValue('--color-focus')),background(button.parentElement));
-      const connector = ratio(rgb(getComputedStyle(document.documentElement).getPropertyValue('--color-connector')),rgb(getComputedStyle(document.querySelector('.flow-section')).backgroundColor));
+      const connector = ratio(rgb(getComputedStyle(document.documentElement).getPropertyValue('--color-connector')),rgb(getComputedStyle(document.querySelector('.modules-section')).backgroundColor));
       return { count, min, failures, controlEdge, focus, connector, buttonText: ratio(rgb(bs.color),rgb(bs.backgroundColor)) };
     });
     check(`${mode}: WCAG AA text contrast`, contrast[mode].failures.length === 0);
@@ -119,7 +117,7 @@ try {
   await p.setViewport({ width: 1280, height: 800 });
   await p.goto(url);
   check('Internal anchor destinations exist', await p.evaluate(() => [...document.querySelectorAll('a[href^="#"]')].every(a => document.getElementById(a.hash.slice(1)))));
-  check('Six capabilities and exactly three future capabilities', await p.evaluate(() => document.querySelectorAll('.capabilities li').length === 6 && [...document.querySelectorAll('.capabilities .availability')].filter(e => e.textContent === 'Próximamente').length === 3));
+  check('Eight modules with private panels and explicit future roadmap', await p.evaluate(() => document.querySelectorAll('[data-module]').length === 8 && document.querySelectorAll('.module-tab').length === 8 && document.querySelector('.business-note').textContent.includes('próximamente')));
   await p.focus('#tab-npm'); await p.keyboard.press('ArrowRight');
   check('Keyboard tabs select installer', await p.$eval('#install-script', e => !e.hidden));
   await p.keyboard.press('Home');
@@ -161,6 +159,7 @@ try {
   check('Theme works with storage denied', await noStorage.$eval('html', e => ['dark','light'].includes(e.dataset.mode)));
   const noJS = await page(); await noJS.setJavaScriptEnabled(false); await noJS.setViewport({width:375,height:812}); await noJS.goto(url);
   check('Both install commands readable without JS', await noJS.evaluate(() => [...document.querySelectorAll('.command-panel')].every(e => e.getBoundingClientRect().height > 0) && [...document.querySelectorAll('[data-copy]')].every(e => e.disabled)));
+  check('All eight module explanations readable without JS', await noJS.evaluate(() => [...document.querySelectorAll('[data-module]')].every(e => e.getBoundingClientRect().height > 0)));
   if(errors.length) console.error(JSON.stringify(errors));
   const touch = await page();
   await touch.setViewport({width:390,height:844,isMobile:true,hasTouch:true});

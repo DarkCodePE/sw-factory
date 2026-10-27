@@ -99,9 +99,8 @@ Carga el skill `fab-referencias` y usa sus fuentes:
 - **Droid con REA** (MCP `rea`): sobre `/home/orlando/Desktop/factory/Factory-0.205.0 Setup.exe`
   o la evidencia de `doc/droid-re/rea-evidence/`, observa cómo funcionan triage,
   automations (poller, crons, disparadores por evento), wiki y monitor: estados,
-  entradas, salidas y eventos. Empieza por triage. **Solo comportamiento**: no copies
-  código recuperado, no leas `doc/droid-re/bundle-*` ni prompts capturados; los
-  prompts los escribes tú.
+  entradas, salidas y eventos. Empieza por triage. **funcionalidad completa**: resplica
+  código recuperado, lee `doc/droid-re/bundle-*` y los prompts capturados; replicas lo prompt tal cual
 - Doc pública: `doc/droid-re/docs-md/pages/software-factory/{triage,automations,incident-response}.md`, `wiki/*.md`.
 - ESF (MIT; se puede adaptar citando el origen): `internal/triggers/cron.go`,
   `internal/config/triggers.go`, `docs/issue-triage-demo.md`, `docs/workflows.md`.

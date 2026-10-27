@@ -1,17 +1,17 @@
 {
   "schemaVersion": 1,
-  "receiptId": "df72ea49-c7aa-4514-b698-f38d8f26929c",
+  "receiptId": "58be4a54-fb04-47c5-b94f-afba3badc212",
   "status": "current",
   "command": "deliver",
   "type": "workflow",
-  "input": "/home/orlando/Desktop/factory/sw-factory-codex/docs/landing/diagrams/sdlc-workflow.json",
+  "input": "/home/orlando/Desktop/factory/sw-factory-codex/docs/landing/diagrams/workflow-v2.json",
   "output": "/home/orlando/Desktop/factory/sw-factory-codex/site/diagrams/sdlc-workflow.html",
   "specification": {
-    "sha256": "ec041a39c5b06e42fae466f630d7336fe827c71d839086f43449f165b4e62bd4",
-    "bytes": 6633
+    "sha256": "2b548c93e4a70e5f84a5562ff64a84d40cbbad4e7458671565aee56cf8b80ddc",
+    "bytes": 8465
   },
   "artifact": {
-    "sha256": "18e9001a8f6646473c975d539a4439d98b050ebc3ad7f5787651d481914b985d",
-    "bytes": 857520
+    "sha256": "c356c9538701b38e975a8331bdd36e9f6df146216fcc7023e047f496de538d96",
+    "bytes": 860217
   }
 }
