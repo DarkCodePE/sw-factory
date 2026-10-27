@@ -9,6 +9,7 @@
 /* Hallmark · answered F1-F26 · one container and primary style; no image slots, reveals or forms; themed browser surfaces, semantic headings, responsive diagrams. */
 @import url("./tokens.css");
 @import url("./base.css");
+@import url("./modules.css");
 
 .site-header { display: flex; align-items: center; gap: var(--space-xl); min-height: var(--nav-height); }
 .brand-home { display: inline-flex; align-items: center; flex-shrink: 0; min-height: var(--control-height); }
@@ -185,3 +186,19 @@ code { font-family: var(--font-outlier); overflow-wrap: anywhere; }
 @media (min-width: 64.01rem) { .hero-grid { min-height: calc(100svh - var(--nav-height) - 2 * var(--hero-padding)); } }
 .copy-status { font-variant-numeric: tabular-nums; }
 .workflow-embed.is-focused { outline: 2px solid var(--color-focus); outline-offset: var(--space-2xs); }
+
+.demo-short-output { display: none; font: inherit; white-space: pre-wrap; overflow-wrap: anywhere; margin: 0; color: var(--color-demo-pass); }
+.is-summary [data-frame="9"] .demo-output { display: none; }
+.is-summary [data-frame="9"] .demo-short-output { display: block; }
+@media (max-width: 48rem) {
+  .hero h1 { font-size: clamp(2rem, 9vw, 2.75rem); }
+  .hero .hero-copy .lead { font-size: var(--text-md); }
+  .hero .hero-intro { gap: var(--space-md); }
+  .hero .install-command { font-size: var(--text-sm); }
+  .hero .install-well { padding-block: var(--space-xs); }
+  .hero .install-tabs { margin-bottom: var(--space-xs); }
+  .hero .command-panel { grid-template-columns: minmax(0, 1fr) auto; align-items: center; gap: var(--space-sm); }
+  .hero .copy-button { min-width: auto; padding-inline: var(--space-sm); }
+  .hero .copy-button svg { display: none; }
+  .hero .install-caption { font-size: var(--text-xs); margin-top: var(--space-xs); }
+}

@@ -34,7 +34,7 @@ pantalla. Con movimiento reducido muestra el resultado final sin animar;
 [`demo-session.txt`](demo-session.txt) conserva la transcripción abreviada.
 El flujo y la arquitectura interactivos están en `diagrams/`, generados con Archify.
 
-Publicación: `.github/workflows/pages.yml` prepara solo los 14 archivos públicos
+Publicación: `.github/workflows/pages.yml` prepara solo los 16 archivos públicos
 necesarios, sube el artefacto y despliega mediante las acciones oficiales fijadas
 por SHA. Se ejecuta al modificar `site/**` en `main` o al lanzarlo manualmente sobre
 `main`; usa el entorno `github-pages`. Excluye capturas, README, cachés y recibos
@@ -60,3 +60,24 @@ python3 docs/landing/serve.py --prefix /sw-factory/ --port 8770
 Abre <http://127.0.0.1:8770/sw-factory/>. `--directory` permite servir el artefacto
 preparado en vez del árbol de trabajo. CSS, scripts, SVG, favicon, transcripción y
 diagramas usan rutas relativas y sirven tanto bajo este prefijo como en `/`.
+
+
+## Landing v2
+
+El explorador explica ocho módulos con SVG/CSS y pasos controlados por el usuario.
+Flechas, Home y End cambian el módulo; los controles inferiores repiten, avanzan o
+muestran el estado final. No ejecuta comandos. Sin JavaScript se leen los ocho
+módulos completos; con movimiento reducido se muestra el estado final y se
+deshabilita la reproducción espacial. Los escenarios de merge y Linux/macOS
+siguen disponibles sin animación. La terminal conserva su captura real de fixtures.
+
+`modules.js` y `modules.css` están en el inventario público de Pages. Ambos
+controladores juntos pesan menos de 10 KB; no se añade ninguna dependencia de
+runtime. El fuente legible de `app.js` está en `docs/landing/app.source.js` y se
+reconstruye con `bun build docs/landing/app.source.js --target browser --minify --outfile site/app.js`.
+
+La mascota no está dibujada: `data-mascot-state="reserved"` reserva un hueco y
+`#fab-mascot-template` contiene un picture inerte sin imagen ni URL. Cuando el
+usuario elija concepto y aporte el recurso, se podrá insertar la imagen aprobada
+en esa plantilla y clonarla dentro del hueco. Ajustar alt/aria-hidden según su
+función; no cargar recursos vacíos ni escoger un concepto automáticamente.

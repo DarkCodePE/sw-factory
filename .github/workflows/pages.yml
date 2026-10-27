@@ -49,7 +49,7 @@ jobs:
           # A fresh directory and explicit inventory prevent stale or work files.
           target.mkdir(parents=True, exist_ok=False)
           public = [
-              'index.html', 'app.js', 'styles.css', 'tokens.css', 'base.css',
+              'index.html', 'app.js', 'modules.js', 'styles.css', 'modules.css', 'tokens.css', 'base.css',
               'demo-session.txt', 'diagrams/sdlc-workflow.html',
               'diagrams/architecture.html',
               'assets/brand/fab-logo-light.svg', 'assets/brand/fab-logo-dark.svg',

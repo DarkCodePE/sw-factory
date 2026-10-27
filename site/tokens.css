@@ -114,3 +114,9 @@
 @media (prefers-color-scheme: dark) { :root:not([data-mode]) { --color-demo-pass: #14B8A6; } }
 
 :root { --terminal-height: 400px; --text-terminal: 1rem; }
+
+:root {
+  --motion-instant: 120ms; --motion-step: 240ms; --motion-flow: 420ms; --motion-cycle: 700ms;
+  --ease-mechanical: cubic-bezier(.16, 1, .3, 1); --ease-pulse: cubic-bezier(.4, 0, .2, 1);
+  --wire-dash: 4 6; --text-diagram: 20px; --text-diagram-small: 16px; --mascot-size: 72px;
+}
