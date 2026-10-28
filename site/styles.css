@@ -235,3 +235,22 @@ code { font-family: var(--font-outlier); overflow-wrap: anywhere; }
   .hero .copy-button svg { display: none; }
   .hero .install-caption { font-size: var(--text-xs); margin-top: var(--space-xs); }
 }
+
+/* Section figure layouts (Contrato D) */
+.hero-relation { margin-top: var(--space-2xl); position: relative; z-index: var(--z-base); }
+.hero-relation-intro { max-width: 65ch; margin-bottom: var(--space-md); }
+.hero-relation-title { font-size: var(--text-title); letter-spacing: 0; }
+.hero-relation-lead { color: var(--color-ink-2); font-size: var(--text-sm); margin-top: var(--space-2xs); }
+.hero-relation svg,
+.models-overview-figure svg,
+.plans-overview-figure svg,
+.sandbox-summary-figure svg {
+  max-width: min(100%, 820px);
+  overflow: hidden;
+}
+.models-overview-figure, .plans-overview-figure { margin-top: var(--space-xl); margin-bottom: var(--space-lg); }
+.sandbox-summary-figure { min-width: 0; }
+.section-flow-wire { fill: none; stroke: var(--color-connector); stroke-width: 2; stroke-dasharray: var(--wire-dash); animation: wire-data 10s linear infinite; }
+@media (prefers-reduced-motion: reduce) {
+  .section-flow-wire { animation: none !important; stroke-dasharray: none; }
+}
