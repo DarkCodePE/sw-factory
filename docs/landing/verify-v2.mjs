@@ -67,7 +67,14 @@ try {
   await page.click('[data-module-end]'); check('Final state stops playback', await page.$eval('#module-jira', p => p.dataset.step === '3' && p.dataset.playing === 'false'));
   await page.click('[data-module-play]'); await page.evaluate(() => scrollTo(0, 0)); await new Promise(resolve => setTimeout(resolve, 100));
   check('Offscreen module animation is suspended', await page.$eval('#module-jira', p => p.dataset.playing === 'false'));
-  check('Mascot slot is reserved with no image or chosen concept', await page.evaluate(() => document.querySelector('[data-mascot-state="reserved"]') && document.querySelector('[data-mascot-state] img') === null && document.querySelector('#fab-mascot-template')));
+  check('Mascot slot is mounted, decorative and visible in both themes', await page.evaluate(() => {
+    const slot = document.querySelector('.mascot-slot[data-mascot-state="mounted"][aria-hidden="true"]');
+    if (!slot) return false;
+    const mascot = slot.querySelector('svg, img');
+    if (!mascot) return false;
+    const cs = getComputedStyle(slot);
+    return cs.display !== 'none' && slot.getBoundingClientRect().width > 0;
+  }));
   await page.click('.architecture-detail summary');
   const frame = await (await page.$('[data-diagram]')).contentFrame(); await frame.waitForFunction(() => document.readyState === 'complete');
   check('Archify interactive workflow loads under Pages prefix', frame.url().includes('/sw-factory/diagrams/sdlc-workflow.html'));

@@ -8,7 +8,9 @@
   <link rel="icon" type="image/svg+xml" href="./assets/brand/favicon.svg">
   <title>fab | La fábrica de software en tu terminal</title>
   <script>try{const m=localStorage.getItem('fab-theme');if(m==='light'||m==='dark')document.documentElement.dataset.mode=m;}catch{}</script>
+  <link rel="stylesheet" href="./tokens.css">
   <link rel="stylesheet" href="./styles.css">
+  <link rel="stylesheet" href="./modules.css">
   <script src="./app.js" defer></script>
   <script src="./modules.js" defer></script>
 </head>
@@ -17,7 +19,7 @@
   <header class="site-header container">
     <a class="brand-home" href="#inicio" aria-label="fab, inicio"><img class="brand-logo brand-logo-light" src="./assets/brand/fab-logo-light.svg" width="251" height="120" alt=""><img class="brand-logo brand-logo-dark" src="./assets/brand/fab-logo-dark.svg" width="251" height="120" alt=""></a>
     <nav aria-label="Principal">
-      <a href="#fabrica">Fábrica</a><a href="#agente">Agente</a><a href="#modelos">Modelos</a><a href="https://github.com/DarkCodePE/sw-factory">GitHub</a><a href="#instalar">Instalar</a>
+      <a href="#fabrica">Fábrica</a><a href="#agente">Agente</a><a href="#flujo">Capacidades</a><a href="#base-local">Base local</a><a href="#proximamente">Próximamente</a><a href="https://github.com/DarkCodePE/sw-factory">GitHub</a><a href="#instalar">Instalar</a>
     </nav>
     <button class="theme-button quiet-button" type="button" hidden aria-label="Cambiar al tema claro">
       <svg viewBox="0 0 24 24" width="20" height="20" aria-hidden="true"><circle cx="12" cy="12" r="4"/><path d="M12 2v2m0 16v2M2 12h2m16 0h2M5 5l1.5 1.5m11 11L19 19M5 19l1.5-1.5m11-11L19 5"/></svg>
@@ -29,8 +31,9 @@
       <div class="container hero-grid">
         <div class="hero-intro">
         <div class="hero-copy">
-          <h1 id="hero-title">La fábrica de software<br>en tu terminal.</h1>
-          <p class="lead">Organiza el trabajo, ejecuta agentes de código y decide qué cambios integrar.</p>
+          <p class="section-tag">Fábrica de software</p>
+          <h1 id="hero-title">Del trabajo pendiente<br>al cambio revisado.</h1>
+          <p class="lead">La fábrica de software en tu terminal. Organiza el trabajo por objetivo y repositorio, asigna actividades a workers e integra con una puerta de merge explícita.</p>
         </div>
         <div class="install-well" id="instalar" aria-label="Instalar fab">
           <div class="install-tabs" role="tablist" aria-label="Método de instalación" hidden>
@@ -55,7 +58,7 @@
           <noscript><p class="no-script">Selecciona un comando para copiarlo.</p></noscript>
           <p class="install-caption">Preliminar <code>@next</code>.</p>
         </div>
-        <div class="mascot-slot" data-mascot-state="reserved" aria-hidden="true"><template id="fab-mascot-template"><picture data-mascot-asset></picture></template></div>
+        <div class="mascot-slot" data-mascot-state="mounted" aria-hidden="true"><svg class="fab-mascot" viewBox="0 0 72 72" width="72" height="72" role="presentation" aria-hidden="true"><path d="M52 46 C64 44 70 54 68 62 C66 68 56 70 48 66 Z" fill="var(--color-paper-3)" stroke="var(--color-control-edge)" stroke-width="1.5"/><path d="M54 50 L64 58 M58 48 L66 54 M50 56 L60 64" stroke="var(--color-rule-2)" stroke-width="1" stroke-linecap="round"/><ellipse cx="36" cy="46" rx="20" ry="18" fill="var(--color-paper-2)" stroke="var(--color-control-edge)" stroke-width="2"/><ellipse cx="36" cy="49" rx="12" ry="11" fill="var(--color-paper-3)"/><circle cx="23" cy="20" r="6" fill="var(--color-paper-3)" stroke="var(--color-control-edge)" stroke-width="1.5"/><circle cx="23" cy="20" r="3" fill="var(--color-rule-2)"/><circle cx="49" cy="20" r="6" fill="var(--color-paper-3)" stroke="var(--color-control-edge)" stroke-width="1.5"/><circle cx="49" cy="20" r="3" fill="var(--color-rule-2)"/><circle cx="36" cy="27" r="17" fill="var(--color-paper-2)" stroke="var(--color-control-edge)" stroke-width="2"/><rect x="22" y="21" width="28" height="9" rx="4.5" fill="var(--color-accent)" stroke="var(--color-accent-key)" stroke-width="1.5"/><path d="M26 24 H34" stroke="var(--color-accent-ink)" stroke-width="1.5" stroke-linecap="round" opacity="0.8"/><circle cx="44" cy="25.5" r="1.5" fill="var(--color-accent-ink)" opacity="0.9"/><ellipse cx="36" cy="33" rx="7" ry="4.5" fill="var(--color-paper-3)" stroke="var(--color-control-edge)" stroke-width="1.2"/><ellipse cx="36" cy="31.5" rx="3" ry="1.8" fill="var(--color-ink)"/><rect x="33" y="36" width="3" height="4.5" rx="0.5" fill="var(--color-paper)" stroke="var(--color-control-edge)" stroke-width="1"/><rect x="36" y="36" width="3" height="4.5" rx="0.5" fill="var(--color-paper)" stroke="var(--color-control-edge)" stroke-width="1"/><rect x="29" y="48" width="14" height="8" rx="2" fill="var(--color-accent-key)" stroke="var(--color-accent)" stroke-width="1.2"/><path d="M33 52 H39" stroke="var(--color-accent-ink)" stroke-width="1" stroke-linecap="round"/><circle cx="26" cy="50" r="3" fill="var(--color-paper-2)" stroke="var(--color-control-edge)" stroke-width="1.2"/><circle cx="46" cy="50" r="3" fill="var(--color-paper-2)" stroke="var(--color-control-edge)" stroke-width="1.2"/></svg></div>
         </div>
         <div class="product-demo" id="demo" aria-labelledby="demo-title">
           <div class="demo-toolbar"><p class="demo-title" id="demo-title">Sesión de fab</p><div class="demo-controls"><button class="quiet-button" type="button" data-demo-play hidden>Reproducir</button><button class="quiet-button" type="button" data-demo-end hidden>Resultado</button></div></div>
@@ -114,9 +117,42 @@
       </div>
       <img class="hero-motif" src="./assets/brand/fab-mark.svg" width="120" height="120" alt="" aria-hidden="true">
     </section>
+
+    <section class="products-section" id="productos" aria-labelledby="products-title">
+      <div class="container">
+        <div class="section-intro">
+          <p class="section-tag">Productos</p>
+          <h2 id="products-title">Coordina un flujo. O trabaja con el agente.</h2>
+          <p class="lead">Dos experiencias bajo el mismo CLI fab: una fábrica para coordinar objetivos y revisiones, y un agente para operar directamente sobre el código.</p>
+        </div>
+        <div class="products-grid">
+          <article class="product-card">
+            <div class="product-card-header">
+              <span class="product-card-command">fab tui &lt;slug&gt;</span>
+              <h3>Fábrica de software</h3>
+            </div>
+            <p>Organiza señales, propuestas de cambio y revisiones humanas. Asigna actividades al pool de workers y custodia la integración con una puerta de merge.</p>
+            <a class="quiet-button" href="#fabrica">Ver la fábrica</a>
+          </article>
+          <article class="product-card">
+            <div class="product-card-header">
+              <span class="product-card-command">fab / fab exec</span>
+              <h3>Agente de código</h3>
+            </div>
+            <p>Conversa interactivamente sobre tu carpeta o ejecuta una tarea directa sin interfaz desde tu terminal, con acceso a tus herramientas locales y modelos configurados.</p>
+            <a class="quiet-button" href="#agente">Ver el agente</a>
+          </article>
+        </div>
+      </div>
+    </section>
+
     <section class="factory-section" id="fabrica" aria-labelledby="factory-title">
       <div class="container">
-        <div class="section-intro"><h2 id="factory-title">La fábrica coordina el trabajo.</h2><p class="lead">Un flujo con estado, revisiones humanas y cambios en Git.</p></div>
+        <div class="section-intro">
+          <p class="section-tag">Fábrica de software</p>
+          <h2 id="factory-title">La fábrica coordina el trabajo.</h2>
+          <p class="lead">Un flujo con estado, revisiones humanas y cambios en Git.</p>
+        </div>
         <p class="factory-location">La operas por CLI o TUI en tu máquina. El estado vive en <code>~/.fabrica/fabrica.db</code>; el código, en tu repositorio y sus worktrees. Este sitio explica el producto; la operación ocurre en tu terminal.</p>
         <ol class="factory-flow" aria-label="Del objetivo a las actividades">
           <li><h3>Workstream</h3><p>Define un objetivo, un repositorio, el agente y las aprobaciones requeridas.</p></li>
@@ -124,9 +160,68 @@
           <li><h3>Change</h3><p>Promueve la señal a una propuesta de cambio. Espera tu aprobación por defecto antes de investigar; se desactiva con <code>--no-change-approval</code>.</p></li>
           <li><h3>Activity</h3><p>El pool asigna investigación e implementación a workers. La revisión de la especificación viene activa por defecto; se desactiva con <code>--no-spec-approval</code>.</p></li>
         </ol>
-        <div class="merge-rule"><h3>La integración tiene su puerta.</h3><div><p>Cada change usa una rama y un worktree. Si solicitas validadores, los pendientes o en FAIL bloquean <code>fab merge</code>. El override explícito <code>--force</code> permite omitir ese bloqueo.</p><p>El merge integra en la rama actual del repositorio y retira el worktree del change.</p><a href="#module-merge" data-open-module="merge">Explorar la puerta de merge</a></div></div>
+        <div class="merge-rule">
+          <h3>La integración tiene su puerta.</h3>
+          <div>
+            <p>Cada change usa una rama y un worktree. Si solicitas validadores, los pendientes o en FAIL bloquean <code>fab merge</code>. El override explícito <code>--force</code> permite omitir ese bloqueo.</p>
+            <p>El merge integra en la rama actual del repositorio y retira el worktree del change.</p>
+            <a href="#module-merge" data-open-module="merge">Explorar la puerta de merge</a>
+          </div>
+        </div>
+
+        <div class="capabilities-section">
+          <div class="section-intro">
+            <p class="section-tag">Capacidades</p>
+            <h3>Funciones clave del ciclo de fábrica</h3>
+          </div>
+          <div class="capabilities-grid">
+            <article class="capability-card">
+              <p class="section-tag">Workstreams y señales</p>
+              <h4>Entrada de trabajo</h4>
+              <p class="capability-claim"><span class="claim-num">01</span>Define el objetivo y el repositorio del workstream (<code>src/cli.ts:49</code>).</p>
+              <p class="capability-claim"><span class="claim-num">02</span>Registra una señal o importa un issue de Jira con su contexto (<code>src/cli.ts:53</code>).</p>
+              <p class="capability-claim"><span class="claim-num">03</span>Promueve las señales que decidas convertir en changes (<code>src/cli.ts:55</code>).</p>
+            </article>
+            <article class="capability-card">
+              <p class="section-tag">Aprobaciones</p>
+              <h4>Revisiones humanas</h4>
+              <p class="capability-claim"><span class="claim-num">01</span>Revisión de change y especificación activas por defecto; desactivables con flags (<code>src/store.ts:236</code>).</p>
+              <p class="capability-claim"><span class="claim-num">02</span>Consulta las actividades que esperan decisión en la bandeja (<code>src/cli.ts:56</code>).</p>
+              <p class="capability-claim"><span class="claim-num">03</span>Aprueba, comenta o rechaza la actividad revisable (<code>src/cli.ts:57</code>).</p>
+            </article>
+            <article class="capability-card">
+              <p class="section-tag">Workers y worktrees</p>
+              <h4>Ejecución y ramas Git</h4>
+              <p class="capability-claim"><span class="claim-num">01</span>Selecciona el agente que ejecutará las actividades (<code>src/cli.ts:49</code>).</p>
+              <p class="capability-claim"><span class="claim-num">02</span>Ajusta concurrencia y límite de tareas del workstream (<code>src/cli.ts:50</code>).</p>
+              <p class="capability-claim"><span class="claim-num">03</span>Investigación e implementación trabajan en el worktree del change (<code>src/worktrees.ts:19</code>).</p>
+            </article>
+            <article class="capability-card">
+              <p class="section-tag">Revisión técnica</p>
+              <h4>Validación y PR</h4>
+              <p class="capability-claim"><span class="claim-num">01</span>Solicita revisión de código, seguridad y QA (<code>src/cli.ts:47</code>).</p>
+              <p class="capability-claim"><span class="claim-num">02</span>Consulta y publica sus resultados verificables (<code>src/cli.ts:47</code>).</p>
+              <p class="capability-claim"><span class="claim-num">03</span>Abre y consulta el PR del change, con validación opcional (<code>src/cli.ts:45</code>).</p>
+            </article>
+            <article class="capability-card">
+              <p class="section-tag">Integración</p>
+              <h4>Puerta de merge</h4>
+              <p class="capability-claim"><span class="claim-num">01</span>El change debe haber llegado a estado implementado (<code>src/cli.ts:245</code>).</p>
+              <p class="capability-claim"><span class="claim-num">02</span>Validadores pendientes o en FAIL bloquean el merge (<code>src/validators/publish.ts:29</code>).</p>
+              <p class="capability-claim"><span class="claim-num">03</span><code>--force</code> permite omitir el bloqueo; conserva reglas de Git (<code>src/cli.ts:247</code>).</p>
+            </article>
+            <article class="capability-card">
+              <p class="section-tag">Panel de la fábrica</p>
+              <h4>Seguimiento y recuperación</h4>
+              <p class="capability-claim"><span class="claim-num">01</span>Abre changes, bandeja y eventos con <code>fab tui &lt;slug&gt;</code> (<code>src/cli.ts:59</code>).</p>
+              <p class="capability-claim"><span class="claim-num">02</span>Consulta estado y detalle de los cambios desde CLI (<code>src/cli.ts:60</code>).</p>
+              <p class="capability-claim"><span class="claim-num">03</span>Reencola un fallo o cancela un change y retira su worktree (<code>src/cli.ts:63</code>).</p>
+            </article>
+          </div>
+        </div>
       </div>
     </section>
+
 <section class="modules-section" id="flujo" aria-labelledby="flow-title"><div class="container"><div class="module-heading" id="modulos"><h2 id="flow-title">Del contexto al cambio integrado.</h2><p>Inspecciona las etapas y los ejecutores de la fábrica.</p></div><div class="module-explorer"><div class="module-tabs" role="tablist" aria-label="Módulos de fab" aria-orientation="vertical" hidden>
 <button type="button" class="module-tab" id="module-tab-jira" role="tab" aria-controls="module-jira" aria-selected="true" tabindex="0"><span class="module-ordinal">01</span>Jira a señal</button>
 <button type="button" class="module-tab" id="module-tab-triage" role="tab" aria-controls="module-triage" aria-selected="false" tabindex="-1"><span class="module-ordinal">02</span>Triage</button>
@@ -176,7 +271,8 @@
 <div class="module-cli"><code>fab run mi-proyecto --agent native --once</code>
 </div></article>
 </div></div><div class="module-playback" hidden><button class="quiet-button" type="button" data-module-play>Repetir pasos</button><button class="quiet-button" type="button" data-module-next>Paso siguiente</button><button class="quiet-button" type="button" data-module-end>Estado final</button><p class="module-state" role="status" aria-live="polite">Esquema ilustrativo. Estado final.</p></div><noscript><p>Los ocho módulos y sus pasos están disponibles sin JavaScript.</p></noscript></div></section>
-    <section class="architecture-section" id="arquitectura" aria-labelledby="architecture-title">
+
+<section class="architecture-section" id="arquitectura" aria-labelledby="architecture-title">
       <div class="container">
         <h2 id="architecture-title">El estado y el código, en su sitio.</h2><p class="architecture-copy">SQLite conserva el flujo de la fábrica. Git conserva los cambios. El pool lanza un agente para ejecutar cada actividad.</p><details class="architecture-detail"><summary>Explorar flujo y arquitectura con Archify</summary>
         <div class="diagram-links"><a class="diagram-link" href="./diagrams/sdlc-workflow.html">Explorar el flujo interactivo</a><a href="./diagrams/architecture.html">Ver la arquitectura</a></div>
@@ -184,13 +280,100 @@
         </details><p class="diagram-caption">Importación, aprobaciones humanas, workers y puerta de merge. El override explícito <code>--force</code> existe.</p>
       </div>
     </section>
+
     <section class="agent-section" id="agente" aria-labelledby="agent-title">
-      <div class="container agent-grid"><div class="section-intro"><h2 id="agent-title">El agente de código ejecuta la tarea.</h2><p class="lead">Un runtime que trabaja desde tu terminal, con las herramientas y el acceso a modelos que configures.</p></div><div class="agent-entry"><h3>Úsalo directamente.</h3><code class="runtime-command">fab exec</code><p>El agente nativo puede trabajar por su cuenta. En la fábrica, el pool lo lanza para ejecutar una actividad dentro del worktree del change.</p><h3>O elige un worker externo.</h3><p>La fábrica también puede delegar en <code>claude</code>, <code>codex</code> o <code>agy</code>. Cada CLI gestiona su acceso y sus políticas de ejecución.</p><a href="https://github.com/DarkCodePE/sw-factory#readme">Consultar los comandos de fab</a></div></div>
+      <div class="container agent-grid">
+        <div class="section-intro">
+          <p class="section-tag">Agente en terminal</p>
+          <h2 id="agent-title">El agente de código ejecuta la tarea.</h2>
+          <p class="lead">Trabaja en tu carpeta o encarga una tarea desde la terminal.</p>
+        </div>
+        <div class="agent-entry">
+          <h3>Úsalo directamente.</h3>
+          <code class="runtime-command">fab exec</code>
+          <p>El agente nativo conversa sobre tu carpeta con <code>fab</code> o resuelve una tarea directa sin interfaz con <code>fab exec</code>. En la fábrica, el pool lo lanza dentro del worktree del change.</p>
+          <h3>O elige un worker externo.</h3>
+          <p>La fábrica también puede delegar en <code>claude</code>, <code>codex</code> o <code>agy</code>. Cada CLI gestiona su acceso y sus políticas de ejecución.</p>
+          <a href="https://github.com/DarkCodePE/sw-factory#readme">Consultar los comandos de fab</a>
+        </div>
+      </div>
     </section>
-    <section class="sandbox-summary" id="sandbox" aria-labelledby="sandbox-title"><div class="container sandbox-summary-grid"><div class="sandbox-summary-copy"><h2 id="sandbox-title">Controla dónde actúan las herramientas.</h2><p>Las herramientas nativas usan bubblewrap en Linux cuando está disponible. <code>--sandbox required</code> exige ese aislamiento.</p><p>En macOS corren con los permisos del usuario. Los CLIs externos conservan sus propias políticas; esta contención no se extiende a todos los workers.</p><a href="#module-sandbox" data-open-module="sandbox">Explorar los límites del sandbox</a></div><div class="sandbox-summary-figure"><svg class="module-scene" viewBox="0 0 680 280" role="img" aria-labelledby="scene-sandbox-summary-title"><title id="scene-sandbox-summary-title">Límites de contención: herramientas nativas en Linux frente a macOS y CLIs externos</title><rect class="sandbox-boundary" x="15" y="20" width="355" height="240" rx="10"/><text class="scene-note" x="32" y="48">Frontera Linux (bubblewrap)</text><g class="module-node" transform="translate(32 68)"><rect width="195" height="68" rx="8"/><text x="16" y="28">Execute</text><text class="node-detail" x="16" y="50">herramientas nativas</text></g><path class="module-wire section-flow-wire" d="M227 102H340"/><text class="scene-note" x="245" y="90">Red</text><text class="node-detail" x="245" y="125">auto / ask / deny</text><text class="scene-note" x="32" y="166">worktree: lectura y escritura (rw)</text><text class="scene-note" x="32" y="194">raíz del host: solo lectura (ro)</text><text class="node-detail" x="32" y="224">--sandbox required exige este entorno</text><text class="scene-note" x="32" y="246">Sin aislamiento absoluto del sistema</text><g class="module-node" transform="translate(415 35)"><rect width="250" height="68" rx="8"/><text x="16" y="28">macOS nativo</text><text class="node-detail" x="16" y="50">permisos del usuario local</text></g><text class="scene-note" x="415" y="126">Sin contenedor bubblewrap equivalente</text><path class="branch-line" d="M415 152H665" stroke-dasharray="3 3"/><g class="module-node" transform="translate(415 170)"><rect width="250" height="68" rx="8"/><text x="16" y="28">claude / codex / agy</text><text class="node-detail" x="16" y="50">políticas propias del CLI externo</text></g><text class="scene-note" x="415" y="258">Contención no extendida a CLIs externos</text></svg></div></div></section>
+
+    <section class="sandbox-summary" id="sandbox" aria-labelledby="sandbox-title">
+      <div class="container sandbox-summary-grid">
+        <div class="sandbox-summary-copy">
+          <p class="section-tag">Límites de contención</p>
+          <h2 id="sandbox-title">Controla dónde actúan las herramientas.</h2>
+          <p>Las herramientas nativas usan bubblewrap en Linux cuando está disponible. <code>--sandbox required</code> exige ese aislamiento.</p>
+          <p>En macOS corren con los permisos del usuario. Los CLIs externos conservan sus propias políticas; esta contención no se extiende a todos los workers.</p>
+          <a href="#module-sandbox" data-open-module="sandbox">Explorar los límites del sandbox</a>
+        </div>
+        <div class="sandbox-summary-figure">
+          <svg class="module-scene" viewBox="0 0 680 280" role="img" aria-labelledby="scene-sandbox-summary-title">
+            <title id="scene-sandbox-summary-title">Límites de contención: herramientas nativas en Linux frente a macOS y CLIs externos</title>
+            <rect class="sandbox-boundary" x="15" y="20" width="355" height="240" rx="10"/>
+            <text class="scene-note" x="32" y="48">Frontera Linux (bubblewrap)</text>
+            <g class="module-node" transform="translate(32 68)">
+              <rect width="195" height="68" rx="8"/>
+              <text x="16" y="28">Execute</text>
+              <text class="node-detail" x="16" y="50">herramientas nativas</text>
+            </g>
+            <path class="module-wire section-flow-wire" d="M227 102H340"/>
+            <text class="scene-note" x="245" y="90">Red</text>
+            <text class="node-detail" x="245" y="125">auto / ask / deny</text>
+            <text class="scene-note" x="32" y="166">worktree: lectura y escritura (rw)</text>
+            <text class="scene-note" x="32" y="194">raíz del host: solo lectura (ro)</text>
+            <text class="node-detail" x="32" y="224">--sandbox required exige este entorno</text>
+            <text class="scene-note" x="32" y="246">Sin aislamiento absoluto del sistema</text>
+            <g class="module-node" transform="translate(415 35)">
+              <rect width="250" height="68" rx="8"/>
+              <text x="16" y="28">macOS nativo</text>
+              <text class="node-detail" x="16" y="50">permisos del usuario local</text>
+            </g>
+            <text class="scene-note" x="415" y="126">Sin contenedor bubblewrap equivalente</text>
+            <path class="branch-line" d="M415 152H665" stroke-dasharray="3 3"/>
+            <g class="module-node" transform="translate(415 170)">
+              <rect width="250" height="68" rx="8"/>
+              <text x="16" y="28">claude / codex / agy</text>
+              <text class="node-detail" x="16" y="50">políticas propias del CLI externo</text>
+            </g>
+            <text class="scene-note" x="415" y="258">Contención no extendida a CLIs externos</text>
+          </svg>
+        </div>
+      </div>
+    </section>
+
+    <section class="base-local-section" id="base-local" aria-labelledby="base-local-title">
+      <div class="container">
+        <div class="section-intro">
+          <p class="section-tag">Plataforma</p>
+          <h2 id="base-local-title">Estado local, conexiones explícitas.</h2>
+          <p class="lead">La base técnica vive en tu máquina y repositorio: CLI y TUI para cada propósito, persistencia local y diagnóstico de sistema.</p>
+        </div>
+        <div class="base-local-grid">
+          <article class="base-local-card">
+            <h4>Estado y repositorio</h4>
+            <p>SQLite guarda el flujo en <code>~/.fabrica/fabrica.db</code> (configurable con <code>FABRICA_HOME</code>). Los worktrees y ramas pertenecen a tu repositorio Git.</p>
+          </article>
+          <article class="base-local-card">
+            <h4>CLI y paneles dedicados</h4>
+            <p><code>fab</code> o <code>fab &lt;carpeta&gt;</code> para el agente conversacional, <code>fab exec</code> para tareas sin interfaz y <code>fab tui &lt;slug&gt;</code> para el panel operativo del workstream.</p>
+          </article>
+          <article class="base-local-card">
+            <h4>Diagnóstico y conexiones</h4>
+            <p><code>fab doctor</code> informa del estado del sandbox, Script y búsqueda. <code>fab mcp list</code> lista servidores MCP configurados para el agente nativo.</p>
+          </article>
+        </div>
+      </div>
+    </section>
+
     <section class="models-section" id="modelos" aria-labelledby="models-title">
       <div class="container">
-        <div class="section-intro"><h2 id="models-title">Tus modelos, con rutas explícitas.</h2><p class="lead">El estado de la fábrica es local. La inferencia puede usar un endpoint local o un servicio remoto.</p></div>
+        <div class="section-intro">
+          <p class="section-tag">Modelos y routers</p>
+          <h2 id="models-title">Tus modelos, con rutas explícitas.</h2>
+          <p class="lead">El estado de la fábrica es local. La inferencia puede usar un endpoint local o un servicio remoto.</p>
+        </div>
         <div class="models-overview-figure">
           <svg class="module-scene" viewBox="0 0 680 290" role="img" aria-labelledby="scene-models-routes-title">
             <title id="scene-models-routes-title">Dos rutas alternativas de inferencia: auto por tarea y omni por cuenta y cuota</title>
@@ -199,24 +382,19 @@
               <text x="16" y="24">fab exec / worker</text>
               <text class="node-detail" x="16" y="44">solicitud de inferencia</text>
             </g>
-            <path class="module-wire section-flow-wire" d="M230 41H140V96"/>
-            <path class="module-wire section-flow-wire" d="M450 41H540V96"/>
-            <text class="scene-note" x="235" y="86">Rutas alternativas e independientes</text>
-
-            <rect class="branch-line" x="15" y="96" width="315" height="174" rx="10" stroke-dasharray="3 3"/>
-            <text class="scene-note" x="30" y="118">Ruta auto: modelo según la tarea</text>
+            <path class="module-wire section-flow-wire" d="M230 41H180V120"/>
+            <path class="module-wire section-flow-wire" d="M450 41H500V120"/>
+            <text class="scene-note" x="30" y="118">Ruta auto: clasificación y reintentos</text>
             <g class="module-node" transform="translate(30 130)">
               <rect width="285" height="56" rx="8"/>
-              <text x="14" y="24">Clasificador Jev</text>
-              <text class="node-detail" x="14" y="44">evalúa candidatos según umbral de aptitud</text>
+              <text x="14" y="24">Clasificador local / Jev</text>
+              <text class="node-detail" x="14" y="44">aptitud y relativeCost por tarea</text>
             </g>
             <g class="module-node" transform="translate(30 198)">
               <rect width="285" height="56" rx="8"/>
-              <text x="14" y="24">relativeCost declarado</text>
-              <text class="node-detail" x="14" y="44">elige el más barato; rota ante 429/5xx/400</text>
+              <text x="14" y="24">Rotación de candidatos</text>
+              <text class="node-detail" x="14" y="44">respaldos ante 429 y 5xx</text>
             </g>
-
-            <rect class="branch-line" x="350" y="96" width="315" height="174" rx="10" stroke-dasharray="3 3"/>
             <text class="scene-note" x="365" y="118">Ruta omni: cuenta y grupo de cuota</text>
             <g class="module-node" transform="translate(365 130)">
               <rect width="285" height="56" rx="8"/>
@@ -231,17 +409,44 @@
           </svg>
         </div>
         <div class="model-routes">
-          <article class="model-route"><h3>Conecta el agente nativo.</h3><div><p>Admite <code>anthropic</code>, <code>openai</code>, <code>chatgpt</code> mediante sesión de Codex y <code>generic-chat-completion-api</code>. Declara tus destinos en <code>customModels</code>, con <code>baseUrl</code> y <code>apiKey</code> según el proveedor.</p><p>Un endpoint OpenAI-compatible permite conectar servicios remotos o servidores locales como Ollama y vLLM. La compatibilidad de protocolo no verifica una integración concreta.</p></div></article>
-          <article class="model-route" id="router-auto"><h3><code>auto</code>: modelo según la tarea.</h3><div><p>Con el clasificador Jev configurado, evalúa tus candidatos y elige el de menor <code>relativeCost</code> entre los que superan el umbral de aptitud. Ese coste relativo lo defines tú.</p><p>Reintenta fallos transitorios como 429 y 5xx, respeta <code>Retry-After</code> y rota a los candidatos de respaldo al agotar los intentos. Un 400 de modelo permite rotar; un 401/403 detiene el intento. Si ya empezó a emitir texto, no repite la salida.</p><details><summary>Qué necesita el clasificador</summary><p>Jev consulta un servicio remoto y requiere tu clave. Si el clasificador no está disponible, usa el primer candidato elegible sin respaldos. Si ninguno supera el umbral, elige el de mayor puntuación.</p></details></div></article>
-          <article class="model-route" id="router-omni"><h3><code>omni</code>: ruta por cuenta y cuota.</h3><div><p>Encadena tus endpoints OpenAI Chat Completions por modelo, cuenta y grupo de cuota. Ante límites o cuota agotada, busca otro destino elegible y respeta los tiempos de espera del proveedor. Los perfiles declarados de pago requieren <code>allowPaid</code> explícito.</p><p>El catálogo de términos de servicio (ToS) excluye destinos <code>avoid</code>; los no revisados quedan deshabilitados. Es una referencia de política, no una revisión legal en tiempo real. <code>costTier</code> es una declaración operativa, no una tarifa verificada.</p><a href="https://github.com/DarkCodePE/sw-factory/blob/main/docs/omni-provider.md">Configurar el router omni</a></div></article>
+          <article class="model-route">
+            <h3>Conecta el agente nativo.</h3>
+            <div>
+              <p>Admite <code>anthropic</code>, <code>openai</code>, <code>chatgpt</code> mediante sesión de Codex y <code>generic-chat-completion-api</code>. Declara tus destinos en <code>customModels</code>, con <code>baseUrl</code> y <code>apiKey</code> según el proveedor.</p>
+              <p>Un endpoint OpenAI-compatible permite conectar servicios remotos o servidores locales como Ollama y vLLM. La compatibilidad de protocolo no verifica una integración concreta.</p>
+            </div>
+          </article>
+          <article class="model-route" id="router-auto">
+            <h3><code>auto</code>: modelo según la tarea.</h3>
+            <div>
+              <p>El router <code>auto</code> (<code>-m auto</code>) evalúa tus candidatos por tarea. Con el clasificador local por defecto o el clasificador Jev opcional de TypeSafe, evalúa aptitud y elige el de menor <code>relativeCost</code>. Ese coste relativo lo defines tú.</p>
+              <p>Reintenta fallos transitorios como 429 y 5xx, respeta <code>Retry-After</code> y rota a los candidatos de respaldo al agotar los intentos. Un 400 de modelo permite rotar; un 401/403 detiene el intento. Si ya empezó a emitir texto, no repite la salida.</p>
+              <details>
+                <summary>Qué necesita el clasificador</summary>
+                <p>Jev es opcional y requiere tu clave (<code>JEV_API_KEY</code> o <code>TYPESAFE_API_KEY</code>). Si el clasificador no está configurado, usa el primer candidato elegible sin respaldos. Si ninguno supera el umbral, elige el de mayor puntuación.</p>
+              </details>
+            </div>
+          </article>
+          <article class="model-route" id="router-omni">
+            <h3><code>omni</code>: ruta por cuenta y cuota.</h3>
+            <div>
+              <p>Encadena tus endpoints OpenAI Chat Completions por modelo, cuenta y grupo de cuota. Ante límites o cuota agotada, busca otro destino elegible y respeta los tiempos de espera del proveedor. Los perfiles declarados de pago requieren <code>allowPaid</code> explícito.</p>
+              <p>El catálogo de términos de servicio (ToS) excluye destinos <code>avoid</code>; los no revisados quedan deshabilitados. Es una referencia de política, no una revisión legal en tiempo real. <code>costTier</code> es una declaración operativa, no una tarifa verificada.</p>
+              <a href="https://github.com/DarkCodePE/sw-factory/blob/main/docs/omni-provider.md">Configurar el router omni</a>
+            </div>
+          </article>
         </div>
         <p class="endpoint-note"><code>auto</code> y <code>omni</code> son alternativas: no se combinan en la misma configuración. Tú aportas el acceso a los modelos; las cuotas y los cargos dependen de cada proveedor.</p>
       </div>
     </section>
+
     <section class="plans-section" id="planes" aria-labelledby="plans-title">
-      <div class="container">
-        <h2 id="plans-title">Empieza en tu repositorio.</h2>
-        <p class="plans-intro lead">Instala fab y prueba el flujo con un cambio que puedas revisar.</p>
+      <div class="container" id="proximamente">
+        <div class="section-intro">
+          <p class="section-tag">Hoja de ruta</p>
+          <h2 id="plans-title">Lo siguiente, separado de lo que puedes usar hoy.</h2>
+          <p class="plans-intro lead">La base local y el ciclo de fábrica están disponibles hoy. Las extensiones de automatización se desarrollan en su propio calendario.</p>
+        </div>
         <div class="plans-overview-figure">
           <svg class="module-scene" viewBox="0 0 680 190" role="img" aria-labelledby="scene-plans-overview-title">
             <title id="scene-plans-overview-title">Operación local disponible frente a propuesta de servicio gestionado en estudio</title>
@@ -273,17 +478,60 @@
           </svg>
         </div>
         <div class="plans-grid">
-          <article><h3>Disponible hoy</h3><p>CLI, TUI, agentes, worktrees y validaciones. La operación y el estado están en tu máquina; tú eliges los modelos y aportas el cómputo.</p><a class="quiet-button" href="#instalar">Instalar fab</a></article>
-          <article><h3>Servicio gestionado, en estudio</h3><p>Un panel web y runners gestionados son una propuesta de negocio en borrador, sin tarifas vigentes ni contratación.</p></article>
+          <article>
+            <h3>Disponible hoy</h3>
+            <p>CLI, TUI, agentes, worktrees y validaciones. La operación y el estado están en tu máquina; tú eliges los modelos y aportas el cómputo.</p>
+            <a class="quiet-button" href="#instalar">Instalar fab</a>
+          </article>
+          <article>
+            <h3>Próximamente (futuro)</h3>
+            <p>Daemon y automatizaciones (rechazado hoy por falta de backend propio), triage inteligente con IA, AutoWiki y Monitor son extensiones de la hoja de ruta no implementadas.</p>
+          </article>
         </div>
         <p class="business-note">Daemon, automatizaciones, triage con IA, AutoWiki y Monitor: próximamente. El clasificador de modelos de <code>auto</code> ya existe; no es el triage de señales.</p>
+      </div>
+    </section>
+
+    <section class="start-section" id="empezar" aria-labelledby="start-title">
+      <div class="container">
+        <div class="section-intro">
+          <p class="section-tag">Empieza con fab</p>
+          <h2 id="start-title">Elige cómo quieres trabajar.</h2>
+          <p class="lead">Dos formas directas de poner a prueba fab en tus proyectos.</p>
+        </div>
+        <div class="start-grid">
+          <article class="start-card">
+            <h3>Para operar con el agente</h3>
+            <p>Abre una conversación interactiva en tu carpeta o resuelve una tarea puntual sin interfaz.</p>
+            <code>fab &lt;carpeta&gt;</code>
+            <p style="margin-top: var(--space-xs);">O sin interfaz:</p>
+            <code>fab exec "analiza los tests"</code>
+          </article>
+          <article class="start-card">
+            <h3>Para coordinar la fábrica</h3>
+            <p>Crea un workstream vinculado a tu repositorio y abre el panel operativo en tu terminal.</p>
+            <code>fab ws create mi-objetivo --repo .</code>
+            <p style="margin-top: var(--space-xs);">Abre el panel:</p>
+            <code>fab tui mi-objetivo</code>
+          </article>
+        </div>
       </div>
     </section>
   </main>
   <footer class="site-footer">
     <div class="container footer-grid">
       <a class="brand-home" href="#inicio" aria-label="fab, volver al inicio"><img class="brand-logo brand-logo-light" src="./assets/brand/fab-logo-light.svg" width="251" height="120" alt=""><img class="brand-logo brand-logo-dark" src="./assets/brand/fab-logo-dark.svg" width="251" height="120" alt=""></a>
-      <nav aria-label="Recursos"><a href="#fabrica">Fábrica</a><a href="#agente">Agente</a><a href="https://github.com/DarkCodePE/sw-factory">Repositorio</a><a href="https://www.npmjs.com/package/@okuanb/fab">npm</a><a href="https://github.com/DarkCodePE/sw-factory#readme">Documentación</a><a href="https://github.com/DarkCodePE/sw-factory/blob/main/packaging/npm/README.md">Instalación</a></nav>
+      <nav aria-label="Recursos">
+        <a href="#fabrica">Fábrica</a>
+        <a href="#agente">Agente</a>
+        <a href="#flujo">Capacidades</a>
+        <a href="#base-local">Base local</a>
+        <a href="#proximamente">Próximamente</a>
+        <a href="https://github.com/DarkCodePE/sw-factory">Repositorio</a>
+        <a href="https://www.npmjs.com/package/@okuanb/fab">npm</a>
+        <a href="https://github.com/DarkCodePE/sw-factory#readme">Documentación</a>
+        <a href="https://github.com/DarkCodePE/sw-factory/blob/main/packaging/npm/README.md">Instalación</a>
+      </nav>
       <p>Linux glibc y macOS, x64/arm64. npm requiere Node ≥22; el binario independiente no requiere Bun ni Node.</p>
     </div>
   </footer>

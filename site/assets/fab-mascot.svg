@@ -1,0 +1,31 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 72 72" width="72" height="72" role="presentation" aria-hidden="true">
+  <!-- Cola plana con textura de grilla de terminal -->
+  <path d="M52 46 C64 44 70 54 68 62 C66 68 56 70 48 66 Z" fill="var(--color-paper-3)" stroke="var(--color-control-edge)" stroke-width="1.5"/>
+  <path d="M54 50 L64 58 M58 48 L66 54 M50 56 L60 64" stroke="var(--color-rule-2)" stroke-width="1" stroke-linecap="round"/>
+  <!-- Cuerpo redondeado -->
+  <ellipse cx="36" cy="46" rx="20" ry="18" fill="var(--color-paper-2)" stroke="var(--color-control-edge)" stroke-width="2"/>
+  <!-- Pecho / vientre sutil -->
+  <ellipse cx="36" cy="49" rx="12" ry="11" fill="var(--color-paper-3)"/>
+  <!-- Orejas -->
+  <circle cx="23" cy="20" r="6" fill="var(--color-paper-3)" stroke="var(--color-control-edge)" stroke-width="1.5"/>
+  <circle cx="23" cy="20" r="3" fill="var(--color-rule-2)"/>
+  <circle cx="49" cy="20" r="6" fill="var(--color-paper-3)" stroke="var(--color-control-edge)" stroke-width="1.5"/>
+  <circle cx="49" cy="20" r="3" fill="var(--color-rule-2)"/>
+  <!-- Cabeza -->
+  <circle cx="36" cy="27" r="17" fill="var(--color-paper-2)" stroke="var(--color-control-edge)" stroke-width="2"/>
+  <!-- Visor HUD / gafas de protección (acento teal) -->
+  <rect x="22" y="21" width="28" height="9" rx="4.5" fill="var(--color-accent)" stroke="var(--color-accent-key)" stroke-width="1.5"/>
+  <path d="M26 24 H34" stroke="var(--color-accent-ink)" stroke-width="1.5" stroke-linecap="round" opacity="0.8"/>
+  <circle cx="44" cy="25.5" r="1.5" fill="var(--color-accent-ink)" opacity="0.9"/>
+  <!-- Hocico -->
+  <ellipse cx="36" cy="33" rx="7" ry="4.5" fill="var(--color-paper-3)" stroke="var(--color-control-edge)" stroke-width="1.2"/>
+  <ellipse cx="36" cy="31.5" rx="3" ry="1.8" fill="var(--color-ink)"/>
+  <!-- Dientes incisivos planos de castor -->
+  <rect x="33" y="36" width="3" height="4.5" rx="0.5" fill="var(--color-paper)" stroke="var(--color-control-edge)" stroke-width="1"/>
+  <rect x="36" y="36" width="3" height="4.5" rx="0.5" fill="var(--color-paper)" stroke="var(--color-control-edge)" stroke-width="1"/>
+  <!-- Patitas delanteras sujetando bloque de código -->
+  <rect x="29" y="48" width="14" height="8" rx="2" fill="var(--color-accent-key)" stroke="var(--color-accent)" stroke-width="1.2"/>
+  <path d="M33 52 H39" stroke="var(--color-accent-ink)" stroke-width="1" stroke-linecap="round"/>
+  <circle cx="26" cy="50" r="3" fill="var(--color-paper-2)" stroke="var(--color-control-edge)" stroke-width="1.2"/>
+  <circle cx="46" cy="50" r="3" fill="var(--color-paper-2)" stroke="var(--color-control-edge)" stroke-width="1.2"/>
+</svg>

@@ -250,7 +250,117 @@ code { font-family: var(--font-outlier); overflow-wrap: anywhere; }
 }
 .models-overview-figure, .plans-overview-figure { margin-top: var(--space-xl); margin-bottom: var(--space-lg); }
 .sandbox-summary-figure { min-width: 0; }
-.section-flow-wire { fill: none; stroke: var(--color-connector); stroke-width: 2; stroke-dasharray: var(--wire-dash); animation: wire-data 10s linear infinite; }
+.section-flow-wire {
+  fill: none;
+  stroke: var(--color-connector);
+  stroke-width: 2;
+  stroke-dasharray: var(--wire-dash);
+  animation: wire-data 10s linear infinite;
+  animation-play-state: paused;
+}
+[data-scene-active="true"] .section-flow-wire,
+.section-flow-wire[data-scene-active="true"] {
+  animation-play-state: running;
+}
+@keyframes wire-data {
+  to { stroke-dashoffset: -20; }
+}
 @media (prefers-reduced-motion: reduce) {
-  .section-flow-wire { animation: none !important; stroke-dasharray: none; }
+  .section-flow-wire { animation: none !important; stroke-dasharray: none !important; }
+}
+
+/* Structure and capability styling (Ronda Construcción) */
+.section-tag {
+  font-family: var(--font-outlier);
+  font-size: var(--text-xs);
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--color-connector);
+  margin-bottom: var(--space-2xs);
+}
+.products-section { padding-block: var(--section-gap); border-bottom: 1px solid var(--color-rule); }
+.products-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
+  gap: var(--space-lg);
+  margin-top: var(--space-xl);
+}
+.product-card {
+  background: var(--color-paper-2);
+  border: 1px solid var(--color-rule);
+  border-radius: var(--radius-card);
+  padding: var(--space-lg);
+  display: flex;
+  flex-direction: column;
+  justify-content: space-between;
+}
+.product-card-header { margin-bottom: var(--space-md); }
+.product-card-header h3 { font-size: var(--text-lg); margin-top: var(--space-2xs); }
+.product-card-command {
+  display: inline-block;
+  font-family: var(--font-outlier);
+  font-size: var(--text-sm);
+  background: var(--color-paper);
+  border: 1px solid var(--color-rule-2);
+  border-radius: var(--radius-input);
+  padding: var(--space-2xs) var(--space-xs);
+  margin-bottom: var(--space-sm);
+  color: var(--color-ink);
+}
+.product-card p { font-size: var(--text-sm); color: var(--color-ink-2); line-height: 1.5; }
+.product-card a { margin-top: var(--space-md); align-self: flex-start; }
+
+.capabilities-section { margin-top: var(--space-2xl); }
+.capabilities-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
+  gap: var(--space-lg);
+  margin-top: var(--space-lg);
+}
+.capability-card {
+  background: var(--color-paper-2);
+  border: 1px solid var(--color-rule);
+  border-radius: var(--radius-card);
+  padding: var(--space-md);
+}
+.capability-card h4 { font-size: var(--text-md); margin-bottom: var(--space-2xs); color: var(--color-ink); }
+.capability-claim { font-size: var(--text-sm); color: var(--color-ink-2); margin-top: var(--space-xs); line-height: 1.45; }
+.claim-num { font-family: var(--font-outlier); color: var(--color-connector); font-size: var(--text-xs); margin-right: var(--space-2xs); }
+
+.base-local-section { padding-block: var(--section-gap); border-bottom: 1px solid var(--color-rule); }
+.base-local-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(260px, 1fr));
+  gap: var(--space-md);
+  margin-top: var(--space-lg);
+}
+.base-local-card {
+  background: var(--color-paper-2);
+  border: 1px solid var(--color-rule);
+  border-radius: var(--radius-card);
+  padding: var(--space-md);
+}
+.base-local-card h4 { font-size: var(--text-md); margin-bottom: var(--space-2xs); }
+.base-local-card p { font-size: var(--text-sm); color: var(--color-ink-2); }
+
+.start-section { padding-block: var(--section-gap); }
+.start-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
+  gap: var(--space-lg);
+  margin-top: var(--space-lg);
+}
+.start-card {
+  background: var(--color-paper-2);
+  border: 1px solid var(--color-rule);
+  border-radius: var(--radius-card);
+  padding: var(--space-lg);
+}
+.start-card h3 { font-size: var(--text-lg); margin-bottom: var(--space-xs); }
+.start-card p { font-size: var(--text-sm); color: var(--color-ink-2); margin-bottom: var(--space-md); }
+
+@media (max-width: 48rem) {
+  .products-grid, .capabilities-grid, .base-local-grid, .start-grid {
+    grid-template-columns: minmax(0, 1fr);
+  }
 }
