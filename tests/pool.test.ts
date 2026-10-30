@@ -62,6 +62,7 @@ test('parseReportStatus', () => {
   expect(parseReportStatus('## **STATUS: done**').done).toBe(true);
   expect(parseReportStatus('STATUS: blocked - no repro')).toEqual({ done: false, kind: 'blocked', reason: 'blocked - no repro' });
   expect(parseReportStatus('no status here')).toEqual({ done: false, kind: 'missing', reason: 'report has no STATUS line' });
+  expect(parseReportStatus('STATUS: working')).toEqual({ done: false, kind: 'missing', reason: 'invalid STATUS line: STATUS: working' });
   for (const text of ['STATUS: doneXYZ', 'STATUS: pending\nSTATUS: done']) {
     expect(validateReportStatus(text)).toBeDefined(); expect(parseReportStatus(text).done).toBe(false);
   }

@@ -90,5 +90,5 @@ export function parseReportStatus(output: string): ReportStatus {
   if (!line) return { done: false, kind: 'missing', reason: 'report has no STATUS line' };
   if (/^STATUS:\s*done\s*$/i.test(line)) return { done: true, kind: 'done', reason: '' };
   if (/^STATUS:\s*blocked\b/i.test(line)) return { done: false, kind: 'blocked', reason: line.replace(/^STATUS:\s*/i, '') };
-  return { done: false, kind: 'missing', reason: 'report has no STATUS line' };
+  return { done: false, kind: 'missing', reason: `invalid STATUS line: ${line.slice(0, 200)}` };
 }
