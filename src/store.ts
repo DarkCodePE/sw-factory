@@ -204,9 +204,17 @@ export class Store {
   }
 
   private migrate(): void {
-    const cols = this.db.query('PRAGMA table_info(activities)').all() as { name: string }[];
-    if (!cols.some((c) => c.name === 'validator')) {
-      this.db.exec('ALTER TABLE activities ADD COLUMN validator TEXT;');
+    this.addColumn('activities', 'validator', 'TEXT');
+  }
+
+  private addColumn(table: string, column: string, ddl: string): void {
+    const cols = this.db.query(`PRAGMA table_info(${table})`).all() as { name: string }[];
+    if (cols.some((c) => c.name === column)) return;
+    try {
+      this.db.exec(`ALTER TABLE ${table} ADD COLUMN ${column} ${ddl}`);
+    } catch (error) {
+      // Another opener may have added it after our schema snapshot.
+      if (!(error instanceof Error) || !/duplicate column name:/i.test(error.message)) throw error;
     }
   }
 
