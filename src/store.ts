@@ -644,16 +644,33 @@ export class Store {
     return this.getChange(changeId);
   }
 
-  /** Human retry of a failed change: re-queue its latest activity kind with a fresh retry budget. */
+  /** Human retry of the latest failed activity, preserving validator context and resetting its budget. */
   retryChange(changeId: string): Activity {
     return this.db.transaction(() => {
       const c = this.getChange(changeId);
-      if (c.status !== 'failed') throw new StoreError('invalid_transition', `change ${changeId} is ${c.status}, not failed`);
-      const acts = this.listActivities({ changeId });
-      const last = acts[acts.length - 1];
-      if (!last) throw new StoreError('not_found', `change ${changeId} has no activities`);
-      const id = this.insertActivity(c.workstreamId, changeId, last.parentActivityId, last.kind, 'pending', null);
-      this.setChangeStatus(changeId, 'pending');
+      if (c.status !== 'failed' && c.status !== 'implemented') {
+        throw new StoreError('invalid_transition', `change ${changeId} is ${c.status}, not failed or implemented`);
+      }
+      const row = this.db
+        .query(`SELECT * FROM activities WHERE change_id = ? AND status = 'failed'
+                ORDER BY created_at DESC, rowid DESC LIMIT 1`)
+        .get(changeId) as Row | null;
+      if (!row) throw new StoreError('not_found', `change ${changeId} has no failed activities`);
+      const last = toActivity(row);
+      if (c.status === 'implemented' && !last.validator) {
+        throw new StoreError('invalid_transition', `implemented change ${changeId} can only retry a validator`);
+      }
+      if (last.validator) {
+        const latest = this.db
+          .query(`SELECT id FROM activities WHERE change_id = ? AND validator = ?
+                  ORDER BY created_at DESC, rowid DESC LIMIT 1`)
+          .get(changeId, last.validator) as { id: string };
+        if (latest.id !== last.id) {
+          throw new StoreError('invalid_transition', `validator ${last.validator} already retried`);
+        }
+      }
+      const id = this.insertActivity(c.workstreamId, changeId, last.parentActivityId, last.kind, 'pending', null, last.validator);
+      if (!last.validator) this.setChangeStatus(changeId, 'pending');
       this.event(c.workstreamId, 'info', `change retried (${last.kind})`, changeId, id);
       return this.getActivity(id);
     })();

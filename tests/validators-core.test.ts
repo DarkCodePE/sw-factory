@@ -349,3 +349,36 @@ test('merge keeps existing behavior for no validators and needs_human', () => {
   store.completeActivity(store.claimActivity(ws.id, 'w1')!.id, 'w1', 'STATUS: done\nVERDICT: needs_human');
   expect(mergeBlocker(store.validationSummary(change.id))).toBeUndefined();
 });
+
+test('retryChange retries failed QA rather than a newer validator and preserves its context', () => {
+  const { ws, change } = implementedChange();
+  const implementation = store.listActivities({ changeId: change.id }).find((a) => a.kind === 'implementation')!;
+  const [qa] = store.requestValidation(change.id, ['qa']);
+  // Non-null parent fixture verifies preservation beyond requestValidation's default null.
+  store.db.query('UPDATE activities SET parent_activity_id = ? WHERE id = ?').run(implementation.id, qa!.id);
+  for (let i = 0; i < 3; i++) {
+    store.failActivity(store.claimActivity(ws.id, 'w1')!.id, 'w1', 'QA crashed');
+  }
+  expect(store.getActivity(qa!.id).status).toBe('failed');
+  expect(store.getChange(change.id).status).toBe('implemented');
+  // Force creation ordering explicitly, without relying on wall-clock resolution.
+  const [newer] = store.requestValidation(change.id, ['security_audit']);
+  store.db.query('UPDATE activities SET created_at = ? WHERE id = ?').run('9999-01-01', newer!.id);
+
+  const retry = store.retryChange(change.id);
+  expect(retry.id).not.toBe(qa!.id);
+  expect(retry.validator).toBe('qa');
+  expect(retry.kind).toBe(qa!.kind);
+  expect(retry.parentActivityId).toBe(implementation.id);
+  expect(retry.retryCount).toBe(0);
+  expect(retry.status).toBe('pending');
+  expect(store.getChange(change.id).status).toBe('implemented');
+  expect(() => store.retryChange(change.id)).toThrow(StoreError);
+
+  const claimed = store.claimActivity(ws.id, 'w1')!;
+  expect(claimed.id).toBe(retry.id);
+  expect(() => store.retryChange(change.id)).toThrow(StoreError);
+  store.completeActivity(claimed.id, 'w1', 'STATUS: done\nVERDICT: pass');
+  expect(store.getChange(change.id).status).toBe('implemented');
+  expect(store.validationSummary(change.id).results.find((r) => r.validator === 'qa')!.verdict).toBe('pass');
+});
