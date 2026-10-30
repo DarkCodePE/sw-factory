@@ -7,7 +7,7 @@ import { join } from 'node:path';
 import { VALIDATOR_KINDS, type ChangeLinks, type PullRequestGateway, type PullRequestRef, type ValidationSummary } from '../src/connectors/types.ts';
 import { Store, StoreError } from '../src/store.ts';
 import { buildValidatorPrompt } from '../src/validators/prompts.ts';
-import { publishValidation, validationMarkdown } from '../src/validators/publish.ts';
+import { mergeBlocker, publishValidation, validationMarkdown } from '../src/validators/publish.ts';
 import { parseVerdict } from '../src/validators/verdict.ts';
 
 let dir: string;
@@ -306,4 +306,46 @@ test('publishValidation returns no_pr when no PR is linked, and publishes commen
   expect(comments.length).toBe(1);
   expect(comments[0]!.pr).toEqual(prRef);
   expect(comments[0]!.md).toContain('Validador | Veredicto | Resumen');
+});
+
+
+function implementedChange() {
+  const ws = store.createWorkstream({
+    slug: 'implemented', goal: 'g', repo: dir,
+    requireChangeApproval: false, requireApproval: false,
+  });
+  store.setWorkstreamState(ws.id, 'active');
+  const change = store.createChange(ws.id, 'Target', 'desc');
+  for (let i = 0; i < 2; i++) {
+    store.completeActivity(store.claimActivity(ws.id, 'w1')!.id, 'w1', 'STATUS: done');
+  }
+  expect(store.getChange(change.id).status).toBe('implemented');
+  return { ws, change };
+}
+
+test.each(['failed', 'completed'] as const)('merge blocks a %s validator without a verdict', (status) => {
+  const { ws, change } = implementedChange();
+  const [qa] = store.requestValidation(change.id, ['qa']);
+  expect(mergeBlocker(store.validationSummary(change.id))).toBe('hay validadores pendientes o en curso');
+  if (status === 'failed') {
+    for (let i = 0; i < 3; i++) {
+      expect(store.claimActivity(ws.id, 'w1')!.id).toBe(qa!.id);
+      store.failActivity(qa!.id, 'w1', 'no verdict');
+    }
+  } else {
+    store.completeActivity(store.claimActivity(ws.id, 'w1')!.id, 'w1', 'STATUS: done');
+  }
+  expect(store.getActivity(qa!.id).status).toBe(status);
+  const summary = store.validationSummary(change.id);
+  expect(summary.pending).toBe(false);
+  expect(summary.results[0]!.verdict).toBeUndefined();
+  expect(mergeBlocker(summary)).toBe('validadores sin veredicto: qa');
+});
+
+test('merge keeps existing behavior for no validators and needs_human', () => {
+  const { ws, change } = implementedChange();
+  expect(mergeBlocker(store.validationSummary(change.id))).toBeUndefined();
+  store.requestValidation(change.id, ['qa']);
+  store.completeActivity(store.claimActivity(ws.id, 'w1')!.id, 'w1', 'STATUS: done\nVERDICT: needs_human');
+  expect(mergeBlocker(store.validationSummary(change.id))).toBeUndefined();
 });
