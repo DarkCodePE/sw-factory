@@ -8,7 +8,7 @@ export function validationMarkdown(summary: ValidationSummary): string {
   const statusEmoji = summary.passed ? 'APROBADO' : summary.pending ? 'PENDIENTE' : 'FALLIDO';
 
   const rows = summary.results.map((r) => {
-    const verdict = r.verdict ? `**${r.verdict.toUpperCase()}**` : '*pendiente*';
+    const verdict = r.verdict ? `**${r.verdict.toUpperCase()}**` : r.failed ? '*sin veredicto (falló)*' : '*pendiente*';
     const cleanSummary = (r.summary || '-').replace(/\|/g, '\\|').replace(/\r?\n/g, ' ');
     return `| \`${r.validator}\` | ${verdict} | ${cleanSummary} |`;
   });

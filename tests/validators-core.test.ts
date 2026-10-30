@@ -340,6 +340,7 @@ test.each(['failed', 'completed'] as const)('merge blocks a %s validator without
   expect(summary.pending).toBe(false);
   expect(summary.results[0]!.verdict).toBeUndefined();
   expect(mergeBlocker(summary)).toBe('validadores sin veredicto: qa');
+  expect(validationMarkdown(summary)).toContain(status === 'failed' ? '*sin veredicto (falló)*' : '*pendiente*');
 });
 
 test('merge keeps existing behavior for no validators and needs_human', () => {

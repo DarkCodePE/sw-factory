@@ -503,6 +503,7 @@ export class Store {
         validator: v,
         activityId: a.id,
         verdict,
+        ...(a.status === 'failed' ? { failed: true } : {}),
         summary: a.reviewComment ?? '',
       });
     }
