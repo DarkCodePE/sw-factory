@@ -180,11 +180,11 @@
   ctx.fillStyle=dark?'#14b8a6':'#087c70';
   let glow=0;
   paths.forEach((points,i)=>{
-   ctx.globalAlpha=dark?.2:.13;
-   points.forEach(([x,y])=>{ctx.beginPath();ctx.arc(x,y,1,0,Math.PI*2);ctx.fill()});
+   ctx.globalAlpha=dark?.4:.13;
+   points.forEach(([x,y])=>{ctx.beginPath();ctx.arc(x,y,1.5,0,Math.PI*2);ctx.fill()});
    const phase=motion.matches?.65:((time/6500+i/paths.length)%1);
    const point=points[Math.floor(phase*(points.length-1))];
-   ctx.globalAlpha=dark?.65:.45;
+   ctx.globalAlpha=dark?.45:.3;
    ctx.beginPath();ctx.arc(point[0],point[1],2.5,0,Math.PI*2);ctx.fill();
    if(!motion.matches)glow=Math.max(glow,Math.max(0,(phase-.94)/.06));
   });
@@ -219,4 +219,18 @@
 
  matchMedia('(prefers-color-scheme: dark)').addEventListener('change',resize);
  resize();
+})();
+
+// Native disclosures own keyboard/touch activation; reflect selected anchors.
+(() => {
+ const nav=document.querySelector('.site-nav'), menus=[...nav.querySelectorAll('details')];
+ const current=()=>nav.querySelectorAll('a[href^="#"]').forEach(a=>{
+  if(a.hash===location.hash)a.setAttribute('aria-current','location');else a.removeAttribute('aria-current');
+ });
+ const close=()=>menus.forEach(d=>d.open=false);
+ menus.forEach(d=>d.addEventListener('toggle',()=>d.querySelector('summary').setAttribute('aria-expanded',d.open)));
+ nav.addEventListener('click',e=>{if(e.target.closest('a'))close()});
+ document.addEventListener('click',e=>{if(!nav.contains(e.target))close()});
+ document.addEventListener('keydown',e=>{if(e.key==='Escape'){const d=menus.find(d=>d.open);if(d){close();d.querySelector('summary').focus()}}});
+ window.addEventListener('hashchange',current);current();
 })();

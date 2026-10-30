@@ -60,3 +60,41 @@ La revisión de construcción Ronda 2 y sus fallos de comandos/transferencias
 permanecen en el informe externo; esta rama no afirma resolverlos. No se modifican
 runtime, tests, manifiesto de dependencias ni changelog. Sin promesas nuevas de
 precio o autonomía, ni datos decorativos inventados.
+
+
+## Correcciones de revisión H-01–H-07
+
+Esta pasada sustituye los valores y controles descritos en la entrega inicial:
+
+- **H-01:** resplandor centrado en 45 % / 20 %, mezcla teal al 20 % y alcance
+  del 85 %. Puntos de radio 1,5 px con alpha 0,4 en oscuro; sin la atenuación
+  global previa. La máscara mantiene la zona de lectura a un tercio de intensidad
+  y deja el campo completo junto a la sesión. Se revisó el resultado claro/oscuro
+  a 390 y 1440 px; la profundidad del titular ya no depende de los puntos aislados.
+- **H-02:** header sticky de ancho completo, superficie al 88 %, blur de 12 px
+  y borde inferior. Navegación agrupada con estados hover, foco y ubicación
+  seleccionada (`aria-current="location"` al navegar por un ancla).
+- **H-03:** Instalar usa superficie teal y texto oscuro, con jerarquía de acción
+  en escritorio y una fila completa al pie del desplegable móvil.
+- **H-04:** castor de sesión a 36 px en escritorio y 30 px en móvil; toolbar
+  en una fila a 390 px. Los controles mantienen su altura táctil.
+- **H-05:** menú nativo con icono y etiqueta, alineado a la derecha; grupos
+  verticales, enlaces de al menos 48 px y separador. Se retiraron las reglas
+  antiguas de navegación de modules.css. Productos también usa details/summary:
+  el navegador expone apertura/cierre sin JavaScript; con JavaScript se refleja
+  aria-expanded tras cada toggle, Escape devuelve foco y un enlace cierra el menú.
+  Los paneles cerrados tienen display:none explícito para evitar geometría de texto
+  fuera de pantalla en navegadores con details-content. Probado a 320 px / 200 %.
+- **H-06:** eliminada la trama radial de puntos de las secciones posteriores;
+  se conservan sus superficies y separadores propios.
+- **H-07:** favicon específico de cuadrícula 16×16, ojos de 2×2 px, nariz amplia
+  y dos incisivos separados. Inspeccionado a 16 y 64 px.
+
+Validación de esta corrección: verify-v2 **131 checks**, verify **51 checks**,
+ambos exit 0, y diff --check exit 0. El nuevo presupuesto explícito de JavaScript
+es 11.000 bytes: **10.712 bytes** servidos (antes 9.998). Los 714 bytes añadidos
+son el manejo de navegación, cierre, Escape y ubicación accesible; no hay
+librerías nuevas. Se conserva la comprobación de pausa/visibilidad/DPR del canvas.
+El detector impeccable sigue emitiendo avisos (exit 2); no se declara aprobado.
+Los PNG producidos por los verificadores no se incluyen en este commit; las
+capturas inspeccionadas para esta corrección quedan en /tmp.

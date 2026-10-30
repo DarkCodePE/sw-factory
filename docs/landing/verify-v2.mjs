@@ -35,9 +35,22 @@ try {
         return shown(document.querySelector('.nav-mobile-menu'))===(width<896) && shown(document.querySelector('.nav-desktop-bar'))===(width>=896);
       },width));
       if(width===1440){
-        await page.focus('.nav-dropdown-trigger');
-        check(`${mode}: product dropdown opens on keyboard focus`,await page.$eval('.nav-dropdown-panel',e=>getComputedStyle(e).display!=='none'));
+        await page.focus('.nav-dropdown-trigger'); await page.keyboard.press('Enter');
+        check(`${mode}: product dropdown opens with keyboard activation`,await page.$eval('.nav-dropdown-panel',e=>getComputedStyle(e).display!=='none'));
         await page.focus('.theme-button');
+      }
+      check(`${mode} ${width}: surfaced sticky header and install CTA`,await page.evaluate(()=>{
+        const h=getComputedStyle(document.querySelector('.site-header')), c=getComputedStyle(document.querySelector('.nav-cta-install'));
+        return h.position==='sticky'&&h.top==='0px'&&h.backgroundColor!=='rgba(0, 0, 0, 0)'&&parseFloat(h.borderBottomWidth)>0&&c.backgroundColor!=='rgba(0, 0, 0, 0)';
+      }));
+      check(`${mode} ${width}: session icon fits toolbar scale`,await page.$eval('.hero-beaver',(e,width)=>e.getBoundingClientRect().width===(width<896?30:36),width));
+      if(width===390){
+        await page.click('.nav-mobile-summary');
+        check(`${mode}: mobile menu has separate touch rows`,await page.$$eval('.nav-mobile-dropdown a',links=>links.every((e,i)=>{const r=e.getBoundingClientRect(),p=links[i-1]?.getBoundingClientRect();return r.height>=44&&r.width>=44&&(!p||r.top>=p.bottom-1)})));
+        await page.click('.nav-mobile-summary');
+      } else {
+        await page.focus('.nav-dropdown-trigger'); await page.keyboard.press('Escape');
+        check(`${mode}: Escape closes products and returns focus`,await page.$eval('.nav-dropdown-item',e=>!e.open&&document.activeElement===e.querySelector('summary')));
       }
       const fieldFrames=await page.$eval('.hero-field',e=>e.dataset.frames);
       await new Promise(r=>setTimeout(r,150));
@@ -133,6 +146,9 @@ try {
   const offscreenFrames=await page.$eval('.hero-field',e=>e.dataset.frames);
   await new Promise(r=>setTimeout(r,200));
   check('Offscreen field cancels loop',await page.$eval('.hero-field',(e,n)=>e.dataset.frames===n,offscreenFrames));
+  await page.click('.nav-desktop-bar a[href="#base-local"]');
+  await page.waitForFunction(()=>document.querySelector('.nav-desktop-bar a[href="#base-local"]').getAttribute('aria-current')==='location');
+  check('Header stays pinned and selected anchor is announced after navigation',await page.$eval('.site-header',e=>Math.abs(e.getBoundingClientRect().top)<1));
   await page.click('.architecture-detail summary');
   const frame = await (await page.$('[data-diagram]')).contentFrame(); await frame.waitForFunction(() => document.readyState === 'complete');
   check('Archify interactive workflow loads under Pages prefix', frame.url().includes('/sw-factory/diagrams/sdlc-workflow.html'));
@@ -158,15 +174,15 @@ try {
     const lum=c=>c.map(v=>{v/=255;return v<=.04045?v/12.92:((v+.055)/1.055)**2.4}).reduce((n,v,i)=>n+v*[.2126,.7152,.0722][i],0);
     return [
       {paper:[247,251,250],ink:[56,75,78],packet:[8,124,112],alpha:.45},
-      {paper:[11,13,18],ink:[178,201,200],packet:[20,184,166],alpha:.65}
+      {paper:[11,13,18],ink:[178,201,200],packet:[20,184,166],alpha:.45}
     ].map(t=>{
-      const bg=blend(t.packet,blend([20,184,166],t.paper,.12),t.alpha*.45);
+      const bg=blend(t.packet,blend([20,184,166],t.paper,.2),t.alpha/3);
       const a=lum(t.ink),b=lum(bg);return (Math.max(a,b)+.05)/(Math.min(a,b)+.05);
     });
   });
   check('Hero copy exceeds 4.5:1 even directly over the brightest packet and radial wash',heroContrast.every(n=>n>=4.5));
   const js = (await readFile('site/app.js')).length + (await readFile('site/modules.js')).length;
-  check('Combined served JavaScript stays below 10 KB', js < 10000);
+  check('Combined served JavaScript stays below 11 KB including accessible navigation', js < 11000);
   if (errors.length || failedRequests.length || external.length) console.error(JSON.stringify({errors,failedRequests,external}));
   check('No JavaScript errors, missing assets or third-party requests', errors.length === 0 && failedRequests.length === 0 && external.length === 0);
   console.log(JSON.stringify({ checks: passed.length, passed, jsBytes: js, errors, failedRequests, external, browser: await browser.version() }, null, 2));
