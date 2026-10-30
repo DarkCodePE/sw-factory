@@ -45,8 +45,8 @@ está en ~/.fabrica/fabrica.db; no se afirma auditoría inmutable o aislamiento 
 
 ## Brand Commitments
 
-Nombre fab; voz técnica y austera. Logo SVG oficial aportado por el usuario;
-marca #14B8A6 y texto #0B0D12. Variantes claras/oscuras sin modificar en
+Nombre fab; voz técnica y austera. Lockup original de cabeza de castor y wordmark fab, decidido por el usuario;
+marca #14B8A6 y texto #0B0D12. Variantes claras/oscuras en
 site/assets/brand/. No marcas, logos, textos o testimonios de los
 sitios de referencia. Sin recursos externos ni fuentes descargadas.
 
@@ -83,7 +83,7 @@ to the current branch, and pending/FAIL validators block only requested validati
 returns a specification report without guaranteeing a spec.md file. Sandbox claims
 apply to native tools on Linux, with local user processes on macOS and external
 CLIs retaining their own policies. No immutable signal or perfect-code claim.
-The mascot is intentionally unselected and has no generated asset.
+The beaver head is the brand isotype; header, footer and the decorative session node are its three visible appearances.
 
 ## Contrato C — 2026-10-27
 

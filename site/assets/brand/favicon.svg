@@ -1,5 +1,1 @@
-<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 120 120" role="img" aria-label="fab"><title>fab</title><g fill="none" stroke="#14B8A6" stroke-linecap="round" stroke-linejoin="round">
-  <path stroke-width="16" d="M44 106V50C44 30 56 18 74 18"/>
-  <path stroke-width="16" d="M20 54H68"/>
-  <circle stroke-width="10" cx="86" cy="54" r="11"/>
-</g></svg>
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64"><title>fab</title><path fill="var(--color-brand,#14B8A6)" d="M14 20C6 9 20 4 25 13Q32 10 39 13C44 4 58 9 50 20Q57 28 53 41Q49 54 38 57H26Q15 54 11 41Q7 28 14 20Z"/><g fill="#0B0D12"><circle cx="23" cy="28" r="3"/><circle cx="41" cy="28" r="3"/><path d="M27 35Q32 32 37 35L32 41Z"/></g><path fill="#F7FBFA" d="M25 42H39V53H25Z"/><path stroke="#0B0D12" stroke-width="2" d="M32 42V53"/></svg>

@@ -15,9 +15,10 @@
     "assets/brand/fab-mark.svg",
     "assets/brand/fab-icon-light.svg",
     "assets/brand/fab-icon-dark.svg",
-    "assets/brand/favicon.svg"
+    "assets/brand/favicon.svg",
+    "assets/brand/fab-og.png"
   ],
-  "count": 16,
+  "count": 17,
   "screenshots": false,
   "caches": false
 }

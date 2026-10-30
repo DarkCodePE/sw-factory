@@ -98,13 +98,10 @@
 .sandbox-summary-grid { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); gap: var(--gap-columns); }
 .sandbox-summary-grid p + p { margin-top: var(--space-md); }
 .sandbox-summary-grid a { display: inline-flex; align-items: center; min-height: var(--control-height); margin-top: var(--space-md); }
-.mascot-slot { width: var(--mascot-size); height: var(--mascot-size); justify-self: end; }
-.mascot-slot img { width: 100%; height: auto; object-fit: contain; }
+
 @media (max-width: 64rem) {
   .module-explorer.is-interactive { grid-template-columns: 200px minmax(0, 1fr); }
   .module-panel { padding: var(--space-md); }
-  .mascot-slot { width: 56px; height: 56px; justify-self: center; margin-block: var(--space-xs); display: flex; align-items: center; justify-content: center; }
-  .mascot-slot svg { width: 56px; height: 56px; }
 }
 @media (max-width: 48rem) {
   .site-header { gap: var(--space-md); }

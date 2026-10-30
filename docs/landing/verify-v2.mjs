@@ -2,9 +2,9 @@
 import assert from 'node:assert/strict';
 import { createRequire } from 'node:module';
 import { mkdir, readFile } from 'node:fs/promises';
-const require = createRequire('/tmp/fab-landing-tools/package.json');
+const require = createRequire((process.env.HALLMARK_PUPPETEER || '/tmp/fab-landing-tools') + '/package.json');
 const puppeteer = require('puppeteer-core');
-const url = process.env.LANDING_URL || 'http://127.0.0.1:8772/sw-factory/';
+const url = process.env.LANDING_URL || 'http://127.0.0.1:8774/sw-factory/';
 const browser = await puppeteer.launch({ executablePath: process.env.CHROME_PATH || '/usr/bin/google-chrome', headless: true });
 const passed = [], errors = [], failedRequests = [], external = [];
 const check = (name, value) => { assert.ok(value, name); passed.push(name); };
@@ -26,15 +26,22 @@ try {
       check(`${mode} ${width}: one selected tab and visible panel`, await page.evaluate(() => document.querySelectorAll('.module-tab[aria-selected="true"]').length === 1 && [...document.querySelectorAll('[data-module]')].filter(p => !p.hidden).length === 1));
       check(`${mode} ${width}: reduced motion is final and replay disabled`, await page.evaluate(() => document.querySelector('[data-module-play]').disabled && document.querySelector('[data-module]:not([hidden])').dataset.step === '3'));
       check(`${mode} ${width}: zero running animations with prefers-reduced-motion`, await page.evaluate(() => document.getAnimations().filter(a => a.playState === 'running').length === 0));
-      check(`${mode} ${width}: mascot slot is mounted, decorative and visible`, await page.evaluate(() => {
-        const slot = document.querySelector('.mascot-slot[data-mascot-state="mounted"][aria-hidden="true"]');
-        if (!slot) return false;
-        const mascot = slot.querySelector('svg, img');
-        if (!mascot) return false;
-        const cs = getComputedStyle(slot);
-        const r = slot.getBoundingClientRect();
-        return cs.display !== 'none' && r.width > 0 && r.height > 0;
+      check(`${mode} ${width}: beaver lockup, decorative receiver and three appearances`, await page.evaluate(() => {
+        const logos=[...document.querySelectorAll('.brand-logo')].filter(e=>e.getBoundingClientRect().width);
+        return logos.length===2 && logos.every(e=>e.complete&&e.naturalWidth&&e.closest('[aria-label]')) && document.querySelectorAll('.hero-beaver[aria-hidden="true"]').length===1 && !document.querySelector('.mascot-slot');
       }));
+      check(`${mode} ${width}: navigation has a single responsive variant`,await page.evaluate(width=>{
+        const shown=e=>getComputedStyle(e).display!=='none';
+        return shown(document.querySelector('.nav-mobile-menu'))===(width<896) && shown(document.querySelector('.nav-desktop-bar'))===(width>=896);
+      },width));
+      if(width===1440){
+        await page.focus('.nav-dropdown-trigger');
+        check(`${mode}: product dropdown opens on keyboard focus`,await page.$eval('.nav-dropdown-panel',e=>getComputedStyle(e).display!=='none'));
+        await page.focus('.theme-button');
+      }
+      const fieldFrames=await page.$eval('.hero-field',e=>e.dataset.frames);
+      await new Promise(r=>setTimeout(r,150));
+      check(`${mode} ${width}: reduced field stays static with DPR capped`,await page.$eval('.hero-field',(e,n)=>e.dataset.state==='reduced'&&e.dataset.frames===n&&Number(e.dataset.pixelRatio)<=2,fieldFrames));
       check(`${mode} ${width}: all text elements fit within their node rects`, await page.evaluate(() => {
         const nodes = document.querySelectorAll('g.module-node');
         for (const node of nodes) {
@@ -112,14 +119,20 @@ try {
     Object.defineProperty(document, 'visibilityState', { value: 'visible', configurable: true });
     document.dispatchEvent(new Event('visibilitychange'));
   });
-  check('Mascot slot is mounted, decorative and visible in both themes', await page.evaluate(() => {
-    const slot = document.querySelector('.mascot-slot[data-mascot-state="mounted"][aria-hidden="true"]');
-    if (!slot) return false;
-    const mascot = slot.querySelector('svg, img');
-    if (!mascot) return false;
-    const cs = getComputedStyle(slot);
-    return cs.display !== 'none' && slot.getBoundingClientRect().width > 0;
-  }));
+  await page.evaluate(()=>scrollTo(0,0));
+  await page.waitForFunction(()=>document.querySelector('.hero-field').dataset.state==='running');
+  const runningFrames=await page.$eval('.hero-field',e=>Number(e.dataset.frames));
+  await new Promise(r=>setTimeout(r,250));
+  check('Hero field draws at most 30 frames per second',await page.$eval('.hero-field',(e,n)=>Number(e.dataset.frames)>n&&Number(e.dataset.frames)-n<=9,runningFrames));
+  await page.evaluate(()=>{Object.defineProperty(document,'hidden',{value:true,configurable:true});document.dispatchEvent(new Event('visibilitychange'))});
+  const hiddenFrames=await page.$eval('.hero-field',e=>e.dataset.frames);
+  await new Promise(r=>setTimeout(r,200));
+  check('Hidden tab cancels field loop',await page.$eval('.hero-field',(e,n)=>e.dataset.state==='paused'&&e.dataset.frames===n,hiddenFrames));
+  await page.evaluate(()=>{Object.defineProperty(document,'hidden',{value:false,configurable:true});document.dispatchEvent(new Event('visibilitychange'));document.querySelector('#planes').scrollIntoView()});
+  await page.waitForFunction(()=>document.querySelector('.hero-field').dataset.state==='paused');
+  const offscreenFrames=await page.$eval('.hero-field',e=>e.dataset.frames);
+  await new Promise(r=>setTimeout(r,200));
+  check('Offscreen field cancels loop',await page.$eval('.hero-field',(e,n)=>e.dataset.frames===n,offscreenFrames));
   await page.click('.architecture-detail summary');
   const frame = await (await page.$('[data-diagram]')).contentFrame(); await frame.waitForFunction(() => document.readyState === 'complete');
   check('Archify interactive workflow loads under Pages prefix', frame.url().includes('/sw-factory/diagrams/sdlc-workflow.html'));
@@ -140,6 +153,18 @@ try {
   }
   await page.setJavaScriptEnabled(false); await page.goto(url);
   check('Factory, agent and routing explanations remain readable without JavaScript', await page.evaluate(() => ['fabrica', 'agente', 'router-auto', 'router-omni'].every(id => document.getElementById(id).getBoundingClientRect().height > 0)));
+  const heroContrast = await page.evaluate(() => {
+    const blend=(fg,bg,a)=>fg.map((v,i)=>v*a+bg[i]*(1-a));
+    const lum=c=>c.map(v=>{v/=255;return v<=.04045?v/12.92:((v+.055)/1.055)**2.4}).reduce((n,v,i)=>n+v*[.2126,.7152,.0722][i],0);
+    return [
+      {paper:[247,251,250],ink:[56,75,78],packet:[8,124,112],alpha:.45},
+      {paper:[11,13,18],ink:[178,201,200],packet:[20,184,166],alpha:.65}
+    ].map(t=>{
+      const bg=blend(t.packet,blend([20,184,166],t.paper,.12),t.alpha*.45);
+      const a=lum(t.ink),b=lum(bg);return (Math.max(a,b)+.05)/(Math.min(a,b)+.05);
+    });
+  });
+  check('Hero copy exceeds 4.5:1 even directly over the brightest packet and radial wash',heroContrast.every(n=>n>=4.5));
   const js = (await readFile('site/app.js')).length + (await readFile('site/modules.js')).length;
   check('Combined served JavaScript stays below 10 KB', js < 10000);
   if (errors.length || failedRequests.length || external.length) console.error(JSON.stringify({errors,failedRequests,external}));

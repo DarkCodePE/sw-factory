@@ -667,4 +667,22 @@ code { font-family: var(--font-outlier); overflow-wrap: anywhere; }
     padding: var(--space-2xs) 0;
     font-size: var(--text-sm);
   }
+
+/* The field converges on the session; it carries no product data. */
+.hero-field { position:absolute; inset:0; width:100%; height:100%; pointer-events:none; z-index:0; }
+.hero { background:radial-gradient(ellipse at 80% 24%, color-mix(in srgb,var(--color-brand) 12%,transparent),transparent 60%); }
+.hero-relation { position:relative; z-index:1; }
+.session-brand { display:flex; align-items:center; gap:.75rem; min-width:0; }
+.hero-beaver { width:80px; height:80px; flex:none; filter:drop-shadow(0 0 calc(var(--receive,0) * 16px) #14b8a6); }
+.demo-toolbar { position:relative; }
+main > section:not(.hero) { background-image:radial-gradient(color-mix(in srgb,var(--color-ink) 6%,transparent) .7px,transparent .7px); background-size:24px 24px; }
+.site-nav > .nav-mobile-menu { display:none; }
+.nav-dropdown-panel { min-width:180px; padding:.5rem; background:var(--color-paper); border:1px solid var(--color-rule); border-radius:8px; z-index:20; }
+@media(max-width:56rem) {
+ .site-nav > .nav-mobile-menu { display:block; }
+ .hero-beaver { width:64px; height:64px; }
+ .session-brand { gap:.375rem; }
 }
+/* Bound the brightest packet under copy, including the radial wash. */
+.hero-field { opacity:.45; }
+.hero .section-tag { color:var(--color-ink-2); }
