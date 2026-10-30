@@ -25,6 +25,32 @@ try {
       check(`${mode} ${width}: new reading sections stay within viewport`, await page.evaluate(() => [...document.querySelectorAll('#fabrica *, #agente *, #sandbox *, #modelos *, #planes *')].filter(e => e.getClientRects().length).every(e => { const r = e.getBoundingClientRect(); return r.left >= -1 && r.right <= innerWidth + 1; })));
       check(`${mode} ${width}: one selected tab and visible panel`, await page.evaluate(() => document.querySelectorAll('.module-tab[aria-selected="true"]').length === 1 && [...document.querySelectorAll('[data-module]')].filter(p => !p.hidden).length === 1));
       check(`${mode} ${width}: reduced motion is final and replay disabled`, await page.evaluate(() => document.querySelector('[data-module-play]').disabled && document.querySelector('[data-module]:not([hidden])').dataset.step === '3'));
+      check(`${mode} ${width}: zero running animations with prefers-reduced-motion`, await page.evaluate(() => document.getAnimations().filter(a => a.playState === 'running').length === 0));
+      check(`${mode} ${width}: mascot slot is mounted, decorative and visible`, await page.evaluate(() => {
+        const slot = document.querySelector('.mascot-slot[data-mascot-state="mounted"][aria-hidden="true"]');
+        if (!slot) return false;
+        const mascot = slot.querySelector('svg, img');
+        if (!mascot) return false;
+        const cs = getComputedStyle(slot);
+        const r = slot.getBoundingClientRect();
+        return cs.display !== 'none' && r.width > 0 && r.height > 0;
+      }));
+      check(`${mode} ${width}: all text elements fit within their node rects`, await page.evaluate(() => {
+        const nodes = document.querySelectorAll('g.module-node');
+        for (const node of nodes) {
+          const rect = node.querySelector('rect');
+          if (!rect) continue;
+          const rectBox = rect.getBoundingClientRect();
+          const texts = node.querySelectorAll('text');
+          for (const text of texts) {
+            if (getComputedStyle(text).display === 'none') continue;
+            const textBox = text.getBoundingClientRect();
+            if (textBox.width === 0 || textBox.height === 0) continue;
+            if (textBox.right > rectBox.right + 1.5 || textBox.left < rectBox.left - 1.5) return false;
+          }
+        }
+        return true;
+      }));
       await page.focus('.module-tab'); await page.keyboard.press('ArrowDown');
       check('ArrowDown selects triage', await page.$eval('.module-tab[aria-selected="true"]', e => e.id === 'module-tab-triage' && document.activeElement === e));
       await page.keyboard.press('End'); check('End selects workers', await page.$eval('.module-tab[aria-selected="true"]', e => e.id === 'module-tab-workers'));
@@ -67,7 +93,33 @@ try {
   await page.click('[data-module-end]'); check('Final state stops playback', await page.$eval('#module-jira', p => p.dataset.step === '3' && p.dataset.playing === 'false'));
   await page.click('[data-module-play]'); await page.evaluate(() => scrollTo(0, 0)); await new Promise(resolve => setTimeout(resolve, 100));
   check('Offscreen module animation is suspended', await page.$eval('#module-jira', p => p.dataset.playing === 'false'));
-  check('Mascot slot is reserved with no image or chosen concept', await page.evaluate(() => document.querySelector('[data-mascot-state="reserved"]') && document.querySelector('[data-mascot-state] img') === null && document.querySelector('#fab-mascot-template')));
+  await page.click('#module-tab-jira'); await page.click('[data-module-play]');
+  await page.waitForFunction(() => document.getElementById('module-jira').dataset.step !== '0');
+  const stepHiddenBefore = await page.$eval('#module-jira', p => p.dataset.step);
+  await page.evaluate(() => {
+    Object.defineProperty(document, 'hidden', { value: true, configurable: true });
+    Object.defineProperty(document, 'visibilityState', { value: 'hidden', configurable: true });
+    document.dispatchEvent(new Event('visibilitychange'));
+  });
+  await new Promise(resolve => setTimeout(resolve, 1500));
+  const stepHiddenAfter = await page.$eval('#module-jira', p => p.dataset.step);
+  check('Hidden tab halts running animations and prevents step advance', await page.evaluate((before, after) => {
+    const running = document.getAnimations().filter(a => a.playState === 'running').length;
+    return before === after && running === 0;
+  }, stepHiddenBefore, stepHiddenAfter));
+  await page.evaluate(() => {
+    Object.defineProperty(document, 'hidden', { value: false, configurable: true });
+    Object.defineProperty(document, 'visibilityState', { value: 'visible', configurable: true });
+    document.dispatchEvent(new Event('visibilitychange'));
+  });
+  check('Mascot slot is mounted, decorative and visible in both themes', await page.evaluate(() => {
+    const slot = document.querySelector('.mascot-slot[data-mascot-state="mounted"][aria-hidden="true"]');
+    if (!slot) return false;
+    const mascot = slot.querySelector('svg, img');
+    if (!mascot) return false;
+    const cs = getComputedStyle(slot);
+    return cs.display !== 'none' && slot.getBoundingClientRect().width > 0;
+  }));
   await page.click('.architecture-detail summary');
   const frame = await (await page.$('[data-diagram]')).contentFrame(); await frame.waitForFunction(() => document.readyState === 'complete');
   check('Archify interactive workflow loads under Pages prefix', frame.url().includes('/sw-factory/diagrams/sdlc-workflow.html'));
