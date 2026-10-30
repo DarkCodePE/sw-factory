@@ -223,7 +223,9 @@ export class Store {
     const id = randomUUID();
     this.db
       .query(
-        `INSERT INTO workstreams VALUES ($id,$slug,$goal,$repo,'draft',$agent,$wc,$tl,$rca,$ra,$at)`
+        `INSERT INTO workstreams (id, slug, goal, repo, state, agent, worker_concurrency,
+         task_limit, require_change_approval, require_approval, created_at)
+         VALUES ($id,$slug,$goal,$repo,'draft',$agent,$wc,$tl,$rca,$ra,$at)`
       )
       .run({
         id,
@@ -272,7 +274,8 @@ export class Store {
     const ws = this.getWorkstream(workstream);
     const id = randomUUID();
     this.db
-      .query(`INSERT INTO signals VALUES (?,?,?,?,'new',NULL,?)`)
+      .query(`INSERT INTO signals (id, workstream_id, title, body, status, change_id, created_at)
+              VALUES (?,?,?,?,'new',NULL,?)`)
       .run(id, ws.id, title, body, now());
     return toSignal(this.db.query('SELECT * FROM signals WHERE id = ?').get(id) as Row);
   }
@@ -325,7 +328,10 @@ export class Store {
     const firstKind: ActivityKind = ws.requireChangeApproval ? 'change_review' : 'investigation';
     // A change awaiting human approval sits in review; otherwise it waits for a worker.
     const status: ChangeStatus = firstKind === 'change_review' ? 'in_review' : 'pending';
-    this.db.query('INSERT INTO changes VALUES (?,?,?,?,?,NULL,?,?)').run(id, ws.id, title, description, status, t, t);
+    this.db
+      .query(`INSERT INTO changes (id, workstream_id, title, description, status, branch, created_at, updated_at)
+              VALUES (?,?,?,?,?,NULL,?,?)`)
+      .run(id, ws.id, title, description, status, t, t);
     if (firstKind === 'change_review') {
       this.insertActivity(ws.id, id, null, 'change_review', 'completed', 'awaiting');
     } else {
