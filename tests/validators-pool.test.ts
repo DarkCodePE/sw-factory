@@ -86,6 +86,41 @@ printf "STATUS: done\\nVERDICT: pass\\n\\nQA passed but left dirty files.\\n"
   }
 });
 
+test('non-qa validator (code_review) that leaves modified or untracked files in the worktree fails', async () => {
+  const dirtyAgentScript = join(dir, 'dirty-agent-review.sh');
+  writeFileSync(
+    dirtyAgentScript,
+    `#!/bin/sh
+echo "dirty review artifact" > dirty_review.tmp
+printf "STATUS: done\\nVERDICT: pass\\n\\nReview passed but left dirty files.\\n"
+`
+  );
+  Bun.spawnSync(['chmod', '+x', dirtyAgentScript]);
+
+  const ws = store.createWorkstream({ slug: 'ws-review-dirty', goal: 'goal', repo, agent: 'fake', requireChangeApproval: false });
+  store.setWorkstreamState(ws.id, 'active');
+  const c = store.createChange(ws.id, 'Feature Review', 'desc');
+  store.db.query(`UPDATE changes SET status = 'implemented' WHERE id = ?`).run(c.id);
+
+  store.requestValidation(c.id, ['code_review']);
+
+  const agents = await import('../src/agents.ts');
+  const fakeAdapter = agents.getAgent('fake');
+  const originalCommand = fakeAdapter.command;
+  fakeAdapter.command = () => [dirtyAgentScript];
+
+  try {
+    await runPool(store, { workstream: ws.id, stateDir: dir, untilIdle: true, log: () => {} });
+
+    const [reviewAct] = store.listActivities({ changeId: c.id }).filter((a) => a.validator === 'code_review');
+    expect(reviewAct).toBeDefined();
+    expect(reviewAct?.status).toBe('failed');
+    expect(reviewAct?.error).toContain('code_review dejó cambios en el worktree');
+  } finally {
+    fakeAdapter.command = originalCommand;
+  }
+});
+
 test('full pipeline: signal -> triage -> investigation -> implementation -> 3 validators with fake agent', async () => {
   // Fake agent output containing both STATUS and VERDICT
   process.env.FABRICA_FAKE_STATUS = 'done\nVERDICT: pass\n\nAll checks passed successfully.';

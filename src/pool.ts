@@ -62,18 +62,16 @@ export async function processActivity(store: Store, activity: Activity, workerId
         log(`[${workerId}] ${a.validator} rejected: missing valid VERDICT`);
         return;
       }
-      if (a.validator === 'qa') {
-        let isDirty = false;
-        try {
-          const proc = Bun.spawn(['git', ...GIT_SAFE_FLAGS, 'status', '--porcelain'], { cwd: path, stdout: 'pipe', stderr: 'pipe' });
-          const statusText = (await new Response(proc.stdout).text()).trim();
-          if (statusText.length > 0) isDirty = true;
-        } catch {}
-        if (isDirty) {
-          store.failActivity(a.id, workerId, 'qa dejó cambios en el worktree');
-          log(`[${workerId}] qa dejó cambios en el worktree`);
-          return;
-        }
+      let isDirty = false;
+      try {
+        const proc = Bun.spawn(['git', ...GIT_SAFE_FLAGS, 'status', '--porcelain'], { cwd: path, stdout: 'pipe', stderr: 'pipe' });
+        const statusText = (await new Response(proc.stdout).text()).trim();
+        if (statusText.length > 0) isDirty = true;
+      } catch {}
+      if (isDirty) {
+        store.failActivity(a.id, workerId, `${a.validator} dejó cambios en el worktree`);
+        log(`[${workerId}] ${a.validator} dejó cambios en el worktree`);
+        return;
       }
     }
     if (a.kind === 'implementation') {
