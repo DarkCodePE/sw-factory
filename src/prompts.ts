@@ -79,9 +79,16 @@ export function validateReportStatus(output: string): string | undefined {
     ? undefined : 'Include a first STATUS line containing exactly STATUS: done or STATUS: blocked - <reason>.';
 }
 
-export function parseReportStatus(output: string): { done: boolean; reason: string } {
+export interface ReportStatus {
+  done: boolean;
+  kind: 'done' | 'blocked' | 'missing';
+  reason: string;
+}
+
+export function parseReportStatus(output: string): ReportStatus {
   const line = reportStatusLine(output);
-  if (!line) return { done: false, reason: 'report has no STATUS line' };
-  if (/^STATUS:\s*done\s*$/i.test(line)) return { done: true, reason: '' };
-  return { done: false, reason: line.replace(/^STATUS:\s*/i, '') };
+  if (!line) return { done: false, kind: 'missing', reason: 'report has no STATUS line' };
+  if (/^STATUS:\s*done\s*$/i.test(line)) return { done: true, kind: 'done', reason: '' };
+  if (/^STATUS:\s*blocked\b/i.test(line)) return { done: false, kind: 'blocked', reason: line.replace(/^STATUS:\s*/i, '') };
+  return { done: false, kind: 'missing', reason: 'report has no STATUS line' };
 }

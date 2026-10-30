@@ -176,3 +176,27 @@ test('removeWorktree: succeeds silently if branch does not exist', async () => {
   const changeId = '0011223344556677';
   await expect(removeWorktree(repo, stateDir, changeId)).resolves.toBeUndefined();
 });
+
+test('D5: git operations in worktrees ignore repository hooks (core.hooksPath=/dev/null)', async () => {
+  const hooksDir = join(repo, '.git', 'hooks');
+  mkdirSync(hooksDir, { recursive: true });
+
+  const markerCheckout = join(dir, 'hook-post-checkout-executed');
+  const markerCommit = join(dir, 'hook-pre-commit-executed');
+
+  const postCheckoutHook = join(hooksDir, 'post-checkout');
+  writeFileSync(postCheckoutHook, `#!/bin/sh\ntouch "${markerCheckout}"\n`);
+  Bun.spawnSync(['chmod', '+x', postCheckoutHook]);
+
+  const preCommitHook = join(hooksDir, 'pre-commit');
+  writeFileSync(preCommitHook, `#!/bin/sh\ntouch "${markerCommit}"\n`);
+  Bun.spawnSync(['chmod', '+x', preCommitHook]);
+
+  const changeId = 'd5test1234567890';
+  const { path: wtPath } = await ensureWorktree(repo, stateDir, changeId);
+  expect(existsSync(markerCheckout)).toBe(false);
+
+  writeFileSync(join(wtPath, 'change.txt'), 'hello\n');
+  await commitWorktree(wtPath, 'test commit without hooks');
+  expect(existsSync(markerCommit)).toBe(false);
+});

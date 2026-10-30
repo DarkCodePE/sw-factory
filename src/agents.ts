@@ -1,13 +1,19 @@
 // Headless coding-agent adapters. Each turns (prompt, cwd) into one non-interactive run.
 // The factory never edits code itself; it hands one activity to one agent run.
 import { selfCommand } from './self.ts';
-import { reportStatusLine } from './prompts.ts';
+import { parseReportStatus, reportStatusLine } from './prompts.ts';
+
+export interface AgentRunStatus {
+  kind: 'done' | 'blocked' | 'missing';
+  reason: string;
+}
 
 export interface AgentRun {
   ok: boolean;
   output: string;
   exitCode: number;
   durationMs: number;
+  status: AgentRunStatus;
 }
 
 export interface AgentAdapter {
@@ -122,8 +128,8 @@ export function boundedAgentOutput(text: string): string {
   const max = 20_000;
   const output = text.trim();
   if (output.length <= max) return output;
-  const status = reportStatusLine(output) ?? 'STATUS: blocked - report has no STATUS line';
-  const prefix = status.slice(0, 1024) + '\n\n[Report body truncated]\n';
+  const status = reportStatusLine(output);
+  const prefix = (status ? status.slice(0, 1024) + '\n\n' : '') + '[Report body truncated]\n';
   return prefix + output.slice(-(max - prefix.length));
 }
 
@@ -149,6 +155,14 @@ export async function runAgent(
     proc.exited,
   ]);
   clearTimeout(timer);
-  const output = boundedAgentOutput(stdout.trim() || stderr.trim());
-  return { ok: exitCode === 0 && output.length > 0, output, exitCode, durationMs: Date.now() - start };
+  const rawOutput = stdout.trim() || stderr.trim();
+  const status = parseReportStatus(rawOutput);
+  const output = boundedAgentOutput(rawOutput);
+  return {
+    ok: exitCode === 0 && output.length > 0,
+    output,
+    exitCode,
+    durationMs: Date.now() - start,
+    status: { kind: status.kind, reason: status.reason },
+  };
 }
