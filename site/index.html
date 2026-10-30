@@ -21,7 +21,7 @@
     <a class="brand-home" href="#inicio" aria-label="fab, inicio"><img class="brand-logo brand-logo-light" src="./assets/brand/fab-logo-light.svg" width="251" height="120" alt=""><img class="brand-logo brand-logo-dark" src="./assets/brand/fab-logo-dark.svg" width="251" height="120" alt=""></a>
     <nav class="site-nav" aria-label="Principal">
       <details class="nav-mobile-menu">
-        <summary class="nav-mobile-summary">Menú</summary>
+        <summary class="nav-mobile-summary"><svg viewBox="0 0 24 24" width="20" height="20" aria-hidden="true"><path d="M4 6h16M4 12h16M4 18h16"/></svg>Menú</summary>
         <div class="nav-mobile-dropdown">
           <div class="nav-group-section">
             <span class="nav-group-heading">Productos</span>
@@ -29,27 +29,28 @@
             <a href="#agente">Agente de código</a>
           </div>
           <div class="nav-group-section">
+            <span class="nav-group-heading">Secciones</span>
             <a href="#capacidades">Capacidades</a>
             <a href="#base-local">Base local</a>
             <a href="#planes">Próximamente</a>
             <a href="https://github.com/DarkCodePE/sw-factory">GitHub</a>
-            <a href="#empezar">Instalar</a>
+            <a class="nav-cta-install" href="#empezar">Instalar</a>
           </div>
         </div>
       </details>
       <div class="nav-desktop-bar">
-        <div class="nav-dropdown-item">
-          <a class="nav-dropdown-trigger" href="#productos">Productos ▾</a>
+        <details class="nav-dropdown-item">
+          <summary class="nav-dropdown-trigger">Productos <svg viewBox="0 0 16 16" width="16" height="16" aria-hidden="true"><path d="m4 6 4 4 4-4"/></svg></summary>
           <div class="nav-dropdown-panel">
             <a href="#fabrica">Fábrica</a>
             <a href="#agente">Agente de código</a>
           </div>
-        </div>
+        </details>
         <a href="#capacidades">Capacidades</a>
         <a href="#base-local">Base local</a>
         <a href="#planes">Próximamente</a>
         <a href="https://github.com/DarkCodePE/sw-factory">GitHub</a>
-        <a href="#empezar">Instalar</a>
+        <a class="nav-cta-install" href="#empezar">Instalar</a>
       </div>
     </nav>
     <button class="theme-button quiet-button" type="button" hidden aria-label="Cambiar al tema claro">

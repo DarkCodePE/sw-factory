@@ -104,8 +104,6 @@
   .module-panel { padding: var(--space-md); }
 }
 @media (max-width: 48rem) {
-  .site-header { gap: var(--space-md); }
-  .site-header nav { column-gap: var(--space-lg); }
   .pillars-grid { grid-template-columns: minmax(0, 1fr); }
   .pillars-grid article { padding-block: var(--space-sm); }
   .module-heading { display: block; }
@@ -125,9 +123,6 @@
 }
 
 @media (max-width: 48rem) {
-  .site-header.container { padding-block: var(--space-sm); }
-  .site-header.container nav { display: grid; grid-template-columns: repeat(5, minmax(0, 1fr)); gap: var(--space-2xs); }
-  .site-header.container nav a { font-size: var(--text-xs); display: inline-flex; align-items: center; justify-content: center; min-height: var(--control-height); }
   .hero .hero-grid { gap: var(--space-lg); }
   .hero { padding-top: var(--space-md); }
   .hero .install-well { padding-block: var(--space-sm); }
@@ -138,8 +133,6 @@
   .module-node .node-detail, .module-scene .scene-note, .module-scene > .node-detail { display: none; }
 }
 @media (max-width: 48rem) {
-  .site-header.container nav { font-size: var(--text-xs); grid-template-columns: repeat(auto-fit, minmax(4em, 1fr)); }
-  .site-header.container nav a { font-size: inherit; white-space: normal; text-align: center; overflow-wrap: anywhere; }
   .module-tabs { font-size: var(--text-sm); grid-template-columns: repeat(auto-fit, minmax(min(100%, 9.5em), 1fr)); }
   .module-tab { min-width: 0; overflow-wrap: anywhere; }
 }
