@@ -156,3 +156,17 @@ describe('claiming and failures', () => {
     expect(store.claimActivity(ws.id, 'w1')).not.toBeNull();
   });
 });
+
+
+test('inserts tolerate extra nullable columns in store tables', () => {
+  for (const table of ['workstreams', 'signals', 'changes', 'activities', 'events']) {
+    store.db.exec(`ALTER TABLE ${table} ADD COLUMN future_value TEXT`);
+  }
+  const ws = store.createWorkstream({ slug: 'extended', goal: 'g', repo: '/r' });
+  expect(ws.slug).toBe('extended');
+  const signal = store.addSignal(ws.id, 'signal', 'body');
+  const change = store.triageSignal(signal.id);
+  expect(change.title).toBe('signal');
+  expect(store.listActivities({ changeId: change.id })).toHaveLength(1);
+  expect(store.listEvents(ws.id).length).toBeGreaterThan(0);
+});
