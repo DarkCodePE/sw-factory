@@ -1,7 +1,7 @@
 // Worker pool: claims pending activities FIFO, runs one headless agent per activity
 // in the change's worktree, and records the result back in the store.
 import { getAgent, runAgent } from './agents.ts';
-import { buildWorkerPrompt, parseReportStatus } from './prompts.ts';
+import { buildWorkerPrompt } from './prompts.ts';
 import type { Activity, Store } from './store.ts';
 import { buildValidatorPrompt } from './validators/prompts.ts';
 import { parseVerdict } from './validators/verdict.ts';
@@ -44,15 +44,15 @@ export async function processActivity(store: Store, activity: Activity, workerId
     log(`[${workerId}] ${a.validator ?? a.kind} "${change.title}" -> ${agent.name} in ${path}`);
     const readOnly = a.validator ? (a.validator !== 'qa') : (a.kind === 'investigation');
     const run = await runAgent(agent, prompt, path, undefined, { readOnly });
-    const status = parseReportStatus(run.output);
     if (!run.ok) {
       store.failActivity(a.id, workerId, `agent exit ${run.exitCode}: ${run.output.slice(-1000)}`);
       log(`[${workerId}] ${a.validator ?? a.kind} failed (exit ${run.exitCode})`);
       return;
     }
-    if (!status.done) {
-      store.failActivity(a.id, workerId, `blocked: ${status.reason}\n\n${run.output.slice(-2000)}`);
-      log(`[${workerId}] ${a.validator ?? a.kind} blocked: ${status.reason}`);
+    if (run.status.kind !== 'done') {
+      const prefix = run.status.kind === 'blocked' ? `blocked: ${run.status.reason}` : run.status.reason;
+      store.failActivity(a.id, workerId, `${prefix}\n\n${run.output.slice(-2000)}`);
+      log(`[${workerId}] ${a.validator ?? a.kind} ${run.status.kind === 'blocked' ? 'blocked' : 'failed'}: ${run.status.reason}`);
       return;
     }
     if (a.validator) {

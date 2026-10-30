@@ -60,8 +60,8 @@ test('parseReportStatus', () => {
   expect(parseReportStatus('STATUS: done\nok').done).toBe(true);
   expect(parseReportStatus('**STATUS: done**').done).toBe(true);
   expect(parseReportStatus('## **STATUS: done**').done).toBe(true);
-  expect(parseReportStatus('STATUS: blocked - no repro')).toEqual({ done: false, reason: 'blocked - no repro' });
-  expect(parseReportStatus('no status here').done).toBe(false);
+  expect(parseReportStatus('STATUS: blocked - no repro')).toEqual({ done: false, kind: 'blocked', reason: 'blocked - no repro' });
+  expect(parseReportStatus('no status here')).toEqual({ done: false, kind: 'missing', reason: 'report has no STATUS line' });
   for (const text of ['STATUS: doneXYZ', 'STATUS: pending\nSTATUS: done']) {
     expect(validateReportStatus(text)).toBeDefined(); expect(parseReportStatus(text).done).toBe(false);
   }
