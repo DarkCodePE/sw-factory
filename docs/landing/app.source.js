@@ -148,7 +148,6 @@
   demo.addEventListener('pointerleave', () => { pointerHeld = false; draw(); schedule(); });
   demo.addEventListener('focusin', () => { focusHeld = true; draw(); schedule(); });
   demo.addEventListener('focusout', () => setTimeout(() => { focusHeld = demo.contains(document.activeElement); draw(); schedule(); }, 0));
-  matchMedia('(max-width: 48rem)').addEventListener('change', draw);
   new IntersectionObserver(entries => {
     visible = entries[0].isIntersecting;
     if (visible && !started && !motion.matches) { started = true; index = 0; running = true; draw(); }
@@ -165,4 +164,59 @@
   window.addEventListener('blur', () => setTimeout(sync, 0));
   window.addEventListener('focus', sync);
   document.addEventListener('focusin', sync);
+})();
+;(()=>{let S=document.querySelectorAll('.hero-relation, .sandbox-summary-figure, .models-overview-figure, .plans-overview-figure');let M=matchMedia('(prefers-reduced-motion: reduce)'),U=(e,a)=>{e.dataset.sceneActive=String(a);let s=e.querySelector('svg');if(s)s.dataset.sceneActive=String(a)},O=new IntersectionObserver(E=>E.forEach(e=>U(e.target,e.isIntersecting&&!document.hidden&&!M.matches)),{threshold:0.1});S.forEach(e=>O.observe(e));let R=()=>S.forEach(e=>U(e,!document.hidden&&!M.matches&&e.getBoundingClientRect().top<innerHeight&&e.getBoundingClientRect().bottom>0));document.addEventListener('visibilitychange',R);M.addEventListener('change',R)})();
+
+// Decorative field: precomputed cables, 30 draws/second, no loop while inactive.
+(() => {
+ const canvas=document.querySelector('.hero-field'), hero=canvas?.parentElement;
+
+ const ctx=canvas.getContext('2d'), receiver=document.querySelector('[data-field-receiver]');
+ const motion=matchMedia('(prefers-reduced-motion: reduce)');
+ let paths=[],width=0,height=0,visible=false,raf=0,last=0,frames=0;
+ function draw(time=0){
+  ctx.clearRect(0,0,width,height);
+  const dark=(document.documentElement.dataset.mode || (matchMedia('(prefers-color-scheme: dark)').matches?'dark':'light'))==='dark';
+  ctx.fillStyle=dark?'#14b8a6':'#087c70';
+  let glow=0;
+  paths.forEach((points,i)=>{
+   ctx.globalAlpha=dark?.2:.13;
+   points.forEach(([x,y])=>{ctx.beginPath();ctx.arc(x,y,1,0,Math.PI*2);ctx.fill()});
+   const phase=motion.matches?.65:((time/6500+i/paths.length)%1);
+   const point=points[Math.floor(phase*(points.length-1))];
+   ctx.globalAlpha=dark?.65:.45;
+   ctx.beginPath();ctx.arc(point[0],point[1],2.5,0,Math.PI*2);ctx.fill();
+   if(!motion.matches)glow=Math.max(glow,Math.max(0,(phase-.94)/.06));
+  });
+  receiver.style.setProperty('--receive',glow);
+  canvas.dataset.frames=++frames;
+ }
+ function tick(time){raf=0;if(time-last>=1000/30){draw(time);last=time}raf=requestAnimationFrame(tick)}
+ function sync(){
+  cancelAnimationFrame(raf);raf=0;
+  const active=visible&&!document.hidden&&!motion.matches;
+  canvas.dataset.state=motion.matches?'reduced':active?'running':'paused';
+  if(active)raf=requestAnimationFrame(tick);
+  else receiver.style.setProperty('--receive','0');
+ }
+ function resize(){
+  const box=hero.getBoundingClientRect(),target=receiver.getBoundingClientRect();
+  width=box.width;height=box.height;
+  const dpr=Math.min(devicePixelRatio||1,2);canvas.dataset.pixelRatio=dpr;
+  canvas.width=width*dpr;canvas.height=height*dpr;ctx.setTransform(dpr,0,0,dpr,0,0);
+  const ex=target.left-box.left+target.width/2,ey=target.top-box.top+target.height/2;
+  paths=Array.from({length:8},(_,i)=>Array.from({length:65},(_,j)=>{
+   const t=j/64,u=1-t,sx=width*i/7;
+   return [u*u*sx+2*u*t*(sx-width*.18)+t*t*ex,u*u*20+2*u*t*(ey+90)+t*t*ey];
+  }));
+  draw();sync();
+ }
+ new IntersectionObserver(entries=>{visible=entries[0].isIntersecting;sync()}).observe(hero);
+ new ResizeObserver(resize).observe(hero);
+ document.addEventListener('visibilitychange',sync);
+ motion.addEventListener('change',resize);
+ new MutationObserver(resize).observe(document.documentElement,{attributes:true,attributeFilter:['data-mode']});
+
+ matchMedia('(prefers-color-scheme: dark)').addEventListener('change',resize);
+ resize();
 })();

@@ -1,7 +1,1 @@
-<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 120 120" role="img" aria-label="fab"><title>fab</title><rect width="120" height="120" rx="26" fill="#FFFFFF"/><g transform="translate(12 12) scale(.8)"><g fill="none" stroke="#14B8A6" stroke-linecap="round" stroke-linejoin="round">
-  <path stroke-width="12" d="M37 108V44C37 24 50 14 72 14"/>
-  <path stroke-width="12" d="M12 59H50C55 59 58 57 60.6 55.7"/>
-  <path stroke-width="12" d="M37 90C44 82 54 80 66 78C75 76.5 80 75.8 84.5 75.1"/>
-  <circle stroke-width="7" cx="74" cy="49" r="7.5"/>
-  <circle stroke-width="8" cx="101" cy="71" r="9"/>
-</g></g></svg>
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64"><title>fab</title><path fill="var(--color-brand,#14B8A6)" d="M14 20C6 9 20 4 25 13Q32 10 39 13C44 4 58 9 50 20Q57 28 53 41Q49 54 38 57H26Q15 54 11 41Q7 28 14 20Z"/><g fill="#0B0D12"><circle cx="23" cy="28" r="3"/><circle cx="41" cy="28" r="3"/><path d="M27 35Q32 32 37 35L32 41Z"/></g><path fill="#F7FBFA" d="M25 42H39V53H25Z"/><path stroke="#0B0D12" stroke-width="2" d="M32 42V53"/></svg>

@@ -1,0 +1,23 @@
+{
+  "method": "Exact Prepare public files block from pages.yml, local only; no upload or deployment",
+  "count": 17,
+  "files": {
+    "modules.js": "ebe3aaba017cb2b5457ce461e2a2d2e2644d965d733c4571bc99698c0a964854",
+    "modules.css": "ffd77ea6b38394318721532c56cd3339662686174258ad0c7abf0bbee77200c0",
+    "app.js": "6dfcf516616fb64525cba6823a0edcf8c5db77acd71aa1f1436a10f54101b1f4",
+    "tokens.css": "42f8998be0325b5250f862c139863d263930de816b66cd5810f78e2449807468",
+    "index.html": "62a867c1b247b311591d5ff32880c5ce02417aa2983d873ab909498804bfc313",
+    "styles.css": "b83ad86943ad00ee559a48bef2227c5ba62eba3ba3fb30953601eef27da6cb27",
+    "base.css": "49056f1c273364e5908a86b52031b10bd1f3f998de5ca42ac7b005f77921650e",
+    "demo-session.txt": "c094170354bf6525599657c11f1a7b3bd9dbb7a65d5ec37b9518737d7ad23a4f",
+    "diagrams/architecture.html": "e2d854686380b6eec4ad5904ccfc7f45983742902ecdca1f315752f41647efe2",
+    "diagrams/sdlc-workflow.html": "c356c9538701b38e975a8331bdd36e9f6df146216fcc7023e047f496de538d96",
+    "assets/brand/fab-icon-light.svg": "f932cd371ca157d4283c66fd28f992151ee51a21522aafa5cc5b17d140d5a705",
+    "assets/brand/fab-logo-dark.svg": "d8ad1a5c7641a1dd0f5f8c27505995d41d94e782e1f5d42404a56a2fd179f727",
+    "assets/brand/fab-logo-light.svg": "263a43cf81be0c1e0f3a20d9aa34a4bd75d580cd43467bead0c2cdc223f139eb",
+    "assets/brand/fab-og.png": "7d9c725673a69f7e725d8fba145258f3e4d53e9e5bbae1e4c12901fabec54d4f",
+    "assets/brand/fab-mark.svg": "01ea82a807d2a1dcc3aa57b64a76144909232907640f1eefccb11ca4b19bc2a3",
+    "assets/brand/favicon.svg": "f932cd371ca157d4283c66fd28f992151ee51a21522aafa5cc5b17d140d5a705",
+    "assets/brand/fab-icon-dark.svg": "f932cd371ca157d4283c66fd28f992151ee51a21522aafa5cc5b17d140d5a705"
+  }
+}
