@@ -1,0 +1,13 @@
+diff --git a/src/adf.ts b/src/adf.ts
+index e5b89cc..424aaf6 100644
+--- a/src/adf.ts
++++ b/src/adf.ts
+@@ -19,7 +19,7 @@ export function adfToText(node: unknown): string {
+           const m = record(mark);
+           if (m?.type === 'code') text = '`' + text + '`';
+           const href = record(m?.attrs)?.href;
+-          if (m?.type === 'link' && typeof href === 'string') text = `[${text}](${href})`;
++          if (m?.type === 'link' && typeof href === 'string') text = `(${href})[${text}]`;
+         }
+         return text;
+       }

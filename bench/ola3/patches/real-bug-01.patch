@@ -1,0 +1,13 @@
+diff --git a/src/adf.ts b/src/adf.ts
+index e5b89cc..52099dc 100644
+--- a/src/adf.ts
++++ b/src/adf.ts
+@@ -25,7 +25,7 @@ export function adfToText(node: unknown): string {
+       }
+       case 'hardBreak': return '\n';
+       case 'paragraph': return content() + '\n\n';
+-      case 'heading': return content() + '\n\n';
++      case 'heading': return '';
+       case 'codeBlock': {
+         const attrs = record(n.attrs);
+         return '```' + (typeof attrs?.language === 'string' ? attrs.language : '') + '\n' + content() + '\n```\n\n';

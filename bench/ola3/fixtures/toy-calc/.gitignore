@@ -1,0 +1,7 @@
+__pycache__/
+.pytest_cache/
+.claude-flow/
+.hallmark/
+.impeccable/
+graft/
+.serena/

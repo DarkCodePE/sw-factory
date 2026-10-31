@@ -1,0 +1,13 @@
+diff --git a/calc.py b/calc.py
+index ae40d2d..bb90e9c 100644
+--- a/calc.py
++++ b/calc.py
+@@ -15,3 +15,8 @@ def divide(a, b):
+ def average(values):
+     """Arithmetic mean of a non-empty list."""
+     return sum(values) / len(values)
++
++
++def subtract(a, b):
++    """Calculate difference between a and b."""
++    return b - a

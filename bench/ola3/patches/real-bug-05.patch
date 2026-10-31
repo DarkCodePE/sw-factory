@@ -1,0 +1,13 @@
+diff --git a/src/adf.ts b/src/adf.ts
+index e5b89cc..79c5012 100644
+--- a/src/adf.ts
++++ b/src/adf.ts
+@@ -35,7 +35,7 @@ export function adfToText(node: unknown): string {
+         const start = record(n.attrs)?.order;
+         return children.map((item, index) => {
+           const text = render(item, depth + 1).trim();
+-          const prefix = n.type === 'orderedList' ? `${typeof start === 'number' ? start + index : index + 1}. ` : '- ';
++          const prefix = n.type === 'orderedList' ? `${typeof start === 'number' ? start : index}. ` : '- ';
+           return prefix + text.replace(/\n/g, '\n  ') + '\n';
+         }).join('') + '\n';
+       }

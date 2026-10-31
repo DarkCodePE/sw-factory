@@ -1,0 +1,37 @@
+diff --git a/src/adf.ts b/src/adf.ts
+index e5b89cc..c85ed91 100644
+--- a/src/adf.ts
++++ b/src/adf.ts
+@@ -26,6 +26,7 @@ export function adfToText(node: unknown): string {
+       case 'hardBreak': return '\n';
+       case 'paragraph': return content() + '\n\n';
+       case 'heading': return content() + '\n\n';
++      case 'rule': return '---\n\n';
+       case 'codeBlock': {
+         const attrs = record(n.attrs);
+         return '```' + (typeof attrs?.language === 'string' ? attrs.language : '') + '\n' + content() + '\n```\n\n';
+@@ -104,6 +105,11 @@ export function markdownToAdf(md: string): unknown {
+       index++;
+       continue;
+     }
++    if (/^---\s*$/.test(line)) {
++      content.push({ type: 'rule' });
++      index++;
++      continue;
++    }
+     const item = bullet(line);
+     if (item) { content.push(list(item[1]!.length)); continue; }
+     const paragraph: Node[] = [];
+diff --git a/tests/adf.test.ts b/tests/adf.test.ts
+index 6182331..7309394 100644
+--- a/tests/adf.test.ts
++++ b/tests/adf.test.ts
+@@ -33,5 +33,8 @@ describe('connector ADF conversion', () => {
+     for (const part of ['Título', '`código`', '[enlace](https://example.test/a)', 'Otra línea.', '- Uno', '- Dos', '- Tres', 'printf "$()"']) expect(text).toContain(part);
+     expect(adfToText(markdownToAdf(''))).toBe('');
+     expect(adfToText(markdownToAdf('```\nunclosed'))).toContain('unclosed');
++    const ruleAdf = markdownToAdf('---\n\ntexto') as any;
++    expect(ruleAdf.content[0].type).toBe('rule');
++    expect(adfToText(ruleAdf)).toContain('---');
+   });
+ });

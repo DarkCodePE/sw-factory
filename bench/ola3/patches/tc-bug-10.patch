@@ -1,0 +1,14 @@
+diff --git a/calc.py b/calc.py
+index ae40d2d..57d57ae 100644
+--- a/calc.py
++++ b/calc.py
+@@ -15,3 +15,9 @@ def divide(a, b):
+ def average(values):
+     """Arithmetic mean of a non-empty list."""
+     return sum(values) / len(values)
++
++
++def median(values):
++    """Calculate the median of values."""
++    s = sorted(values)
++    return s[len(s) // 2]
