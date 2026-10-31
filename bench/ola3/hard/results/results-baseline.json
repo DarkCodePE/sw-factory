@@ -4,12 +4,12 @@
   "cliDir": "/home/orlando/Desktop/factory/sw-factory-ola3b-agy",
   "totalCases": 20,
   "bugsTotal": 15,
-  "bugsDetected": 14,
-  "sensitivity": 0.9333333333333333,
+  "bugsDetected": 13,
+  "sensitivity": 0.8666666666666667,
   "cleanTotal": 5,
-  "falseRejections": 1,
-  "falseRejectionRate": 0.2,
-  "totalDurationS": 276,
+  "falseRejections": 0,
+  "falseRejectionRate": 0,
+  "totalDurationS": 183,
   "results": [
     {
       "id": "hard-bug-01",
@@ -124,9 +124,9 @@
       "verdict": "fail",
       "detected": true,
       "false_rejection": false,
-      "duration_s": 31.7,
+      "duration_s": 46.7,
       "cost": "suscripción ($0.00)",
-      "summary": "All 95 tests pass under `bun test`, but `sliceLines` does not limit text to `maxLines`. It slices to `maxLines + 1` (`src/connectors/adf.ts:11`), so `sliceLines('a\\nb\\nc\\nd\\ne', 2)` returns 3 lines instead of 2. The new test only checks the result with `toContain('a\\nb')`, so the bug passes CI. The "
+      "summary": "The tests pass (94/94, run with `bun test`) and the worktree is still clean, but the change does not meet its own description. It is described as a cleanup with no behavior change, yet `src/connectors/adf.ts:39` changes the ordered-list fallback from `index + 1` to `index`. Every ordered list withou"
     },
     {
       "id": "hard-bug-10",
@@ -137,9 +137,9 @@
       "verdict": "fail",
       "detected": true,
       "false_rejection": false,
-      "duration_s": 50.6,
+      "duration_s": 44,
       "cost": "suscripción ($0.00)",
-      "summary": "The full suite passes (`bun test`: 95 pass, 0 fail), but the change doesn't meet its goal. `isWorkerPidAlive` returns `true` on `ESRCH` (process doesn't exist) and `false` on `EPERM` (process exists), the opposite of what it should. Dead workers would be reported alive and live processes owned by ot"
+      "summary": "The test suite passes (`bun test`: 94 pass, 0 fail), and the `statusEmoji` → `statusBadge` rename in `validationMarkdown` is a safe rename. But the `ownerAlive` change from `e.code !== 'ESRCH'` to `e.code === 'ESRCH'` reverses the liveness check: a dead merge owner (`ESRCH`) now counts as alive and "
     },
     {
       "id": "hard-bug-11",
@@ -147,12 +147,12 @@
       "category": "semantic",
       "is_bug": true,
       "caught_by_tests": false,
-      "verdict": "pass",
-      "detected": false,
+      "verdict": "fail",
+      "detected": true,
       "false_rejection": false,
-      "duration_s": 33.7,
+      "duration_s": 52.1,
       "cost": "suscripción ($0.00)",
-      "summary": "The change adds `safeJsonParse<T>` to `src/manifest.ts`; it parses valid JSON and returns the fallback when `JSON.parse` throws, as described. `bun test` passed all 95 tests across 7 files (524 `expect()` calls), including the new test for the valid and invalid cases. `git status --porcelain` is emp"
+      "summary": "**Test command:** `bun test`. Result: **94 pass, 0 fail** (522 `expect()` calls, 7 files, 8.76s)."
     },
     {
       "id": "hard-bug-12",
@@ -163,9 +163,9 @@
       "verdict": "fail",
       "detected": true,
       "false_rejection": false,
-      "duration_s": 48.6,
+      "duration_s": 70.7,
       "cost": "suscripción ($0.00)",
-      "summary": "`bun test` passes 95/95, and the helper behaves correctly for times clearly in the past or future. It fails the goal of checking expiry against the store clock in two ways. First, at the exact expiry moment it says \"not expired\" while `requeueOrphans` (`src/store.ts:1023`, `<=`) has already put the "
+      "summary": "`bun test` passes (94/94), but the change isn't the pure refactor it claims to be. Changing `<=` to `<` in `requeueOrphans` (`src/store.ts:1019`) means a lease that expires exactly at `now` is no longer reclaimed. This disagrees with the `<=` expiry check at `src/store.ts:1120` in the same file, so "
     },
     {
       "id": "hard-bug-13",
@@ -173,12 +173,12 @@
       "category": "semantic",
       "is_bug": true,
       "caught_by_tests": false,
-      "verdict": "fail",
-      "detected": true,
+      "verdict": "pass",
+      "detected": false,
       "false_rejection": false,
-      "duration_s": 34.4,
+      "duration_s": 69.7,
       "cost": "suscripción ($0.00)",
-      "summary": "The suite passes (95/95) but the main requirement fails: `formatCleanupSummary` writes into the shared `DEFAULT_CLEANUP_CONFIG` through `Object.assign` and hands out that same object on the default path. After one call with a custom value, every later default call returns the custom value instead of"
+      "summary": "`bun test` passes 94/94 and both criteria are met: `severityRank` is documented, `defaultRules()` is memoized, and by code reading behaviour is the same for all current callers. The one concern is that `defaultRules()` now hands every caller the same mutable array, so a future caller that changes it"
     },
     {
       "id": "hard-bug-14",
@@ -189,9 +189,9 @@
       "verdict": "fail",
       "detected": true,
       "false_rejection": false,
-      "duration_s": 47.5,
+      "duration_s": 79.5,
       "cost": "suscripción ($0.00)",
-      "summary": "`bun test` passes 95/95, but `resolveBranchHead` checks its inputs in the wrong order. `cachedHead ?? head` returns the cached SHA even when a fresh head is supplied, so a stale commit wins over the live one. That inverts the \"cached fallback\" the change promises and the live-first order `writeManif"
+      "summary": "**Test command:** `bun test` (run from the worktree root) **Result:** 94 pass, 0 fail, 522 `expect()` calls, 7 files, 8.46s."
     },
     {
       "id": "hard-bug-15",
@@ -199,12 +199,12 @@
       "category": "semantic",
       "is_bug": true,
       "caught_by_tests": false,
-      "verdict": "fail",
-      "detected": true,
+      "verdict": "pass",
+      "detected": false,
       "false_rejection": false,
-      "duration_s": 40.2,
+      "duration_s": 67.6,
       "cost": "suscripción ($0.00)",
-      "summary": "The suite passes (`bun test`: 95 pass, 0 fail), but the change doesn't do what it claims. `normalizeHeadingLevel` should bound heading levels to the valid ADF range of 1–6, and it caps them at 5 (`src/connectors/adf.ts:10`). A valid level-6 heading, which this file's own parser produces from `######"
+      "summary": "`bun test` passes (94/94, 0 failures), and both changes in `src/threatmon/index.ts` do what the description says: `splitLines` behaves the same with `lines.at(-1)`, and `normalizeLine` now keeps tabs while still replacing other control characters with spaces, dropping `\\r` and stripping ANSI escape "
     },
     {
       "id": "hard-clean-01",
@@ -212,12 +212,12 @@
       "category": "clean",
       "is_bug": false,
       "caught_by_tests": false,
-      "verdict": "fail",
+      "verdict": "pass",
       "detected": false,
-      "false_rejection": true,
-      "duration_s": 38.6,
+      "false_rejection": false,
+      "duration_s": 35.3,
       "cost": "suscripción ($0.00)",
-      "summary": "The full suite passes (`bun test`: 95 pass, 0 fail), and a quote that is one paragraph on one line renders as `> text`, as requested. But the new code at `src/connectors/adf.ts:28` only prefixes the first line of each child, so any quote containing a line break or a list comes out partly unquoted. T"
+      "summary": "The full `bun test` suite passes (95/95) and the focused ADF tests pass (3/3), including the new blockquote test, which confirms blockquotes render as `> text`. The change is a single line, follows the converter's existing pattern, and breaks no other tests. Two small gaps don't affect the verdict: "
     },
     {
       "id": "hard-clean-02",

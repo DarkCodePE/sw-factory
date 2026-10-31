@@ -51,7 +51,8 @@ async function main() {
   } else if (filter === 'all') {
     selectedCases = allCases;
   } else {
-    selectedCases = allCases.filter((c) => c.id === filter);
+    const ids = filter.split(',').map((s) => s.trim());
+    selectedCases = allCases.filter((c) => ids.includes(c.id));
     if (selectedCases.length === 0) {
       console.error(`Error: no se encontró ningún caso con id "${filter}".`);
       process.exit(1);
@@ -108,9 +109,28 @@ async function main() {
 
   const totalDurationS = Math.round((Date.now() - startAll) / 1000);
 
+  // Merge with previous results if running a subset
+  const jsonPath = join(outDir, `results-${mode}.json`);
+  const tsvPath = join(outDir, `results-${mode}.tsv`);
+  let finalResults = results;
+  if (filter !== 'all' && existsSync(jsonPath)) {
+    try {
+      const prev = JSON.parse(readFileSync(jsonPath, 'utf8'));
+      if (Array.isArray(prev.results)) {
+        const byId = new Map<string, CaseResult>(prev.results.map((r: CaseResult) => [r.id, r]));
+        for (const r of results) {
+          byId.set(r.id, r);
+        }
+        finalResults = allCases.map((c) => byId.get(c.id)).filter((r): r is CaseResult => Boolean(r));
+      }
+    } catch (e) {
+      console.warn('Advertencia: no se pudieron cargar resultados anteriores para mezclar:', e);
+    }
+  }
+
   // Aggregation
-  const bugCases = results.filter((r) => r.is_bug);
-  const cleanCases = results.filter((r) => !r.is_bug);
+  const bugCases = finalResults.filter((r) => r.is_bug);
+  const cleanCases = finalResults.filter((r) => !r.is_bug);
 
   const bugsDetected = bugCases.filter((r) => r.detected).length;
   const falseRejections = cleanCases.filter((r) => r.false_rejection).length;
@@ -124,7 +144,7 @@ async function main() {
   console.log(`======================================================`);
   console.log(`ID           Repo      Categoría     Esperado  Veredicto   Det/FR   Duración  Coste`);
   console.log(`---------------------------------------------------------------------------------`);
-  for (const r of results) {
+  for (const r of finalResults) {
     const esp = r.is_bug ? (r.caught_by_tests ? 'bug (test)' : 'bug (sem)') : 'sano';
     const status = r.is_bug
       ? (r.detected ? 'DET' : 'MISS')
@@ -136,7 +156,7 @@ async function main() {
   console.log(`---------------------------------------------------------------------------------`);
   console.log(`Sensibilidad (bugs detectados): ${bugsDetected}/${bugCases.length} (${(sensitivity * 100).toFixed(1)}%)`);
   console.log(`Falsos rechazos (sanos):        ${falseRejections}/${cleanCases.length} (${(fpRate * 100).toFixed(1)}%)`);
-  console.log(`Duración total:                 ${totalDurationS}s`);
+  console.log(`Duración de esta corrida:       ${totalDurationS}s`);
   console.log(`======================================================\n`);
 
   // Write TSV and JSON summaries
@@ -144,20 +164,19 @@ async function main() {
   mkdirSync(outDir, { recursive: true });
 
   const tsvHeader = 'id\trepo\tcategory\tis_bug\tcaught_by_tests\tverdict\tdetected\tfalse_rejection\tduration_s\tcost\tsummary\n';
-  const tsvRows = results
+  const tsvRows = finalResults
     .map(
       (r) =>
         `${r.id}\t${r.repo}\t${r.category}\t${r.is_bug}\t${r.caught_by_tests}\t${r.verdict}\t${r.detected}\t${r.false_rejection}\t${r.duration_s}\t${r.cost}\t${r.summary}`
     )
     .join('\n');
-  const tsvPath = join(outDir, `results-${mode}.tsv`);
   writeFileSync(tsvPath, tsvHeader + tsvRows + '\n');
 
   const jsonSummary = {
     mode,
     agent,
     cliDir,
-    totalCases: results.length,
+    totalCases: finalResults.length,
     bugsTotal: bugCases.length,
     bugsDetected,
     sensitivity,
@@ -165,9 +184,8 @@ async function main() {
     falseRejections,
     falseRejectionRate: fpRate,
     totalDurationS,
-    results,
+    results: finalResults,
   };
-  const jsonPath = join(outDir, `results-${mode}.json`);
   writeFileSync(jsonPath, JSON.stringify(jsonSummary, null, 2) + '\n');
 
   console.log(`Resumen guardado en:`);
