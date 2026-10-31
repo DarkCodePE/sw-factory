@@ -31,9 +31,10 @@ async function main() {
 
   const filter = args[2] ?? 'all';
   const agent = process.env.FAB_BENCH_AGENT ?? 'codex';
-  const outDir = process.env.FAB_BENCH_OUTDIR ?? resolve(cliDir, 'bench/ola3/results');
+  const benchDir = process.env.FAB_BENCH_DIR ? resolve(process.env.FAB_BENCH_DIR) : resolve(cliDir, 'bench/ola3');
+  const outDir = process.env.FAB_BENCH_OUTDIR ?? resolve(benchDir, 'results');
 
-  const casesPath = resolve(cliDir, 'bench/ola3/cases.json');
+  const casesPath = resolve(benchDir, 'cases.json');
   if (!existsSync(casesPath)) {
     console.error(`Error: no se encontró ${casesPath}`);
     process.exit(1);
@@ -43,8 +44,10 @@ async function main() {
   let selectedCases: BenchCase[] = [];
 
   if (filter === 'pilot') {
-    // 2 cases to test quota and duration: 1 bug (tc-bug-01) + 1 clean (tc-clean-01)
-    selectedCases = allCases.filter((c) => c.id === 'tc-bug-01' || c.id === 'tc-clean-01');
+    // 2 cases to test quota and duration: first bug + first clean
+    const firstBug = allCases.find((c) => c.is_bug);
+    const firstClean = allCases.find((c) => !c.is_bug);
+    selectedCases = [firstBug, firstClean].filter((c): c is BenchCase => Boolean(c));
   } else if (filter === 'all') {
     selectedCases = allCases;
   } else {

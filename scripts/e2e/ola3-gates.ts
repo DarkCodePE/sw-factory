@@ -1,15 +1,32 @@
 // Ola 3: mide los gates deterministas sobre el banco de agy y los combina con la línea base del QA con LLM.
 // El pipeline es secuencial (gates → QA sobre el mismo HEAD) y el QA recibe la misma entrada que en la línea
 // base, así que el resultado combinado es: rechazo si el gate falla; si pasa, el veredicto de QA de la línea base.
-// uso: bun scripts/e2e/ola3-gates.ts [raíz de trabajo]   (por defecto ~/.cache/fab-ola3-gates; no /tmp: ver report-ola3-codex)
-import { cpSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+// uso: bun scripts/e2e/ola3-gates.ts [ruta_banco|raíz_trabajo] [raíz_trabajo]   (por defecto bench/ola3 y ~/.cache/fab-ola3-gates)
+import { cpSync, existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { homedir } from 'node:os';
 import { join, resolve } from 'node:path';
 import { runGates } from '../../src/gates.ts';
 
 const repo = resolve(import.meta.dir, '../..');
-const bench = join(repo, 'bench/ola3');
-const root = resolve(process.argv[2] ?? join(homedir(), '.cache/fab-ola3-gates'));
+let bench = join(repo, 'bench/ola3');
+let root = join(homedir(), '.cache/fab-ola3-gates');
+
+const arg2 = process.argv[2];
+const arg3 = process.argv[3];
+
+if (process.env.FAB_BENCH_DIR) {
+  bench = resolve(process.env.FAB_BENCH_DIR);
+  if (arg2) root = resolve(arg2);
+} else if (arg2) {
+  const candidate = resolve(arg2);
+  if (existsSync(join(candidate, 'cases.json'))) {
+    bench = candidate;
+    if (arg3) root = resolve(arg3);
+  } else {
+    root = candidate;
+  }
+}
+
 const cases = JSON.parse(readFileSync(join(bench, 'cases.json'), 'utf8')) as {
   id: string; repo: string; is_bug: boolean; caught_by_tests: boolean; test_cmd: string; patch_file: string;
 }[];
@@ -24,9 +41,12 @@ const git = (cwd: string, ...args: string[]) => {
 rmSync(root, { recursive: true, force: true });
 mkdirSync(root, { recursive: true });
 // Fase de dependencias, separada del gate (ficha 01): el sandbox filtra el entorno y no ve ~/.local.
+const hasPytest = cases.some((c) => c.test_cmd.startsWith('pytest'));
 const deps = join(root, '_deps');
-const pip = Bun.spawnSync(['python3', '-m', 'pip', 'install', '-q', '--target', deps, 'pytest']);
-if (pip.exitCode !== 0) throw new Error(`pip: ${pip.stderr.toString()}`);
+if (hasPytest) {
+  const pip = Bun.spawnSync(['python3', '-m', 'pip', 'install', '-q', '--target', deps, 'pytest']);
+  if (pip.exitCode !== 0) throw new Error(`pip: ${pip.stderr.toString()}`);
+}
 const PYTEST = ['python3', '-c', "import sys;sys.path.insert(0,'_deps');import pytest;raise SystemExit(pytest.main(['-q','-p','no:cacheprovider']))"];
 const rows = [];
 for (const c of cases) {

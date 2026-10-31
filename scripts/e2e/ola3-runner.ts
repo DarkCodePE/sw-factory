@@ -57,9 +57,10 @@ export async function runBenchCase(
   rmSync(caseRoot, { recursive: true, force: true });
   mkdirSync(caseRoot, { recursive: true });
 
+  const benchDir = process.env.FAB_BENCH_DIR ? resolve(process.env.FAB_BENCH_DIR) : resolve(cliDir, 'bench/ola3');
   const repoDir = join(caseRoot, 'repo');
-  const fixtureDir = resolve(cliDir, 'bench/ola3/fixtures', c.repo);
-  const patchPath = resolve(cliDir, 'bench/ola3', c.patch_file);
+  const fixtureDir = resolve(benchDir, 'fixtures', c.repo);
+  const patchPath = resolve(benchDir, c.patch_file);
   const fabricaHome = join(caseRoot, 'home');
   mkdirSync(fabricaHome, { recursive: true });
 
