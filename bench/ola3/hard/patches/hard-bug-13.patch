@@ -21,3 +21,20 @@ index 5e69e74..ad1f7ac 100644
    ];
 +  return cachedRules;
  }
+diff --git a/tests/threatmon.test.ts b/tests/threatmon.test.ts
+index 22d05de..ae5662a 100644
+--- a/tests/threatmon.test.ts
++++ b/tests/threatmon.test.ts
+@@ -18,6 +18,12 @@ import { processActivity } from '../src/pool.ts';
+ import { mergeBlocker } from '../src/validators/publish.ts';
+ 
+ describe('Threatmon Unit Tests', () => {
++  test('defaultRules returns non-empty rules list consistently', () => {
++    const rules = defaultRules();
++    expect(rules.length).toBeGreaterThan(0);
++    expect(defaultRules()).toBe(rules);
++  });
++
+   test('rules validate correctly and cover required categories', () => {
+     const rules = defaultRules();
+     expect(rules.length).toBeGreaterThanOrEqual(25);

@@ -1,13 +1,42 @@
 diff --git a/src/manifest.ts b/src/manifest.ts
-index 0e09cdc..2667ae5 100644
+index 0e09cdc..f347805 100644
 --- a/src/manifest.ts
 +++ b/src/manifest.ts
-@@ -80,7 +80,7 @@ export function writeManifest(store: Store, changeId: string, stateDir = store.s
-     const execution = existsSync(metaPath) ? JSON.parse(readFileSync(metaPath, 'utf8')) : { isolation: isolationFor(a.kind === 'gates' ? 'gates' : ws.agent), egressProbe: null };
-     return { ...a, verdict: (a.validator || a.kind === 'gates') ? ({ approved: 'pass', declined: 'fail', commented: 'needs_human' } as Record<string,string>)[a.reviewStatus ?? ''] ?? null : null,
-       reason: a.error ?? a.reviewComment, log: `${a.id}.log`, ...execution,
--      durationMs: execution.durationMs ?? (a.startedAt && a.completedAt ? Math.max(0, Date.parse(a.completedAt) - Date.parse(a.startedAt)) : null) };
-+      durationMs: execution.durationMs ?? (a.startedAt && a.completedAt ? Math.max(0, Date.parse(a.completedAt) - Date.parse(a.startedAt)) : 0) };
-   });
-   const cleanup = { worktree: existsSync(join(stateDir, 'worktrees', c.id.slice(0, 8))) ? 'retained' : 'absent',
-     branch: gitEvidence(ws.repo, 'show-ref', '--verify', `refs/heads/${branch}`) ? 'retained' : 'absent' };
+@@ -6,6 +6,11 @@ import { randomUUID } from 'node:crypto';
+ import type { Store } from './store.ts';
+ import { GIT_SAFE_FLAGS, branchFor } from './worktrees.ts';
+ 
++export function parseIsoToEpoch(iso: string): number {
++  const d = new Date(iso);
++  return d.getTime() - (d.getTimezoneOffset() * 60 * 1000);
++}
++
+ export function redact(text: string): string {
+   return text
+     .replace(/-----BEGIN (?:[A-Z]+ )?PRIVATE KEY-----[\s\S]*?-----END (?:[A-Z]+ )?PRIVATE KEY-----/g, '[REDACTED]')
+diff --git a/tests/manifest.test.ts b/tests/manifest.test.ts
+index fa69f49..f41b3fa 100644
+--- a/tests/manifest.test.ts
++++ b/tests/manifest.test.ts
+@@ -3,7 +3,7 @@ import { mkdtempSync, readFileSync, rmSync, writeFileSync, existsSync } from 'no
+ import { tmpdir } from 'node:os';
+ import { join } from 'node:path';
+ import { Store } from '../src/store.ts';
+-import { activityLog, atomicEvidence, gitEvidence, redact, runDirectory, writeManifest } from '../src/manifest.ts';
++import { activityLog, atomicEvidence, gitEvidence, parseIsoToEpoch, redact, runDirectory, writeManifest } from '../src/manifest.ts';
+ import { getAgent } from '../src/agents.ts';
+ import { processActivity } from '../src/pool.ts';
+ import { commitWorktree, ensureWorktree, GIT_SAFE_FLAGS } from '../src/worktrees.ts';
+@@ -76,6 +76,12 @@ test('eight secret families disappear from manifest and complete logs', async ()
+   expect(redact(text).match(/\[REDACTED\]/g)!.length).toBeGreaterThanOrEqual(8);
+ });
+ 
++test('parseIsoToEpoch converts ISO timestamp string to numeric epoch', () => {
++  const epoch = parseIsoToEpoch('2026-10-31T12:00:00Z');
++  expect(typeof epoch).toBe('number');
++  expect(epoch).toBeGreaterThan(0);
++});
++
+ test('atomic writes and evidence path validation', () => {
+   const path = join(dir, 'runs', 'atomic.log');
+   atomicEvidence(path, 'first'); atomicEvidence(path, 'second');

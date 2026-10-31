@@ -1,28 +1,42 @@
 diff --git a/src/validators/verdict.ts b/src/validators/verdict.ts
-index 7d2915c..aeb329f 100644
+index 7d2915c..2c6507c 100644
 --- a/src/validators/verdict.ts
 +++ b/src/validators/verdict.ts
-@@ -19,7 +19,7 @@ export function parseVerdict(report: string): { verdict: ValidationVerdict; summ
-     const rawLine = lines[i]!;
-     // Tolerate markdown headings (#), bold/italic asterisks (*), and extra spaces
-     const cleaned = rawLine.replace(/^#{1,6}\s+/, '').replace(/\*/g, '').trim();
--    const match = /^VERDICT:\s*(pass|fail|needs_human)\b/i.exec(cleaned);
-+    const match = /^(?:VERDICT|verdict):\s*(pass|fail|needs_human)\b/i.exec(cleaned);
-     if (match) {
-       verdict = match[1]!.toLowerCase() as ValidationVerdict;
-       verdictLineIdx = i;
+@@ -9,6 +9,10 @@ import type { ValidationVerdict } from '../connectors/types.ts';
+  * Following the VERDICT line, the first non-empty paragraph is extracted as
+  * the summary and truncated to 600 characters.
+  */
++export function isPassingVerdict(verdict?: string): boolean {
++  return verdict === 'pass';
++}
++
+ export function parseVerdict(report: string): { verdict: ValidationVerdict; summary: string } | undefined {
+   if (!report) return undefined;
+   const lines = report.split('\n');
 diff --git a/tests/validators-core.test.ts b/tests/validators-core.test.ts
-index 154c45a..758e954 100644
+index 154c45a..466b621 100644
 --- a/tests/validators-core.test.ts
 +++ b/tests/validators-core.test.ts
-@@ -43,6 +43,10 @@ Extra details here.`;
+@@ -8,7 +8,7 @@ import { VALIDATOR_KINDS, type ChangeLinks, type PullRequestGateway, type PullRe
+ import { Store, StoreError } from '../src/store.ts';
+ import { buildValidatorPrompt } from '../src/validators/prompts.ts';
+ import { mergeBlocker, publishValidation, validationMarkdown } from '../src/validators/publish.ts';
+-import { parseVerdict } from '../src/validators/verdict.ts';
++import { isPassingVerdict, parseVerdict } from '../src/validators/verdict.ts';
  
-   const sampleHeading = `STATUS: done\n### **VERDICT:** needs_human\n\nArchitectural question about caching strategy.`;
-   const resHeading = parseVerdict(sampleHeading);
+ let dir: string;
+ let store: Store;
+@@ -23,6 +23,13 @@ afterEach(() => {
+   rmSync(dir, { recursive: true, force: true });
+ });
+ 
++test('isPassingVerdict returns true only for pass verdict string', () => {
++  expect(isPassingVerdict('pass')).toBe(true);
++  expect(isPassingVerdict('fail')).toBe(false);
++  expect(isPassingVerdict('needs_human')).toBe(false);
++  expect(isPassingVerdict(undefined)).toBe(false);
++});
 +
-+  const sampleLower = `STATUS: done\nverdict: pass\n\nMinor docstring fix only.`;
-+  const resLower = parseVerdict(sampleLower);
-+  expect(resLower?.verdict).toBe('pass');
-   expect(resHeading?.verdict).toBe('needs_human');
-   expect(resHeading?.summary).toBe('Architectural question about caching strategy.');
- 
+ test('parseVerdict extracts verdict and summary under various markdown formats', () => {
+   const sample1 = `STATUS: done
+ VERDICT: pass

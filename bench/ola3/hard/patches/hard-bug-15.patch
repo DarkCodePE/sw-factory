@@ -19,3 +19,20 @@ index e5b89cc..ea9716a 100644
        continue;
      }
      const heading = /^(#{1,6})\s+(.*)$/.exec(line);
+diff --git a/tests/connectors-adf.test.ts b/tests/connectors-adf.test.ts
+index 3a47151..929034f 100644
+--- a/tests/connectors-adf.test.ts
++++ b/tests/connectors-adf.test.ts
+@@ -23,6 +23,12 @@ describe('connector ADF conversion', () => {
+     expect(adfToText(undefined)).toBe('');
+   });
+ 
++  test('code block language attribute is preserved during markdown to adf conversion', () => {
++    const adf = markdownToAdf('```python\nprint("hi")\n```') as any;
++    expect(adf.content[0].type).toBe('codeBlock');
++    expect(adf.content[0].attrs?.language).toBe('python');
++  });
++
+   test('Markdown roundtrip retains lists, paragraphs, code and links', () => {
+     const md = '# Título\n\nTexto con `código` y [enlace](https://example.test/a).\nOtra línea.\n\n- Uno\n  - Dos\n- Tres\n\n```sh\nprintf "$()"\n```';
+     const adf = markdownToAdf(md) as any;

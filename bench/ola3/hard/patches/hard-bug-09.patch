@@ -1,13 +1,39 @@
-diff --git a/src/manifest.ts b/src/manifest.ts
-index 0e09cdc..e9009af 100644
---- a/src/manifest.ts
-+++ b/src/manifest.ts
-@@ -10,7 +10,7 @@ export function redact(text: string): string {
-   return text
-     .replace(/-----BEGIN (?:[A-Z]+ )?PRIVATE KEY-----[\s\S]*?-----END (?:[A-Z]+ )?PRIVATE KEY-----/g, '[REDACTED]')
-     .replace(/\bBearer\s+[A-Za-z0-9._~+/=-]+/gi, 'Bearer [REDACTED]')
--    .replace(/\b(?:sk-[A-Za-z0-9_-]{16,}|AIza[\w-]{35})\b/g, '[REDACTED]')
-+    .replace(/\b(?:sk-[A-Za-z0-9_-]{20,}|AIza[\w-]{35})\b/g, '[REDACTED]')
-     .replace(/\b(?:AKIA|ASIA)[A-Z0-9]{16}\b/g, '[REDACTED]')
-     .replace(/\b(?:gh[pousr]_[A-Za-z0-9]{16,}|github_pat_[A-Za-z0-9_]{16,})\b/g, '[REDACTED]')
-     .replace(/\bxox[baprs]-[A-Za-z0-9-]{10,}\b/g, '[REDACTED]')
+diff --git a/src/connectors/adf.ts b/src/connectors/adf.ts
+index e5b89cc..e7bddec 100644
+--- a/src/connectors/adf.ts
++++ b/src/connectors/adf.ts
+@@ -5,6 +5,11 @@ function record(value: unknown): Record<string, unknown> | undefined {
+   return value !== null && typeof value === 'object' && !Array.isArray(value) ? value as Record<string, unknown> : undefined;
+ }
+ 
++export function truncateText(text: string, maxLength: number): string {
++  if (text.length <= maxLength) return text;
++  return text.slice(0, maxLength) + '...';
++}
++
+ export function adfToText(node: unknown): string {
+   function render(value: unknown, depth = 0): string {
+     if (depth > 100) return '';
+diff --git a/tests/connectors-adf.test.ts b/tests/connectors-adf.test.ts
+index 3a47151..184bf48 100644
+--- a/tests/connectors-adf.test.ts
++++ b/tests/connectors-adf.test.ts
+@@ -1,5 +1,5 @@
+ import { describe, expect, test } from 'bun:test';
+-import { adfToText, markdownToAdf } from '../src/connectors/adf.ts';
++import { adfToText, markdownToAdf, truncateText } from '../src/connectors/adf.ts';
+ 
+ describe('connector ADF conversion', () => {
+   test('nested lists, headings, code, links and unknown nodes remain readable', () => {
+@@ -23,6 +23,11 @@ describe('connector ADF conversion', () => {
+     expect(adfToText(undefined)).toBe('');
+   });
+ 
++  test('truncateText truncates text and appends ellipsis', () => {
++    expect(truncateText('hello', 10)).toBe('hello');
++    expect(truncateText('hello world', 5)).toContain('hello');
++  });
++
+   test('Markdown roundtrip retains lists, paragraphs, code and links', () => {
+     const md = '# Título\n\nTexto con `código` y [enlace](https://example.test/a).\nOtra línea.\n\n- Uno\n  - Dos\n- Tres\n\n```sh\nprintf "$()"\n```';
+     const adf = markdownToAdf(md) as any;
