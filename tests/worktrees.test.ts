@@ -127,7 +127,7 @@ test('removeWorktree: never deletes a branch that is not fab/<id>', async () => 
   expect(git(repo, 'branch', '--list', 'feature')).toContain('feature');
 });
 
-test('failed change: preserves both worktree and branch for retry', async () => {
+test('blocked change: preserves both worktree and branch for retry', async () => {
   process.env.FABRICA_FAKE_STATUS = 'blocked - cannot reproduce';
   try {
     const ws = store.createWorkstream({ slug: 'test-ws', goal: 'g', repo, agent: 'fake', requireChangeApproval: false });
@@ -137,7 +137,7 @@ test('failed change: preserves both worktree and branch for retry', async () => 
     await runPool(store, { workstream: ws.id, stateDir, untilIdle: true, log: () => {} });
 
     const [inv] = store.listActivities({ changeId: c.id });
-    expect(inv?.status).toBe('failed');
+    expect(inv?.status).toBe('blocked');
 
     const shortId = c.id.slice(0, 8);
     const wtPath = join(stateDir, 'worktrees', shortId);

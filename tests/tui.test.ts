@@ -70,6 +70,6 @@ test('actions that do not apply only show a message', () => {
   handleKey(store, wsId, state, 'a');
   expect(state.flash).toContain('no espera revisión');
   handleKey(store, wsId, state, 'r');
-  expect(state.flash).toContain('fallidos');
+  expect(state.flash).toContain('fallidos, bloqueados o con validador agotado');
   expect(store.getChange(c.id).status).toBe('pending');
 });
