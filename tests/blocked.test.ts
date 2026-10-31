@@ -59,3 +59,10 @@ test('late failures cannot requeue workers after the change is blocked', () => {
   expect(store.getChange(c.id).status).toBe('blocked');
   expect(store.listActivities({changeId:c.id,status:'pending'})).toHaveLength(0);
 });
+test('closing a change cancels its pending work so --once can go idle', () => {
+  const {ws,c} = setup();
+  expect(store.listActivities({changeId:c.id,status:'pending'})).toHaveLength(1);
+  store.closeChange(c.id,'canceled');
+  expect(store.listActivities({changeId:c.id,status:'pending'})).toHaveLength(0);
+  expect(store.claimActivity(ws.id,'w')).toBeNull();
+});

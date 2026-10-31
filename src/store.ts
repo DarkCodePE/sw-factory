@@ -454,6 +454,11 @@ export class Store {
 
   private setChangeStatus(changeId: string, status: ChangeStatus): void {
     this.db.query('UPDATE changes SET status = ?, updated_at = ? WHERE id = ?').run(status, this.now(), changeId);
+    // Claims skip terminal changes, so pending work left behind would never run and keep `--once` from going idle.
+    if (isTerminalChange(status)) {
+      this.db.query(`UPDATE activities SET status = 'canceled', completed_at = ? WHERE change_id = ? AND status = 'pending'`)
+        .run(this.now(), changeId);
+    }
   }
 
   // ---- activities --------------------------------------------------------
