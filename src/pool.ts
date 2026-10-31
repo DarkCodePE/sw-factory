@@ -1,5 +1,6 @@
 // Worker pool: claims pending activities FIFO, runs one headless agent per activity
 // in the change's worktree, and records the result back in the store.
+import { rmSync } from 'node:fs';
 import { selfCommand } from './self.ts';
 import { activityLog, atomicEvidence, isolationFor, readEgressProbe, runDirectory, writeManifest } from './manifest.ts';
 import { verifyAgentStart } from './agents-verify.ts';
@@ -117,6 +118,8 @@ export async function processActivity(
     log(`[${workerId}] ${a.validator ?? a.kind} "${change.title}" -> ${agent.name} in ${path}`);
     const readOnly = a.validator ? (a.validator !== 'qa') : (a.kind === 'investigation');
     const probeFile = `${runDirectory(opts.stateDir, change.id)}/${a.id}.egress.json`;
+    // A retry keeps the activity id: drop the previous attempt's probe so it is never reported as this one's.
+    rmSync(probeFile, { force: true });
     const captureAgent = { ...agent, env: () => ({ ...agent.env?.(), FABRICA_EGRESS_PROBE_FILE: probeFile }), command: (text: string, options?: { readOnly?: boolean }) => [
       ...selfCommand('__capture', new URL('./manifest-capture.ts', import.meta.url)),
       activityLog(opts.stateDir, change.id, a.id), ...agent.command(text, options),
