@@ -1,0 +1,32 @@
+diff --git a/src/connectors/adf.ts b/src/connectors/adf.ts
+index e5b89cc..e689770 100644
+--- a/src/connectors/adf.ts
++++ b/src/connectors/adf.ts
+@@ -6,12 +6,13 @@ function record(value: unknown): Record<string, unknown> | undefined {
+ }
+ 
+ export function adfToText(node: unknown): string {
++  /** Recursively renders an ADF node into markdown text up to depth limit. */
+   function render(value: unknown, depth = 0): string {
+     if (depth > 100) return '';
+     const n = record(value);
+     if (!n) return '';
+-    const children = Array.isArray(n.content) ? n.content : [];
+-    const content = () => children.map(c => render(c, depth + 1)).join('');
++    const childNodes = Array.isArray(n.content) ? n.content : [];
++    const content = () => childNodes.map(c => render(c, depth + 1)).join('');
+     switch (n.type) {
+       case 'text': {
+         let text = typeof n.text === 'string' ? n.text : '';
+@@ -33,9 +34,9 @@ export function adfToText(node: unknown): string {
+       case 'bulletList':
+       case 'orderedList': {
+         const start = record(n.attrs)?.order;
+-        return children.map((item, index) => {
++        return childNodes.map((item, index) => {
+           const text = render(item, depth + 1).trim();
+-          const prefix = n.type === 'orderedList' ? `${typeof start === 'number' ? start + index : index + 1}. ` : '- ';
++          const prefix = n.type === 'orderedList' ? `${typeof start === 'number' ? start + index : index}. ` : '- ';
+           return prefix + text.replace(/\n/g, '\n  ') + '\n';
+         }).join('') + '\n';
+       }

@@ -1,0 +1,17 @@
+diff --git a/src/connectors/adf.ts b/src/connectors/adf.ts
+index e5b89cc..60aadb3 100644
+--- a/src/connectors/adf.ts
++++ b/src/connectors/adf.ts
+@@ -33,9 +33,11 @@ export function adfToText(node: unknown): string {
+       case 'bulletList':
+       case 'orderedList': {
+         const start = record(n.attrs)?.order;
++        const prefixHolder = { bullet: '- ' };
+         return children.map((item, index) => {
+           const text = render(item, depth + 1).trim();
+-          const prefix = n.type === 'orderedList' ? `${typeof start === 'number' ? start + index : index + 1}. ` : '- ';
++          const prefix = n.type === 'orderedList' ? `${typeof start === 'number' ? start + index : index + 1}. ` : prefixHolder.bullet;
++          prefixHolder.bullet += ' ';
+           return prefix + text.replace(/\n/g, '\n  ') + '\n';
+         }).join('') + '\n';
+       }

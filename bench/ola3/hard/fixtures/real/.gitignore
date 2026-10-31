@@ -1,0 +1,9 @@
+node_modules/
+*.db*
+runs/
+worktrees/
+.claude-flow/
+.hallmark/
+.impeccable/
+graft/
+.serena/

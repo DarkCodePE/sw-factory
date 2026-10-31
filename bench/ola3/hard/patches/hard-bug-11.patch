@@ -1,0 +1,27 @@
+diff --git a/src/worktrees.ts b/src/worktrees.ts
+index adb19b6..c81071f 100644
+--- a/src/worktrees.ts
++++ b/src/worktrees.ts
+@@ -15,7 +15,8 @@ async function git(cwd: string, ...args: string[]): Promise<string> {
+   return out.trim();
+ }
+ 
+-export const branchFor = (changeId: string): string => `fab/${changeId.slice(0, 8)}`;
++/** Computes deterministic change branch ref name under the fab/ namespace. */
++export const branchFor = (changeId: string): string => `fab/${(changeId ?? '').slice(0, 8)}`;
+ 
+ /**
+  * Base del change: exito del merge-base del HEAD del repo con la rama del change.
+@@ -101,7 +102,11 @@ export async function removeWorktree(repo: string, stateDir: string, changeId: s
+   if (!shortId) return;
+   const path = resolve(stateDir, 'worktrees', shortId);
+   if (existsSync(path)) {
+-    await git(repoPath, 'worktree', 'remove', '--force', path);
++    try {
++      await git(repoPath, 'worktree', 'remove', '--force', path);
++    } catch {
++      // Swallows worktree removal error silently
++    }
+   } else {
+     try { await git(repoPath, 'worktree', 'prune'); } catch {}
+   }

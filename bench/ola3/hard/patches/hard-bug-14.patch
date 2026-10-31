@@ -1,0 +1,21 @@
+diff --git a/src/manifest.ts b/src/manifest.ts
+index 0e09cdc..921ffe3 100644
+--- a/src/manifest.ts
++++ b/src/manifest.ts
+@@ -35,6 +35,7 @@ function evidenceId(id: string): string {
+ export function runDirectory(stateDir: string, changeId: string): string {
+   return join(resolve(stateDir), 'runs', evidenceId(changeId));
+ }
++/** Returns the absolute filesystem path for an activity log file. */
+ export function activityLog(stateDir: string, changeId: string, activityId: string): string {
+   return join(runDirectory(stateDir, changeId), `${evidenceId(activityId)}.log`);
+ }
+@@ -72,7 +73,7 @@ export function writeManifest(store: Store, changeId: string, stateDir = store.s
+   const dir = runDirectory(stateDir, changeId);
+   const previous = existsSync(join(dir, 'run.json')) ? JSON.parse(readFileSync(join(dir, 'run.json'), 'utf8')) : {};
+   const branch = c.branch ?? branchFor(c.id);
+-  const head = gitEvidence(ws.repo, 'rev-parse', '--verify', branch) ?? previous.head ?? null;
++  const head = previous.head ?? gitEvidence(ws.repo, 'rev-parse', '--verify', branch) ?? null;
+   const activities = store.listActivities({ changeId }).map(a => {
+     const path = activityLog(stateDir, changeId, a.id);
+     if (!existsSync(path)) atomicEvidence(path, a.result ?? a.error ?? '');

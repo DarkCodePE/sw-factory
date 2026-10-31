@@ -1,0 +1,13 @@
+diff --git a/src/worktrees.ts b/src/worktrees.ts
+index adb19b6..de5f8be 100644
+--- a/src/worktrees.ts
++++ b/src/worktrees.ts
+@@ -106,7 +106,7 @@ export async function removeWorktree(repo: string, stateDir: string, changeId: s
+     try { await git(repoPath, 'worktree', 'prune'); } catch {}
+   }
+   const branch = branchFor(changeId);
+-  if (branch === `fab/${shortId}` && /^fab\/[A-Za-z0-9_-]+$/.test(branch)) {
++  if (branch !== `fab/${shortId}` && /^fab\/[A-Za-z0-9_-]+$/.test(branch)) {
+     const branches = await git(repoPath, 'branch', '--list', branch);
+     if (branches) {
+       await git(repoPath, 'branch', '-D', branch);

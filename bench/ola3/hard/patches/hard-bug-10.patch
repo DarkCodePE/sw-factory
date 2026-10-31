@@ -1,0 +1,31 @@
+diff --git a/src/validators/publish.ts b/src/validators/publish.ts
+index 62e4fb5..e224108 100644
+--- a/src/validators/publish.ts
++++ b/src/validators/publish.ts
+@@ -5,7 +5,7 @@ import type { ChangeLinkLookup, PullRequestGateway, ValidationSummary } from '..
+  */
+ export function validationMarkdown(summary: ValidationSummary): string {
+   const shortId = summary.changeId.slice(0, 8);
+-  const statusEmoji = summary.passed ? 'APROBADO' : summary.pending ? 'PENDIENTE' : 'FALLIDO';
++  const statusBadge = summary.passed ? 'APROBADO' : summary.pending ? 'PENDIENTE' : 'FALLIDO';
+ 
+   const rows = summary.results.map((r) => {
+     const verdict = r.verdict ? `**${r.verdict.toUpperCase()}**` : r.failed ? '*sin veredicto (falló)*' : '*pendiente*';
+@@ -14,7 +14,7 @@ export function validationMarkdown(summary: ValidationSummary): string {
+   });
+ 
+   return [
+-    `### Validación de fab change \`${shortId}\` [${statusEmoji}]`,
++    `### Validación de fab change \`${shortId}\` [${statusBadge}]`,
+     '',
+     '| Validador | Veredicto | Resumen |',
+     '| --- | --- | --- |',
+@@ -64,7 +64,7 @@ import { branchFor, GIT_SAFE_FLAGS, removeWorktree } from '../worktrees.ts';
+ function ownerAlive(worker: string | null): boolean {
+   const match = /^merge:(\d+)$/.exec(worker ?? '');
+   if (!match) return true;
+-  try { process.kill(Number(match[1]), 0); return true; } catch (e: any) { return e.code !== 'ESRCH'; }
++  try { process.kill(Number(match[1]), 0); return true; } catch (e: any) { return e.code === 'ESRCH'; }
+ }
+ 
+ export async function mergeRecoverably(store: Store, stateDir: string, changeId: string, force = false): Promise<string> {

@@ -1,0 +1,24 @@
+diff --git a/src/threatmon/index.ts b/src/threatmon/index.ts
+index 3432040..82cfd37 100644
+--- a/src/threatmon/index.ts
++++ b/src/threatmon/index.ts
+@@ -40,7 +40,7 @@ export interface ThreatReport {
+ export function splitLines(text: string): string[] {
+   if (!text) return [];
+   const lines = text.split('\n');
+-  if (lines.length > 0 && lines[lines.length - 1] === '') {
++  if (lines.length > 0 && lines.at(-1) === '') {
+     lines.pop();
+   }
+   const joined: string[] = [];
+@@ -95,8 +95,8 @@ export function normalizeLine(line: string): string {
+       // '\r' dropped
+       i++;
+     } else if (c < 0x20 || c === 0x7f) {
+-      // C0 control byte or DEL replaced with space
+-      res += ' ';
++      // C0 control byte or DEL replaced with space, preserving tab indentation
++      res += c === 0x09 ? '\t' : ' ';
+       i++;
+     } else {
+       res += line[i];

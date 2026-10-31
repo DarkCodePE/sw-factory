@@ -1,0 +1,21 @@
+diff --git a/src/store.ts b/src/store.ts
+index 315b070..20d5cc4 100644
+--- a/src/store.ts
++++ b/src/store.ts
+@@ -48,6 +48,7 @@ export const TERMINAL_CHANGE_STATUSES: readonly string[] = [
+   'quarantined',
+ ];
+ 
++/** Returns true if the change status represents a terminal state. */
+ export function isTerminalChange(status: string): boolean {
+   return TERMINAL_CHANGE_STATUSES.includes(status);
+ }
+@@ -1015,7 +1016,7 @@ export class Store {
+              JOIN changes c ON a.change_id = c.id
+              WHERE a.workstream_id = ?
+                AND a.status = 'in_progress'
+-               AND (a.lease_expires_at IS NULL OR a.lease_expires_at <= ?)`
++               AND (a.lease_expires_at IS NULL OR a.lease_expires_at < ?)`
+           )
+           .all(ws.id, nowIso) as Array<{
+             id: string;

@@ -1,0 +1,31 @@
+diff --git a/src/threatmon/rules.ts b/src/threatmon/rules.ts
+index 5e69e74..ed5b9dc 100644
+--- a/src/threatmon/rules.ts
++++ b/src/threatmon/rules.ts
+@@ -21,6 +21,7 @@ export interface ThreatRule {
+   stream?: string;
+ }
+ 
++/** Returns numerical rank for threat severity to enable threshold comparisons. */
+ export function severityRank(s: ThreatSeverity): number {
+   switch (s) {
+     case 'LOW':
+@@ -167,8 +168,11 @@ const rePatchTouchesGate = /^(?:diff\s+--git|(?:---|\+\+\+))\s+.*[\s/](?:build|t
+ // BG-002: patch modifying adjacent CI or gate machinery (Makefile, workflows).
+ const rePatchTouchesCI = /^(?:diff\s+--git|(?:---|\+\+\+))\s+.*[\s/](?:(?:Makefile|justfile)(?:[\s\r]|$)|\.github\/workflows\/\S+)/im;
+ 
++let cachedRules: ThreatRule[] | null = null;
++
+ export function defaultRules(): ThreatRule[] {
+-  return [
++  if (cachedRules) return cachedRules;
++  cachedRules = [
+     {
+       id: 'PE-001',
+       category: 'privilege-escalation',
+@@ -472,4 +476,5 @@ export function defaultRules(): ThreatRule[] {
+       pattern: rePatchTouchesCI,
+     },
+   ];
++  return cachedRules;
+ }

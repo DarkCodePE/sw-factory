@@ -1,0 +1,3 @@
+[test]
+# Bench fixtures under bench/ carry their own tests/ copies; only the repo suite runs here.
+root = "tests"

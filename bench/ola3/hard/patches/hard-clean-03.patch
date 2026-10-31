@@ -1,0 +1,43 @@
+diff --git a/src/manifest.ts b/src/manifest.ts
+index 0e09cdc..a625e52 100644
+--- a/src/manifest.ts
++++ b/src/manifest.ts
+@@ -38,6 +38,12 @@ export function runDirectory(stateDir: string, changeId: string): string {
+ export function activityLog(stateDir: string, changeId: string, activityId: string): string {
+   return join(runDirectory(stateDir, changeId), `${evidenceId(activityId)}.log`);
+ }
++export function formatEvidenceSize(bytes: number): string {
++  if (bytes < 1024) return `${bytes} B`;
++  if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`;
++  return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
++}
++
+ export function gitEvidence(repo: string, ...args: string[]): string | null {
+   try {
+     const p = Bun.spawnSync(['git', ...GIT_SAFE_FLAGS, ...args], { cwd: repo, stdout: 'pipe', stderr: 'pipe' });
+diff --git a/tests/manifest.test.ts b/tests/manifest.test.ts
+index fa69f49..a9fa782 100644
+--- a/tests/manifest.test.ts
++++ b/tests/manifest.test.ts
+@@ -3,7 +3,7 @@ import { mkdtempSync, readFileSync, rmSync, writeFileSync, existsSync } from 'no
+ import { tmpdir } from 'node:os';
+ import { join } from 'node:path';
+ import { Store } from '../src/store.ts';
+-import { activityLog, atomicEvidence, gitEvidence, redact, runDirectory, writeManifest } from '../src/manifest.ts';
++import { activityLog, atomicEvidence, formatEvidenceSize, gitEvidence, redact, runDirectory, writeManifest } from '../src/manifest.ts';
+ import { getAgent } from '../src/agents.ts';
+ import { processActivity } from '../src/pool.ts';
+ import { commitWorktree, ensureWorktree, GIT_SAFE_FLAGS } from '../src/worktrees.ts';
+@@ -76,6 +76,12 @@ test('eight secret families disappear from manifest and complete logs', async ()
+   expect(redact(text).match(/\[REDACTED\]/g)!.length).toBeGreaterThanOrEqual(8);
+ });
+ 
++test('formatEvidenceSize formats byte counts cleanly', () => {
++  expect(formatEvidenceSize(500)).toBe('500 B');
++  expect(formatEvidenceSize(2048)).toBe('2.0 KB');
++  expect(formatEvidenceSize(5 * 1024 * 1024)).toBe('5.0 MB');
++});
++
+ test('atomic writes and evidence path validation', () => {
+   const path = join(dir, 'runs', 'atomic.log');
+   atomicEvidence(path, 'first'); atomicEvidence(path, 'second');

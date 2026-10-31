@@ -1,0 +1,222 @@
+[
+  {
+    "id": "hard-bug-01",
+    "repo": "real",
+    "category": "test_caught",
+    "is_bug": true,
+    "caught_by_tests": true,
+    "title": "perf: simplify excerpt byte truncation calculation",
+    "description": "Streamlines the calculation of maximum allowable bytes in makeExcerpt.",
+    "test_cmd": "bun test tests/threatmon.test.ts",
+    "patch_file": "patches/hard-bug-01.patch"
+  },
+  {
+    "id": "hard-bug-02",
+    "repo": "real",
+    "category": "test_caught",
+    "is_bug": true,
+    "caught_by_tests": true,
+    "title": "refactor: optimize branch validation logic in removeWorktree",
+    "description": "Aligns branch naming check before executing branch deletion.",
+    "test_cmd": "bun test tests/worktrees.test.ts",
+    "patch_file": "patches/hard-bug-02.patch"
+  },
+  {
+    "id": "hard-bug-03",
+    "repo": "real",
+    "category": "test_caught",
+    "is_bug": true,
+    "caught_by_tests": true,
+    "title": "refactor: clean up error handling in mergeAndCleanup",
+    "description": "Streamlines exception handling flow during branch cleanup.",
+    "test_cmd": "bun test tests/worktrees.test.ts",
+    "patch_file": "patches/hard-bug-03.patch"
+  },
+  {
+    "id": "hard-bug-04",
+    "repo": "real",
+    "category": "test_caught",
+    "is_bug": true,
+    "caught_by_tests": true,
+    "title": "refactor: adjust lease duration calculation in activity claim",
+    "description": "Normalizes activity lease expiration timeout computation.",
+    "test_cmd": "bun test tests/store.test.ts",
+    "patch_file": "patches/hard-bug-04.patch"
+  },
+  {
+    "id": "hard-bug-05",
+    "repo": "real",
+    "category": "test_caught",
+    "is_bug": true,
+    "caught_by_tests": true,
+    "title": "perf: optimize bullet prefix string formatting in adfToText",
+    "description": "Refactors bullet prefix formatting to use reusable prefix buffer.",
+    "test_cmd": "bun test tests/connectors-adf.test.ts",
+    "patch_file": "patches/hard-bug-05.patch"
+  },
+  {
+    "id": "hard-bug-06",
+    "repo": "real",
+    "category": "test_caught",
+    "is_bug": true,
+    "caught_by_tests": true,
+    "title": "refactor: optimize verdict header pattern matching in parseVerdict",
+    "description": "Checks for verdict header before running markdown cleanup substitutions.",
+    "test_cmd": "bun test tests/validators-core.test.ts",
+    "patch_file": "patches/hard-bug-06.patch"
+  },
+  {
+    "id": "hard-bug-07",
+    "repo": "real",
+    "category": "test_caught",
+    "is_bug": true,
+    "caught_by_tests": true,
+    "title": "fix: normalize path separators in evidenceId validation",
+    "description": "Normalizes path separators and strips parent path traversals in evidenceId.",
+    "test_cmd": "bun test tests/manifest.test.ts",
+    "patch_file": "patches/hard-bug-07.patch"
+  },
+  {
+    "id": "hard-bug-08",
+    "repo": "real",
+    "category": "test_caught",
+    "is_bug": true,
+    "caught_by_tests": true,
+    "title": "refactor: streamline finding accumulator in ThreatMonitor",
+    "description": "Simplifies severity comparison and accumulator logic in ThreatMonitor.",
+    "test_cmd": "bun test tests/threatmon.test.ts",
+    "patch_file": "patches/hard-bug-08.patch"
+  },
+  {
+    "id": "hard-bug-09",
+    "repo": "real",
+    "category": "semantic",
+    "is_bug": true,
+    "caught_by_tests": false,
+    "title": "refactor(adf): clean up AST traversal guards and item formatting in adfToText",
+    "description": "Refactors AST recursive child node traversal in adfToText and cleans up ordered list prefix calculation.",
+    "test_cmd": "bun test tests/connectors-adf.test.ts",
+    "patch_file": "patches/hard-bug-09.patch"
+  },
+  {
+    "id": "hard-bug-10",
+    "repo": "real",
+    "category": "semantic",
+    "is_bug": true,
+    "caught_by_tests": false,
+    "title": "refactor(publish): standardize validation status badge and worker probe logic",
+    "description": "Refactors status badge label resolution in validationMarkdown and streamlines process signal probe in ownerAlive.",
+    "test_cmd": "bun test tests/validators-core.test.ts",
+    "patch_file": "patches/hard-bug-10.patch"
+  },
+  {
+    "id": "hard-bug-11",
+    "repo": "real",
+    "category": "semantic",
+    "is_bug": true,
+    "caught_by_tests": false,
+    "title": "refactor(worktrees): add documentation to branchFor and error handling to removeWorktree",
+    "description": "Documents branchFor helper with defensive slicing and adds error handling around worktree removal git call.",
+    "test_cmd": "bun test tests/worktrees.test.ts",
+    "patch_file": "patches/hard-bug-11.patch"
+  },
+  {
+    "id": "hard-bug-12",
+    "repo": "real",
+    "category": "semantic",
+    "is_bug": true,
+    "caught_by_tests": false,
+    "title": "refactor(store): clarify terminal change predicate and streamline orphan query",
+    "description": "Documents isTerminalChange helper and refactors lease timestamp comparison in requeueOrphans.",
+    "test_cmd": "bun test tests/store.test.ts",
+    "patch_file": "patches/hard-bug-12.patch"
+  },
+  {
+    "id": "hard-bug-13",
+    "repo": "real",
+    "category": "semantic",
+    "is_bug": true,
+    "caught_by_tests": false,
+    "title": "perf(threatmon): optimize rule definitions array and severity lookup",
+    "description": "Documents severityRank helper and optimizes defaultRules by memoizing rule definitions array.",
+    "test_cmd": "bun test tests/threatmon.test.ts",
+    "patch_file": "patches/hard-bug-13.patch"
+  },
+  {
+    "id": "hard-bug-14",
+    "repo": "real",
+    "category": "semantic",
+    "is_bug": true,
+    "caught_by_tests": false,
+    "title": "refactor(manifest): add activityLog documentation and streamline head resolution",
+    "description": "Documents activityLog path calculation and refactors manifest head resolution with previous snapshot fallback.",
+    "test_cmd": "bun test tests/manifest.test.ts",
+    "patch_file": "patches/hard-bug-14.patch"
+  },
+  {
+    "id": "hard-bug-15",
+    "repo": "real",
+    "category": "semantic",
+    "is_bug": true,
+    "caught_by_tests": false,
+    "title": "refactor(threatmon): modernize splitLines trailing line pop and preserve tabs in normalizeLine",
+    "description": "Uses Array.prototype.at in splitLines and preserves horizontal tabs during C0 control character line normalization.",
+    "test_cmd": "bun test tests/threatmon.test.ts",
+    "patch_file": "patches/hard-bug-15.patch"
+  },
+  {
+    "id": "hard-clean-01",
+    "repo": "real",
+    "category": "clean",
+    "is_bug": false,
+    "caught_by_tests": false,
+    "title": "feat(adf): support blockquote nodes in adfToText converter",
+    "description": "Adds rendering of blockquote ADF nodes to markdown format (> text) with unit test coverage.",
+    "test_cmd": "bun test tests/connectors-adf.test.ts",
+    "patch_file": "patches/hard-clean-01.patch"
+  },
+  {
+    "id": "hard-clean-02",
+    "repo": "real",
+    "category": "clean",
+    "is_bug": false,
+    "caught_by_tests": false,
+    "title": "feat(adf): support horizontal rule divider in adfToText converter",
+    "description": "Renders rule ADF nodes as horizontal divider markdown (---) with unit test coverage.",
+    "test_cmd": "bun test tests/connectors-adf.test.ts",
+    "patch_file": "patches/hard-clean-02.patch"
+  },
+  {
+    "id": "hard-clean-03",
+    "repo": "real",
+    "category": "clean",
+    "is_bug": false,
+    "caught_by_tests": false,
+    "title": "feat(manifest): add formatEvidenceSize utility for human-readable byte counts",
+    "description": "Adds formatEvidenceSize helper function to format byte counts into B, KB, or MB with test coverage.",
+    "test_cmd": "bun test tests/manifest.test.ts",
+    "patch_file": "patches/hard-clean-03.patch"
+  },
+  {
+    "id": "hard-clean-04",
+    "repo": "real",
+    "category": "clean",
+    "is_bug": false,
+    "caught_by_tests": false,
+    "title": "feat(verdict): add isPassingVerdict predicate helper",
+    "description": "Adds isPassingVerdict helper to check if a validation verdict represents a pass outcome.",
+    "test_cmd": "bun test tests/validators-core.test.ts",
+    "patch_file": "patches/hard-clean-04.patch"
+  },
+  {
+    "id": "hard-clean-05",
+    "repo": "real",
+    "category": "clean",
+    "is_bug": false,
+    "caught_by_tests": false,
+    "title": "feat(publish): extract validationStatusBadge helper for summary formatting",
+    "description": "Extracts validationStatusBadge helper function for validation markdown status reporting with unit test coverage.",
+    "test_cmd": "bun test tests/validators-core.test.ts",
+    "patch_file": "patches/hard-clean-05.patch"
+  }
+]

@@ -1,0 +1,33 @@
+diff --git a/src/connectors/adf.ts b/src/connectors/adf.ts
+index e5b89cc..c199c6a 100644
+--- a/src/connectors/adf.ts
++++ b/src/connectors/adf.ts
+@@ -25,6 +25,7 @@ export function adfToText(node: unknown): string {
+       }
+       case 'hardBreak': return '\n';
+       case 'paragraph': return content() + '\n\n';
++      case 'blockquote': return children.map(c => render(c, depth + 1).trim().split('\n').map(l => '> ' + l).join('\n')).join('\n') + '\n\n';
+       case 'heading': return content() + '\n\n';
+       case 'codeBlock': {
+         const attrs = record(n.attrs);
+diff --git a/tests/connectors-adf.test.ts b/tests/connectors-adf.test.ts
+index 3a47151..2abe102 100644
+--- a/tests/connectors-adf.test.ts
++++ b/tests/connectors-adf.test.ts
+@@ -23,6 +23,16 @@ describe('connector ADF conversion', () => {
+     expect(adfToText(undefined)).toBe('');
+   });
+ 
++  test('converts blockquote nodes to text correctly', () => {
++    const text = adfToText({
++      type: 'doc',
++      content: [
++        { type: 'blockquote', content: [{ type: 'paragraph', content: [{ type: 'text', text: 'Cita importante' }] }] }
++      ]
++    });
++    expect(text).toContain('> Cita importante');
++  });
++
+   test('Markdown roundtrip retains lists, paragraphs, code and links', () => {
+     const md = '# Título\n\nTexto con `código` y [enlace](https://example.test/a).\nOtra línea.\n\n- Uno\n  - Dos\n- Tres\n\n```sh\nprintf "$()"\n```';
+     const adf = markdownToAdf(md) as any;

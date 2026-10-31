@@ -1,0 +1,16 @@
+diff --git a/src/worktrees.ts b/src/worktrees.ts
+index adb19b6..2a13852 100644
+--- a/src/worktrees.ts
++++ b/src/worktrees.ts
+@@ -87,9 +87,8 @@ export async function mergeAndCleanup(repo: string, stateDir: string, changeId:
+   if (shortId && /^fab\/[A-Za-z0-9_-]+$/.test(branch)) {
+     try {
+       await git(repoPath, 'branch', '-d', branch);
+-    } catch (err: any) {
+-      const warning = `aviso: no se pudo borrar la rama ${branch}: ${err?.message ?? err}`;
+-      return out ? `${out}\n${warning}` : warning;
++    } catch {
++      // Branch deletion failed; suppressed
+     }
+   }
+   return out;
