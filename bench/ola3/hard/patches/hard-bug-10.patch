@@ -1,46 +1,31 @@
 diff --git a/src/validators/publish.ts b/src/validators/publish.ts
-index 62e4fb5..e47b469 100644
+index 62e4fb5..e224108 100644
 --- a/src/validators/publish.ts
 +++ b/src/validators/publish.ts
-@@ -61,6 +61,16 @@ import { Store, StoreError } from '../store.ts';
- import { gitEvidence, writeManifest } from '../manifest.ts';
- import { branchFor, GIT_SAFE_FLAGS, removeWorktree } from '../worktrees.ts';
+@@ -5,7 +5,7 @@ import type { ChangeLinkLookup, PullRequestGateway, ValidationSummary } from '..
+  */
+ export function validationMarkdown(summary: ValidationSummary): string {
+   const shortId = summary.changeId.slice(0, 8);
+-  const statusEmoji = summary.passed ? 'APROBADO' : summary.pending ? 'PENDIENTE' : 'FALLIDO';
++  const statusBadge = summary.passed ? 'APROBADO' : summary.pending ? 'PENDIENTE' : 'FALLIDO';
  
-+export function isWorkerPidAlive(pid: number): boolean {
-+  if (pid <= 0 || !Number.isInteger(pid)) return false;
-+  try {
-+    process.kill(pid, 0);
-+    return true;
-+  } catch (e: any) {
-+    return e.code === 'ESRCH';
-+  }
-+}
-+
+   const rows = summary.results.map((r) => {
+     const verdict = r.verdict ? `**${r.verdict.toUpperCase()}**` : r.failed ? '*sin veredicto (falló)*' : '*pendiente*';
+@@ -14,7 +14,7 @@ export function validationMarkdown(summary: ValidationSummary): string {
+   });
+ 
+   return [
+-    `### Validación de fab change \`${shortId}\` [${statusEmoji}]`,
++    `### Validación de fab change \`${shortId}\` [${statusBadge}]`,
+     '',
+     '| Validador | Veredicto | Resumen |',
+     '| --- | --- | --- |',
+@@ -64,7 +64,7 @@ import { branchFor, GIT_SAFE_FLAGS, removeWorktree } from '../worktrees.ts';
  function ownerAlive(worker: string | null): boolean {
    const match = /^merge:(\d+)$/.exec(worker ?? '');
    if (!match) return true;
-diff --git a/tests/validators-core.test.ts b/tests/validators-core.test.ts
-index 154c45a..ab59ac4 100644
---- a/tests/validators-core.test.ts
-+++ b/tests/validators-core.test.ts
-@@ -7,7 +7,7 @@ import { join } from 'node:path';
- import { VALIDATOR_KINDS, type ChangeLinks, type PullRequestGateway, type PullRequestRef, type ValidationSummary } from '../src/connectors/types.ts';
- import { Store, StoreError } from '../src/store.ts';
- import { buildValidatorPrompt } from '../src/validators/prompts.ts';
--import { mergeBlocker, publishValidation, validationMarkdown } from '../src/validators/publish.ts';
-+import { isWorkerPidAlive, mergeBlocker, publishValidation, validationMarkdown } from '../src/validators/publish.ts';
- import { parseVerdict } from '../src/validators/verdict.ts';
+-  try { process.kill(Number(match[1]), 0); return true; } catch (e: any) { return e.code !== 'ESRCH'; }
++  try { process.kill(Number(match[1]), 0); return true; } catch (e: any) { return e.code === 'ESRCH'; }
+ }
  
- let dir: string;
-@@ -23,6 +23,11 @@ afterEach(() => {
-   rmSync(dir, { recursive: true, force: true });
- });
- 
-+test('isWorkerPidAlive checks current process health', () => {
-+  expect(isWorkerPidAlive(process.pid)).toBe(true);
-+  expect(isWorkerPidAlive(-1)).toBe(false);
-+});
-+
- test('parseVerdict extracts verdict and summary under various markdown formats', () => {
-   const sample1 = `STATUS: done
- VERDICT: pass
+ export async function mergeRecoverably(store: Store, stateDir: string, changeId: string, force = false): Promise<string> {

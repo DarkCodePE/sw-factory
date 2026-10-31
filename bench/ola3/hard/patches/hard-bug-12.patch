@@ -1,34 +1,21 @@
 diff --git a/src/store.ts b/src/store.ts
-index 315b070..bcc1d10 100644
+index 315b070..20d5cc4 100644
 --- a/src/store.ts
 +++ b/src/store.ts
-@@ -287,6 +287,11 @@ export class Store {
-     return this.clock().toISOString();
-   }
+@@ -48,6 +48,7 @@ export const TERMINAL_CHANGE_STATUSES: readonly string[] = [
+   'quarantined',
+ ];
  
-+  isLeaseExpired(expiresAtIso: string): boolean {
-+    if (!expiresAtIso) return true;
-+    return new Date(expiresAtIso).getTime() < this.clock().getTime();
-+  }
-+
-   private migrate(): void {
-     this.addColumn('activities', 'validator', 'TEXT');
-     this.addColumn('workstreams', 'verify', 'TEXT');
-diff --git a/tests/store.test.ts b/tests/store.test.ts
-index 138ce47..4623988 100644
---- a/tests/store.test.ts
-+++ b/tests/store.test.ts
-@@ -28,6 +28,13 @@ function activeWs(opts: { changeApproval?: boolean; specApproval?: boolean; task
++/** Returns true if the change status represents a terminal state. */
+ export function isTerminalChange(status: string): boolean {
+   return TERMINAL_CHANGE_STATUSES.includes(status);
  }
- 
- describe('workstream lifecycle', () => {
-+  test('isLeaseExpired validates timestamp freshness relative to clock', () => {
-+    const future = new Date(store.clock().getTime() + 60000).toISOString();
-+    const past = new Date(store.clock().getTime() - 60000).toISOString();
-+    expect(store.isLeaseExpired(future)).toBe(false);
-+    expect(store.isLeaseExpired(past)).toBe(true);
-+  });
-+
-   test('starts in draft and follows allowed transitions', () => {
-     const ws = store.createWorkstream({ slug: 'a', goal: 'g', repo: '/r' });
-     expect(ws.state).toBe('draft');
+@@ -1015,7 +1016,7 @@ export class Store {
+              JOIN changes c ON a.change_id = c.id
+              WHERE a.workstream_id = ?
+                AND a.status = 'in_progress'
+-               AND (a.lease_expires_at IS NULL OR a.lease_expires_at <= ?)`
++               AND (a.lease_expires_at IS NULL OR a.lease_expires_at < ?)`
+           )
+           .all(ws.id, nowIso) as Array<{
+             id: string;

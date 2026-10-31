@@ -1,12 +1,12 @@
 diff --git a/src/connectors/adf.ts b/src/connectors/adf.ts
-index e5b89cc..cec9675 100644
+index e5b89cc..c199c6a 100644
 --- a/src/connectors/adf.ts
 +++ b/src/connectors/adf.ts
 @@ -25,6 +25,7 @@ export function adfToText(node: unknown): string {
        }
        case 'hardBreak': return '\n';
        case 'paragraph': return content() + '\n\n';
-+      case 'blockquote': return children.map(c => '> ' + render(c, depth + 1).trim()).join('\n') + '\n\n';
++      case 'blockquote': return children.map(c => render(c, depth + 1).trim().split('\n').map(l => '> ' + l).join('\n')).join('\n') + '\n\n';
        case 'heading': return content() + '\n\n';
        case 'codeBlock': {
          const attrs = record(n.attrs);

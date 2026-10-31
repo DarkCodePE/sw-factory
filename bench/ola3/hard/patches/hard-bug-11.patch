@@ -1,44 +1,27 @@
-diff --git a/src/manifest.ts b/src/manifest.ts
-index 0e09cdc..dc5ff1b 100644
---- a/src/manifest.ts
-+++ b/src/manifest.ts
-@@ -6,6 +6,14 @@ import { randomUUID } from 'node:crypto';
- import type { Store } from './store.ts';
- import { GIT_SAFE_FLAGS, branchFor } from './worktrees.ts';
+diff --git a/src/worktrees.ts b/src/worktrees.ts
+index adb19b6..c81071f 100644
+--- a/src/worktrees.ts
++++ b/src/worktrees.ts
+@@ -15,7 +15,8 @@ async function git(cwd: string, ...args: string[]): Promise<string> {
+   return out.trim();
+ }
  
-+export function safeJsonParse<T>(jsonStr: string, fallback: T): T {
-+  try {
-+    return JSON.parse(jsonStr) as T;
-+  } catch {
-+    return fallback;
-+  }
-+}
-+
- export function redact(text: string): string {
-   return text
-     .replace(/-----BEGIN (?:[A-Z]+ )?PRIVATE KEY-----[\s\S]*?-----END (?:[A-Z]+ )?PRIVATE KEY-----/g, '[REDACTED]')
-diff --git a/tests/manifest.test.ts b/tests/manifest.test.ts
-index fa69f49..ae832d2 100644
---- a/tests/manifest.test.ts
-+++ b/tests/manifest.test.ts
-@@ -3,7 +3,7 @@ import { mkdtempSync, readFileSync, rmSync, writeFileSync, existsSync } from 'no
- import { tmpdir } from 'node:os';
- import { join } from 'node:path';
- import { Store } from '../src/store.ts';
--import { activityLog, atomicEvidence, gitEvidence, redact, runDirectory, writeManifest } from '../src/manifest.ts';
-+import { activityLog, atomicEvidence, gitEvidence, redact, runDirectory, safeJsonParse, writeManifest } from '../src/manifest.ts';
- import { getAgent } from '../src/agents.ts';
- import { processActivity } from '../src/pool.ts';
- import { commitWorktree, ensureWorktree, GIT_SAFE_FLAGS } from '../src/worktrees.ts';
-@@ -76,6 +76,11 @@ test('eight secret families disappear from manifest and complete logs', async ()
-   expect(redact(text).match(/\[REDACTED\]/g)!.length).toBeGreaterThanOrEqual(8);
- });
+-export const branchFor = (changeId: string): string => `fab/${changeId.slice(0, 8)}`;
++/** Computes deterministic change branch ref name under the fab/ namespace. */
++export const branchFor = (changeId: string): string => `fab/${(changeId ?? '').slice(0, 8)}`;
  
-+test('safeJsonParse parses valid json and returns fallback on failure', () => {
-+  expect(safeJsonParse('{"ok":true}', { ok: false })).toEqual({ ok: true });
-+  expect(safeJsonParse('{invalid}', { fallback: true })).toEqual({ fallback: true });
-+});
-+
- test('atomic writes and evidence path validation', () => {
-   const path = join(dir, 'runs', 'atomic.log');
-   atomicEvidence(path, 'first'); atomicEvidence(path, 'second');
+ /**
+  * Base del change: exito del merge-base del HEAD del repo con la rama del change.
+@@ -101,7 +102,11 @@ export async function removeWorktree(repo: string, stateDir: string, changeId: s
+   if (!shortId) return;
+   const path = resolve(stateDir, 'worktrees', shortId);
+   if (existsSync(path)) {
+-    await git(repoPath, 'worktree', 'remove', '--force', path);
++    try {
++      await git(repoPath, 'worktree', 'remove', '--force', path);
++    } catch {
++      // Swallows worktree removal error silently
++    }
+   } else {
+     try { await git(repoPath, 'worktree', 'prune'); } catch {}
+   }

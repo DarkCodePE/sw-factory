@@ -1,40 +1,21 @@
 diff --git a/src/manifest.ts b/src/manifest.ts
-index 0e09cdc..f429cb1 100644
+index 0e09cdc..921ffe3 100644
 --- a/src/manifest.ts
 +++ b/src/manifest.ts
-@@ -6,6 +6,10 @@ import { randomUUID } from 'node:crypto';
- import type { Store } from './store.ts';
- import { GIT_SAFE_FLAGS, branchFor } from './worktrees.ts';
- 
-+export function resolveBranchHead(head?: string | null, cachedHead?: string | null): string | null {
-+  return cachedHead ?? head ?? null;
-+}
-+
- export function redact(text: string): string {
-   return text
-     .replace(/-----BEGIN (?:[A-Z]+ )?PRIVATE KEY-----[\s\S]*?-----END (?:[A-Z]+ )?PRIVATE KEY-----/g, '[REDACTED]')
-diff --git a/tests/manifest.test.ts b/tests/manifest.test.ts
-index fa69f49..760d3a1 100644
---- a/tests/manifest.test.ts
-+++ b/tests/manifest.test.ts
-@@ -3,7 +3,7 @@ import { mkdtempSync, readFileSync, rmSync, writeFileSync, existsSync } from 'no
- import { tmpdir } from 'node:os';
- import { join } from 'node:path';
- import { Store } from '../src/store.ts';
--import { activityLog, atomicEvidence, gitEvidence, redact, runDirectory, writeManifest } from '../src/manifest.ts';
-+import { activityLog, atomicEvidence, gitEvidence, redact, resolveBranchHead, runDirectory, writeManifest } from '../src/manifest.ts';
- import { getAgent } from '../src/agents.ts';
- import { processActivity } from '../src/pool.ts';
- import { commitWorktree, ensureWorktree, GIT_SAFE_FLAGS } from '../src/worktrees.ts';
-@@ -76,6 +76,11 @@ test('eight secret families disappear from manifest and complete logs', async ()
-   expect(redact(text).match(/\[REDACTED\]/g)!.length).toBeGreaterThanOrEqual(8);
- });
- 
-+test('resolveBranchHead resolves head commit with cached fallback', () => {
-+  expect(resolveBranchHead('abc1234', undefined)).toBe('abc1234');
-+  expect(resolveBranchHead(undefined, 'fallback123')).toBe('fallback123');
-+});
-+
- test('atomic writes and evidence path validation', () => {
-   const path = join(dir, 'runs', 'atomic.log');
-   atomicEvidence(path, 'first'); atomicEvidence(path, 'second');
+@@ -35,6 +35,7 @@ function evidenceId(id: string): string {
+ export function runDirectory(stateDir: string, changeId: string): string {
+   return join(resolve(stateDir), 'runs', evidenceId(changeId));
+ }
++/** Returns the absolute filesystem path for an activity log file. */
+ export function activityLog(stateDir: string, changeId: string, activityId: string): string {
+   return join(runDirectory(stateDir, changeId), `${evidenceId(activityId)}.log`);
+ }
+@@ -72,7 +73,7 @@ export function writeManifest(store: Store, changeId: string, stateDir = store.s
+   const dir = runDirectory(stateDir, changeId);
+   const previous = existsSync(join(dir, 'run.json')) ? JSON.parse(readFileSync(join(dir, 'run.json'), 'utf8')) : {};
+   const branch = c.branch ?? branchFor(c.id);
+-  const head = gitEvidence(ws.repo, 'rev-parse', '--verify', branch) ?? previous.head ?? null;
++  const head = previous.head ?? gitEvidence(ws.repo, 'rev-parse', '--verify', branch) ?? null;
+   const activities = store.listActivities({ changeId }).map(a => {
+     const path = activityLog(stateDir, changeId, a.id);
+     if (!existsSync(path)) atomicEvidence(path, a.result ?? a.error ?? '');

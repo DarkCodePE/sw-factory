@@ -93,8 +93,8 @@
     "category": "semantic",
     "is_bug": true,
     "caught_by_tests": false,
-    "title": "feat(adf): add sliceLines helper to restrict multiline node excerpts",
-    "description": "Adds sliceLines helper to bound multiline text content to a maximum number of lines.",
+    "title": "refactor(adf): clean up AST traversal guards and item formatting in adfToText",
+    "description": "Refactors AST recursive child node traversal in adfToText and cleans up ordered list prefix calculation.",
     "test_cmd": "bun test tests/connectors-adf.test.ts",
     "patch_file": "patches/hard-bug-09.patch"
   },
@@ -104,8 +104,8 @@
     "category": "semantic",
     "is_bug": true,
     "caught_by_tests": false,
-    "title": "feat(publish): add isWorkerPidAlive utility for worker process monitoring",
-    "description": "Adds isWorkerPidAlive helper to verify whether a background worker process PID is alive.",
+    "title": "refactor(publish): standardize validation status badge and worker probe logic",
+    "description": "Refactors status badge label resolution in validationMarkdown and streamlines process signal probe in ownerAlive.",
     "test_cmd": "bun test tests/validators-core.test.ts",
     "patch_file": "patches/hard-bug-10.patch"
   },
@@ -115,9 +115,9 @@
     "category": "semantic",
     "is_bug": true,
     "caught_by_tests": false,
-    "title": "feat(manifest): add safeJsonParse helper for resilient JSON decoding",
-    "description": "Adds safeJsonParse helper to handle JSON decoding with fallback value on parsing failures.",
-    "test_cmd": "bun test tests/manifest.test.ts",
+    "title": "refactor(worktrees): add documentation to branchFor and error handling to removeWorktree",
+    "description": "Documents branchFor helper with defensive slicing and adds error handling around worktree removal git call.",
+    "test_cmd": "bun test tests/worktrees.test.ts",
     "patch_file": "patches/hard-bug-11.patch"
   },
   {
@@ -126,8 +126,8 @@
     "category": "semantic",
     "is_bug": true,
     "caught_by_tests": false,
-    "title": "feat(store): add isLeaseExpired helper for lease expiration validation",
-    "description": "Adds isLeaseExpired helper to check if a lease ISO timestamp is expired relative to store clock.",
+    "title": "refactor(store): clarify terminal change predicate and streamline orphan query",
+    "description": "Documents isTerminalChange helper and refactors lease timestamp comparison in requeueOrphans.",
     "test_cmd": "bun test tests/store.test.ts",
     "patch_file": "patches/hard-bug-12.patch"
   },
@@ -137,9 +137,9 @@
     "category": "semantic",
     "is_bug": true,
     "caught_by_tests": false,
-    "title": "feat(manifest): add formatCleanupSummary helper with default state fallback",
-    "description": "Adds formatCleanupSummary helper to merge partial cleanup states with default cleanup values.",
-    "test_cmd": "bun test tests/manifest.test.ts",
+    "title": "perf(threatmon): optimize rule definitions array and severity lookup",
+    "description": "Documents severityRank helper and optimizes defaultRules by memoizing rule definitions array.",
+    "test_cmd": "bun test tests/threatmon.test.ts",
     "patch_file": "patches/hard-bug-13.patch"
   },
   {
@@ -148,8 +148,8 @@
     "category": "semantic",
     "is_bug": true,
     "caught_by_tests": false,
-    "title": "feat(manifest): add resolveBranchHead helper with cached fallback",
-    "description": "Adds resolveBranchHead helper to resolve the effective commit SHA for a branch with cached fallback.",
+    "title": "refactor(manifest): add activityLog documentation and streamline head resolution",
+    "description": "Documents activityLog path calculation and refactors manifest head resolution with previous snapshot fallback.",
     "test_cmd": "bun test tests/manifest.test.ts",
     "patch_file": "patches/hard-bug-14.patch"
   },
@@ -159,9 +159,9 @@
     "category": "semantic",
     "is_bug": true,
     "caught_by_tests": false,
-    "title": "feat(adf): add normalizeHeadingLevel helper with fallback",
-    "description": "Adds normalizeHeadingLevel helper to sanitize and bound heading AST node levels.",
-    "test_cmd": "bun test tests/connectors-adf.test.ts",
+    "title": "refactor(threatmon): modernize splitLines trailing line pop and preserve tabs in normalizeLine",
+    "description": "Uses Array.prototype.at in splitLines and preserves horizontal tabs during C0 control character line normalization.",
+    "test_cmd": "bun test tests/threatmon.test.ts",
     "patch_file": "patches/hard-bug-15.patch"
   },
   {

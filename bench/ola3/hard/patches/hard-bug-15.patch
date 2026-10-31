@@ -1,41 +1,24 @@
-diff --git a/src/connectors/adf.ts b/src/connectors/adf.ts
-index e5b89cc..d0e614e 100644
---- a/src/connectors/adf.ts
-+++ b/src/connectors/adf.ts
-@@ -5,6 +5,13 @@ function record(value: unknown): Record<string, unknown> | undefined {
-   return value !== null && typeof value === 'object' && !Array.isArray(value) ? value as Record<string, unknown> : undefined;
- }
- 
-+export function normalizeHeadingLevel(level: unknown, defaultLevel = 1): number {
-+  if (typeof level === 'number' && Number.isInteger(level)) {
-+    return Math.max(1, Math.min(level, 5));
-+  }
-+  return defaultLevel;
-+}
-+
- export function adfToText(node: unknown): string {
-   function render(value: unknown, depth = 0): string {
-     if (depth > 100) return '';
-diff --git a/tests/connectors-adf.test.ts b/tests/connectors-adf.test.ts
-index 3a47151..8916e0f 100644
---- a/tests/connectors-adf.test.ts
-+++ b/tests/connectors-adf.test.ts
-@@ -1,5 +1,5 @@
- import { describe, expect, test } from 'bun:test';
--import { adfToText, markdownToAdf } from '../src/connectors/adf.ts';
-+import { adfToText, markdownToAdf, normalizeHeadingLevel } from '../src/connectors/adf.ts';
- 
- describe('connector ADF conversion', () => {
-   test('nested lists, headings, code, links and unknown nodes remain readable', () => {
-@@ -23,6 +23,11 @@ describe('connector ADF conversion', () => {
-     expect(adfToText(undefined)).toBe('');
-   });
- 
-+  test('normalizeHeadingLevel bounds heading level attribute', () => {
-+    expect(normalizeHeadingLevel(2)).toBe(2);
-+    expect(normalizeHeadingLevel('invalid')).toBe(1);
-+  });
-+
-   test('Markdown roundtrip retains lists, paragraphs, code and links', () => {
-     const md = '# Título\n\nTexto con `código` y [enlace](https://example.test/a).\nOtra línea.\n\n- Uno\n  - Dos\n- Tres\n\n```sh\nprintf "$()"\n```';
-     const adf = markdownToAdf(md) as any;
+diff --git a/src/threatmon/index.ts b/src/threatmon/index.ts
+index 3432040..82cfd37 100644
+--- a/src/threatmon/index.ts
++++ b/src/threatmon/index.ts
+@@ -40,7 +40,7 @@ export interface ThreatReport {
+ export function splitLines(text: string): string[] {
+   if (!text) return [];
+   const lines = text.split('\n');
+-  if (lines.length > 0 && lines[lines.length - 1] === '') {
++  if (lines.length > 0 && lines.at(-1) === '') {
+     lines.pop();
+   }
+   const joined: string[] = [];
+@@ -95,8 +95,8 @@ export function normalizeLine(line: string): string {
+       // '\r' dropped
+       i++;
+     } else if (c < 0x20 || c === 0x7f) {
+-      // C0 control byte or DEL replaced with space
+-      res += ' ';
++      // C0 control byte or DEL replaced with space, preserving tab indentation
++      res += c === 0x09 ? '\t' : ' ';
+       i++;
+     } else {
+       res += line[i];
