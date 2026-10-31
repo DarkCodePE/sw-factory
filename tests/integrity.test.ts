@@ -50,6 +50,14 @@ for(let i=0;i<10;i++) test(`clean change ${i+1} has no false positive`,async()=>
   if(i%2) await commitWorktree(wt.path,'code only');
   expect((await protectedIntegrity(wt.path,wt.baseSha,DEFAULT_PROTECTED_PATHS)).tampered).toEqual([]);
 });
+test('ignored prose under a wildcard test glob is not a test (F4), but code still is',async()=>{
+  const {c}=setup(); const wt=await ensureWorktree(repo,dir,c.id);
+  writeFileSync(join(wt.path,'.gitignore'),'graft/\n'); mkdirSync(join(wt.path,'graft/tests'),{recursive:true});
+  writeFileSync(join(wt.path,'graft/tests/health.test.md'),'# index\n');
+  expect((await protectedIntegrity(wt.path,wt.baseSha,DEFAULT_PROTECTED_PATHS)).tampered).toEqual([]);
+  writeFileSync(join(wt.path,'graft/tests/health.test.ts'),'skip();\n');
+  expect((await protectedIntegrity(wt.path,wt.baseSha,DEFAULT_PROTECTED_PATHS)).tampered).toEqual(['graft/tests/health.test.ts']);
+});
 test('default protections can be extended; only protect-none disables them, migration persists',()=>{
   expect(setup().ws.protectedPaths).toEqual(DEFAULT_PROTECTED_PATHS);
   expect(store.createWorkstream({slug:'extra',repo,goal:'g',protectedPaths:['docs/**']}).protectedPaths).toContain('tests/**');
