@@ -32,8 +32,8 @@ afterEach(() => {
   rmSync(dir, { recursive: true, force: true });
 });
 
-function setup(verify?: string[]) {
-  const ws = store.createWorkstream({ slug: 'gates', goal: 'goal', repo, agent: 'fake', verify,
+function setup(verify?: string[], verifySetup?: string[]) {
+  const ws = store.createWorkstream({ slug: 'gates', goal: 'goal', repo, agent: 'fake', verify, verifySetup,
     requireChangeApproval: false, requireApproval: false });
   store.setWorkstreamState(ws.id, 'active');
   const change = store.createChange(ws.id, 'Feature', 'Small change');
@@ -235,4 +235,67 @@ test('merge remains blocked when gates are missing or canceled after worker abor
   expect(store.getActivity(gate.id).status).toBe('canceled');
   expect(mergeBlocker(store.validationSummary(change.id))).toContain('gates');
   expect(store.validationSummary(change.id).passed).toBe(false);
+});
+
+const FAKE_TOOL = `sh -c 'mkdir -p $FAB_DEPS/bin && printf "#!/bin/sh\\necho fake-pytest ok\\n" > $FAB_DEPS/bin/fakepytest && chmod +x $FAB_DEPS/bin/fakepytest && echo x >> $FAB_DEPS/runs'`;
+
+test('setup writes FAB_DEPS not the worktree; gate sees the tool, still no network', async () => {
+  const { ws, change } = setup(['fakepytest', `sh -c 'echo $PYTHONPATH; test -n "$NODE_PATH"; echo y > $FAB_DEPS/x'`], [FAKE_TOOL, `sh -c 'echo w > leak.txt'`]);
+  await pool(ws.id);
+  // second setup step tries to write the worktree: read-only, so the gate fails with reason setup
+  const gate = store.listActivities({ changeId: change.id }).find(a => a.kind === 'gates')!;
+  expect(gate.status).toBe('blocked');
+  expect(gate.error).toContain('GATES_FAIL setup');
+  expect(existsSync(join(dir, 'worktrees', change.id.slice(0, 8), 'leak.txt'))).toBe(false);
+  expect(store.listActivities({ changeId: change.id }).filter(a => a.validator)).toHaveLength(0);
+  expect(store.getWorkstream(ws.id).verifySetupHash).toBeNull();
+  expect(existsSync(join(dir, 'deps', 'gates', 'bin', 'fakepytest'))).toBe(true);
+});
+
+test('gate uses FAB_DEPS read-only; setup runs once while argv is unchanged', async () => {
+  const { ws, change } = setup(['fakepytest', `sh -c 'echo y > $PYTHONPATH/x'`], [FAKE_TOOL]);
+  await pool(ws.id);
+  const gate = store.listActivities({ changeId: change.id }).find(a => a.kind === 'gates')!;
+  // fakepytest passes (PATH has deps/bin) but writing into the read-only deps fails
+  expect(gate.error).toContain('fake-pytest ok');
+  expect(gate.error).not.toContain('GATES_FAIL setup');
+  expect(existsSync(join(dir, 'deps', 'gates', 'x'))).toBe(false);
+  expect(store.getWorkstream(ws.id).verifySetupHash).not.toBeNull();
+  store.retryChange(change.id);
+  const runs = () => readFileSync(join(dir, 'deps', 'gates', 'runs'), 'utf8').split('\n').filter(Boolean).length;
+  expect(runs()).toBe(1);
+  await pool(ws.id);
+  expect(runs()).toBe(1);
+  const wt = join(dir, 'worktrees', change.id.slice(0, 8));
+  expect(Bun.spawnSync(['git', 'status', '--porcelain', '-uall'], { cwd: wt }).stdout.toString()).toBe('');
+});
+
+test('failing setup fails the gate with reason setup and does not run the gate', async () => {
+  const { ws, change } = setup(['echo gate-ran'], [`sh -c 'echo no-network; exit 3'`]);
+  await pool(ws.id);
+  const gate = store.listActivities({ changeId: change.id }).find(a => a.kind === 'gates')!;
+  expect(gate.status).toBe('blocked');
+  expect(gate.error).toContain('GATES_FAIL setup');
+  expect(gate.error).not.toContain('gate-ran');
+  const manifest = JSON.parse(readFileSync(join(dir, 'runs', change.id, 'run.json'), 'utf8'));
+  expect(manifest.activities.find((a: any) => a.id === gate.id).steps[0].phase).toBe('setup');
+});
+
+test('setup has network; without --verify-setup nothing changes', async () => {
+  const server = Bun.serve({ hostname: '127.0.0.1', port: 0, fetch: () => new Response('reachable') });
+  try {
+    const r = await (await import('../src/gates.ts')).runSetupAt(repo, ['python3', '-c', `import urllib.request as u; print(u.urlopen('http://127.0.0.1:${server.port}').read())`], join(dir, 'd'), signal());
+    expect(r.output).toContain('reachable');
+  } finally { server.stop(true); }
+  expect(store.getWorkstream(setup(['echo ok']).ws.id).verifySetup).toEqual([]);
+});
+
+test('a tracked symlink (unignored .venv python) is copied as a link, not followed', async () => {
+  const { symlinkSync } = await import('node:fs');
+  mkdirSync(join(repo, 'venv'));
+  symlinkSync(Bun.which('python3')!, join(repo, 'venv', 'python'));
+  git('add', '.'); git('commit', '-qm', 'venv');
+  const r = await runVerifierAt(repo, ['venv/python', '-c', 'print(7)'], signal());
+  expect(r.exitCode).toBe(0);
+  expect(r.output.trim()).toBe('7');
 });

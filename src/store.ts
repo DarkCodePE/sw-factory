@@ -71,6 +71,9 @@ export interface Workstream {
   createdAt: string;
   protectedPaths: string[];
   verify?: string[][];
+  verifySetup?: string[][];
+  /** Hash of the setup argv that last succeeded; setup reruns only when it differs. */
+  verifySetupHash?: string | null;
 }
 
 export interface Signal {
@@ -171,6 +174,8 @@ function toWorkstream(r: Row): Workstream {
     requireApproval: bool(r.require_approval),
     protectedPaths: r.protected_paths == null ? [...DEFAULT_PROTECTED_PATHS] : JSON.parse(r.protected_paths as string),
     verify: r.verify == null ? [] : JSON.parse(r.verify as string),
+    verifySetup: r.verify_setup == null ? [] : JSON.parse(r.verify_setup as string),
+    verifySetupHash: (r.verify_setup_hash as string | null) ?? null,
     createdAt: r.created_at as string,
   };
 }
@@ -238,6 +243,7 @@ export interface CreateWorkstreamInput {
   protectedPaths?: string[];
   protectNone?: boolean;
   verify?: string[];
+  verifySetup?: string[];
 }
 
 export interface StoreOptions {
@@ -290,6 +296,8 @@ export class Store {
   private migrate(): void {
     this.addColumn('activities', 'validator', 'TEXT');
     this.addColumn('workstreams', 'verify', 'TEXT');
+    this.addColumn('workstreams', 'verify_setup', 'TEXT');
+    this.addColumn('workstreams', 'verify_setup_hash', 'TEXT');
     this.addColumn('activities', 'verified_head', 'TEXT');
     this.addColumn('activities', 'requested_validators', 'TEXT');
     this.addColumn('events', 'actor', 'TEXT');
@@ -329,6 +337,9 @@ export class Store {
       throw new StoreError('invalid_input', `invalid slug "${input.slug}" (use a-z, 0-9, -)`);
     }
     const verify = (input.verify ?? []).map(command => verifierArgv(command));
+    // $FAB_DEPS is the one expansion allowed: it is substituted by the runner, never by a shell.
+    const verifySetup = (input.verifySetup ?? []).map(command => verifierArgv(command.replaceAll('$FAB_DEPS', 'FAB_DEPS_SLOT')).map(a => a.replaceAll('FAB_DEPS_SLOT', '$FAB_DEPS')));
+    if (verifySetup.length && !verify.length) throw new StoreError('invalid_input', '--verify-setup exige --verify');
     const additions = input.protectedPaths ?? [];
     validateProtectedPatterns(additions);
     if (input.protectedPaths?.length === 0 && !input.protectNone) {
@@ -340,8 +351,8 @@ export class Store {
       this.db
         .query(
           `INSERT INTO workstreams (id, slug, goal, repo, state, agent, worker_concurrency,
-           task_limit, require_change_approval, require_approval, created_at, protected_paths, verify)
-           VALUES ($id,$slug,$goal,$repo,'draft',$agent,$wc,$tl,$rca,$ra,$at,$protected,$verify)`
+           task_limit, require_change_approval, require_approval, created_at, protected_paths, verify, verify_setup)
+           VALUES ($id,$slug,$goal,$repo,'draft',$agent,$wc,$tl,$rca,$ra,$at,$protected,$verify,$setup)`
         )
         .run({
           id,
@@ -356,10 +367,15 @@ export class Store {
           at: this.now(),
           protected: JSON.stringify(protectedPaths),
           verify: JSON.stringify(verify),
+          setup: JSON.stringify(verifySetup),
         });
       this.event(id, 'info', `workstream ${input.slug} created (draft)`);
     });
     return this.getWorkstream(id);
+  }
+
+  setVerifySetupHash(id: string, hash: string): void {
+    this.withRetry(() => this.db.query('UPDATE workstreams SET verify_setup_hash = ? WHERE id = ?').run(hash, id));
   }
 
   getWorkstream(idOrSlug: string): Workstream {
