@@ -40,16 +40,20 @@ test('pool runs investigation with the fake agent in a per-change worktree', asy
   expect(store.getChange(c.id).status).toBe('in_review');
 });
 
-test('a blocked report counts as a failure and is retried', async () => {
+test('a declared block stops after one session and reaches the inbox', async () => {
   process.env.FABRICA_FAKE_STATUS = 'blocked - cannot reproduce';
   try {
     const ws = store.createWorkstream({ slug: 'p', goal: 'g', repo, agent: 'fake', requireChangeApproval: false });
     store.setWorkstreamState(ws.id, 'active');
     const c = store.createChange(ws.id, 'fix it', 'desc');
-    await runPool(store, { workstream: ws.id, stateDir: dir, untilIdle: true, log: () => {} });
+    const logs: string[] = [];
+    await runPool(store, { workstream: ws.id, stateDir: dir, untilIdle: true, log: msg => logs.push(msg) });
+    expect(logs.filter(msg => msg.includes(' -> fake in '))).toHaveLength(1);
     const [inv] = store.listActivities({ changeId: c.id });
-    expect(inv?.status).toBe('failed');
-    expect(inv?.retryCount).toBe(3);
+    expect(inv?.status).toBe('blocked');
+    expect(inv?.retryCount).toBe(0);
+    expect(store.getChange(c.id).status).toBe('blocked');
+    expect(store.inbox(ws.id).map(a => a.id)).toContain(inv!.id);
     expect(inv?.error).toContain('cannot reproduce');
   } finally {
     delete process.env.FABRICA_FAKE_STATUS;

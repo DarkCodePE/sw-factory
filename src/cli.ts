@@ -12,7 +12,7 @@ import { sandboxReport } from './sandbox/index.ts';
 import { runScript } from './script-runtime/index.ts';
 import { openSearch } from './search/index.ts';
 import { runTui } from './tui.ts';
-import { mergeAndCleanup, removeWorktree } from './worktrees.ts';
+import { commitProtectedPaths, mergeAndCleanup, removeWorktree } from './worktrees.ts';
 import { execMain } from './agent/exec.ts';
 import { chatMain } from './chat.ts';
 import { localCommandMain } from './chat/cli.ts';
@@ -24,6 +24,7 @@ import { connectorsMain } from './connectors/cli.ts';
 import { createGhGateway } from './connectors/github.ts';
 import { ChangeLinkStore } from './connectors/links.ts';
 import { validateMain } from './validators/cli.ts';
+import { protectedIntegrity } from './validators/integrity.ts';
 import { mergeBlocker } from './validators/publish.ts';
 
 const STATE_DIR = resolve(process.env.FABRICA_HOME ?? resolve(process.env.HOME ?? '.', '.fabrica'));
@@ -47,12 +48,13 @@ const HELP = `fab — agente de código y fábrica de software local
   fab validate <changeId> [--only code_review,security_audit,qa] | status <changeId> | publish <changeId> [--dry-run]
 
   fab ws create <slug> --repo <path> --goal <text> [--agent ${AGENT_NAMES.join('|')}]
-                [--concurrency N] [--task-limit N] [--no-change-approval] [--no-spec-approval]
+                [--protect <glob>] [--protect-none] [--concurrency N] [--task-limit N] [--no-change-approval] [--no-spec-approval]
   fab ws list
   fab ws state <slug> <active|paused|archived>
   fab signal add <slug> <title> [--body <text>]
   fab signal list <slug>
   fab triage <signalId> | fab triage --all <slug>
+  fab gate allow <changeId> <ruta…> --comment <motivo>
   fab inbox [slug]
   fab review <activityId> <approve|comment|decline> [--comment <text>]
   fab run <slug> [--once] [--agent <name>]
@@ -60,7 +62,7 @@ const HELP = `fab — agente de código y fábrica de software local
   fab status <slug>
   fab show <changeId>
   fab merge <changeId> [--force] fusiona la rama fab/<id> y cierra el change; --force ignora validadores pendientes o en fail
-  fab retry <changeId>          re-encola la última actividad de un change fallido
+  fab retry <changeId>          re-encola un bloqueo, fallo o validador agotado
   fab reject <changeId>         cancela el change y borra su worktree
   fab events <slug>
   fab exec [prompt]             agente propio; fab exec --help para opciones
@@ -130,6 +132,8 @@ async function main(argv: string[]): Promise<number> {
       all: { type: 'boolean' },
       once: { type: 'boolean' },
       force: { type: 'boolean' },
+      protect: { type: 'string', multiple: true },
+      'protect-none': { type: 'boolean' },
       help: { type: 'boolean', short: 'h' },
     },
   });
@@ -155,6 +159,8 @@ async function main(argv: string[]): Promise<number> {
             taskLimit: values['task-limit'] ? Number(values['task-limit']) : undefined,
             requireChangeApproval: !values['no-change-approval'],
             requireApproval: !values['no-spec-approval'],
+            protectedPaths: values.protect,
+            protectNone: values['protect-none'],
           });
           console.log(`workstream ${ws.slug} (${short(ws.id)}) creado en draft; actívalo con: fab ws state ${ws.slug} active`);
         } else if (sub === 'list') {
@@ -194,6 +200,11 @@ async function main(argv: string[]): Promise<number> {
         for (const a of items) {
           const c = store.getChange(a.changeId);
           console.log(`\n== ${short(a.id)}  ${a.kind}  change ${short(c.id)}: ${c.title}`);
+          if (a.status === 'blocked') {
+            console.log(`blocked: ${a.error ?? ''}`);
+            console.log(`-> fab retry ${short(c.id)} | fab reject ${short(c.id)}`);
+            continue;
+          }
           console.log(a.kind === 'change_review' ? c.description : (a.result ?? '').slice(0, 4000));
           console.log(`-> fab review ${short(a.id)} approve|comment|decline`);
         }
@@ -246,9 +257,35 @@ async function main(argv: string[]): Promise<number> {
         const blocked = mergeBlocker(store.validationSummary(c.id));
         if (blocked && !values.force) throw new StoreError('invalid_transition', `${blocked}; usa --force para fusionar igualmente`);
         if (blocked) console.log(`aviso: ${blocked}; se fusiona por --force`);
+        if (values.force) store.event(ws.id, 'warning', `merge --force${blocked ? `: ${blocked}` : ''}`, c.id);
         console.log(await mergeAndCleanup(ws.repo, STATE_DIR, c.id));
         store.closeChange(c.id, 'completed');
         console.log(`change ${short(c.id)} completado`);
+        return 0;
+      }
+      case 'gate': {
+        if (sub !== 'allow' || !rest[0] || rest.length < 2 || !values.comment?.trim()) {
+          throw new StoreError('invalid_input', 'usage: fab gate allow <changeId> <ruta…> --comment <motivo>');
+        }
+        const c = findByPrefix(allChanges(store), rest[0], 'change');
+        if (!c.baseSha) throw new StoreError('invalid_transition', 'change sin base_sha');
+        if (c.status !== 'blocked' || !store.listActivities({changeId:c.id}).some(a => a.status === 'blocked' && a.error?.startsWith('GATE_TAMPERED:'))) {
+          throw new StoreError('invalid_transition', 'gate allow exige un bloqueo GATE_TAMPERED');
+        }
+        if (store.listActivities({changeId:c.id}).some(a => a.status === 'in_progress')) throw new StoreError('conflict', 'change tiene workers en curso');
+        const ws = store.getWorkstream(c.workstreamId);
+        const path = resolve(STATE_DIR, 'worktrees', short(c.id));
+        const { snapshot } = await protectedIntegrity(path, c.baseSha, ws.protectedPaths, c.protectedBaseline);
+        const selected: typeof snapshot = {};
+        for (const route of rest.slice(1)) {
+          if (!Object.hasOwn(snapshot, route)) throw new StoreError('invalid_input', `ruta protegida no encontrada: ${route}`);
+          selected[route] = snapshot[route]!;
+        }
+        await commitProtectedPaths(path, Object.keys(selected), `gate allow: ${values.comment}`);
+        const approved = await protectedIntegrity(path, c.baseSha, ws.protectedPaths, c.protectedBaseline);
+        for (const route of Object.keys(selected)) selected[route] = approved.snapshot[route] ?? {disk:null, head:null};
+        store.allowGate(c.id, selected, values.comment);
+        console.log(`change ${short(c.id)}: gate allow registrado; actividad re-encolada`);
         return 0;
       }
       case 'retry': {
@@ -259,6 +296,7 @@ async function main(argv: string[]): Promise<number> {
       }
       case 'reject': {
         const c = findByPrefix(allChanges(store), sub ?? '', 'change');
+        store.event(c.workstreamId, 'warning', 'reject solicitado', c.id);
         await removeWorktree(store.getWorkstream(c.workstreamId).repo, STATE_DIR, c.id);
         store.closeChange(c.id, 'canceled');
         console.log(`change ${short(c.id)} cancelado`);
@@ -274,7 +312,7 @@ async function main(argv: string[]): Promise<number> {
         return 0;
       }
       case 'events': {
-        for (const e of store.listEvents(sub ?? '')) console.log(`${e.created_at} ${String(e.severity).padEnd(7)} ${e.message}`);
+        for (const e of store.listEvents(sub ?? '')) console.log(`${e.created_at} ${String(e.severity).padEnd(7)} [${e.actor ?? '-'}] ${e.message}`);
         return 0;
       }
       default:
@@ -289,7 +327,7 @@ async function main(argv: string[]): Promise<number> {
   }
 }
 
-const COMMANDS = new Set(['ws', 'signal', 'triage', 'inbox', 'review', 'run', 'status', 'show', 'merge', 'retry', 'reject', 'events', 'tui', 'doctor', 'help']);
+const COMMANDS = new Set(['ws', 'signal', 'triage', 'inbox', 'review', 'run', 'status', 'show', 'merge', 'retry', 'gate', 'reject', 'events', 'tui', 'doctor', 'help']);
 
 // The Script worker speaks NDJSON on stdio until its input closes; it must not be cut short by exit().
 if (process.argv[2] === SCRIPT_WORKER_COMMAND) void runScriptWorker(process.argv[3]);

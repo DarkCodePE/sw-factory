@@ -18,17 +18,17 @@ async function git(cwd: string, ...args: string[]): Promise<string> {
 export const branchFor = (changeId: string): string => `fab/${changeId.slice(0, 8)}`;
 
 /** Create (or reuse) the worktree for a change. Investigation and implementation share it. */
-export async function ensureWorktree(repo: string, stateDir: string, changeId: string): Promise<{ path: string; branch: string }> {
+export async function ensureWorktree(repo: string, stateDir: string, changeId: string): Promise<{ path: string; branch: string; baseSha: string }> {
   const repoPath = resolve(repo);
   if (!existsSync(join(repoPath, '.git'))) throw new Error(`${repoPath} is not a git repository`);
   const branch = branchFor(changeId);
   const path = resolve(stateDir, 'worktrees', changeId.slice(0, 8));
-  if (existsSync(path)) return { path, branch };
+  if (existsSync(path)) return { path, branch, baseSha: await git(path, 'rev-parse', 'HEAD') };
   mkdirSync(resolve(stateDir, 'worktrees'), { recursive: true });
   const branches = await git(repoPath, 'branch', '--list', branch);
   if (branches) await git(repoPath, 'worktree', 'add', path, branch);
   else await git(repoPath, 'worktree', 'add', '-b', branch, path, 'HEAD');
-  return { path, branch };
+  return { path, branch, baseSha: await git(path, 'rev-parse', 'HEAD') };
 }
 
 /**
@@ -40,6 +40,14 @@ export async function commitWorktree(worktree: string, message: string): Promise
   await git(worktree, 'add', '-A');
   await git(worktree, '-c', 'user.name=fab', '-c', 'user.email=fab@localhost', 'commit', '-q', '-m', message);
   return true;
+}
+
+/** Record only the paths explicitly approved by a human, preserving unrelated work. */
+export async function commitProtectedPaths(worktree: string, paths: string[], message: string): Promise<void> {
+  if (!(await git(worktree, '--literal-pathspecs', 'status', '--porcelain', '--', ...paths))) return;
+  await git(worktree, '--literal-pathspecs', 'add', '-f', '-A', '--', ...paths);
+  await git(worktree, '--literal-pathspecs', '-c', 'user.name=fab', '-c', 'user.email=fab@localhost',
+    'commit', '--only', '-q', '-m', message, '--', ...paths);
 }
 
 /** Commits on the change branch that are not on the repo's current HEAD. */

@@ -4,6 +4,7 @@ import { getAgent, runAgent } from './agents.ts';
 import { buildWorkerPrompt } from './prompts.ts';
 import type { Activity, Store } from './store.ts';
 import { buildValidatorPrompt } from './validators/prompts.ts';
+import { protectedIntegrity } from './validators/integrity.ts';
 import { parseVerdict } from './validators/verdict.ts';
 import { branchCommits, commitWorktree, ensureWorktree, GIT_SAFE_FLAGS } from './worktrees.ts';
 
@@ -23,8 +24,9 @@ export async function processActivity(store: Store, activity: Activity, workerId
   const agent = getAgent(opts.agentOverride ?? ws.agent);
   try {
     const { activity: a, change, history } = store.activityContext(activity.id);
-    const { path, branch } = await ensureWorktree(ws.repo, opts.stateDir, change.id);
+    const { path, branch, baseSha } = await ensureWorktree(ws.repo, opts.stateDir, change.id);
     store.setChangeBranch(change.id, branch);
+    store.setChangeBase(change.id, baseSha);
     let diffStat = '';
     if (a.validator) {
       try {
@@ -44,15 +46,30 @@ export async function processActivity(store: Store, activity: Activity, workerId
     log(`[${workerId}] ${a.validator ?? a.kind} "${change.title}" -> ${agent.name} in ${path}`);
     const readOnly = a.validator ? (a.validator !== 'qa') : (a.kind === 'investigation');
     const run = await runAgent(agent, prompt, path, undefined, { readOnly });
+    if (a.kind === 'implementation' || a.validator) {
+      const current = store.getChange(change.id);
+      const { tampered } = await protectedIntegrity(path, current.baseSha!, ws.protectedPaths, current.protectedBaseline);
+      if (tampered.length) {
+        const reason = `GATE_TAMPERED: ${tampered.join(', ')}`;
+        store.blockActivity(a.id, workerId, reason);
+        log(`[${workerId}] ${reason}`);
+        return;
+      }
+    }
+    if (run.status.kind === 'blocked') {
+      store.blockActivity(a.id, workerId, run.status.reason);
+      log(`[${workerId}] ${a.validator ?? a.kind} blocked: ${run.status.reason}`);
+      return;
+    }
     if (!run.ok) {
       store.failActivity(a.id, workerId, `agent exit ${run.exitCode}: ${run.output.slice(-1000)}`);
       log(`[${workerId}] ${a.validator ?? a.kind} failed (exit ${run.exitCode})`);
       return;
     }
     if (run.status.kind !== 'done') {
-      const prefix = run.status.kind === 'blocked' ? `blocked: ${run.status.reason}` : run.status.reason;
+      const prefix = run.status.reason;
       store.failActivity(a.id, workerId, `${prefix}\n\n${run.output.slice(-2000)}`);
-      log(`[${workerId}] ${a.validator ?? a.kind} ${run.status.kind === 'blocked' ? 'blocked' : 'failed'}: ${run.status.reason}`);
+      log(`[${workerId}] ${a.validator ?? a.kind} failed: ${run.status.reason}`);
       return;
     }
     if (a.validator) {

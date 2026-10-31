@@ -24,6 +24,7 @@ const STATUS_COLOR: Record<string, string> = {
   implemented: c.green,
   completed: c.green,
   failed: c.red,
+  blocked: c.yellow,
   declined: c.dim,
   canceled: c.dim,
 };
@@ -35,6 +36,7 @@ export interface TuiState {
   mode: Mode;
   scroll: number;
   input: string;
+  inputDecision?: 'comment' | 'decline';
   flash: string;
 }
 
@@ -66,7 +68,7 @@ function fit(s: string, width: number): string {
 
 function header(store: Store, workstream: string, rows: Row[], width: number): string[] {
   const ws = store.getWorkstream(workstream);
-  const awaiting = rows.filter((r) => r.awaiting).length;
+  const awaiting = rows.filter((r) => r.awaiting || r.change.status === 'blocked').length;
   const stateColor = ws.state === 'active' ? c.green : c.yellow;
   return [
     fit(
@@ -86,7 +88,7 @@ function listBody(store: Store, workstream: string, rows: Row[], state: TuiState
   }
   rows.forEach((r, i) => {
     const color = STATUS_COLOR[r.change.status] ?? '';
-    const mark = r.awaiting ? `${c.cyan}●${c.reset}` : ' ';
+    const mark = r.awaiting || r.change.status === 'blocked' ? `${c.cyan}●${c.reset}` : ' ';
     const stage = r.last ? `${r.last.kind}:${r.last.status}` : '';
     const line = `${mark} ${r.change.id.slice(0, 8)} ${color}${r.change.status.padEnd(12)}${c.reset} ${stage.padEnd(26)} ${r.change.title}`;
     out.push(i === state.selected ? `${c.inv}${fit(stripAnsi(line), width)}${c.reset}` : fit(line, width));
@@ -123,7 +125,7 @@ function detailLines(store: Store, row: Row): string[] {
 
 const HELP: Record<Mode, string> = {
   list: '↑↓ mover · enter detalle · a aprobar · c comentar · d rechazar · r reintentar · g agente · q salir',
-  detail: '↑↓ desplazar · a aprobar · c comentar · d rechazar · g agente · esc volver · q salir',
+  detail: '↑↓ desplazar · a aprobar · c comentar · d rechazar · r reintentar · g agente · esc volver · q salir',
   comment: 'escribe y enter para enviar · esc cancelar',
 };
 
@@ -143,7 +145,7 @@ export function render(store: Store, workstream: string, state: TuiState, width:
     state.scroll = Math.min(state.scroll, Math.max(0, detail.length - 1));
     body = detail.slice(state.scroll, state.scroll + bodyHeight - inputRows).map((l) => fit(l, width));
     while (body.length < bodyHeight - inputRows) body.push('');
-    if (state.mode === 'comment') body.push('─'.repeat(width), fit(`${c.bold}comentario:${c.reset} ${state.input}█`, width));
+    if (state.mode === 'comment') body.push('─'.repeat(width), fit(`${c.bold}${state.inputDecision === 'decline' ? 'motivo' : 'comentario'}:${c.reset} ${state.input}█`, width));
   }
   while (body.length < bodyHeight) body.push('');
   body.length = bodyHeight;
@@ -160,9 +162,13 @@ export function handleKey(store: Store, workstream: string, state: TuiState, key
   if (state.mode === 'comment') {
     if (key === '\x1b') state.mode = 'detail';
     else if (key === '\r' || key === '\n') {
+      if (state.inputDecision === 'decline' && !state.input.trim()) {
+        state.flash = 'rechazar exige un motivo';
+        return true;
+      }
       if (row?.awaiting && state.input.trim()) {
-        store.resolveReview(row.awaiting.id, 'comment', state.input.trim());
-        state.flash = 'comentario enviado; se re-encola la actividad';
+        store.resolveReview(row.awaiting.id, state.inputDecision ?? 'comment', state.input.trim());
+        state.flash = state.inputDecision === 'decline' ? 'change rechazado' : 'comentario enviado; se re-encola la actividad';
       }
       state.input = '';
       state.mode = 'detail';
@@ -190,17 +196,24 @@ export function handleKey(store: Store, workstream: string, state: TuiState, key
     if (key === 'a' || key === 'd') {
       if (!row.awaiting) state.flash = 'este change no espera revisión';
       else {
-        store.resolveReview(row.awaiting.id, key === 'a' ? 'approve' : 'decline');
-        state.flash = key === 'a' ? `${row.awaiting.kind} aprobado` : 'change rechazado';
+        if (key === 'd') {
+          state.mode = 'comment';
+          state.inputDecision = 'decline';
+          state.input = '';
+        } else {
+          store.resolveReview(row.awaiting.id, 'approve');
+          state.flash = `${row.awaiting.kind} aprobado`;
+        }
       }
     } else if (key === 'c') {
       if (!row.awaiting) state.flash = 'este change no espera revisión';
       else {
         state.mode = 'comment';
+        state.inputDecision = 'comment';
         state.input = '';
       }
     } else if (key === 'r') {
-      if (row.change.status !== 'failed') state.flash = 'solo se reintentan changes fallidos';
+      if (!['failed', 'blocked', 'implemented'].includes(row.change.status)) state.flash = 'solo se reintentan changes fallidos, bloqueados o con validador agotado';
       else {
         store.retryChange(row.change.id);
         state.flash = 'change re-encolado';
