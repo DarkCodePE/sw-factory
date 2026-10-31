@@ -96,7 +96,7 @@ const fake: AgentAdapter = {
   command: (prompt) => [
     'sh',
     '-c',
-    'if [ -n "$FABRICA_FAKE_SLEEP" ]; then sleep "$FABRICA_FAKE_SLEEP"; fi; printf "STATUS: %s\\n\\nfake agent handled: %s\\n" "${FABRICA_FAKE_STATUS:-done}" "$1"',
+    'if [ -n "$FABRICA_FAKE_SLEEP" ]; then sleep "$FABRICA_FAKE_SLEEP"; fi; if [ -n "$FABRICA_FAKE_TOUCH" ]; then touch "$FABRICA_FAKE_TOUCH-$$"; fi; printf "STATUS: %s\\n\\nfake agent handled: %s\\n" "${FABRICA_FAKE_STATUS:-done}" "$1"',
     'fake',
     prompt.slice(0, 80),
   ],
@@ -138,7 +138,7 @@ export async function runAgent(
   prompt: string,
   cwd: string,
   timeoutMs = 20 * 60_000,
-  options: { readOnly?: boolean; signal?: AbortSignal } = {}
+  options: { readOnly?: boolean; signal?: AbortSignal; onSpawn?: (pgid: number) => void } = {}
 ): Promise<AgentRun> {
   const start = Date.now();
   const proc = Bun.spawn(agent.command(prompt, options), {
@@ -150,10 +150,16 @@ export async function runAgent(
     detached: true,
   });
 
+  if (options.onSpawn) {
+    try {
+      options.onSpawn(proc.pid);
+    } catch {}
+  }
+
   let killed = false;
+  let killTimer: ReturnType<typeof setTimeout> | undefined;
+
   const killGroup = (sig: 'SIGTERM' | 'SIGKILL' = 'SIGTERM') => {
-    if (killed && sig === 'SIGTERM') return;
-    killed = true;
     try {
       process.kill(-proc.pid, sig);
     } catch {
@@ -163,14 +169,18 @@ export async function runAgent(
     }
   };
 
-  const onAbort = () => {
+  const terminateWithEscalation = () => {
+    if (killed) return;
+    killed = true;
     killGroup('SIGTERM');
-    const killTimer = setTimeout(() => {
-      try {
-        killGroup('SIGKILL');
-      } catch {}
+    killTimer = setTimeout(() => {
+      killGroup('SIGKILL');
     }, 2000);
     killTimer.unref?.();
+  };
+
+  const onAbort = () => {
+    terminateWithEscalation();
   };
 
   if (options.signal?.aborted) {
@@ -179,8 +189,8 @@ export async function runAgent(
     options.signal.addEventListener('abort', onAbort, { once: true });
   }
 
-  const timer = setTimeout(() => {
-    killGroup('SIGTERM');
+  const timeoutTimer = setTimeout(() => {
+    terminateWithEscalation();
   }, timeoutMs);
 
   const [stdout, stderr, exitCode] = await Promise.all([
@@ -189,7 +199,10 @@ export async function runAgent(
     proc.exited,
   ]);
 
-  clearTimeout(timer);
+  clearTimeout(timeoutTimer);
+  if (killTimer) {
+    clearTimeout(killTimer);
+  }
   if (options.signal) {
     options.signal.removeEventListener('abort', onAbort);
   }
