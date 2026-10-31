@@ -17,18 +17,34 @@ async function git(cwd: string, ...args: string[]): Promise<string> {
 
 export const branchFor = (changeId: string): string => `fab/${changeId.slice(0, 8)}`;
 
+/**
+ * Base del change: exito del merge-base del HEAD del repo con la rama del change.
+ * Si la rama ya existía (reintento o worker caído que dejó commits del agente),
+ * el HEAD del worktree ya puede incluir trabajo del agente: el punto de partida
+ * correcto es la fusión común con el HEAD del repo (F2).
+ */
+async function baseSha(repoPath: string, branch: string, existed: boolean): Promise<string> {
+  if (existed) {
+    try {
+      const mergeBase = await git(repoPath, 'merge-base', 'HEAD', branch);
+      if (mergeBase) return mergeBase;
+    } catch { /* rama sin ancestro común con HEAD: cae al HEAD actual. */ }
+  }
+  return await git(repoPath, 'rev-parse', 'HEAD');
+}
+
 /** Create (or reuse) the worktree for a change. Investigation and implementation share it. */
 export async function ensureWorktree(repo: string, stateDir: string, changeId: string): Promise<{ path: string; branch: string; baseSha: string }> {
   const repoPath = resolve(repo);
   if (!existsSync(join(repoPath, '.git'))) throw new Error(`${repoPath} is not a git repository`);
   const branch = branchFor(changeId);
   const path = resolve(stateDir, 'worktrees', changeId.slice(0, 8));
-  if (existsSync(path)) return { path, branch, baseSha: await git(path, 'rev-parse', 'HEAD') };
+  if (existsSync(path)) return { path, branch, baseSha: await baseSha(repoPath, branch, (await git(repoPath, 'branch', '--list', branch)) !== '') };
   mkdirSync(resolve(stateDir, 'worktrees'), { recursive: true });
   const branches = await git(repoPath, 'branch', '--list', branch);
   if (branches) await git(repoPath, 'worktree', 'add', path, branch);
   else await git(repoPath, 'worktree', 'add', '-b', branch, path, 'HEAD');
-  return { path, branch, baseSha: await git(path, 'rev-parse', 'HEAD') };
+  return { path, branch, baseSha: await baseSha(repoPath, branch, !!branches) };
 }
 
 /**

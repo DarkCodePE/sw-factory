@@ -200,3 +200,30 @@ test('D5: git operations in worktrees ignore repository hooks (core.hooksPath=/d
   await commitWorktree(wtPath, 'test commit without hooks');
   expect(existsSync(markerCommit)).toBe(false);
 });
+
+test('F2: baseSha es el merge-base cuando la rama fab/<id> ya existe con commits del agente', async () => {
+  const changeId = 'f2sha1234567890';
+  const branch = branchFor(changeId);
+
+  // Base recién creada: HEAD del repo.
+  const first = await ensureWorktree(repo, stateDir, changeId);
+  expect(first.baseSha).toBe(git(repo, 'rev-parse', 'HEAD'));
+
+  // Un commit del agente avanza la rama.
+  writeFileSync(join(first.path, 'agent.txt'), 'trabajo del agente\n');
+  await commitWorktree(first.path, 'commit del agente');
+  const agentHead = git(first.path, 'rev-parse', 'HEAD');
+  expect(agentHead).not.toBe(first.baseSha);
+
+  // Reuso del mismo worktree: el base debe seguir siendo el merge-base, no el HEAD del worktree.
+  const reuse = await ensureWorktree(repo, stateDir, changeId);
+  expect(reuse.baseSha).toBe(git(repo, 'merge-base', 'HEAD', branch));
+  expect(reuse.baseSha).toBe(first.baseSha);
+
+  // El worktree se pierde (worker caído, limpieza) pero la rama persiste: base = commit anterior al del agente.
+  rmSync(first.path, { recursive: true, force: true });
+  git(repo, 'worktree', 'prune');
+  const reattached = await ensureWorktree(repo, stateDir, changeId);
+  expect(reattached.baseSha).toBe(first.baseSha);
+  expect(reattached.baseSha).not.toBe(agentHead);
+});
