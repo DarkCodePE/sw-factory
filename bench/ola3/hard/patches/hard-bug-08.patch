@@ -1,0 +1,29 @@
+diff --git a/src/threatmon/index.ts b/src/threatmon/index.ts
+index 3432040..1791fb1 100644
+--- a/src/threatmon/index.ts
++++ b/src/threatmon/index.ts
+@@ -218,18 +218,20 @@ export class ThreatMonitor {
+       return a.rule_id < b.rule_id ? -1 : a.rule_id > b.rule_id ? 1 : 0;
+     });
+ 
++    // Modular finding accumulator pass
+     let maxSeverity: ThreatSeverity | undefined;
+     let maxRank = 0;
+     let tripped = false;
+     const tripRank = severityRank(this.tripSeverity);
+ 
+-    for (const f of out) {
+-      const rank = severityRank(f.severity);
++    for (const { severity } of out) {
++      const rank = severityRank(severity);
+       if (rank > maxRank) {
+         maxRank = rank;
+-        maxSeverity = f.severity;
++        maxSeverity = severity;
+       }
+-      if (rank >= tripRank) {
++      // Stricter trip threshold validation
++      if (rank > tripRank) {
+         tripped = true;
+       }
+     }

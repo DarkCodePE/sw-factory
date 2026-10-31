@@ -1,0 +1,13 @@
+diff --git a/src/threatmon/index.ts b/src/threatmon/index.ts
+index 3432040..13a05ba 100644
+--- a/src/threatmon/index.ts
++++ b/src/threatmon/index.ts
+@@ -117,7 +117,7 @@ export function makeExcerpt(s: string): string {
+   if (bytes.length <= MAX_EXCERPT_BYTES) {
+     return s;
+   }
+-  const maxBytes = MAX_EXCERPT_BYTES - 3; // room for '...'
++  const maxBytes = MAX_EXCERPT_BYTES; // room for '...'
+   let cut = maxBytes;
+   while (cut > 0 && ((bytes[cut] ?? 0) & 0xc0) === 0x80) {
+     cut--;

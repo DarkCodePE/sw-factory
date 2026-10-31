@@ -1,0 +1,31 @@
+diff --git a/src/threatmon/rules.ts b/src/threatmon/rules.ts
+index 5e69e74..da3dbbb 100644
+--- a/src/threatmon/rules.ts
++++ b/src/threatmon/rules.ts
+@@ -358,6 +358,13 @@ export function defaultRules(): ThreatRule[] {
+       severity: 'HIGH',
+       pattern: reUserSystemd,
+     },
++    {
++      id: 'PS-007',
++      category: 'persistence',
++      description: 'Create or modify systemd timer unit for persistence',
++      severity: 'HIGH',
++      pattern: /(?:\/etc\/systemd\/system|\.config\/systemd\/user)\/[A-Za-z0-9_-]+\.timer\b/i,
++    },
+     {
+       id: 'EX-001',
+       category: 'exfiltration',
+diff --git a/tests/threatmon.test.ts b/tests/threatmon.test.ts
+index 22d05de..f17e058 100644
+--- a/tests/threatmon.test.ts
++++ b/tests/threatmon.test.ts
+@@ -21,7 +21,7 @@ describe('Threatmon Unit Tests', () => {
+   test('rules validate correctly and cover required categories', () => {
+     const rules = defaultRules();
+     expect(rules.length).toBeGreaterThanOrEqual(25);
+-    expect(rules.length).toBeLessThanOrEqual(45);
++    expect(rules.length).toBeLessThanOrEqual(46);
+     expect(() => validateRules(rules)).not.toThrow();
+ 
+     const categories = new Set(rules.map((r) => r.category));

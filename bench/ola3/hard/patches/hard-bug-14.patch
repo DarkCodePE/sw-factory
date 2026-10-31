@@ -1,0 +1,13 @@
+diff --git a/src/manifest.ts b/src/manifest.ts
+index 0e09cdc..0269d00 100644
+--- a/src/manifest.ts
++++ b/src/manifest.ts
+@@ -75,7 +75,7 @@ export function writeManifest(store: Store, changeId: string, stateDir = store.s
+   const head = gitEvidence(ws.repo, 'rev-parse', '--verify', branch) ?? previous.head ?? null;
+   const activities = store.listActivities({ changeId }).map(a => {
+     const path = activityLog(stateDir, changeId, a.id);
+-    if (!existsSync(path)) atomicEvidence(path, a.result ?? a.error ?? '');
++    if (!existsSync(path)) atomicEvidence(path, a.error ?? a.result ?? '');
+     const metaPath = join(dir, `${a.id}.json`);
+     const execution = existsSync(metaPath) ? JSON.parse(readFileSync(metaPath, 'utf8')) : { isolation: isolationFor(a.kind === 'gates' ? 'gates' : ws.agent), egressProbe: null };
+     return { ...a, verdict: (a.validator || a.kind === 'gates') ? ({ approved: 'pass', declined: 'fail', commented: 'needs_human' } as Record<string,string>)[a.reviewStatus ?? ''] ?? null : null,

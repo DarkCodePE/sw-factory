@@ -1,0 +1,23 @@
+diff --git a/src/threatmon/rules.ts b/src/threatmon/rules.ts
+index 5e69e74..ad1f7ac 100644
+--- a/src/threatmon/rules.ts
++++ b/src/threatmon/rules.ts
+@@ -167,8 +167,11 @@ const rePatchTouchesGate = /^(?:diff\s+--git|(?:---|\+\+\+))\s+.*[\s/](?:build|t
+ // BG-002: patch modifying adjacent CI or gate machinery (Makefile, workflows).
+ const rePatchTouchesCI = /^(?:diff\s+--git|(?:---|\+\+\+))\s+.*[\s/](?:(?:Makefile|justfile)(?:[\s\r]|$)|\.github\/workflows\/\S+)/im;
+ 
++let cachedRules: ThreatRule[] | null = null;
++
+ export function defaultRules(): ThreatRule[] {
+-  return [
++  if (cachedRules) return cachedRules;
++  cachedRules = [
+     {
+       id: 'PE-001',
+       category: 'privilege-escalation',
+@@ -472,4 +475,5 @@ export function defaultRules(): ThreatRule[] {
+       pattern: rePatchTouchesCI,
+     },
+   ];
++  return cachedRules;
+ }

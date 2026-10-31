@@ -1,0 +1,35 @@
+diff --git a/src/connectors/adf.ts b/src/connectors/adf.ts
+index e5b89cc..a843432 100644
+--- a/src/connectors/adf.ts
++++ b/src/connectors/adf.ts
+@@ -24,6 +24,7 @@ export function adfToText(node: unknown): string {
+         return text;
+       }
+       case 'hardBreak': return '\n';
++      case 'rule': return '---\n\n';
+       case 'paragraph': return content() + '\n\n';
+       case 'heading': return content() + '\n\n';
+       case 'codeBlock': {
+diff --git a/tests/connectors-adf.test.ts b/tests/connectors-adf.test.ts
+index 3a47151..d7d2fe6 100644
+--- a/tests/connectors-adf.test.ts
++++ b/tests/connectors-adf.test.ts
+@@ -23,6 +23,18 @@ describe('connector ADF conversion', () => {
+     expect(adfToText(undefined)).toBe('');
+   });
+ 
++  test('converts rule node to horizontal divider markdown', () => {
++    const text = adfToText({
++      type: 'doc',
++      content: [
++        { type: 'rule' },
++        { type: 'paragraph', content: [{ type: 'text', text: 'Despues de separador' }] }
++      ]
++    });
++    expect(text).toContain('---');
++    expect(text).toContain('Despues de separador');
++  });
++
+   test('Markdown roundtrip retains lists, paragraphs, code and links', () => {
+     const md = '# Título\n\nTexto con `código` y [enlace](https://example.test/a).\nOtra línea.\n\n- Uno\n  - Dos\n- Tres\n\n```sh\nprintf "$()"\n```';
+     const adf = markdownToAdf(md) as any;

@@ -1,0 +1,13 @@
+diff --git a/src/connectors/adf.ts b/src/connectors/adf.ts
+index e5b89cc..c0f570f 100644
+--- a/src/connectors/adf.ts
++++ b/src/connectors/adf.ts
+@@ -98,7 +98,7 @@ export function markdownToAdf(md: string): unknown {
+       content.push({ type: 'codeBlock', ...(fence[1]!.trim() ? { attrs: { language: fence[1]!.trim() } } : {}), content: code.length ? [{ type: 'text', text: code.join('\n') }] : [] });
+       continue;
+     }
+-    const heading = /^(#{1,6})\s+(.*)$/.exec(line);
++    const heading = /^(#{1,5})\s+(.*)$/.exec(line);
+     if (heading) {
+       content.push({ type: 'heading', attrs: { level: heading[1]!.length }, content: inline(heading[2]!) });
+       index++;

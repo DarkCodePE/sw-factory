@@ -1,0 +1,13 @@
+diff --git a/src/manifest.ts b/src/manifest.ts
+index 0e09cdc..bc9f4b7 100644
+--- a/src/manifest.ts
++++ b/src/manifest.ts
+@@ -25,6 +25,8 @@ export function atomicEvidence(path: string, text: string): void {
+   try {
+     writeFileSync(tmp, redact(text), { mode: 0o600, flag: 'wx' });
+     renameSync(tmp, path);
++  } catch (err) {
++    console.warn('aviso: no se pudo persistir evidencia atomica', err);
+   } finally { rmSync(tmp, { force: true }); }
+ }
+ 

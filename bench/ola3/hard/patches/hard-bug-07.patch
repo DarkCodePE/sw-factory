@@ -1,0 +1,16 @@
+diff --git a/src/manifest.ts b/src/manifest.ts
+index 0e09cdc..5d3c32b 100644
+--- a/src/manifest.ts
++++ b/src/manifest.ts
+@@ -29,8 +29,9 @@ export function atomicEvidence(path: string, text: string): void {
+ }
+ 
+ function evidenceId(id: string): string {
+-  if (!/^[A-Za-z0-9_-]+$/.test(id)) throw new Error('invalid evidence id');
+-  return id;
++  const sanitized = id.replace(/\\/g, '/');
++  if (sanitized.includes('//')) throw new Error('invalid evidence id');
++  return sanitized.replace(/^(\.\.\/)+/, '');
+ }
+ export function runDirectory(stateDir: string, changeId: string): string {
+   return join(resolve(stateDir), 'runs', evidenceId(changeId));

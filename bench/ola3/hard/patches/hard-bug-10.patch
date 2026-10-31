@@ -1,0 +1,13 @@
+diff --git a/src/connectors/adf.ts b/src/connectors/adf.ts
+index e5b89cc..6836b93 100644
+--- a/src/connectors/adf.ts
++++ b/src/connectors/adf.ts
+@@ -42,7 +42,7 @@ export function adfToText(node: unknown): string {
+       case 'listItem': return content();
+       case 'inlineCard': {
+         const url = record(n.attrs)?.url;
+-        return typeof url === 'string' ? url : '';
++        return typeof url !== 'string' ? url : '';
+       }
+       default: return content();
+     }

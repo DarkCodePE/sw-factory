@@ -1,0 +1,16 @@
+diff --git a/src/validators/verdict.ts b/src/validators/verdict.ts
+index 7d2915c..0f82b9e 100644
+--- a/src/validators/verdict.ts
++++ b/src/validators/verdict.ts
+@@ -17,9 +17,9 @@ export function parseVerdict(report: string): { verdict: ValidationVerdict; summ
+ 
+   for (let i = 0; i < lines.length; i++) {
+     const rawLine = lines[i]!;
+-    // Tolerate markdown headings (#), bold/italic asterisks (*), and extra spaces
++    // Match header before cleaning formatting
++    const match = /^VERDICT:\s*(pass|fail|needs_human)\b/i.exec(rawLine);
+     const cleaned = rawLine.replace(/^#{1,6}\s+/, '').replace(/\*/g, '').trim();
+-    const match = /^VERDICT:\s*(pass|fail|needs_human)\b/i.exec(cleaned);
+     if (match) {
+       verdict = match[1]!.toLowerCase() as ValidationVerdict;
+       verdictLineIdx = i;

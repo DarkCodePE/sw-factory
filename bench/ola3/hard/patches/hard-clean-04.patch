@@ -1,0 +1,28 @@
+diff --git a/src/validators/verdict.ts b/src/validators/verdict.ts
+index 7d2915c..aeb329f 100644
+--- a/src/validators/verdict.ts
++++ b/src/validators/verdict.ts
+@@ -19,7 +19,7 @@ export function parseVerdict(report: string): { verdict: ValidationVerdict; summ
+     const rawLine = lines[i]!;
+     // Tolerate markdown headings (#), bold/italic asterisks (*), and extra spaces
+     const cleaned = rawLine.replace(/^#{1,6}\s+/, '').replace(/\*/g, '').trim();
+-    const match = /^VERDICT:\s*(pass|fail|needs_human)\b/i.exec(cleaned);
++    const match = /^(?:VERDICT|verdict):\s*(pass|fail|needs_human)\b/i.exec(cleaned);
+     if (match) {
+       verdict = match[1]!.toLowerCase() as ValidationVerdict;
+       verdictLineIdx = i;
+diff --git a/tests/validators-core.test.ts b/tests/validators-core.test.ts
+index 154c45a..758e954 100644
+--- a/tests/validators-core.test.ts
++++ b/tests/validators-core.test.ts
+@@ -43,6 +43,10 @@ Extra details here.`;
+ 
+   const sampleHeading = `STATUS: done\n### **VERDICT:** needs_human\n\nArchitectural question about caching strategy.`;
+   const resHeading = parseVerdict(sampleHeading);
++
++  const sampleLower = `STATUS: done\nverdict: pass\n\nMinor docstring fix only.`;
++  const resLower = parseVerdict(sampleLower);
++  expect(resLower?.verdict).toBe('pass');
+   expect(resHeading?.verdict).toBe('needs_human');
+   expect(resHeading?.summary).toBe('Architectural question about caching strategy.');
+ 
