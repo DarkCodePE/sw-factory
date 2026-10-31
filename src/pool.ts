@@ -1,5 +1,6 @@
 // Worker pool: claims pending activities FIFO, runs one headless agent per activity
 // in the change's worktree, and records the result back in the store.
+import { verifyAgentStart } from './agents-verify.ts';
 import { getAgent, runAgent } from './agents.ts';
 import { buildWorkerPrompt } from './prompts.ts';
 import { HEARTBEAT_INTERVAL_MS, LEASE_TTL_MS, type Activity, type Store } from './store.ts';
@@ -14,6 +15,8 @@ export interface PoolOptions {
   agentOverride?: string;
   /** Stop once nothing is pending or running (instead of polling forever). */
   untilIdle?: boolean;
+  /** Start even when the workstream agent's pinned sha256 does not match the binary on PATH. */
+  acceptAgentBinaries?: boolean;
   pollMs?: number;
   heartbeatMs?: number;
   leaseTtlMs?: number;
@@ -172,6 +175,11 @@ export async function processActivity(
 export async function runPool(store: Store, opts: PoolOptions): Promise<void> {
   const log = opts.log ?? console.log;
   const ws = store.getWorkstream(opts.workstream);
+  // agents-verify: única comprobación al arrancar. El pin del adaptador del
+  // workstream que no coincida impide arrancar; sin pin → aviso, no bloqueo.
+  const agentCheck = verifyAgentStart(opts.agentOverride ?? ws.agent);
+  if (agentCheck.violation && !opts.acceptAgentBinaries) throw new Error(agentCheck.violation);
+  if (agentCheck.warning) log(agentCheck.warning);
   const running = new Set<Promise<void>>();
   const activeControllers = new Map<Promise<void>, AbortController>();
   let slot = 0;
