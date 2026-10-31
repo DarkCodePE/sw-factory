@@ -5,11 +5,49 @@ import { activityLog, atomicEvidence, isolationFor, runDirectory, writeManifest 
 import { verifyAgentStart } from './agents-verify.ts';
 import { getAgent, runAgent } from './agents.ts';
 import { buildWorkerPrompt } from './prompts.ts';
-import { HEARTBEAT_INTERVAL_MS, LEASE_TTL_MS, type Activity, type Store } from './store.ts';
+import { HEARTBEAT_INTERVAL_MS, isBusyError, LEASE_TTL_MS, type Activity, type Store, type Workstream } from './store.ts';
 import { buildValidatorPrompt } from './validators/prompts.ts';
 import { protectedIntegrity } from './validators/integrity.ts';
 import { parseVerdict } from './validators/verdict.ts';
 import { branchCommits, commitWorktree, ensureWorktree, GIT_SAFE_FLAGS } from './worktrees.ts';
+import { defaultRules, ThreatMonitor } from './threatmon/index.ts';
+
+async function getWorktreeDiff(worktreePath: string, baseSha?: string): Promise<string> {
+  const parts: string[] = [];
+  try {
+    const diffArgs = baseSha
+      ? ['git', ...GIT_SAFE_FLAGS, 'diff', baseSha]
+      : ['git', ...GIT_SAFE_FLAGS, 'diff', 'HEAD'];
+    const p1 = Bun.spawn(diffArgs, { cwd: worktreePath, stdout: 'pipe', stderr: 'pipe' });
+    const diffText = (await new Response(p1.stdout).text()).trim();
+    if (diffText) parts.push(diffText);
+  } catch {}
+
+  try {
+    const p2 = Bun.spawn(['git', ...GIT_SAFE_FLAGS, 'status', '--porcelain', '-uall'], {
+      cwd: worktreePath,
+      stdout: 'pipe',
+      stderr: 'pipe',
+    });
+    const statusText = (await new Response(p2.stdout).text()).trim();
+    if (statusText) {
+      parts.push(statusText);
+      const lines = statusText.split('\n');
+      for (const line of lines) {
+        if (line.startsWith('?? ')) {
+          const filePath = line.slice(3).trim();
+          try {
+            const file = Bun.file(`${worktreePath}/${filePath}`);
+            const content = await file.text();
+            parts.push(`--- /dev/null\n+++ b/${filePath}\n${content}`);
+          } catch {}
+        }
+      }
+    }
+  } catch {}
+
+  return parts.join('\n');
+}
 
 export interface PoolOptions {
   workstream: string;
@@ -102,6 +140,30 @@ export async function processActivity(
       return;
     }
 
+    // Post-hoc behavior monitoring via threatmon.
+    // Límite declarado / Post-hoc limitation:
+    // Este monitor opera de forma post-hoc sobre la salida capturada (stdout, stderr, diff)
+    // tras finalizar la ejecución del agente. Detecta comportamientos fuera de límites u
+    // ofensivos para poner el change en cuarentena ('quarantined') antes de validación, pero
+    // NO puede revertir ni evitar efectos secundarios ya ocurridos en el host si el agente
+    // corrió sin aislamiento previo (p. ej. con agy). La mitigación de fondo de H1 es envolver
+    // los CLIs en sandboxes de egress, fuera de este plan.
+    const monitor = new ThreatMonitor(defaultRules(), 'HIGH');
+    monitor.observe('stdout', run.stdout ?? '');
+    monitor.observe('stderr', run.stderr ?? '');
+    const worktreeDiff = await getWorktreeDiff(path, baseSha);
+    monitor.observe('patch', worktreeDiff);
+    const threatReport = monitor.report();
+    if (threatReport.tripped) {
+      const findingsSummary = threatReport.findings
+        .map((f) => `[${f.severity}] ${f.rule_id} (${f.category}) at ${f.stream}:${f.line} -> ${f.excerpt}`)
+        .join('\n');
+      const reason = `THREAT_DETECTED (${threatReport.max_severity}):\n${findingsSummary}`;
+      store.quarantineActivity(a.id, workerId, reason);
+      log(`[${workerId}] threat detected (${threatReport.max_severity}): change ${change.id} quarantined:\n${findingsSummary}`);
+      return;
+    }
+
     if (a.kind === 'implementation' || a.validator) {
       const current = store.getChange(change.id);
       const { tampered } = await protectedIntegrity(path, current.baseSha!, ws.protectedPaths, current.protectedBaseline);
@@ -165,6 +227,13 @@ export async function processActivity(
     store.completeActivity(a.id, workerId, run.output);
     log(`[${workerId}] ${a.kind} done in ${Math.round(run.durationMs / 1000)}s`);
   } catch (err) {
+    if (isBusyError(err)) {
+      log(`[${workerId}] database locked during activity processing, preserving activity without failing`);
+      try {
+        store.requeueActivity(activity.id, workerId);
+      } catch {}
+      return;
+    }
     const msg = err instanceof Error ? err.message : String(err);
     try {
       const currentChange = store.getChange(activity.changeId);
@@ -216,13 +285,39 @@ export async function runPool(store: Store, opts: PoolOptions): Promise<void> {
   try {
     for (;;) {
       if (interrupted) break;
-      const recovered = store.requeueOrphans(ws.id);
+      let recovered = 0;
+      try {
+        recovered = store.requeueOrphans(ws.id);
+      } catch (err) {
+        if (isBusyError(err)) {
+          await Promise.race([Bun.sleep(50), interruptPromise]);
+          continue;
+        }
+        throw err;
+      }
       if (recovered) log(`requeued ${recovered} orphaned activities`);
 
-      const current = store.getWorkstream(ws.id);
+      let current: Workstream;
+      try {
+        current = store.getWorkstream(ws.id);
+      } catch (err) {
+        if (isBusyError(err)) {
+          await Promise.race([Bun.sleep(50), interruptPromise]);
+          continue;
+        }
+        throw err;
+      }
       while (!interrupted && current.state === 'active' && running.size < current.workerConcurrency) {
         const workerId = `w${(slot++ % current.workerConcurrency) + 1}-${process.pid}`;
-        const claimed = store.claimActivity(ws.id, workerId, opts.leaseTtlMs);
+        let claimed: Activity | null = null;
+        try {
+          claimed = store.claimActivity(ws.id, workerId, opts.leaseTtlMs);
+        } catch (err) {
+          if (isBusyError(err)) {
+            break;
+          }
+          throw err;
+        }
         if (!claimed) break;
         const controller = new AbortController();
         const p: Promise<void> = processActivity(store, claimed, workerId, opts, controller).finally(() => {

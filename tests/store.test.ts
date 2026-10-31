@@ -1,4 +1,7 @@
 import { afterEach, beforeEach, describe, expect, test } from 'bun:test';
+import { mkdtempSync, rmSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 
 import { Store, StoreError } from '../src/store.ts';
 
@@ -173,4 +176,51 @@ test('inserts tolerate extra nullable columns in store tables', () => {
   expect(change.title).toBe('signal');
   expect(store.listActivities({ changeId: change.id })).toHaveLength(1);
   expect(store.listEvents(ws.id).length).toBeGreaterThan(0);
+});
+
+test('F1: lock mantenido por otra conexión durante una completeActivity → la activity termina sin consumir reintento', async () => {
+  const tmpDir = mkdtempSync(join(tmpdir(), 'fab-f1-test-'));
+  const dbPath = join(tmpDir, 'test.db');
+  try {
+    const fileStore = new Store(dbPath);
+    const ws = fileStore.createWorkstream({
+      slug: 'f1-test',
+      goal: 'f1 lock test',
+      repo: '/repo',
+      requireApproval: false,
+      requireChangeApproval: false,
+    });
+    fileStore.setWorkstreamState(ws.id, 'active');
+    fileStore.createChange(ws.id, 'title', 'desc');
+    const claimed = fileStore.claimActivity(ws.id, 'worker-1');
+    expect(claimed).not.toBeNull();
+    expect(claimed!.retryCount).toBe(0);
+
+    // Force lock with a second connection in a child process (BEGIN EXCLUSIVE for 500ms)
+    const lockScript = `
+      import { Database } from 'bun:sqlite';
+      const db = new Database('${dbPath}');
+      db.exec('PRAGMA busy_timeout = 5000;');
+      db.exec('BEGIN EXCLUSIVE');
+      Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, 500);
+      db.exec('COMMIT');
+      db.close();
+    `;
+    const child = Bun.spawn(['bun', '-e', lockScript]);
+    // Give child time to acquire the exclusive lock
+    Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, 100);
+
+    // completeActivity should wait / retry through the lock, succeed, and NOT increment retryCount
+    const completed = fileStore.completeActivity(claimed!.id, 'worker-1', 'STATUS: done\\nResult OK');
+    await child.exited;
+
+    expect(completed.status).toBe('completed');
+    expect(completed.retryCount).toBe(0);
+    const fresh = fileStore.getActivity(claimed!.id);
+    expect(fresh.status).toBe('completed');
+    expect(fresh.retryCount).toBe(0);
+    fileStore.close();
+  } finally {
+    rmSync(tmpDir, { recursive: true, force: true });
+  }
 });
