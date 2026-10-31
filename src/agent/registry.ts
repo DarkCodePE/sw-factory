@@ -17,6 +17,7 @@ import { featureHandoffTool, MissionManager } from './mission.ts';
 import type { SessionState } from './session.ts';
 import { builtinTools, COMMAND_POLICY_HINT, executeAllowed, inputObject, scriptTool, stringArg, tool } from './tools.ts';
 import type { AgentOptions, AgentResult, AgentTool, ToolCall, ToolContext } from './types.ts';
+import { probeEgress } from '../sandbox/index.ts';
 
 export class ToolRuntime {
   readonly registry: Map<string, AgentTool>;
@@ -156,6 +157,23 @@ export class ToolRuntime {
       const network = networkDecision(requested, policy, scope.autonomy, scope.interactionMode, netTool);
       const networkEvent = (decision: string) => { if (requested) opts.onEvent?.({ type: 'network_permission', sessionId: state.id ?? '', toolUseId: actual.id, policy, decision, access: netTool ? 'http_url' : 'host', scope: 'this_call', toolName: name }); };
       if (network === 'deny') { networkEvent('denied'); throw new Error(name + ' network access denied by policy or spec mode'); }
+      if (requested && !scope.egressProbe) {
+        try {
+          const probe = await probeEgress({
+            workdir: scope.cwd,
+            allowNetwork: network === 'allow',
+            mode: scope.sandbox,
+          });
+          scope.egressProbe = probe;
+          opts.onEvent?.({
+            type: 'egress_probe',
+            sessionId: state.id ?? '',
+            reachable: probe.reachable,
+            decided: probe.decided,
+            positiveControl: probe.positiveControl,
+          });
+        } catch {}
+      }
       const allowedCommand = name !== 'Execute' || executeAllowed(input, scope);
       const needsApproval = pre?.ask || !pre?.allow && !yolo && (network === 'ask' || t.effect === 'write' && scope.autonomy === 'off' ||
         t.effect === 'execute' && !['Execute', 'Script', 'WaitForScript'].includes(name) && !['medium', 'high'].includes(scope.autonomy) ||
