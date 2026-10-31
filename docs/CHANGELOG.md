@@ -1,20 +1,33 @@
 # Registro de Cambios (`CHANGELOG.md`)
 
-Historial detallado de versiones de `sw-factory` desde la etiqueta base `c3eff63` hasta la versión actual (v0.1.0-rc.11).
+Historial detallado de versiones de `sw-factory` desde la etiqueta base `c3eff63` hasta la versión actual (v0.1.0-rc.12).
+
+---
+
+## [v0.1.0-rc.12] — 2026-10-31
+
+rc.11 pasó preflight pero no se etiquetó; rc.12 la sustituye e incluye sus cambios.
+
+### Cambios incluidos
+- fix(integrity): no bloquear por índices de prosa ignorados (F4) ([#34](https://github.com/DarkCodePE/sw-factory/pull/34)) por @DarkCodePE
+- ESF ola 4: perfiles de instrucciones inmutables por digest y experimentos pareados ([#33](https://github.com/DarkCodePE/sw-factory/pull/33)) por @DarkCodePE
+- ESF ola 3: banco difícil sobre código real de fab y conclusión de sensibilidad ([#32](https://github.com/DarkCodePE/sw-factory/pull/32)) por @DarkCodePE
+- ESF ola 3: verificación determinista (--verify), fase de dependencias y medición ([#31](https://github.com/DarkCodePE/sw-factory/pull/31)) por @DarkCodePE
+- ESF ola 2 (cierre): threatmon medido y ajustado, sonda 08 en run.json ([#30](https://github.com/DarkCodePE/sw-factory/pull/30)) por @DarkCodePE
+- ESF ola 2: manifest, merge recuperable, threatmon, SQLITE_BUSY, sonda de egress y agents-verify ([#29](https://github.com/DarkCodePE/sw-factory/pull/29)) por @DarkCodePE
+- ESF olas 0 y 1: correcciones, BLOCKED, integridad, actor y leases ([#28](https://github.com/DarkCodePE/sw-factory/pull/28)) por @DarkCodePE
+- fix(landing): fondo visible, header fijo y menú con jerarquía ([#27](https://github.com/DarkCodePE/sw-factory/pull/27)) por @DarkCodePE
+- feat(landing): castor como logo, fondo animado del hero y menú ([#26](https://github.com/DarkCodePE/sw-factory/pull/26)) por @DarkCodePE
+- feat(landing): estructura por productos, castor Fabbe y animaciones SVG corregidas ([#25](https://github.com/DarkCodePE/sw-factory/pull/25)) por @DarkCodePE
+- feat(landing): figuras SVG de secciones y corrección de aprobaciones por defecto ([#23](https://github.com/DarkCodePE/sw-factory/pull/23)) por @DarkCodePE
+- feat(landing): separar fábrica y agente de código ([#22](https://github.com/DarkCodePE/sw-factory/pull/22)) por @DarkCodePE
+- feat(landing): explorador interactivo de módulos v2 ([#21](https://github.com/DarkCodePE/sw-factory/pull/21)) por @DarkCodePE
 
 ---
 
 ## [v0.1.0-rc.11] — 2026-10-27
 
 ### Cambios incluidos
-- fix(worktrees): delete fab/<id> branch on merge and reject ([#19](https://github.com/DarkCodePE/sw-factory/pull/19)) por @DarkCodePE
-- feat(omni): account-aware composite provider with free/paid routing ([#18](https://github.com/DarkCodePE/sw-factory/pull/18)) por @DarkCodePE
-- test(stream-input): avoid closing stdin concurrently with SIGINT ([#15](https://github.com/DarkCodePE/sw-factory/pull/15)) por @DarkCodePE
-- feat(site): fab landing page with GitHub Pages deployment ([#16](https://github.com/DarkCodePE/sw-factory/pull/16)) por @DarkCodePE
-- feat(release): release PRs, generated release notes and version badge ([#17](https://github.com/DarkCodePE/sw-factory/pull/17)) por @DarkCodePE
-- docs(readme): fix Jira variables, update channel and local model claims ([#14](https://github.com/DarkCodePE/sw-factory/pull/14)) por @DarkCodePE
-- docs(readme): rework README with logo, archify diagrams and SDLC commands ([#13](https://github.com/DarkCodePE/sw-factory/pull/13)) por @DarkCodePE
-- fix(release): retry npm view while a published version propagates ([#12](https://github.com/DarkCodePE/sw-factory/pull/12)) por @DarkCodePE
 
 ---
 
