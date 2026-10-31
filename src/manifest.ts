@@ -39,8 +39,14 @@ export function activityLog(stateDir: string, changeId: string, activityId: stri
   return join(runDirectory(stateDir, changeId), `${evidenceId(activityId)}.log`);
 }
 export function gitEvidence(repo: string, ...args: string[]): string | null {
-  const p = Bun.spawnSync(['git', ...GIT_SAFE_FLAGS, ...args], { cwd: repo, stdout: 'pipe', stderr: 'pipe' });
-  return p.exitCode === 0 ? p.stdout.toString().trim() : null;
+  try {
+    const p = Bun.spawnSync(['git', ...GIT_SAFE_FLAGS, ...args], { cwd: repo, stdout: 'pipe', stderr: 'pipe' });
+    return p.exitCode === 0 ? p.stdout.toString().trim() : null;
+  } catch (error) {
+    // Store also supports records for repos not mounted on this host.
+    if ((error as NodeJS.ErrnoException).code === 'ENOENT') return null;
+    throw error;
+  }
 }
 export function isolationFor(adapter: string) {
   const posture: Record<string, string> = {
