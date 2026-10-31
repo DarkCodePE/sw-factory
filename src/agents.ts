@@ -96,7 +96,7 @@ const fake: AgentAdapter = {
   command: (prompt) => [
     'sh',
     '-c',
-    'printf "STATUS: %s\\n\\nfake agent handled: %s\\n" "${FABRICA_FAKE_STATUS:-done}" "$1"',
+    'if [ -n "$FABRICA_FAKE_SLEEP" ]; then sleep "$FABRICA_FAKE_SLEEP"; fi; printf "STATUS: %s\\n\\nfake agent handled: %s\\n" "${FABRICA_FAKE_STATUS:-done}" "$1"',
     'fake',
     prompt.slice(0, 80),
   ],
@@ -138,7 +138,7 @@ export async function runAgent(
   prompt: string,
   cwd: string,
   timeoutMs = 20 * 60_000,
-  options: { readOnly?: boolean } = {}
+  options: { readOnly?: boolean; signal?: AbortSignal } = {}
 ): Promise<AgentRun> {
   const start = Date.now();
   const proc = Bun.spawn(agent.command(prompt, options), {
@@ -147,19 +147,60 @@ export async function runAgent(
     stdin: 'ignore',
     stdout: 'pipe',
     stderr: 'pipe',
+    detached: true,
   });
-  const timer = setTimeout(() => proc.kill('SIGTERM'), timeoutMs);
+
+  let killed = false;
+  const killGroup = (sig: 'SIGTERM' | 'SIGKILL' = 'SIGTERM') => {
+    if (killed && sig === 'SIGTERM') return;
+    killed = true;
+    try {
+      process.kill(-proc.pid, sig);
+    } catch {
+      try {
+        proc.kill(sig);
+      } catch {}
+    }
+  };
+
+  const onAbort = () => {
+    killGroup('SIGTERM');
+    const killTimer = setTimeout(() => {
+      try {
+        killGroup('SIGKILL');
+      } catch {}
+    }, 2000);
+    killTimer.unref?.();
+  };
+
+  if (options.signal?.aborted) {
+    onAbort();
+  } else if (options.signal) {
+    options.signal.addEventListener('abort', onAbort, { once: true });
+  }
+
+  const timer = setTimeout(() => {
+    killGroup('SIGTERM');
+  }, timeoutMs);
+
   const [stdout, stderr, exitCode] = await Promise.all([
     new Response(proc.stdout).text(),
     new Response(proc.stderr).text(),
     proc.exited,
   ]);
+
   clearTimeout(timer);
+  if (options.signal) {
+    options.signal.removeEventListener('abort', onAbort);
+  }
+
   const rawOutput = stdout.trim() || stderr.trim();
   const status = parseReportStatus(rawOutput);
   const output = boundedAgentOutput(rawOutput);
+  const wasAborted = !!options.signal?.aborted;
+
   return {
-    ok: exitCode === 0 && output.length > 0,
+    ok: exitCode === 0 && output.length > 0 && !wasAborted,
     output,
     exitCode,
     durationMs: Date.now() - start,
