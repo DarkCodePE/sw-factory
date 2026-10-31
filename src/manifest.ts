@@ -4,6 +4,7 @@ import { existsSync, mkdirSync, readFileSync, renameSync, rmSync, writeFileSync 
 import { dirname, join, resolve } from 'node:path';
 import { randomUUID } from 'node:crypto';
 import type { Store } from './store.ts';
+import { DEFAULT_DIGEST, fabSha } from './profile.ts';
 import { GIT_SAFE_FLAGS, branchFor } from './worktrees.ts';
 
 export function redact(text: string): string {
@@ -87,6 +88,7 @@ export function writeManifest(store: Store, changeId: string, stateDir = store.s
   // Redact strings before JSON encoding so multiline PEMs cannot evade scrubbing.
   const scrub = (_key: string, value: unknown) => typeof value === 'string' ? redact(value) : value;
   atomicEvidence(join(dir, 'run.json'), JSON.stringify({ schemaVersion: 1, changeId, status: c.status,
+    profile: ws.profile ?? DEFAULT_DIGEST, fabSha: fabSha(),
     baseSha: c.baseSha, branch, head, createdAt: c.createdAt, updatedAt: c.updatedAt,
     durationMs: Math.max(0, Date.parse(c.updatedAt) - Date.parse(c.createdAt)), activities, cleanup }, scrub, 2) + '\n');
 }

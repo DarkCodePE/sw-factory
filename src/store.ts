@@ -1,6 +1,7 @@
 // SQLite-backed store for workstreams, signals, changes, activities and events.
 // Every lifecycle transition goes through a compare-and-set UPDATE so concurrent workers
 // cannot double-claim or overwrite each other's results.
+import { DEFAULT_DIGEST, resolveProfile } from './profile.ts';
 import { Database } from 'bun:sqlite';
 import { randomUUID } from 'node:crypto';
 import { userInfo } from 'node:os';
@@ -74,6 +75,8 @@ export interface Workstream {
   verifySetup?: string[][];
   /** Hash of the setup argv that last succeeded; setup reruns only when it differs. */
   verifySetupHash?: string | null;
+  /** Digest del perfil de instrucciones fijado; null = perfil por defecto. */
+  profile: string | null;
 }
 
 export interface Signal {
@@ -119,6 +122,9 @@ export interface Activity {
   completedAt: string | null;
   leaseExpiresAt: string | null;
   agentPgid: number | null;
+  /** Perfil de instrucciones y sha de fab con los que corrió; null si aún no empezó. */
+  profileDigest: string | null;
+  fabSha: string | null;
 }
 
 export class StoreError extends Error {
@@ -176,6 +182,7 @@ function toWorkstream(r: Row): Workstream {
     verify: r.verify == null ? [] : JSON.parse(r.verify as string),
     verifySetup: r.verify_setup == null ? [] : JSON.parse(r.verify_setup as string),
     verifySetupHash: (r.verify_setup_hash as string | null) ?? null,
+    profile: (r.profile as string | null) ?? null,
     createdAt: r.created_at as string,
   };
 }
@@ -228,6 +235,8 @@ function toActivity(r: Row): Activity {
     completedAt: (r.completed_at as string | null) ?? null,
     leaseExpiresAt: (r.lease_expires_at as string | null) ?? null,
     agentPgid: (r.agent_pgid as number | null) ?? null,
+    profileDigest: (r.profile_digest as string | null) ?? null,
+    fabSha: (r.fab_sha as string | null) ?? null,
   };
 }
 
@@ -244,6 +253,8 @@ export interface CreateWorkstreamInput {
   protectNone?: boolean;
   verify?: string[];
   verifySetup?: string[];
+  /** Digest de un perfil ya importado; sin él, el por defecto. */
+  profile?: string;
 }
 
 export interface StoreOptions {
@@ -306,6 +317,9 @@ export class Store {
     this.addColumn('changes', 'protected_baseline', 'TEXT');
     this.addColumn('activities', 'lease_expires_at', 'TEXT');
     this.addColumn('activities', 'agent_pgid', 'INTEGER');
+    this.addColumn('workstreams', 'profile', 'TEXT');
+    this.addColumn('activities', 'profile_digest', 'TEXT');
+    this.addColumn('activities', 'fab_sha', 'TEXT');
     this.db.exec('CREATE INDEX IF NOT EXISTS idx_activities_lease ON activities(status, lease_expires_at);');
     const migrationTtl = new Date(this.clock().getTime() + LEASE_TTL_MS).toISOString();
     this.db
@@ -346,13 +360,16 @@ export class Store {
       throw new StoreError('invalid_input', 'vaciar protected_paths exige --protect-none');
     }
     const protectedPaths = input.protectNone ? additions : [...new Set([...DEFAULT_PROTECTED_PATHS, ...additions])];
+    if (input.profile) {
+      try { resolveProfile(this.stateDir, input.profile); } catch (e) { throw new StoreError('invalid_input', (e as Error).message); }
+    }
     const id = randomUUID();
     this.withRetry(() => {
       this.db
         .query(
           `INSERT INTO workstreams (id, slug, goal, repo, state, agent, worker_concurrency,
-           task_limit, require_change_approval, require_approval, created_at, protected_paths, verify, verify_setup)
-           VALUES ($id,$slug,$goal,$repo,'draft',$agent,$wc,$tl,$rca,$ra,$at,$protected,$verify,$setup)`
+           task_limit, require_change_approval, require_approval, created_at, protected_paths, verify, verify_setup, profile)
+           VALUES ($id,$slug,$goal,$repo,'draft',$agent,$wc,$tl,$rca,$ra,$at,$protected,$verify,$setup,$profile)`
         )
         .run({
           id,
@@ -368,6 +385,7 @@ export class Store {
           protected: JSON.stringify(protectedPaths),
           verify: JSON.stringify(verify),
           setup: JSON.stringify(verifySetup),
+          profile: input.profile && input.profile !== DEFAULT_DIGEST ? input.profile : null,
         });
       this.event(id, 'info', `workstream ${input.slug} created (draft)`);
     });
@@ -1009,6 +1027,13 @@ export class Store {
         this.event(c.workstreamId, 'info', `change retried (${last.kind})`, changeId, id);
         return this.getActivity(id);
       }).immediate();
+    });
+  }
+
+  /** Registra con qué perfil y qué sha de fab corre la activity (va al run.json). */
+  setActivityProvenance(activityId: string, profileDigest: string, fabSha: string | null): void {
+    this.withRetry(() => {
+      this.db.query('UPDATE activities SET profile_digest = ?, fab_sha = ? WHERE id = ?').run(profileDigest, fabSha, activityId);
     });
   }
 

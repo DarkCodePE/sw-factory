@@ -9,6 +9,7 @@ import { activityLog, atomicEvidence, gitEvidence, isolationFor, readEgressProbe
 import { verifyAgentStart } from './agents-verify.ts';
 import { getAgent, runAgent } from './agents.ts';
 import { buildWorkerPrompt } from './prompts.ts';
+import { fabSha, resolveProfile } from './profile.ts';
 import { HEARTBEAT_INTERVAL_MS, isBusyError, LEASE_TTL_MS, type Activity, type Store, type Workstream } from './store.ts';
 import { buildValidatorPrompt } from './validators/prompts.ts';
 import { protectedIntegrity } from './validators/integrity.ts';
@@ -126,6 +127,8 @@ export async function processActivity(
     const { path, branch, baseSha } = await ensureWorktree(ws.repo, opts.stateDir, change.id);
     store.setChangeBranch(change.id, branch);
     store.setChangeBase(change.id, baseSha);
+    const { digest: profileDigest, profile } = resolveProfile(opts.stateDir, ws.profile);
+    store.setActivityProvenance(a.id, profileDigest, fabSha());
     const verifiedWorkspace = (head: string | null | undefined) => !!head &&
       gitEvidence(path, 'rev-parse', 'HEAD') === head && gitEvidence(path, 'status', '--porcelain', '-uall') === '';
     if (a.kind === 'gates') {
@@ -197,8 +200,8 @@ export async function processActivity(
       }
     }
     const prompt = a.validator
-      ? buildValidatorPrompt(a.validator, { change, diffStat, base: 'main', branch, worktree: path, history })
-      : buildWorkerPrompt({ workstream: ws, change, activity: a, history, worktree: path, branch }, { factoryCommits: agent.factoryCommits });
+      ? buildValidatorPrompt(a.validator, { change, diffStat, base: 'main', branch, worktree: path, history }, profile.validators)
+      : buildWorkerPrompt({ workstream: ws, change, activity: a, history, worktree: path, branch }, { factoryCommits: agent.factoryCommits }, profile.worker);
     log(`[${workerId}] ${a.validator ?? a.kind} "${change.title}" -> ${agent.name} in ${path}`);
     const readOnly = a.validator ? (a.validator !== 'qa') : (a.kind === 'investigation');
     const probeFile = `${runDirectory(opts.stateDir, change.id)}/${a.id}.egress.json`;
