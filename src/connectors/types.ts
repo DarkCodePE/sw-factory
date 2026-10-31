@@ -91,4 +91,6 @@ export interface ValidationSummary {
   passed: boolean;
   /** True while any requested validator is pending or running. */
   pending: boolean;
+  /** True when the change is quarantined. */
+  quarantined?: boolean;
 }

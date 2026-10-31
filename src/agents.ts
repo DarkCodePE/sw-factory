@@ -14,6 +14,8 @@ export interface AgentRun {
   exitCode: number;
   durationMs: number;
   status: AgentRunStatus;
+  stdout?: string;
+  stderr?: string;
 }
 
 export interface AgentAdapter {
@@ -218,5 +220,7 @@ export async function runAgent(
     exitCode,
     durationMs: Date.now() - start,
     status: { kind: status.kind, reason: status.reason },
+    stdout,
+    stderr,
   };
 }

@@ -4,7 +4,9 @@ import { mkdirSync } from 'node:fs';
 import { resolve } from 'node:path';
 import { parseArgs } from 'node:util';
 
+import { captureMain } from './manifest-capture.ts';
 import { AGENT_NAMES } from './agents.ts';
+import { agentsMain } from './agents-verify.ts';
 import type { ReviewDecision, WorkstreamState } from './enums.ts';
 import { runPool } from './pool.ts';
 import { Store, StoreError } from './store.ts';
@@ -12,7 +14,7 @@ import { sandboxReport } from './sandbox/index.ts';
 import { runScript } from './script-runtime/index.ts';
 import { openSearch } from './search/index.ts';
 import { runTui } from './tui.ts';
-import { commitProtectedPaths, mergeAndCleanup, removeWorktree } from './worktrees.ts';
+import { commitProtectedPaths, removeWorktree } from './worktrees.ts';
 import { execMain } from './agent/exec.ts';
 import { chatMain } from './chat.ts';
 import { localCommandMain } from './chat/cli.ts';
@@ -25,7 +27,7 @@ import { createGhGateway } from './connectors/github.ts';
 import { ChangeLinkStore } from './connectors/links.ts';
 import { validateMain } from './validators/cli.ts';
 import { protectedIntegrity } from './validators/integrity.ts';
-import { mergeBlocker } from './validators/publish.ts';
+import { mergeRecoverably } from './validators/publish.ts';
 
 const STATE_DIR = resolve(process.env.FABRICA_HOME ?? resolve(process.env.HOME ?? '.', '.fabrica'));
 
@@ -40,6 +42,7 @@ const HELP = `fab — agente de código y fábrica de software local
   fab mcp list --settings f    listar servidores configurados
   fab --cwd <path> [prompt]     conversación, --use-spec o --mission --auto high
   fab --version
+  fab agents verify [--pin]         pines sha256 de los binarios claude, codex, agy, droid; --pin guarda los actuales
   fab update [--channel stable|prerelease] [--check]
   fab jira show <KEY> | import <KEY> --ws <slug> [--triage] [--dry-run]
   fab jira comment <changeId> [--dry-run]
@@ -57,7 +60,7 @@ const HELP = `fab — agente de código y fábrica de software local
   fab gate allow <changeId> <ruta…> --comment <motivo>
   fab inbox [slug]
   fab review <activityId> <approve|comment|decline> [--comment <text>]
-  fab run <slug> [--once] [--agent <name>]
+  fab run <slug> [--once] [--agent <name>] [--accept-agent-binaries]
   fab tui <slug>                panel interactivo: changes, bandeja y eventos
   fab status <slug>
   fab show <changeId>
@@ -94,6 +97,7 @@ function allChanges(store: Store) {
 
 async function main(argv: string[]): Promise<number> {
   if (argv[0] === 'jira' || argv[0] === 'pr') return connectorsMain(argv[0], argv.slice(1));
+  if (argv[0] === 'agents') return agentsMain(argv.slice(1));
   if (argv[0] === 'validate') {
     const store = openStore();
     try {
@@ -132,6 +136,7 @@ async function main(argv: string[]): Promise<number> {
       all: { type: 'boolean' },
       once: { type: 'boolean' },
       force: { type: 'boolean' },
+      'accept-agent-binaries': { type: 'boolean' },
       protect: { type: 'string', multiple: true },
       'protect-none': { type: 'boolean' },
       help: { type: 'boolean', short: 'h' },
@@ -200,8 +205,8 @@ async function main(argv: string[]): Promise<number> {
         for (const a of items) {
           const c = store.getChange(a.changeId);
           console.log(`\n== ${short(a.id)}  ${a.kind}  change ${short(c.id)}: ${c.title}`);
-          if (a.status === 'blocked') {
-            console.log(`blocked: ${a.error ?? ''}`);
+          if (a.status === 'blocked' || a.status === 'quarantined') {
+            console.log(`${a.status}: ${a.error ?? ''}`);
             console.log(`-> fab retry ${short(c.id)} | fab reject ${short(c.id)}`);
             continue;
           }
@@ -219,7 +224,7 @@ async function main(argv: string[]): Promise<number> {
         return 0;
       }
       case 'run': {
-        await runPool(store, { workstream: sub ?? '', stateDir: STATE_DIR, agentOverride: values.agent, untilIdle: !!values.once });
+        await runPool(store, { workstream: sub ?? '', stateDir: STATE_DIR, agentOverride: values.agent, untilIdle: !!values.once, acceptAgentBinaries: !!values['accept-agent-binaries'] });
         return 0;
       }
       case 'tui': {
@@ -252,14 +257,7 @@ async function main(argv: string[]): Promise<number> {
       }
       case 'merge': {
         const c = findByPrefix(allChanges(store), sub ?? '', 'change');
-        const ws = store.getWorkstream(c.workstreamId);
-        if (c.status !== 'implemented') throw new StoreError('invalid_transition', `change is ${c.status}, not implemented`);
-        const blocked = mergeBlocker(store.validationSummary(c.id));
-        if (blocked && !values.force) throw new StoreError('invalid_transition', `${blocked}; usa --force para fusionar igualmente`);
-        if (blocked) console.log(`aviso: ${blocked}; se fusiona por --force`);
-        if (values.force) store.event(ws.id, 'warning', `merge --force${blocked ? `: ${blocked}` : ''}`, c.id);
-        console.log(await mergeAndCleanup(ws.repo, STATE_DIR, c.id));
-        store.closeChange(c.id, 'completed');
+        console.log(await mergeRecoverably(store, STATE_DIR, c.id, values.force));
         console.log(`change ${short(c.id)} completado`);
         return 0;
       }
@@ -328,8 +326,9 @@ async function main(argv: string[]): Promise<number> {
   }
 }
 
-const COMMANDS = new Set(['ws', 'signal', 'triage', 'inbox', 'review', 'run', 'status', 'show', 'merge', 'retry', 'gate', 'reject', 'events', 'tui', 'doctor', 'help']);
+const COMMANDS = new Set(['ws', 'signal', 'triage', 'inbox', 'review', 'run', 'status', 'show', 'merge', 'retry', 'gate', 'reject', 'events', 'tui', 'doctor', 'agents', 'help']);
 
 // The Script worker speaks NDJSON on stdio until its input closes; it must not be cut short by exit().
-if (process.argv[2] === SCRIPT_WORKER_COMMAND) void runScriptWorker(process.argv[3]);
+if (process.argv[2] === '__capture') process.exit(await captureMain(process.argv.slice(3)));
+else if (process.argv[2] === SCRIPT_WORKER_COMMAND) void runScriptWorker(process.argv[3]);
 else process.exit(await main(process.argv.slice(2)));
