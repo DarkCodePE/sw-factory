@@ -152,3 +152,26 @@ test('terminal evidence survives an unavailable repository', () => {
   expect(manifest(c.id).status).toBe('canceled');
   expect(manifest(c.id).head).toBeNull();
 });
+
+test('egressProbe: native deja la sonda en run.json; otro adaptador y sin sonda dejan null', async () => {
+  const probe = { reachable: false, decided: true, positiveControl: true, probedAt: '2026-01-01T00:00:00.000Z', details: 'no sale' };
+  const run = async (agentName: string, writeProbe: boolean, stale = false) => {
+    const w = store.createWorkstream({ slug: agentName + writeProbe + stale, goal: 'g', repo, agent: agentName, requireApproval: false, requireChangeApproval: false }).id;
+    store.setWorkstreamState(w, 'active');
+    const c = store.createChange(w, 'probe', '');
+    const a = store.claimActivity(w, 'w')!;
+    // A previous attempt's probe left on disk must not be reported for this attempt.
+    if (stale) await Bun.write(`${runDirectory(dir, c.id)}/${a.id}.egress.json`, JSON.stringify(probe));
+    const adapter = getAgent(agentName), original = adapter.command;
+    adapter.command = () => ['sh', '-c', `${writeProbe ? 'printf %s "$P" > "$FABRICA_EGRESS_PROBE_FILE";' : ''} printf "STATUS: done\\n"`, 'x'];
+    process.env.P = JSON.stringify(probe);
+    try { await processActivity(store, a, 'w', { workstream: w, stateDir: dir, log: () => {} }); }
+    finally { adapter.command = original; delete process.env.P; }
+    return manifest(c.id).activities[0].egressProbe;
+  };
+  const { details: _d, ...expected } = probe;
+  expect(await run('native', true)).toEqual(expected);
+  expect(await run('native', false)).toBeNull();
+  expect(await run('fake', true)).toBeNull();
+  expect(await run('native', false, true)).toBeNull();
+});

@@ -184,6 +184,9 @@ export class ThreatMonitor {
       this.lines.set(stream, currentStreamLines);
 
       for (const rule of this.rules) {
+        if (rule.stream && rule.stream !== stream) {
+          continue;
+        }
         // Reset lastIndex in case a regex has state
         rule.pattern.lastIndex = 0;
         const match = rule.pattern.exec(line);
