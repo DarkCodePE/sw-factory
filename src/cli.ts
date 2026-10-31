@@ -7,6 +7,7 @@ import { parseArgs } from 'node:util';
 import { captureMain } from './manifest-capture.ts';
 import { AGENT_NAMES } from './agents.ts';
 import { agentsMain } from './agents-verify.ts';
+import { profileMain } from './profile-cli.ts';
 import type { ReviewDecision, WorkstreamState } from './enums.ts';
 import { runPool } from './pool.ts';
 import { Store, StoreError } from './store.ts';
@@ -51,8 +52,9 @@ const HELP = `fab — agente de código y fábrica de software local
   fab validate <changeId> [--only code_review,security_audit,qa] | status <changeId> | publish <changeId> [--dry-run]
 
   fab ws create <slug> --repo <path> --goal <text> [--agent ${AGENT_NAMES.join('|')}]
-                [--verify <comando>] [--verify-setup <comando>] [--protect <glob>] [--protect-none] [--concurrency N] [--task-limit N] [--no-change-approval] [--no-spec-approval]
+                [--verify <comando>] [--verify-setup <comando>] [--protect <glob>] [--protect-none] [--profile <digest>] [--concurrency N] [--task-limit N] [--no-change-approval] [--no-spec-approval]
   fab ws list
+  fab profile export [--out f] | import <f> | inspect <digest> | list   perfiles de instrucciones inmutables por digest
   fab ws state <slug> <active|paused|archived>
   fab signal add <slug> <title> [--body <text>]
   fab signal list <slug>
@@ -101,6 +103,7 @@ function allChanges(store: Store) {
 async function main(argv: string[]): Promise<number> {
   if (argv[0] === 'jira' || argv[0] === 'pr') return connectorsMain(argv[0], argv.slice(1));
   if (argv[0] === 'agents') return agentsMain(argv.slice(1));
+  if (argv[0] === 'profile') { mkdirSync(STATE_DIR, { recursive: true }); return profileMain(argv.slice(1), STATE_DIR); }
   if (argv[0] === 'validate') {
     const store = openStore();
     try {
@@ -144,6 +147,7 @@ async function main(argv: string[]): Promise<number> {
       verify: { type: 'string', multiple: true },
       'verify-setup': { type: 'string', multiple: true },
       'protect-none': { type: 'boolean' },
+      profile: { type: 'string' },
       help: { type: 'boolean', short: 'h' },
     },
   });
@@ -173,6 +177,7 @@ async function main(argv: string[]): Promise<number> {
             protectNone: values['protect-none'],
             verify: values.verify,
             verifySetup: values['verify-setup'],
+            profile: values.profile,
           });
           console.log(`workstream ${ws.slug} (${short(ws.id)}) creado en draft; actívalo con: fab ws state ${ws.slug} active`);
         } else if (sub === 'list') {
@@ -333,7 +338,7 @@ async function main(argv: string[]): Promise<number> {
   }
 }
 
-const COMMANDS = new Set(['ws', 'signal', 'triage', 'inbox', 'review', 'run', 'status', 'show', 'merge', 'retry', 'gate', 'reject', 'events', 'tui', 'doctor', 'agents', 'help']);
+const COMMANDS = new Set(['ws', 'signal', 'triage', 'inbox', 'review', 'run', 'status', 'show', 'merge', 'retry', 'gate', 'reject', 'events', 'tui', 'doctor', 'agents', 'profile', 'help']);
 
 // The Script worker speaks NDJSON on stdio until its input closes; it must not be cut short by exit().
 if (process.argv[2] === '__capture') process.exit(await captureMain(process.argv.slice(3)));
