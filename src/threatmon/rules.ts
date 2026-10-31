@@ -18,6 +18,7 @@ export interface ThreatRule {
   description: string;
   severity: ThreatSeverity;
   pattern: RegExp;
+  stream?: string;
 }
 
 export function severityRank(s: ThreatSeverity): number {
@@ -68,7 +69,7 @@ const reCloudMetadata = /(?:^|[\s;|&`$()<>])(?:curl|wget|http|fetch|nc|ncat|netc
 const rePasswordCracker = /\b(?:hydra|hashcat|medusa|john)\b\s+-{1,2}\S/i;
 
 // RC-001: network scanning or probe loops.
-const reNetworkScanner = /(?:^|[\s;|&`$()<>])nmap\s+(?:-[A-Za-z0-9]|(?:\d{1,3}\.){3}\d{1,3}|[a-zA-Z0-9.-]+\.[a-zA-Z]{2,})|\b(?:masscan|zmap)\b|\b(?:nc|ncat|netcat)\b[^\n]{0,30}\s-z\b|\bfor\s+[A-Za-z_]\w*\s+in\s+\$\(\s*seq\b[^\n]{0,100}\b(?:nc|ncat|netcat|curl|wget|ping|telnet|\/dev\/tcp)\b/i;
+const reNetworkScanner = /(?:^|[\s;|&`$()<>])nmap\s+(?:-[A-Za-z0-9]|(?:\d{1,3}\.){3}\d{1,3}|[a-zA-Z0-9.-]+\.[a-zA-Z]{2,})|\b(?:masscan|zmap)\b|\b(?:nc|ncat|netcat)\b[^\n]{0,30}\s-z\b|\bfor\s+([A-Za-z_]\w*)\s+in\s+\$\(\s*seq\b[^\n]{0,120}\b(?:nc|ncat|netcat|\/dev\/tcp)[^\n]{0,60}\$\1\b/i;
 
 // RC-002: offensive exploitation frameworks.
 const reExploitFramework = /(?:^|[\s;|&`$()<>])(?:msfconsole|msfvenom|metasploit|sqlmap|nikto|gobuster|ffuf|enum4linux|wpscan|nuclei)\s+(?:-[A-Za-z0-9]|\S+)/i;
@@ -99,6 +100,9 @@ const rePtySpawn = /\bpty\.spawn\b/i;
 
 // RS-005: Download and execute piped directly into shell interpreter.
 const reCurlPipeShell = /\b(?:curl|wget|fetch)\b[^\n]{0,120}(?:http:\/\/|https?:\/\/(?:\d{1,3}\.){3}\d{1,3})[^\n]{0,80}\|\s*(?:sudo\s+)?(?:bash|sh|zsh|dash|ash)\b/i;
+
+// RS-006: reverse shell in scripting language (python, perl, ruby, node, php).
+const reScriptReverseShell = /(?:\b(?:python[0-9.]*|perl|ruby|node|php)\b[^\n]{0,250}(?:\bsocket\b[^\n]{0,60}\bconnect\b|TCPSocket|IO::Socket|fsockopen|pfsockopen|\bnet\.(?:Socket|connect)\b|require\(["']net["']\))[^\n]{0,250}(?:(?:\/bin\/|\/usr\/bin\/)?(?:sh|bash)\b|os\.dup2\b|\bdup2\b|child_process[^\n]{0,40}(?:spawn|exec)|\.pipe\([^\n]{0,30}stdin\)|proc_open\b|exec\b[^\n]{0,40}(?:\/bin\/)?(?:sh|bash)|system\b[^\n]{0,40}(?:\/bin\/)?(?:sh|bash))|\b(?:python[0-9.]*|perl|ruby|node|php)\b[^\n]{0,250}(?:(?:\/bin\/|\/usr\/bin\/)?(?:sh|bash)\b|os\.dup2\b|\bdup2\b|child_process[^\n]{0,40}(?:spawn|exec)|\.pipe\([^\n]{0,30}stdin\)|proc_open\b|exec\b[^\n]{0,40}(?:\/bin\/)?(?:sh|bash)|system\b[^\n]{0,40}(?:\/bin\/)?(?:sh|bash))[^\n]{0,250}(?:\bsocket\b[^\n]{0,60}\bconnect\b|TCPSocket|IO::Socket|fsockopen|pfsockopen|\bnet\.(?:Socket|connect)\b|require\(["']net["']\)))/i;
 
 // PS-001: cron job installation or modification.
 const reCronPersistence = /(?:\bcrontab\s+(?:-{1,2}[er]\b|-(?:\s|$)|[A-Za-z0-9_./~]+)|\|\s*crontab\b|>>?\s*\S*\/etc\/cron|\/etc\/cron\.d\b|\/var\/spool\/cron\/)/i;
@@ -313,6 +317,13 @@ export function defaultRules(): ThreatRule[] {
       pattern: reCurlPipeShell,
     },
     {
+      id: 'RS-006',
+      category: 'reverse-shell',
+      description: 'Reverse shell in scripting language (python, perl, ruby, node, php) connecting socket and spawning shell or redirecting descriptors',
+      severity: 'CRITICAL',
+      pattern: reScriptReverseShell,
+    },
+    {
       id: 'PS-001',
       category: 'persistence',
       description: 'Install or alter a scheduled job through crontab or the cron spool',
@@ -451,6 +462,7 @@ export function defaultRules(): ThreatRule[] {
       description: 'Patch modifies the build.sh or test.sh verification gate',
       severity: 'HIGH',
       pattern: rePatchTouchesGate,
+      stream: 'patch',
     },
     {
       id: 'BG-002',

