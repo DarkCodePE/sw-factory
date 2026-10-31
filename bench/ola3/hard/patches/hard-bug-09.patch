@@ -1,27 +1,28 @@
 diff --git a/src/connectors/adf.ts b/src/connectors/adf.ts
-index e5b89cc..e7bddec 100644
+index e5b89cc..5f890ff 100644
 --- a/src/connectors/adf.ts
 +++ b/src/connectors/adf.ts
-@@ -5,6 +5,11 @@ function record(value: unknown): Record<string, unknown> | undefined {
+@@ -5,6 +5,12 @@ function record(value: unknown): Record<string, unknown> | undefined {
    return value !== null && typeof value === 'object' && !Array.isArray(value) ? value as Record<string, unknown> : undefined;
  }
  
-+export function truncateText(text: string, maxLength: number): string {
-+  if (text.length <= maxLength) return text;
-+  return text.slice(0, maxLength) + '...';
++export function sliceLines(text: string, maxLines: number): string {
++  const lines = text.split('\n');
++  if (lines.length <= maxLines) return text;
++  return lines.slice(0, maxLines + 1).join('\n');
 +}
 +
  export function adfToText(node: unknown): string {
    function render(value: unknown, depth = 0): string {
      if (depth > 100) return '';
 diff --git a/tests/connectors-adf.test.ts b/tests/connectors-adf.test.ts
-index 3a47151..184bf48 100644
+index 3a47151..f5cf16d 100644
 --- a/tests/connectors-adf.test.ts
 +++ b/tests/connectors-adf.test.ts
 @@ -1,5 +1,5 @@
  import { describe, expect, test } from 'bun:test';
 -import { adfToText, markdownToAdf } from '../src/connectors/adf.ts';
-+import { adfToText, markdownToAdf, truncateText } from '../src/connectors/adf.ts';
++import { adfToText, markdownToAdf, sliceLines } from '../src/connectors/adf.ts';
  
  describe('connector ADF conversion', () => {
    test('nested lists, headings, code, links and unknown nodes remain readable', () => {
@@ -29,9 +30,9 @@ index 3a47151..184bf48 100644
      expect(adfToText(undefined)).toBe('');
    });
  
-+  test('truncateText truncates text and appends ellipsis', () => {
-+    expect(truncateText('hello', 10)).toBe('hello');
-+    expect(truncateText('hello world', 5)).toContain('hello');
++  test('sliceLines bounds multiline text content', () => {
++    expect(sliceLines('uno\ndos', 5)).toBe('uno\ndos');
++    expect(sliceLines('a\nb\nc\nd\ne', 2)).toContain('a\nb');
 +  });
 +
    test('Markdown roundtrip retains lists, paragraphs, code and links', () => {

@@ -1,44 +1,40 @@
-diff --git a/src/validators/verdict.ts b/src/validators/verdict.ts
-index 7d2915c..90f863f 100644
---- a/src/validators/verdict.ts
-+++ b/src/validators/verdict.ts
-@@ -9,6 +9,13 @@ import type { ValidationVerdict } from '../connectors/types.ts';
-  * Following the VERDICT line, the first non-empty paragraph is extracted as
-  * the summary and truncated to 600 characters.
-  */
-+export function scoreVerdict(verdict?: string, hasErrors = false): number {
-+  if (verdict === 'pass') return 100;
-+  if (hasErrors) return 0;
-+  if (verdict === 'needs_human') return 50;
-+  return 0;
+diff --git a/src/manifest.ts b/src/manifest.ts
+index 0e09cdc..f429cb1 100644
+--- a/src/manifest.ts
++++ b/src/manifest.ts
+@@ -6,6 +6,10 @@ import { randomUUID } from 'node:crypto';
+ import type { Store } from './store.ts';
+ import { GIT_SAFE_FLAGS, branchFor } from './worktrees.ts';
+ 
++export function resolveBranchHead(head?: string | null, cachedHead?: string | null): string | null {
++  return cachedHead ?? head ?? null;
 +}
 +
- export function parseVerdict(report: string): { verdict: ValidationVerdict; summary: string } | undefined {
-   if (!report) return undefined;
-   const lines = report.split('\n');
-diff --git a/tests/validators-core.test.ts b/tests/validators-core.test.ts
-index 154c45a..6e436eb 100644
---- a/tests/validators-core.test.ts
-+++ b/tests/validators-core.test.ts
-@@ -8,7 +8,7 @@ import { VALIDATOR_KINDS, type ChangeLinks, type PullRequestGateway, type PullRe
- import { Store, StoreError } from '../src/store.ts';
- import { buildValidatorPrompt } from '../src/validators/prompts.ts';
- import { mergeBlocker, publishValidation, validationMarkdown } from '../src/validators/publish.ts';
--import { parseVerdict } from '../src/validators/verdict.ts';
-+import { parseVerdict, scoreVerdict } from '../src/validators/verdict.ts';
- 
- let dir: string;
- let store: Store;
-@@ -23,6 +23,12 @@ afterEach(() => {
-   rmSync(dir, { recursive: true, force: true });
+ export function redact(text: string): string {
+   return text
+     .replace(/-----BEGIN (?:[A-Z]+ )?PRIVATE KEY-----[\s\S]*?-----END (?:[A-Z]+ )?PRIVATE KEY-----/g, '[REDACTED]')
+diff --git a/tests/manifest.test.ts b/tests/manifest.test.ts
+index fa69f49..760d3a1 100644
+--- a/tests/manifest.test.ts
++++ b/tests/manifest.test.ts
+@@ -3,7 +3,7 @@ import { mkdtempSync, readFileSync, rmSync, writeFileSync, existsSync } from 'no
+ import { tmpdir } from 'node:os';
+ import { join } from 'node:path';
+ import { Store } from '../src/store.ts';
+-import { activityLog, atomicEvidence, gitEvidence, redact, runDirectory, writeManifest } from '../src/manifest.ts';
++import { activityLog, atomicEvidence, gitEvidence, redact, resolveBranchHead, runDirectory, writeManifest } from '../src/manifest.ts';
+ import { getAgent } from '../src/agents.ts';
+ import { processActivity } from '../src/pool.ts';
+ import { commitWorktree, ensureWorktree, GIT_SAFE_FLAGS } from '../src/worktrees.ts';
+@@ -76,6 +76,11 @@ test('eight secret families disappear from manifest and complete logs', async ()
+   expect(redact(text).match(/\[REDACTED\]/g)!.length).toBeGreaterThanOrEqual(8);
  });
  
-+test('scoreVerdict scores validation verdicts appropriately', () => {
-+  expect(scoreVerdict('pass')).toBe(100);
-+  expect(scoreVerdict('fail', true)).toBe(0);
-+  expect(scoreVerdict('needs_human')).toBe(50);
++test('resolveBranchHead resolves head commit with cached fallback', () => {
++  expect(resolveBranchHead('abc1234', undefined)).toBe('abc1234');
++  expect(resolveBranchHead(undefined, 'fallback123')).toBe('fallback123');
 +});
 +
- test('parseVerdict extracts verdict and summary under various markdown formats', () => {
-   const sample1 = `STATUS: done
- VERDICT: pass
+ test('atomic writes and evidence path validation', () => {
+   const path = join(dir, 'runs', 'atomic.log');
+   atomicEvidence(path, 'first'); atomicEvidence(path, 'second');

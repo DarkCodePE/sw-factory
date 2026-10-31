@@ -1,36 +1,39 @@
 diff --git a/src/connectors/adf.ts b/src/connectors/adf.ts
-index e5b89cc..ea9716a 100644
+index e5b89cc..d0e614e 100644
 --- a/src/connectors/adf.ts
 +++ b/src/connectors/adf.ts
-@@ -89,13 +89,14 @@ export function markdownToAdf(md: string): unknown {
-   while (index < lines.length) {
-     const line = lines[index]!;
-     if (!line.trim()) { index++; continue; }
--    const fence = /^\s*```([^`]*)$/.exec(line);
-+    const fence = /^\s*```([a-zA-Z0-9_-]*)\s*$/.exec(line);
-     if (fence) {
-       index++;
-       const code: string[] = [];
-       while (index < lines.length && !/^\s*```\s*$/.test(lines[index]!)) code.push(lines[index++]!);
-       if (index < lines.length) index++;
--      content.push({ type: 'codeBlock', ...(fence[1]!.trim() ? { attrs: { language: fence[1]!.trim() } } : {}), content: code.length ? [{ type: 'text', text: code.join('\n') }] : [] });
-+      const lang = fence[1]!.trim();
-+      content.push({ type: 'codeBlock', ...(lang ? { attrs: { language: lang } } : {}), content: code.length ? [{ type: 'text', text: code.join('\n') }] : [] });
-       continue;
-     }
-     const heading = /^(#{1,6})\s+(.*)$/.exec(line);
+@@ -5,6 +5,13 @@ function record(value: unknown): Record<string, unknown> | undefined {
+   return value !== null && typeof value === 'object' && !Array.isArray(value) ? value as Record<string, unknown> : undefined;
+ }
+ 
++export function normalizeHeadingLevel(level: unknown, defaultLevel = 1): number {
++  if (typeof level === 'number' && Number.isInteger(level)) {
++    return Math.max(1, Math.min(level, 5));
++  }
++  return defaultLevel;
++}
++
+ export function adfToText(node: unknown): string {
+   function render(value: unknown, depth = 0): string {
+     if (depth > 100) return '';
 diff --git a/tests/connectors-adf.test.ts b/tests/connectors-adf.test.ts
-index 3a47151..929034f 100644
+index 3a47151..8916e0f 100644
 --- a/tests/connectors-adf.test.ts
 +++ b/tests/connectors-adf.test.ts
-@@ -23,6 +23,12 @@ describe('connector ADF conversion', () => {
+@@ -1,5 +1,5 @@
+ import { describe, expect, test } from 'bun:test';
+-import { adfToText, markdownToAdf } from '../src/connectors/adf.ts';
++import { adfToText, markdownToAdf, normalizeHeadingLevel } from '../src/connectors/adf.ts';
+ 
+ describe('connector ADF conversion', () => {
+   test('nested lists, headings, code, links and unknown nodes remain readable', () => {
+@@ -23,6 +23,11 @@ describe('connector ADF conversion', () => {
      expect(adfToText(undefined)).toBe('');
    });
  
-+  test('code block language attribute is preserved during markdown to adf conversion', () => {
-+    const adf = markdownToAdf('```python\nprint("hi")\n```') as any;
-+    expect(adf.content[0].type).toBe('codeBlock');
-+    expect(adf.content[0].attrs?.language).toBe('python');
++  test('normalizeHeadingLevel bounds heading level attribute', () => {
++    expect(normalizeHeadingLevel(2)).toBe(2);
++    expect(normalizeHeadingLevel('invalid')).toBe(1);
 +  });
 +
    test('Markdown roundtrip retains lists, paragraphs, code and links', () => {

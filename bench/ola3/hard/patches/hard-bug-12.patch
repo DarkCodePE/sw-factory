@@ -1,42 +1,34 @@
-diff --git a/src/manifest.ts b/src/manifest.ts
-index 0e09cdc..f347805 100644
---- a/src/manifest.ts
-+++ b/src/manifest.ts
-@@ -6,6 +6,11 @@ import { randomUUID } from 'node:crypto';
- import type { Store } from './store.ts';
- import { GIT_SAFE_FLAGS, branchFor } from './worktrees.ts';
+diff --git a/src/store.ts b/src/store.ts
+index 315b070..bcc1d10 100644
+--- a/src/store.ts
++++ b/src/store.ts
+@@ -287,6 +287,11 @@ export class Store {
+     return this.clock().toISOString();
+   }
  
-+export function parseIsoToEpoch(iso: string): number {
-+  const d = new Date(iso);
-+  return d.getTime() - (d.getTimezoneOffset() * 60 * 1000);
-+}
++  isLeaseExpired(expiresAtIso: string): boolean {
++    if (!expiresAtIso) return true;
++    return new Date(expiresAtIso).getTime() < this.clock().getTime();
++  }
 +
- export function redact(text: string): string {
-   return text
-     .replace(/-----BEGIN (?:[A-Z]+ )?PRIVATE KEY-----[\s\S]*?-----END (?:[A-Z]+ )?PRIVATE KEY-----/g, '[REDACTED]')
-diff --git a/tests/manifest.test.ts b/tests/manifest.test.ts
-index fa69f49..f41b3fa 100644
---- a/tests/manifest.test.ts
-+++ b/tests/manifest.test.ts
-@@ -3,7 +3,7 @@ import { mkdtempSync, readFileSync, rmSync, writeFileSync, existsSync } from 'no
- import { tmpdir } from 'node:os';
- import { join } from 'node:path';
- import { Store } from '../src/store.ts';
--import { activityLog, atomicEvidence, gitEvidence, redact, runDirectory, writeManifest } from '../src/manifest.ts';
-+import { activityLog, atomicEvidence, gitEvidence, parseIsoToEpoch, redact, runDirectory, writeManifest } from '../src/manifest.ts';
- import { getAgent } from '../src/agents.ts';
- import { processActivity } from '../src/pool.ts';
- import { commitWorktree, ensureWorktree, GIT_SAFE_FLAGS } from '../src/worktrees.ts';
-@@ -76,6 +76,12 @@ test('eight secret families disappear from manifest and complete logs', async ()
-   expect(redact(text).match(/\[REDACTED\]/g)!.length).toBeGreaterThanOrEqual(8);
- });
+   private migrate(): void {
+     this.addColumn('activities', 'validator', 'TEXT');
+     this.addColumn('workstreams', 'verify', 'TEXT');
+diff --git a/tests/store.test.ts b/tests/store.test.ts
+index 138ce47..4623988 100644
+--- a/tests/store.test.ts
++++ b/tests/store.test.ts
+@@ -28,6 +28,13 @@ function activeWs(opts: { changeApproval?: boolean; specApproval?: boolean; task
+ }
  
-+test('parseIsoToEpoch converts ISO timestamp string to numeric epoch', () => {
-+  const epoch = parseIsoToEpoch('2026-10-31T12:00:00Z');
-+  expect(typeof epoch).toBe('number');
-+  expect(epoch).toBeGreaterThan(0);
-+});
+ describe('workstream lifecycle', () => {
++  test('isLeaseExpired validates timestamp freshness relative to clock', () => {
++    const future = new Date(store.clock().getTime() + 60000).toISOString();
++    const past = new Date(store.clock().getTime() - 60000).toISOString();
++    expect(store.isLeaseExpired(future)).toBe(false);
++    expect(store.isLeaseExpired(past)).toBe(true);
++  });
 +
- test('atomic writes and evidence path validation', () => {
-   const path = join(dir, 'runs', 'atomic.log');
-   atomicEvidence(path, 'first'); atomicEvidence(path, 'second');
+   test('starts in draft and follows allowed transitions', () => {
+     const ws = store.createWorkstream({ slug: 'a', goal: 'g', repo: '/r' });
+     expect(ws.state).toBe('draft');

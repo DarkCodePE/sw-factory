@@ -93,8 +93,8 @@
     "category": "semantic",
     "is_bug": true,
     "caught_by_tests": false,
-    "title": "feat(adf): add truncateText utility for node text truncation",
-    "description": "Adds truncateText helper to truncate long node text content with ellipsis when exceeding limit.",
+    "title": "feat(adf): add sliceLines helper to restrict multiline node excerpts",
+    "description": "Adds sliceLines helper to bound multiline text content to a maximum number of lines.",
     "test_cmd": "bun test tests/connectors-adf.test.ts",
     "patch_file": "patches/hard-bug-09.patch"
   },
@@ -104,9 +104,9 @@
     "category": "semantic",
     "is_bug": true,
     "caught_by_tests": false,
-    "title": "feat(worktrees): add isManagedBranch helper for branch validation",
-    "description": "Adds isManagedBranch helper to validate managed fabrica change branch names.",
-    "test_cmd": "bun test tests/worktrees.test.ts",
+    "title": "feat(publish): add isWorkerPidAlive utility for worker process monitoring",
+    "description": "Adds isWorkerPidAlive helper to verify whether a background worker process PID is alive.",
+    "test_cmd": "bun test tests/validators-core.test.ts",
     "patch_file": "patches/hard-bug-10.patch"
   },
   {
@@ -126,9 +126,9 @@
     "category": "semantic",
     "is_bug": true,
     "caught_by_tests": false,
-    "title": "feat(manifest): add parseIsoToEpoch helper for timestamp conversion",
-    "description": "Adds parseIsoToEpoch helper for normalizing ISO timestamps to epoch milliseconds.",
-    "test_cmd": "bun test tests/manifest.test.ts",
+    "title": "feat(store): add isLeaseExpired helper for lease expiration validation",
+    "description": "Adds isLeaseExpired helper to check if a lease ISO timestamp is expired relative to store clock.",
+    "test_cmd": "bun test tests/store.test.ts",
     "patch_file": "patches/hard-bug-12.patch"
   },
   {
@@ -137,9 +137,9 @@
     "category": "semantic",
     "is_bug": true,
     "caught_by_tests": false,
-    "title": "perf(threatmon): cache default rules array across invocations",
-    "description": "Avoids reallocating threat rules array on every call by memoizing defaultRules.",
-    "test_cmd": "bun test tests/threatmon.test.ts",
+    "title": "feat(manifest): add formatCleanupSummary helper with default state fallback",
+    "description": "Adds formatCleanupSummary helper to merge partial cleanup states with default cleanup values.",
+    "test_cmd": "bun test tests/manifest.test.ts",
     "patch_file": "patches/hard-bug-13.patch"
   },
   {
@@ -148,9 +148,9 @@
     "category": "semantic",
     "is_bug": true,
     "caught_by_tests": false,
-    "title": "feat(validators): add scoreVerdict helper for ranking validation outcomes",
-    "description": "Adds scoreVerdict utility to calculate numeric quality scores from validation verdicts.",
-    "test_cmd": "bun test tests/validators-core.test.ts",
+    "title": "feat(manifest): add resolveBranchHead helper with cached fallback",
+    "description": "Adds resolveBranchHead helper to resolve the effective commit SHA for a branch with cached fallback.",
+    "test_cmd": "bun test tests/manifest.test.ts",
     "patch_file": "patches/hard-bug-14.patch"
   },
   {
@@ -159,8 +159,8 @@
     "category": "semantic",
     "is_bug": true,
     "caught_by_tests": false,
-    "title": "refactor(adf): optimize fence code block language parsing in markdownToAdf",
-    "description": "Extracts fence language token cleanly and avoids empty attributes object in codeBlock AST nodes.",
+    "title": "feat(adf): add normalizeHeadingLevel helper with fallback",
+    "description": "Adds normalizeHeadingLevel helper to sanitize and bound heading AST node levels.",
     "test_cmd": "bun test tests/connectors-adf.test.ts",
     "patch_file": "patches/hard-bug-15.patch"
   },

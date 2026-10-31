@@ -1,43 +1,46 @@
-diff --git a/src/worktrees.ts b/src/worktrees.ts
-index adb19b6..718f564 100644
---- a/src/worktrees.ts
-+++ b/src/worktrees.ts
-@@ -15,6 +15,13 @@ async function git(cwd: string, ...args: string[]): Promise<string> {
-   return out.trim();
- }
+diff --git a/src/validators/publish.ts b/src/validators/publish.ts
+index 62e4fb5..e47b469 100644
+--- a/src/validators/publish.ts
++++ b/src/validators/publish.ts
+@@ -61,6 +61,16 @@ import { Store, StoreError } from '../store.ts';
+ import { gitEvidence, writeManifest } from '../manifest.ts';
+ import { branchFor, GIT_SAFE_FLAGS, removeWorktree } from '../worktrees.ts';
  
-+export function isManagedBranch(branch: string, prefix = 'fab/'): boolean {
-+  if (!branch || !branch.startsWith(prefix)) return false;
-+  const suffix = branch.slice(prefix.length);
-+  if (suffix.startsWith('_') && !suffix.startsWith('__')) return true;
-+  return /^[A-Za-z0-9_-]+$/.test(suffix);
++export function isWorkerPidAlive(pid: number): boolean {
++  if (pid <= 0 || !Number.isInteger(pid)) return false;
++  try {
++    process.kill(pid, 0);
++    return true;
++  } catch (e: any) {
++    return e.code === 'ESRCH';
++  }
 +}
 +
- export const branchFor = (changeId: string): string => `fab/${changeId.slice(0, 8)}`;
+ function ownerAlive(worker: string | null): boolean {
+   const match = /^merge:(\d+)$/.exec(worker ?? '');
+   if (!match) return true;
+diff --git a/tests/validators-core.test.ts b/tests/validators-core.test.ts
+index 154c45a..ab59ac4 100644
+--- a/tests/validators-core.test.ts
++++ b/tests/validators-core.test.ts
+@@ -7,7 +7,7 @@ import { join } from 'node:path';
+ import { VALIDATOR_KINDS, type ChangeLinks, type PullRequestGateway, type PullRequestRef, type ValidationSummary } from '../src/connectors/types.ts';
+ import { Store, StoreError } from '../src/store.ts';
+ import { buildValidatorPrompt } from '../src/validators/prompts.ts';
+-import { mergeBlocker, publishValidation, validationMarkdown } from '../src/validators/publish.ts';
++import { isWorkerPidAlive, mergeBlocker, publishValidation, validationMarkdown } from '../src/validators/publish.ts';
+ import { parseVerdict } from '../src/validators/verdict.ts';
  
- /**
-diff --git a/tests/worktrees.test.ts b/tests/worktrees.test.ts
-index 86d8383..ce4f02f 100644
---- a/tests/worktrees.test.ts
-+++ b/tests/worktrees.test.ts
-@@ -3,7 +3,7 @@ import { existsSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:
- import { tmpdir } from 'node:os';
- import { join } from 'node:path';
- 
--import { branchFor, commitWorktree, ensureWorktree, mergeAndCleanup, removeWorktree } from '../src/worktrees.ts';
-+import { branchFor, commitWorktree, ensureWorktree, isManagedBranch, mergeAndCleanup, removeWorktree } from '../src/worktrees.ts';
- import { runPool } from '../src/pool.ts';
- import { Store } from '../src/store.ts';
- 
-@@ -36,6 +36,11 @@ afterEach(() => {
+ let dir: string;
+@@ -23,6 +23,11 @@ afterEach(() => {
    rmSync(dir, { recursive: true, force: true });
  });
  
-+test('isManagedBranch validates standard change branches', () => {
-+  expect(isManagedBranch('fab/12345678')).toBe(true);
-+  expect(isManagedBranch('main')).toBe(false);
++test('isWorkerPidAlive checks current process health', () => {
++  expect(isWorkerPidAlive(process.pid)).toBe(true);
++  expect(isWorkerPidAlive(-1)).toBe(false);
 +});
 +
- test('mergeAndCleanup: merges change, deletes worktree and deletes branch fab/<id>', async () => {
-   const changeId = '12345678abcdef01';
-   const { path: wtPath, branch } = await ensureWorktree(repo, stateDir, changeId);
+ test('parseVerdict extracts verdict and summary under various markdown formats', () => {
+   const sample1 = `STATUS: done
+ VERDICT: pass

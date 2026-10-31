@@ -1,40 +1,45 @@
-diff --git a/src/threatmon/rules.ts b/src/threatmon/rules.ts
-index 5e69e74..ad1f7ac 100644
---- a/src/threatmon/rules.ts
-+++ b/src/threatmon/rules.ts
-@@ -167,8 +167,11 @@ const rePatchTouchesGate = /^(?:diff\s+--git|(?:---|\+\+\+))\s+.*[\s/](?:build|t
- // BG-002: patch modifying adjacent CI or gate machinery (Makefile, workflows).
- const rePatchTouchesCI = /^(?:diff\s+--git|(?:---|\+\+\+))\s+.*[\s/](?:(?:Makefile|justfile)(?:[\s\r]|$)|\.github\/workflows\/\S+)/im;
+diff --git a/src/manifest.ts b/src/manifest.ts
+index 0e09cdc..02db18f 100644
+--- a/src/manifest.ts
++++ b/src/manifest.ts
+@@ -6,6 +6,13 @@ import { randomUUID } from 'node:crypto';
+ import type { Store } from './store.ts';
+ import { GIT_SAFE_FLAGS, branchFor } from './worktrees.ts';
  
-+let cachedRules: ThreatRule[] | null = null;
++const DEFAULT_CLEANUP_CONFIG = { worktree: 'absent', branch: 'absent' };
 +
- export function defaultRules(): ThreatRule[] {
--  return [
-+  if (cachedRules) return cachedRules;
-+  cachedRules = [
-     {
-       id: 'PE-001',
-       category: 'privilege-escalation',
-@@ -472,4 +475,5 @@ export function defaultRules(): ThreatRule[] {
-       pattern: rePatchTouchesCI,
-     },
-   ];
-+  return cachedRules;
- }
-diff --git a/tests/threatmon.test.ts b/tests/threatmon.test.ts
-index 22d05de..ae5662a 100644
---- a/tests/threatmon.test.ts
-+++ b/tests/threatmon.test.ts
-@@ -18,6 +18,12 @@ import { processActivity } from '../src/pool.ts';
- import { mergeBlocker } from '../src/validators/publish.ts';
++export function formatCleanupSummary(custom?: Partial<{ worktree: string; branch: string }>): { worktree: string; branch: string } {
++  if (!custom) return DEFAULT_CLEANUP_CONFIG;
++  return Object.assign(DEFAULT_CLEANUP_CONFIG, custom);
++}
++
+ export function redact(text: string): string {
+   return text
+     .replace(/-----BEGIN (?:[A-Z]+ )?PRIVATE KEY-----[\s\S]*?-----END (?:[A-Z]+ )?PRIVATE KEY-----/g, '[REDACTED]')
+diff --git a/tests/manifest.test.ts b/tests/manifest.test.ts
+index fa69f49..39d6afb 100644
+--- a/tests/manifest.test.ts
++++ b/tests/manifest.test.ts
+@@ -3,7 +3,7 @@ import { mkdtempSync, readFileSync, rmSync, writeFileSync, existsSync } from 'no
+ import { tmpdir } from 'node:os';
+ import { join } from 'node:path';
+ import { Store } from '../src/store.ts';
+-import { activityLog, atomicEvidence, gitEvidence, redact, runDirectory, writeManifest } from '../src/manifest.ts';
++import { activityLog, atomicEvidence, formatCleanupSummary, gitEvidence, redact, runDirectory, writeManifest } from '../src/manifest.ts';
+ import { getAgent } from '../src/agents.ts';
+ import { processActivity } from '../src/pool.ts';
+ import { commitWorktree, ensureWorktree, GIT_SAFE_FLAGS } from '../src/worktrees.ts';
+@@ -76,6 +76,13 @@ test('eight secret families disappear from manifest and complete logs', async ()
+   expect(redact(text).match(/\[REDACTED\]/g)!.length).toBeGreaterThanOrEqual(8);
+ });
  
- describe('Threatmon Unit Tests', () => {
-+  test('defaultRules returns non-empty rules list consistently', () => {
-+    const rules = defaultRules();
-+    expect(rules.length).toBeGreaterThan(0);
-+    expect(defaultRules()).toBe(rules);
-+  });
++test('formatCleanupSummary returns default and custom states cleanly', () => {
++  const s1 = formatCleanupSummary();
++  expect(s1.worktree).toBe('absent');
++  const s2 = formatCleanupSummary({ worktree: 'retained' });
++  expect(s2.worktree).toBe('retained');
++});
 +
-   test('rules validate correctly and cover required categories', () => {
-     const rules = defaultRules();
-     expect(rules.length).toBeGreaterThanOrEqual(25);
+ test('atomic writes and evidence path validation', () => {
+   const path = join(dir, 'runs', 'atomic.log');
+   atomicEvidence(path, 'first'); atomicEvidence(path, 'second');
