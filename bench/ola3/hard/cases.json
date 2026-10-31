@@ -171,7 +171,7 @@
     "is_bug": false,
     "caught_by_tests": false,
     "title": "feat: support blockquote node conversion in adf",
-    "description": "Adds blockquote markdown parsing (> text) and ADF rendering with unit test.",
+    "description": "Adds blockquote ADF node rendering (> text) with unit test.",
     "test_cmd": "bun test tests/connectors-adf.test.ts",
     "patch_file": "patches/hard-clean-01.patch"
   },
@@ -182,7 +182,7 @@
     "is_bug": false,
     "caught_by_tests": false,
     "title": "feat: support horizontal rule conversion in adf",
-    "description": "Adds horizontal rule markdown parsing (---) and ADF rendering with unit test.",
+    "description": "Adds horizontal rule ADF node rendering (---) with unit test.",
     "test_cmd": "bun test tests/connectors-adf.test.ts",
     "patch_file": "patches/hard-clean-02.patch"
   },

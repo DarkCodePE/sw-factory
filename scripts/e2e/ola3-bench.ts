@@ -62,42 +62,49 @@ async function main() {
   console.log(`  BANCO OLA 3 — MEDICI\u00d3N FICHA 01`);
   console.log(`  Modo: ${mode.toUpperCase()} | Agente: ${agent}`);
   console.log(`  Casos a ejecutar: ${selectedCases.length} (filtro: ${filter})`);
+  const concurrency = Math.max(1, Number(process.env.FAB_BENCH_CONCURRENCY ?? 1));
+  console.log(`  Concurrencia: ${concurrency}`);
   console.log(`  CLI dir: ${cliDir}`);
   console.log(`======================================================\n`);
 
-  const results: CaseResult[] = [];
+  const results: CaseResult[] = new Array(selectedCases.length);
   const startAll = Date.now();
+  let nextIdx = 0;
 
-  for (let i = 0; i < selectedCases.length; i++) {
-    const c = selectedCases[i]!;
-    const num = `[${i + 1}/${selectedCases.length}]`;
-    process.stdout.write(`${num} Ejecutando ${c.id} (${c.repo}, ${c.category})... `);
-
-    try {
-      const res = await runBenchCase(c, cliDir, mode, agent);
-      results.push(res);
-      const mark = c.is_bug
-        ? res.detected ? 'DETECTADO (OK)' : 'NO DETECTADO (FALLO)'
-        : res.false_rejection ? 'FALSO RECHAZO (FALLO)' : 'ACEPTADO (OK)';
-      console.log(`veredicto=${res.verdict} -> ${mark} (${res.duration_s}s, ${res.cost})`);
-    } catch (err: any) {
-      console.log(`ERROR: ${err.message}`);
-      results.push({
-        id: c.id,
-        repo: c.repo,
-        category: c.category,
-        is_bug: c.is_bug,
-        caught_by_tests: c.caught_by_tests,
-        verdict: 'error',
-        detected: false,
-        false_rejection: false,
-        duration_s: 0,
-        cost: 'error',
-        summary: '',
-        error: err.message,
-      });
+  async function worker() {
+    while (nextIdx < selectedCases.length) {
+      const i = nextIdx++;
+      const c = selectedCases[i]!;
+      const num = `[${i + 1}/${selectedCases.length}]`;
+      console.log(`${num} Iniciando ${c.id} (${c.repo}, ${c.category})...`);
+      try {
+        const res = await runBenchCase(c, cliDir, mode, agent);
+        results[i] = res;
+        const mark = c.is_bug
+          ? res.detected ? 'DETECTADO (OK)' : 'NO DETECTADO (FALLO)'
+          : res.false_rejection ? 'FALSO RECHAZO (FALLO)' : 'ACEPTADO (OK)';
+        console.log(`${num} ${c.id}: veredicto=${res.verdict} -> ${mark} (${res.duration_s}s, ${res.cost})`);
+      } catch (err: any) {
+        console.log(`${num} ${c.id}: ERROR: ${err.message}`);
+        results[i] = {
+          id: c.id,
+          repo: c.repo,
+          category: c.category,
+          is_bug: c.is_bug,
+          caught_by_tests: c.caught_by_tests,
+          verdict: 'error',
+          detected: false,
+          false_rejection: false,
+          duration_s: 0,
+          cost: 'error',
+          summary: '',
+          error: err.message,
+        };
+      }
     }
   }
+
+  await Promise.all(Array.from({ length: Math.min(concurrency, selectedCases.length) }, () => worker()));
 
   const totalDurationS = Math.round((Date.now() - startAll) / 1000);
 

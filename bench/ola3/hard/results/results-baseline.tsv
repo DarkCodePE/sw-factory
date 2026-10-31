@@ -1,0 +1,3 @@
+id	repo	category	is_bug	caught_by_tests	verdict	detected	false_rejection	duration_s	cost	summary
+hard-bug-01	real	test_caught	true	true	fail	true	false	102.2	suscripción ($0.00)	qa dejó cambios en el worktree
+hard-clean-01	real	clean	false	false	fail	false	true	154.4	suscripción ($0.00)	qa dejó cambios en el worktree

@@ -1,0 +1,43 @@
+{
+  "mode": "baseline",
+  "agent": "claude",
+  "cliDir": "/home/orlando/Desktop/factory/sw-factory-ola3b-agy",
+  "totalCases": 2,
+  "bugsTotal": 1,
+  "bugsDetected": 1,
+  "sensitivity": 1,
+  "cleanTotal": 1,
+  "falseRejections": 1,
+  "falseRejectionRate": 1,
+  "totalDurationS": 257,
+  "results": [
+    {
+      "id": "hard-bug-01",
+      "repo": "real",
+      "category": "test_caught",
+      "is_bug": true,
+      "caught_by_tests": true,
+      "verdict": "fail",
+      "detected": true,
+      "false_rejection": false,
+      "duration_s": 102.2,
+      "cost": "suscripción ($0.00)",
+      "summary": "qa dejó cambios en el worktree",
+      "error": "qa dejó cambios en el worktree"
+    },
+    {
+      "id": "hard-clean-01",
+      "repo": "real",
+      "category": "clean",
+      "is_bug": false,
+      "caught_by_tests": false,
+      "verdict": "fail",
+      "detected": false,
+      "false_rejection": true,
+      "duration_s": 154.4,
+      "cost": "suscripción ($0.00)",
+      "summary": "qa dejó cambios en el worktree",
+      "error": "qa dejó cambios en el worktree"
+    }
+  ]
+}
