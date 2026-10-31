@@ -2,7 +2,7 @@
 // in the change's worktree, and records the result back in the store.
 import { getAgent, runAgent } from './agents.ts';
 import { buildWorkerPrompt } from './prompts.ts';
-import { HEARTBEAT_INTERVAL_MS, LEASE_TTL_MS, type Activity, type Store } from './store.ts';
+import { HEARTBEAT_INTERVAL_MS, isBusyError, LEASE_TTL_MS, type Activity, type Store, type Workstream } from './store.ts';
 import { buildValidatorPrompt } from './validators/prompts.ts';
 import { protectedIntegrity } from './validators/integrity.ts';
 import { parseVerdict } from './validators/verdict.ts';
@@ -151,6 +151,13 @@ export async function processActivity(
     store.completeActivity(a.id, workerId, run.output);
     log(`[${workerId}] ${a.kind} done in ${Math.round(run.durationMs / 1000)}s`);
   } catch (err) {
+    if (isBusyError(err)) {
+      log(`[${workerId}] database locked during activity processing, preserving activity without failing`);
+      try {
+        store.requeueActivity(activity.id, workerId);
+      } catch {}
+      return;
+    }
     const msg = err instanceof Error ? err.message : String(err);
     try {
       const currentChange = store.getChange(activity.changeId);
@@ -196,13 +203,39 @@ export async function runPool(store: Store, opts: PoolOptions): Promise<void> {
   try {
     for (;;) {
       if (interrupted) break;
-      const recovered = store.requeueOrphans(ws.id);
+      let recovered = 0;
+      try {
+        recovered = store.requeueOrphans(ws.id);
+      } catch (err) {
+        if (isBusyError(err)) {
+          await Promise.race([Bun.sleep(50), interruptPromise]);
+          continue;
+        }
+        throw err;
+      }
       if (recovered) log(`requeued ${recovered} orphaned activities`);
 
-      const current = store.getWorkstream(ws.id);
+      let current: Workstream;
+      try {
+        current = store.getWorkstream(ws.id);
+      } catch (err) {
+        if (isBusyError(err)) {
+          await Promise.race([Bun.sleep(50), interruptPromise]);
+          continue;
+        }
+        throw err;
+      }
       while (!interrupted && current.state === 'active' && running.size < current.workerConcurrency) {
         const workerId = `w${(slot++ % current.workerConcurrency) + 1}-${process.pid}`;
-        const claimed = store.claimActivity(ws.id, workerId, opts.leaseTtlMs);
+        let claimed: Activity | null = null;
+        try {
+          claimed = store.claimActivity(ws.id, workerId, opts.leaseTtlMs);
+        } catch (err) {
+          if (isBusyError(err)) {
+            break;
+          }
+          throw err;
+        }
         if (!claimed) break;
         const controller = new AbortController();
         const p: Promise<void> = processActivity(store, claimed, workerId, opts, controller).finally(() => {
