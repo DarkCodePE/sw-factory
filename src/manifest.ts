@@ -57,6 +57,14 @@ export function isolationFor(adapter: string) {
   return { adapter, posture: posture[adapter] ?? 'unknown; no isolation attested' };
 }
 
+// Sonda de egress escrita por el hijo native; ausente si la activity no usó red.
+export function readEgressProbe(path: string) {
+  try {
+    const { reachable, decided, positiveControl, probedAt } = JSON.parse(readFileSync(path, 'utf8'));
+    return { reachable, decided, positiveControl, probedAt };
+  } catch { return null; }
+}
+
 export function writeManifest(store: Store, changeId: string, stateDir = store.stateDir): void {
   if (!stateDir) return; // In-memory stores have no durable state directory.
   const c = store.getChange(changeId);
@@ -69,7 +77,7 @@ export function writeManifest(store: Store, changeId: string, stateDir = store.s
     const path = activityLog(stateDir, changeId, a.id);
     if (!existsSync(path)) atomicEvidence(path, a.result ?? a.error ?? '');
     const metaPath = join(dir, `${a.id}.json`);
-    const execution = existsSync(metaPath) ? JSON.parse(readFileSync(metaPath, 'utf8')) : { isolation: isolationFor(ws.agent) };
+    const execution = existsSync(metaPath) ? JSON.parse(readFileSync(metaPath, 'utf8')) : { isolation: isolationFor(ws.agent), egressProbe: null };
     return { ...a, verdict: a.validator ? ({ approved: 'pass', declined: 'fail', commented: 'needs_human' } as Record<string,string>)[a.reviewStatus ?? ''] ?? null : null,
       reason: a.error ?? a.reviewComment, log: `${a.id}.log`, ...execution,
       durationMs: execution.durationMs ?? (a.startedAt && a.completedAt ? Math.max(0, Date.parse(a.completedAt) - Date.parse(a.startedAt)) : null) };
