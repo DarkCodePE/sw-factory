@@ -94,6 +94,7 @@ export interface Activity {
   startedAt: string | null;
   completedAt: string | null;
   leaseExpiresAt: string | null;
+  agentPgid: number | null;
 }
 
 export class StoreError extends Error {
@@ -124,7 +125,7 @@ CREATE TABLE IF NOT EXISTS activities (
   kind TEXT NOT NULL, status TEXT NOT NULL, review_status TEXT, review_comment TEXT,
   validator TEXT, worker_id TEXT,
   result TEXT, error TEXT, retry_count INTEGER NOT NULL DEFAULT 0, created_at TEXT NOT NULL,
-  started_at TEXT, completed_at TEXT, lease_expires_at TEXT);
+  started_at TEXT, completed_at TEXT, lease_expires_at TEXT, agent_pgid INTEGER);
 CREATE INDEX IF NOT EXISTS idx_activities_claim ON activities(workstream_id, status, created_at);
 CREATE TABLE IF NOT EXISTS events (
   id INTEGER PRIMARY KEY AUTOINCREMENT, workstream_id TEXT NOT NULL, change_id TEXT,
@@ -195,6 +196,7 @@ function toActivity(r: Row): Activity {
     startedAt: (r.started_at as string | null) ?? null,
     completedAt: (r.completed_at as string | null) ?? null,
     leaseExpiresAt: (r.lease_expires_at as string | null) ?? null,
+    agentPgid: (r.agent_pgid as number | null) ?? null,
   };
 }
 
@@ -232,6 +234,7 @@ export class Store {
   private migrate(): void {
     this.addColumn('activities', 'validator', 'TEXT');
     this.addColumn('activities', 'lease_expires_at', 'TEXT');
+    this.addColumn('activities', 'agent_pgid', 'INTEGER');
     this.db.exec('CREATE INDEX IF NOT EXISTS idx_activities_lease ON activities(status, lease_expires_at);');
     const migrationTtl = new Date(this.clock().getTime() + LEASE_TTL_MS).toISOString();
     this.db
@@ -604,7 +607,7 @@ export class Store {
       }
       const res = this.db
         .query(
-          `UPDATE activities SET status = 'completed', result = ?, completed_at = ?, lease_expires_at = NULL
+          `UPDATE activities SET status = 'completed', result = ?, completed_at = ?, lease_expires_at = NULL, agent_pgid = NULL
            WHERE id = ? AND status = 'in_progress' AND worker_id = ?`
         )
         .run(result, this.now(), activityId, workerId);
@@ -659,7 +662,7 @@ export class Store {
       const res = this.db
         .query(
           `UPDATE activities SET status = ?, error = ?, retry_count = ?, worker_id = NULL,
-           started_at = NULL, completed_at = ?, lease_expires_at = NULL WHERE id = ? AND status = 'in_progress' AND worker_id = ?`
+           started_at = NULL, completed_at = ?, lease_expires_at = NULL, agent_pgid = NULL WHERE id = ? AND status = 'in_progress' AND worker_id = ?`
         )
         .run(retry ? 'pending' : 'failed', error, retryCount, retry ? null : this.now(), activityId, workerId);
       if (res.changes !== 1) throw new StoreError('conflict', `activity ${activityId} is not held by ${workerId}`);
@@ -752,13 +755,18 @@ export class Store {
     })();
   }
 
+  /** Record the spawned agent's process group id for cleanup on ungraceful worker termination. */
+  setActivityAgentPgid(activityId: string, pgid: number | null): void {
+    this.db.query('UPDATE activities SET agent_pgid = ? WHERE id = ?').run(pgid, activityId);
+  }
+
   /** Put activities held by dead workers back in the queue (lease expired). */
   requeueOrphans(workstream: string, nowIso = this.now()): number {
     const ws = this.getWorkstream(workstream);
     return this.db.transaction(() => {
       const expired = this.db
         .query(
-          `SELECT a.id, a.change_id, a.kind, a.validator, c.status AS change_status
+          `SELECT a.id, a.change_id, a.kind, a.validator, a.agent_pgid, c.status AS change_status
            FROM activities a
            JOIN changes c ON a.change_id = c.id
            WHERE a.workstream_id = ?
@@ -770,15 +778,33 @@ export class Store {
           change_id: string;
           kind: ActivityKind;
           validator: ValidatorKind | null;
+          agent_pgid: number | null;
           change_status: string;
         }>;
 
       let count = 0;
       for (const act of expired) {
+        if (act.agent_pgid) {
+          // shortcut: asume pools en la misma máquina, revisar si hay pools remotos
+          let isAlive = false;
+          try {
+            process.kill(-act.agent_pgid, 0);
+            isAlive = true;
+          } catch {
+            isAlive = false;
+          }
+          if (isAlive) {
+            try {
+              process.kill(-act.agent_pgid, 'SIGKILL');
+            } catch {}
+            continue;
+          }
+        }
+
         if (isTerminalChange(act.change_status)) {
           this.db
             .query(
-              `UPDATE activities SET status = 'canceled', worker_id = NULL, lease_expires_at = NULL
+              `UPDATE activities SET status = 'canceled', worker_id = NULL, lease_expires_at = NULL, agent_pgid = NULL
                WHERE id = ? AND status = 'in_progress'`
             )
             .run(act.id);
@@ -786,7 +812,7 @@ export class Store {
           const res = this.db
             .query(
               `UPDATE activities
-               SET status = 'pending', worker_id = NULL, started_at = NULL, lease_expires_at = NULL
+               SET status = 'pending', worker_id = NULL, started_at = NULL, lease_expires_at = NULL, agent_pgid = NULL
                WHERE id = ? AND status = 'in_progress'`
             )
             .run(act.id);
@@ -813,7 +839,7 @@ export class Store {
   releaseActivity(activityId: string, workerId: string): void {
     this.db
       .query(
-        `UPDATE activities SET status = 'canceled', worker_id = NULL, lease_expires_at = NULL
+        `UPDATE activities SET status = 'canceled', worker_id = NULL, lease_expires_at = NULL, agent_pgid = NULL
          WHERE id = ? AND worker_id = ? AND status = 'in_progress'`
       )
       .run(activityId, workerId);
@@ -833,7 +859,7 @@ export class Store {
       if (allExpired) {
         this.db
           .query(
-            `UPDATE activities SET status = 'canceled', worker_id = NULL, lease_expires_at = NULL
+            `UPDATE activities SET status = 'canceled', worker_id = NULL, lease_expires_at = NULL, agent_pgid = NULL
              WHERE change_id = ? AND status = 'in_progress'`
           )
           .run(changeId);
