@@ -1,6 +1,6 @@
 import type { Journal } from './journal.ts';
 import type { Hooks } from './hooks.ts';
-import { readFileSync } from 'node:fs';
+import { readFileSync, writeFileSync } from 'node:fs';
 import { ScriptRunManager, SCRIPT_AWAIT_MS, SCRIPT_FOREGROUND_MS } from './script-runs.ts';
 import { loopTool, parseLoop } from './loop.ts';
 import { fetchUrlTool, parseFetch } from './fetch-url.ts';
@@ -165,6 +165,8 @@ export class ToolRuntime {
             mode: scope.sandbox,
           });
           scope.egressProbe = probe;
+          // El pool (proceso padre) recoge la sonda de este hijo por archivo para el run.json.
+          if (process.env.FABRICA_EGRESS_PROBE_FILE) writeFileSync(process.env.FABRICA_EGRESS_PROBE_FILE, JSON.stringify(probe));
           opts.onEvent?.({
             type: 'egress_probe',
             sessionId: state.id ?? '',
