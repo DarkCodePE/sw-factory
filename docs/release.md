@@ -1,6 +1,6 @@
 # CI/CD y distribución de FAB
 
-El candidato de esta entrega es `0.1.0-rc.10`, paquete npm `@okuanb/fab`, dist-tag `next`. No reemplaza una versión estable. El estado real de publicación se comprueba en GitHub/npm; la presencia de estos workflows por sí sola no prueba una release.
+El candidato de esta entrega es `0.1.0-rc.12`, paquete npm `@okuanb/fab`, dist-tag `next`. No reemplaza una versión estable. El estado real de publicación se comprueba en GitHub/npm; la presencia de estos workflows por sí sola no prueba una release.
 
 ## Contrato
 
@@ -15,6 +15,8 @@ la autoridad. Véase [contrato YOLO](design-yolo-mode.md).
 La RC.10 añade el router `auto` de modelos (clasificador local o Jev, rotación
 ante errores, escalado y subagentes), aliases/routing de modelos, SDK, hooks en
 chat/RPC y estado MCP.
+La RC.12 incorpora las olas ESF 0–4 (BLOCKED, integridad de rutas protegidas,
+leases, manifest y merge recuperable, threatmon, `--verify`, perfiles por digest).
 
 1. Para iniciar un ciclo de release, se crea la rama `release/<versión>` y se ejecuta `node scripts/release/prepare.mjs <versión>`. El script sube `package.json` a la versión indicada, extrae los PRs fusionados desde el tag anterior (vía `gh pr list --state merged` o `git log --merges`) y añade la sección correspondiente en `docs/CHANGELOG.md`. Finalmente, imprime el título y cuerpo sugeridos para abrir la Pull Request de release hacia `main`.
 2. `release-candidate-preflight.yml` se ejecuta al subir una rama `release/**`. Todos los jobs usan el mismo SHA explícito, sin credenciales Git persistidas. Linux ejecuta TypeScript y la suite completa con JUnit; se rechazan cero pruebas, fallos y omisiones.
