@@ -1,0 +1,13 @@
+diff --git a/calc.py b/calc.py
+index ae40d2d..33b102f 100644
+--- a/calc.py
++++ b/calc.py
+@@ -9,7 +9,7 @@ def divide(a, b):
+     """Divide a by b. Raises ValueError when b is zero."""
+     if b == 0:
+         raise ValueError("cannot divide by zero")
+-    return a / b
++    return b / a
+ 
+ 
+ def average(values):

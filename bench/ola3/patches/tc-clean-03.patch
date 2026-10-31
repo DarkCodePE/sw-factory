@@ -1,0 +1,26 @@
+diff --git a/calc.py b/calc.py
+index ae40d2d..984ee5b 100644
+--- a/calc.py
++++ b/calc.py
+@@ -1,17 +1,18 @@
+ """Tiny calculator and statistics helpers."""
++from typing import Sequence, Union
+ 
+ 
+-def add(a, b):
++def add(a: Union[int, float], b: Union[int, float]) -> Union[int, float]:
+     return a + b
+ 
+ 
+-def divide(a, b):
++def divide(a: Union[int, float], b: Union[int, float]) -> float:
+     """Divide a by b. Raises ValueError when b is zero."""
+     if b == 0:
+         raise ValueError("cannot divide by zero")
+     return a / b
+ 
+ 
+-def average(values):
++def average(values: Sequence[Union[int, float]]) -> float:
+     """Arithmetic mean of a non-empty list."""
+     return sum(values) / len(values)
