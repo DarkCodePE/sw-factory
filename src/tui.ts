@@ -24,6 +24,7 @@ const STATUS_COLOR: Record<string, string> = {
   implemented: c.green,
   completed: c.green,
   failed: c.red,
+  blocked: c.yellow,
   declined: c.dim,
   canceled: c.dim,
 };
@@ -200,7 +201,7 @@ export function handleKey(store: Store, workstream: string, state: TuiState, key
         state.input = '';
       }
     } else if (key === 'r') {
-      if (row.change.status !== 'failed') state.flash = 'solo se reintentan changes fallidos';
+      if (!['failed', 'blocked', 'implemented'].includes(row.change.status)) state.flash = 'solo se reintentan changes fallidos, bloqueados o con validador agotado';
       else {
         store.retryChange(row.change.id);
         state.flash = 'change re-encolado';

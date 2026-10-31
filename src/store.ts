@@ -6,8 +6,8 @@ import { randomUUID } from 'node:crypto';
 
 import {
   type ActivityKind,
-  type ActivityStatus,
-  type ChangeStatus,
+  type ActivityStatus as BaseActivityStatus,
+  type ChangeStatus as BaseChangeStatus,
   type ReviewDecision,
   type SignalStatus,
   type WorkstreamState,
@@ -25,6 +25,10 @@ import {
   type ValidationVerdict,
 } from './connectors/types.ts';
 import { parseVerdict } from './validators/verdict.ts';
+
+// Local extensions keep this task within the store ownership boundary.
+export type ActivityStatus = BaseActivityStatus | 'blocked';
+export type ChangeStatus = BaseChangeStatus | 'blocked';
 
 export interface Workstream {
   id: string;
@@ -419,7 +423,7 @@ export class Store {
 
   /** Activities waiting on a human decision (the inbox). */
   inbox(workstream?: string): Activity[] {
-    return this.listActivities(workstream ? { workstream } : {}).filter((a) => a.reviewStatus === 'awaiting');
+    return this.listActivities(workstream ? { workstream } : {}).filter((a) => a.reviewStatus === 'awaiting' || (a.status === 'blocked' && this.getChange(a.changeId).status === 'blocked'));
   }
 
   /** Atomically claim the oldest pending activity of an active workstream (FIFO). */
@@ -503,7 +507,7 @@ export class Store {
         validator: v,
         activityId: a.id,
         verdict,
-        ...(a.status === 'failed' ? { failed: true } : {}),
+        ...(a.status === 'failed' || a.status === 'blocked' ? { failed: true } : {}),
         summary: a.reviewComment ?? '',
       });
     }
@@ -571,6 +575,21 @@ export class Store {
       } else {
         this.setChangeStatus(a.changeId, 'completed');
       }
+      return this.getActivity(activityId);
+    })();
+  }
+
+  /** A declared block stops automatic retries and retains the full reason for human action. */
+  blockActivity(activityId: string, workerId: string, reason: string): Activity {
+    return this.db.transaction(() => {
+      const a = this.getActivity(activityId);
+      const res = this.db.query(`UPDATE activities SET status = 'blocked', error = ?, completed_at = ?
+        WHERE id = ? AND status = 'in_progress' AND worker_id = ?`).run(reason, now(), activityId, workerId);
+      if (res.changes !== 1) throw new StoreError('conflict', `activity ${activityId} is not held by ${workerId}`);
+      this.db.query(`UPDATE activities SET status = 'canceled', completed_at = ?
+        WHERE change_id = ? AND status = 'pending'`).run(now(), a.changeId);
+      this.setChangeStatus(a.changeId, 'blocked');
+      this.event(a.workstreamId, 'warning', `blocked: ${reason}`, a.changeId, a.id);
       return this.getActivity(activityId);
     })();
   }
@@ -649,11 +668,11 @@ export class Store {
   retryChange(changeId: string): Activity {
     return this.db.transaction(() => {
       const c = this.getChange(changeId);
-      if (c.status !== 'failed' && c.status !== 'implemented') {
-        throw new StoreError('invalid_transition', `change ${changeId} is ${c.status}, not failed or implemented`);
+      if (c.status !== 'failed' && c.status !== 'implemented' && c.status !== 'blocked') {
+        throw new StoreError('invalid_transition', `change ${changeId} is ${c.status}, not failed, blocked or implemented`);
       }
       const row = this.db
-        .query(`SELECT * FROM activities WHERE change_id = ? AND status = 'failed'
+        .query(`SELECT * FROM activities WHERE change_id = ? AND status IN ('failed','blocked')
                 ORDER BY created_at DESC, rowid DESC LIMIT 1`)
         .get(changeId) as Row | null;
       if (!row) throw new StoreError('not_found', `change ${changeId} has no failed activities`);
@@ -671,7 +690,7 @@ export class Store {
         }
       }
       const id = this.insertActivity(c.workstreamId, changeId, last.parentActivityId, last.kind, 'pending', null, last.validator);
-      if (!last.validator) this.setChangeStatus(changeId, 'pending');
+      this.setChangeStatus(changeId, last.validator ? 'implemented' : 'pending');
       this.event(c.workstreamId, 'info', `change retried (${last.kind})`, changeId, id);
       return this.getActivity(id);
     })();
@@ -700,7 +719,7 @@ export class Store {
   }
 
   isTerminal(status: ActivityStatus): boolean {
-    return TERMINAL_ACTIVITY.includes(status);
+    return status === 'blocked' || TERMINAL_ACTIVITY.includes(status);
   }
 
   // ---- events ------------------------------------------------------------

@@ -194,6 +194,11 @@ async function main(argv: string[]): Promise<number> {
         for (const a of items) {
           const c = store.getChange(a.changeId);
           console.log(`\n== ${short(a.id)}  ${a.kind}  change ${short(c.id)}: ${c.title}`);
+          if (a.status === 'blocked') {
+            console.log(`blocked: ${a.error ?? ''}`);
+            console.log(`-> fab retry ${short(c.id)} | fab reject ${short(c.id)}`);
+            continue;
+          }
           console.log(a.kind === 'change_review' ? c.description : (a.result ?? '').slice(0, 4000));
           console.log(`-> fab review ${short(a.id)} approve|comment|decline`);
         }
