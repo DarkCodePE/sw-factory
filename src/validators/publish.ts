@@ -105,7 +105,7 @@ export async function mergeRecoverably(store: Store, stateDir: string, changeId:
     if (previous && branchHead && branchHead !== previous.head) throw new Error('rama de change cambió desde merge_started');
     if (!previous) store.event(ws.id, 'info', `merge_started ${JSON.stringify({ head, branch, target })}`, c.id, lock);
     const ancestor = Bun.spawnSync(['git', ...GIT_SAFE_FLAGS, 'merge-base', '--is-ancestor', head, 'HEAD'], { cwd: ws.repo });
-    let output = 'merge recuperado: rama ya fusionada';
+    let output = previous ? 'merge recuperado: rama ya fusionada' : 'rama sin commits nuevos: nada que fusionar';
     if (ancestor.exitCode !== 0) {
       if (c.status === 'completed') throw new Error('change completado pero SHA ausente del destino');
       const p = Bun.spawn(['git', ...GIT_SAFE_FLAGS, 'merge', '--no-edit', head], { cwd: ws.repo, stdout: 'pipe', stderr: 'pipe' });
