@@ -40,12 +40,15 @@ const IMPLEMENT = `Your task is an IMPLEMENTATION of the approved spec above.
 4. Commit your work on the current branch with a clear message (git add + git commit).
 If the spec turns out to be wrong, stop and explain instead of improvising a different change.`;
 
-const IMPLEMENT_FACTORY_COMMITS = IMPLEMENT.replace(
-  '4. Commit your work on the current branch with a clear message (git add + git commit).',
-  '4. Do NOT run git add or git commit: leave the changes in the working tree; the factory commits them after your report.');
+export const COMMIT_LINE = '4. Commit your work on the current branch with a clear message (git add + git commit).';
+const NO_COMMIT_LINE = '4. Do NOT run git add or git commit: leave the changes in the working tree; the factory commits them after your report.';
 
-export function buildWorkerPrompt(p: PromptInput, opts: { factoryCommits?: boolean } = {}): string {
-  const task = p.activity.kind === 'implementation' ? (opts.factoryCommits ? IMPLEMENT_FACTORY_COMMITS : IMPLEMENT) : INVESTIGATE;
+/** Instrucciones de worker que un perfil puede reemplazar; por defecto, las de siempre. */
+export interface WorkerTemplates { rules: string; investigate: string; implement: string }
+export const DEFAULT_WORKER_TEMPLATES: WorkerTemplates = { rules: SHARED_RULES, investigate: INVESTIGATE, implement: IMPLEMENT };
+
+export function buildWorkerPrompt(p: PromptInput, opts: { factoryCommits?: boolean } = {}, tpl: WorkerTemplates = DEFAULT_WORKER_TEMPLATES): string {
+  const task = p.activity.kind === 'implementation' ? (opts.factoryCommits ? tpl.implement.replace(COMMIT_LINE, NO_COMMIT_LINE) : tpl.implement) : tpl.investigate;
   return `You are a worker in a software factory. You were assigned ONE activity on ONE change.
 
 # Workstream goal
@@ -64,7 +67,7 @@ Working directory: ${p.worktree} (branch ${p.branch})
 
 ${task}
 
-${SHARED_RULES}`;
+${tpl.rules}`;
 }
 
 /** The first report line decides success; anything else counts as blocked. */

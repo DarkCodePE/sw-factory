@@ -43,6 +43,11 @@ const QA_INSTRUCTIONS = `Your task is QUALITY ASSURANCE (QA) on the change in th
    - fail: test suite failures, runtime errors, or unmet acceptance criteria.
    - needs_human: environment blockers preventing verification or ambiguous acceptance criteria.`;
 
+export interface ValidatorTemplates { rules: string; code_review: string; security_audit: string; qa: string }
+export const DEFAULT_VALIDATOR_TEMPLATES: ValidatorTemplates = {
+  rules: VALIDATOR_RULES, code_review: CODE_REVIEW_INSTRUCTIONS, security_audit: SECURITY_AUDIT_INSTRUCTIONS, qa: QA_INSTRUCTIONS,
+};
+
 export function buildValidatorPrompt(
   v: ValidatorKind,
   input: {
@@ -52,18 +57,19 @@ export function buildValidatorPrompt(
     branch: string;
     worktree: string;
     history: Activity[];
-  }
+  },
+  tpl: ValidatorTemplates = DEFAULT_VALIDATOR_TEMPLATES
 ): string {
   let instructions = '';
   switch (v) {
     case 'code_review':
-      instructions = CODE_REVIEW_INSTRUCTIONS;
+      instructions = tpl.code_review;
       break;
     case 'security_audit':
-      instructions = SECURITY_AUDIT_INSTRUCTIONS;
+      instructions = tpl.security_audit;
       break;
     case 'qa':
-      instructions = QA_INSTRUCTIONS;
+      instructions = tpl.qa;
       break;
     default:
       throw new Error(`unknown validator kind: ${v}`);
@@ -93,5 +99,5 @@ ${historyBlock(input.history)}
 # Your Validator Assignment: ${v}
 ${instructions}
 
-${VALIDATOR_RULES}`;
+${tpl.rules}`;
 }
