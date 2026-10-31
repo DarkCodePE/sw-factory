@@ -36,6 +36,7 @@ export interface TuiState {
   mode: Mode;
   scroll: number;
   input: string;
+  inputDecision?: 'comment' | 'decline';
   flash: string;
 }
 
@@ -144,7 +145,7 @@ export function render(store: Store, workstream: string, state: TuiState, width:
     state.scroll = Math.min(state.scroll, Math.max(0, detail.length - 1));
     body = detail.slice(state.scroll, state.scroll + bodyHeight - inputRows).map((l) => fit(l, width));
     while (body.length < bodyHeight - inputRows) body.push('');
-    if (state.mode === 'comment') body.push('─'.repeat(width), fit(`${c.bold}comentario:${c.reset} ${state.input}█`, width));
+    if (state.mode === 'comment') body.push('─'.repeat(width), fit(`${c.bold}${state.inputDecision === 'decline' ? 'motivo' : 'comentario'}:${c.reset} ${state.input}█`, width));
   }
   while (body.length < bodyHeight) body.push('');
   body.length = bodyHeight;
@@ -161,9 +162,13 @@ export function handleKey(store: Store, workstream: string, state: TuiState, key
   if (state.mode === 'comment') {
     if (key === '\x1b') state.mode = 'detail';
     else if (key === '\r' || key === '\n') {
+      if (state.inputDecision === 'decline' && !state.input.trim()) {
+        state.flash = 'rechazar exige un motivo';
+        return true;
+      }
       if (row?.awaiting && state.input.trim()) {
-        store.resolveReview(row.awaiting.id, 'comment', state.input.trim());
-        state.flash = 'comentario enviado; se re-encola la actividad';
+        store.resolveReview(row.awaiting.id, state.inputDecision ?? 'comment', state.input.trim());
+        state.flash = state.inputDecision === 'decline' ? 'change rechazado' : 'comentario enviado; se re-encola la actividad';
       }
       state.input = '';
       state.mode = 'detail';
@@ -191,13 +196,20 @@ export function handleKey(store: Store, workstream: string, state: TuiState, key
     if (key === 'a' || key === 'd') {
       if (!row.awaiting) state.flash = 'este change no espera revisión';
       else {
-        store.resolveReview(row.awaiting.id, key === 'a' ? 'approve' : 'decline');
-        state.flash = key === 'a' ? `${row.awaiting.kind} aprobado` : 'change rechazado';
+        if (key === 'd') {
+          state.mode = 'comment';
+          state.inputDecision = 'decline';
+          state.input = '';
+        } else {
+          store.resolveReview(row.awaiting.id, 'approve');
+          state.flash = `${row.awaiting.kind} aprobado`;
+        }
       }
     } else if (key === 'c') {
       if (!row.awaiting) state.flash = 'este change no espera revisión';
       else {
         state.mode = 'comment';
+        state.inputDecision = 'comment';
         state.input = '';
       }
     } else if (key === 'r') {

@@ -251,6 +251,7 @@ async function main(argv: string[]): Promise<number> {
         const blocked = mergeBlocker(store.validationSummary(c.id));
         if (blocked && !values.force) throw new StoreError('invalid_transition', `${blocked}; usa --force para fusionar igualmente`);
         if (blocked) console.log(`aviso: ${blocked}; se fusiona por --force`);
+        if (values.force) store.event(ws.id, 'warning', `merge --force${blocked ? `: ${blocked}` : ''}`, c.id);
         console.log(await mergeAndCleanup(ws.repo, STATE_DIR, c.id));
         store.closeChange(c.id, 'completed');
         console.log(`change ${short(c.id)} completado`);
@@ -264,6 +265,7 @@ async function main(argv: string[]): Promise<number> {
       }
       case 'reject': {
         const c = findByPrefix(allChanges(store), sub ?? '', 'change');
+        store.event(c.workstreamId, 'warning', 'reject solicitado', c.id);
         await removeWorktree(store.getWorkstream(c.workstreamId).repo, STATE_DIR, c.id);
         store.closeChange(c.id, 'canceled');
         console.log(`change ${short(c.id)} cancelado`);
@@ -279,7 +281,7 @@ async function main(argv: string[]): Promise<number> {
         return 0;
       }
       case 'events': {
-        for (const e of store.listEvents(sub ?? '')) console.log(`${e.created_at} ${String(e.severity).padEnd(7)} ${e.message}`);
+        for (const e of store.listEvents(sub ?? '')) console.log(`${e.created_at} ${String(e.severity).padEnd(7)} [${e.actor ?? '-'}] ${e.message}`);
         return 0;
       }
       default:

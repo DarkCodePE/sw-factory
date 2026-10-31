@@ -3,6 +3,7 @@
 // cannot double-claim or overwrite each other's results.
 import { Database } from 'bun:sqlite';
 import { randomUUID } from 'node:crypto';
+import { userInfo } from 'node:os';
 
 import {
   type ActivityKind,
@@ -209,6 +210,7 @@ export class Store {
 
   private migrate(): void {
     this.addColumn('activities', 'validator', 'TEXT');
+    this.addColumn('events', 'actor', 'TEXT');
   }
 
   private addColumn(table: string, column: string, ddl: string): void {
@@ -623,6 +625,9 @@ export class Store {
 
   /** Human decision on an activity in the inbox. */
   resolveReview(activityId: string, decision: ReviewDecision, comment = ''): Activity {
+    if (decision === 'decline' && !comment.trim()) {
+      throw new StoreError('invalid_input', 'decline exige --comment con un motivo');
+    }
     return this.db.transaction(() => {
       const a = this.getActivity(activityId);
       if (!REVIEWABLE_KINDS.includes(a.kind)) {
@@ -726,8 +731,8 @@ export class Store {
 
   event(workstreamId: string, severity: 'info' | 'warning' | 'error', message: string, changeId?: string, activityId?: string): void {
     this.db
-      .query('INSERT INTO events (workstream_id, change_id, activity_id, severity, message, created_at) VALUES (?,?,?,?,?,?)')
-      .run(workstreamId, changeId ?? null, activityId ?? null, severity, message, now());
+      .query('INSERT INTO events (workstream_id, change_id, activity_id, severity, message, created_at, actor) VALUES (?,?,?,?,?,?,?)')
+      .run(workstreamId, changeId ?? null, activityId ?? null, severity, message, now(), process.env.FAB_ACTOR ?? userInfo().username);
   }
 
   listEvents(workstream: string, limit = 50): Row[] {
