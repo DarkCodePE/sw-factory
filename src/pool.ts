@@ -19,11 +19,16 @@ export interface PoolOptions {
   log?: (msg: string) => void;
 }
 
-export async function processActivity(store: Store, activity: Activity, workerId: string, opts: PoolOptions): Promise<void> {
+export async function processActivity(
+  store: Store,
+  activity: Activity,
+  workerId: string,
+  opts: PoolOptions,
+  abortController = new AbortController()
+): Promise<void> {
   const log = opts.log ?? console.log;
   const ws = store.getWorkstream(activity.workstreamId);
   const agent = getAgent(opts.agentOverride ?? ws.agent);
-  const abortController = new AbortController();
   const heartbeatIntervalMs = opts.heartbeatMs ?? HEARTBEAT_INTERVAL_MS;
 
   const heartbeatTimer = setInterval(() => {
@@ -66,7 +71,13 @@ export async function processActivity(store: Store, activity: Activity, workerId
       : buildWorkerPrompt({ workstream: ws, change, activity: a, history, worktree: path, branch }, { factoryCommits: agent.factoryCommits });
     log(`[${workerId}] ${a.validator ?? a.kind} "${change.title}" -> ${agent.name} in ${path}`);
     const readOnly = a.validator ? (a.validator !== 'qa') : (a.kind === 'investigation');
-    const run = await runAgent(agent, prompt, path, undefined, { readOnly, signal: abortController.signal });
+    const run = await runAgent(agent, prompt, path, undefined, {
+      readOnly,
+      signal: abortController.signal,
+      onSpawn: (pgid) => {
+        store.setActivityAgentPgid(a.id, pgid);
+      },
+    });
 
     // Barrier check after agent run
     if (abortController.signal.aborted || store.isTerminalChange(store.getChange(change.id).status)) {
@@ -145,43 +156,78 @@ export async function runPool(store: Store, opts: PoolOptions): Promise<void> {
   const log = opts.log ?? console.log;
   const ws = store.getWorkstream(opts.workstream);
   const running = new Set<Promise<void>>();
+  const activeControllers = new Map<Promise<void>, AbortController>();
   let slot = 0;
-  for (;;) {
-    const recovered = store.requeueOrphans(ws.id);
-    if (recovered) log(`requeued ${recovered} orphaned activities`);
+  let interrupted = false;
+  let triggerInterrupt: () => void;
+  const interruptPromise = new Promise<void>((resolve) => {
+    triggerInterrupt = resolve;
+  });
 
-    const current = store.getWorkstream(ws.id);
-    while (current.state === 'active' && running.size < current.workerConcurrency) {
-      const workerId = `w${(slot++ % current.workerConcurrency) + 1}-${process.pid}`;
-      const claimed = store.claimActivity(ws.id, workerId, opts.leaseTtlMs);
-      if (!claimed) break;
-      const p: Promise<void> = processActivity(store, claimed, workerId, opts).finally(() => running.delete(p));
-      running.add(p);
+  const onSignal = () => {
+    if (interrupted) return;
+    interrupted = true;
+    for (const controller of activeControllers.values()) {
+      controller.abort();
     }
-    if (running.size === 0 && opts.untilIdle) {
-      if (current.state !== 'active') return;
-      const pending = store.listActivities({ workstream: ws.id, status: 'pending' }).length;
-      if (pending === 0) {
-        const inProgress = store.listActivities({ workstream: ws.id, status: 'in_progress' });
-        if (inProgress.length === 0) return;
-        // There are still activities in progress (running on another worker/pool).
-        // --once must NOT exit before their leases expire.
-        const nowMs = store.clock ? store.clock().getTime() : Date.now();
-        let waitMs = opts.pollMs ?? 1000;
-        for (const act of inProgress) {
-          if (act.leaseExpiresAt) {
-            const expMs = new Date(act.leaseExpiresAt).getTime();
-            const diff = expMs - nowMs;
-            if (diff > 0 && diff < waitMs) {
-              waitMs = diff;
+    triggerInterrupt();
+  };
+
+  process.on('SIGINT', onSignal);
+  process.on('SIGTERM', onSignal);
+
+  try {
+    for (;;) {
+      if (interrupted) break;
+      const recovered = store.requeueOrphans(ws.id);
+      if (recovered) log(`requeued ${recovered} orphaned activities`);
+
+      const current = store.getWorkstream(ws.id);
+      while (!interrupted && current.state === 'active' && running.size < current.workerConcurrency) {
+        const workerId = `w${(slot++ % current.workerConcurrency) + 1}-${process.pid}`;
+        const claimed = store.claimActivity(ws.id, workerId, opts.leaseTtlMs);
+        if (!claimed) break;
+        const controller = new AbortController();
+        const p: Promise<void> = processActivity(store, claimed, workerId, opts, controller).finally(() => {
+          running.delete(p);
+          activeControllers.delete(p);
+        });
+        running.add(p);
+        activeControllers.set(p, controller);
+      }
+      if (interrupted) break;
+      if (running.size === 0 && opts.untilIdle) {
+        if (current.state !== 'active') return;
+        const pending = store.listActivities({ workstream: ws.id, status: 'pending' }).length;
+        if (pending === 0) {
+          const inProgress = store.listActivities({ workstream: ws.id, status: 'in_progress' });
+          if (inProgress.length === 0) return;
+          // There are still activities in progress (running on another worker/pool).
+          // --once must NOT exit before their leases expire.
+          const nowMs = store.clock ? store.clock().getTime() : Date.now();
+          let waitMs = opts.pollMs ?? 1000;
+          for (const act of inProgress) {
+            if (act.leaseExpiresAt) {
+              const expMs = new Date(act.leaseExpiresAt).getTime();
+              const diff = expMs - nowMs;
+              if (diff > 0 && diff < waitMs) {
+                waitMs = diff;
+              }
             }
           }
+          await Promise.race([Bun.sleep(Math.max(10, Math.min(waitMs, opts.pollMs ?? 1000))), interruptPromise]);
+          continue;
         }
-        await Bun.sleep(Math.max(10, Math.min(waitMs, opts.pollMs ?? 1000)));
-        continue;
       }
+      if (interrupted) break;
+      if (running.size > 0) await Promise.race([...running, Bun.sleep(opts.pollMs ?? 30_000), interruptPromise]);
+      else await Promise.race([Bun.sleep(opts.untilIdle ? 50 : (opts.pollMs ?? 30_000)), interruptPromise]);
     }
-    if (running.size > 0) await Promise.race([...running, Bun.sleep(opts.pollMs ?? 30_000)]);
-    else await Bun.sleep(opts.untilIdle ? 50 : (opts.pollMs ?? 30_000));
+  } finally {
+    process.off('SIGINT', onSignal);
+    process.off('SIGTERM', onSignal);
+    if (running.size > 0) {
+      await Promise.allSettled(Array.from(running));
+    }
   }
 }
