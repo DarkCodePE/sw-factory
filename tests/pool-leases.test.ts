@@ -349,3 +349,196 @@ test('migración de leases: activities in_progress existentes sin lease reciben 
   }
 });
 
+test('SIGINT al pool mata al agente y su nieto y deja la activity liberada', async () => {
+  const childPidFile = join(dir, 'sigint-child.pid');
+  const gcPidFile = join(dir, 'sigint-gc.pid');
+
+  const script = join(dir, 'sigint-tree.sh');
+  writeFileSync(
+    script,
+    `#!/bin/sh
+echo "$$" > "${childPidFile}"
+sh -c 'echo "$$" > "${gcPidFile}"; exec sleep 60' &
+wait
+`
+  );
+  Bun.spawnSync(['chmod', '+x', script]);
+
+  const store = new Store(join(dir, 'sigint.db'), { clock: () => simTime });
+  const fakeAdapter = getAgent('fake');
+  const origCommand = fakeAdapter.command;
+  fakeAdapter.command = () => [script];
+
+  try {
+    const ws = store.createWorkstream({ slug: 'sigint-ws', goal: 'sigint', repo, agent: 'fake', requireChangeApproval: false, requireApproval: false });
+    store.setWorkstreamState(ws.id, 'active');
+    const change = store.createChange(ws.id, 'Sigint test', 'desc');
+
+    const poolPromise = runPool(store, {
+      workstream: ws.id,
+      stateDir: dir,
+      pollMs: 10,
+      log: () => {},
+    });
+
+    // Wait until child and grandchild PIDs are recorded and verified alive
+    let childPid = 0;
+    let gcPid = 0;
+    for (let i = 0; i < 50; i++) {
+      if (existsSync(childPidFile) && existsSync(gcPidFile)) {
+        childPid = Number(readFileSync(childPidFile, 'utf8').trim());
+        gcPid = Number(readFileSync(gcPidFile, 'utf8').trim());
+        if (childPid > 0 && gcPid > 0) break;
+      }
+      await Bun.sleep(20);
+    }
+    expect(childPid).toBeGreaterThan(0);
+    expect(gcPid).toBeGreaterThan(0);
+
+    // Verify alive before SIGINT
+    let childAliveBefore = false;
+    let gcAliveBefore = false;
+    try {
+      process.kill(childPid, 0);
+      childAliveBefore = true;
+    } catch {}
+    try {
+      process.kill(gcPid, 0);
+      gcAliveBefore = true;
+    } catch {}
+    expect(childAliveBefore).toBe(true);
+    expect(gcAliveBefore).toBe(true);
+
+    // Emit SIGINT to the process
+    process.emit('SIGINT', 'SIGINT');
+
+    // Pool must wait for the agent to exit and resolve cleanly
+    await poolPromise;
+
+    // Both child and grandchild must be dead
+    let childAliveAfter = false;
+    let gcAliveAfter = false;
+    try {
+      process.kill(childPid, 0);
+      childAliveAfter = true;
+    } catch {}
+    try {
+      process.kill(gcPid, 0);
+      gcAliveAfter = true;
+    } catch {}
+
+    expect(childAliveAfter).toBe(false);
+    expect(gcAliveAfter).toBe(false);
+
+    // Activity must be liberada (status = canceled, worker_id = null)
+    const [act] = store.listActivities({ changeId: change.id });
+    expect(act).toBeDefined();
+    expect(act?.status).toBe('canceled');
+    expect(act?.workerId).toBeNull();
+  } finally {
+    fakeAdapter.command = origCommand;
+    store.close();
+  }
+});
+
+test('pool muerto con agente vivo -> requeueOrphans mata el grupo y no reencola hasta que muere', async () => {
+  const orphanMarker = join(dir, 'orphan-wrote.tmp');
+  const orphanPidFile = join(dir, 'orphan.pid');
+
+  // Agent script that records its PID, sleeps 2 seconds, and if still alive, touches orphanMarker
+  const orphanScript = join(dir, 'orphan-script.sh');
+  writeFileSync(
+    orphanScript,
+    `#!/bin/sh
+echo "$$" > "${orphanPidFile}"
+sleep 3
+touch "${orphanMarker}"
+printf "STATUS: done\\n\\nCompleted\\n"
+`
+  );
+  Bun.spawnSync(['chmod', '+x', orphanScript]);
+
+  const dbPath = join(dir, 'orphan.db');
+  const clock = () => simTime;
+  const store1 = new Store(dbPath, { clock });
+  const store2 = new Store(dbPath, { clock });
+
+  try {
+    const ws = store1.createWorkstream({ slug: 'orphan-ws', goal: 'orphan', repo, agent: 'fake', requireChangeApproval: false, requireApproval: false });
+    store1.setWorkstreamState(ws.id, 'active');
+    const change = store1.createChange(ws.id, 'Orphan change', 'desc');
+
+    // Pool 1 claims the activity
+    const act = store1.claimActivity(ws.id, 'pool1-worker');
+    expect(act).not.toBeNull();
+
+    // Spawn the detached orphan agent process as Pool 1 would
+    const proc = Bun.spawn([orphanScript], {
+      cwd: dir,
+      stdin: 'ignore',
+      stdout: 'pipe',
+      stderr: 'pipe',
+      detached: true,
+    });
+    store1.setActivityAgentPgid(act!.id, proc.pid);
+
+    // Wait until script recorded its PID
+    let orphanPid = 0;
+    for (let i = 0; i < 50; i++) {
+      if (existsSync(orphanPidFile)) {
+        orphanPid = Number(readFileSync(orphanPidFile, 'utf8').trim());
+        if (orphanPid > 0) break;
+      }
+      await Bun.sleep(20);
+    }
+    expect(orphanPid).toBeGreaterThan(0);
+
+    // Advance simulated clock past TTL (90s)
+    simTime = new Date(simTime.getTime() + 95_000);
+
+    // Round 1 of requeueOrphans: orphan process is still alive.
+    // requeueOrphans MUST send SIGKILL and NOT requeue in this round (returns 0).
+    const round1Recovered = store2.requeueOrphans(ws.id);
+    expect(round1Recovered).toBe(0);
+
+    // Activity remains in_progress
+    const actRound1 = store2.getActivity(act!.id);
+    expect(actRound1.status).toBe('in_progress');
+
+    // Wait brief moment for SIGKILL to be delivered and OS to reap
+    await proc.exited;
+    await Bun.sleep(30);
+
+    // Process is now confirmed dead
+    let orphanAlive = false;
+    try {
+      process.kill(orphanPid, 0);
+      orphanAlive = true;
+    } catch {}
+    expect(orphanAlive).toBe(false);
+
+    // Round 2 of requeueOrphans: orphan is dead now, so it re-enqueues!
+    const round2Recovered = store2.requeueOrphans(ws.id);
+    expect(round2Recovered).toBe(1);
+
+    const actRound2 = store2.getActivity(act!.id);
+    expect(actRound2.status).toBe('pending');
+    expect(actRound2.agentPgid).toBeNull();
+
+    // Pool 2 now claims and finishes the activity
+    const claimedByPool2 = store2.claimActivity(ws.id, 'pool2-worker');
+    expect(claimedByPool2).not.toBeNull();
+    store2.completeActivity(claimedByPool2!.id, 'pool2-worker', 'STATUS: done\nHandled by pool 2');
+
+    // Wait another 500ms to guarantee orphan script had enough time to write if it had lived
+    await Bun.sleep(500);
+
+    // Zero writes from the orphaned agent!
+    expect(existsSync(orphanMarker)).toBe(false);
+  } finally {
+    store1.close();
+    store2.close();
+  }
+});
+
+
