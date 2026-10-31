@@ -15,7 +15,7 @@ export function redact(text: string): string {
     .replace(/\b(?:gh[pousr]_[A-Za-z0-9]{16,}|github_pat_[A-Za-z0-9_]{16,})\b/g, '[REDACTED]')
     .replace(/\bxox[baprs]-[A-Za-z0-9-]{10,}\b/g, '[REDACTED]')
     .replace(/\beyJ[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+\b/g, '[REDACTED]')
-    .replace(/([a-z][a-z0-9+.-]*:\/\/)[^\s/@]+:[^\s/@]+@/gi, '$1[REDACTED]@')
+    .replace(/\b([a-z][a-z0-9+.-]*:\/\/)[^\s/@]+:[^\s/@]+@/gi, '$1[REDACTED]@')
     .replace(/\b([\w-]*(?:api[_-]?key|token|secret|password|credential)[\w-]*\s*[:=]\s*)["']?[^\s"',}]+["']?/gi, '$1[REDACTED]');
 }
 
@@ -77,8 +77,8 @@ export function writeManifest(store: Store, changeId: string, stateDir = store.s
     const path = activityLog(stateDir, changeId, a.id);
     if (!existsSync(path)) atomicEvidence(path, a.result ?? a.error ?? '');
     const metaPath = join(dir, `${a.id}.json`);
-    const execution = existsSync(metaPath) ? JSON.parse(readFileSync(metaPath, 'utf8')) : { isolation: isolationFor(ws.agent), egressProbe: null };
-    return { ...a, verdict: a.validator ? ({ approved: 'pass', declined: 'fail', commented: 'needs_human' } as Record<string,string>)[a.reviewStatus ?? ''] ?? null : null,
+    const execution = existsSync(metaPath) ? JSON.parse(readFileSync(metaPath, 'utf8')) : { isolation: isolationFor(a.kind === 'gates' ? 'gates' : ws.agent), egressProbe: null };
+    return { ...a, verdict: (a.validator || a.kind === 'gates') ? ({ approved: 'pass', declined: 'fail', commented: 'needs_human' } as Record<string,string>)[a.reviewStatus ?? ''] ?? null : null,
       reason: a.error ?? a.reviewComment, log: `${a.id}.log`, ...execution,
       durationMs: execution.durationMs ?? (a.startedAt && a.completedAt ? Math.max(0, Date.parse(a.completedAt) - Date.parse(a.startedAt)) : null) };
   });

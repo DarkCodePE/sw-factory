@@ -51,13 +51,14 @@ const HELP = `fab — agente de código y fábrica de software local
   fab validate <changeId> [--only code_review,security_audit,qa] | status <changeId> | publish <changeId> [--dry-run]
 
   fab ws create <slug> --repo <path> --goal <text> [--agent ${AGENT_NAMES.join('|')}]
-                [--protect <glob>] [--protect-none] [--concurrency N] [--task-limit N] [--no-change-approval] [--no-spec-approval]
+                [--verify <comando>] [--protect <glob>] [--protect-none] [--concurrency N] [--task-limit N] [--no-change-approval] [--no-spec-approval]
   fab ws list
   fab ws state <slug> <active|paused|archived>
   fab signal add <slug> <title> [--body <text>]
   fab signal list <slug>
   fab triage <signalId> | fab triage --all <slug>
   fab gate allow <changeId> <ruta…> --comment <motivo>
+  --verify <comando>  Gate argv repetible al crear workstream (sin shell, timeout 120s)
   fab inbox [slug]
   fab review <activityId> <approve|comment|decline> [--comment <text>]
   fab run <slug> [--once] [--agent <name>] [--accept-agent-binaries]
@@ -138,6 +139,7 @@ async function main(argv: string[]): Promise<number> {
       force: { type: 'boolean' },
       'accept-agent-binaries': { type: 'boolean' },
       protect: { type: 'string', multiple: true },
+      verify: { type: 'string', multiple: true },
       'protect-none': { type: 'boolean' },
       help: { type: 'boolean', short: 'h' },
     },
@@ -166,6 +168,7 @@ async function main(argv: string[]): Promise<number> {
             requireApproval: !values['no-spec-approval'],
             protectedPaths: values.protect,
             protectNone: values['protect-none'],
+            verify: values.verify,
           });
           console.log(`workstream ${ws.slug} (${short(ws.id)}) creado en draft; actívalo con: fab ws state ${ws.slug} active`);
         } else if (sub === 'list') {

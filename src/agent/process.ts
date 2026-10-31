@@ -2,7 +2,7 @@ import { spawn } from 'node:child_process';
 
 /** Scrubbed environment, bounded output, owned process group and abort cleanup. */
 export function runProcess(argv: string[], cwd: string, env: Record<string, string>, signal: AbortSignal,
-  maxBytes = 256 * 1024, cleanupOnExit = false): Promise<{ stdout: string; stderr: string; exitCode: number }> {
+  maxBytes = 256 * 1024, cleanupOnExit = false, onOutput?: (part: Buffer) => void): Promise<{ stdout: string; stderr: string; exitCode: number }> {
   signal.throwIfAborted();
   return new Promise((resolve, reject) => {
     const child = spawn(argv[0]!, argv.slice(1), { cwd, env, detached: process.platform !== 'win32', stdio: ['ignore', 'pipe', 'pipe'] });
@@ -24,6 +24,7 @@ export function runProcess(argv: string[], cwd: string, env: Record<string, stri
     signal.addEventListener('abort', abort, { once: true });
     if (signal.aborted) abort();
     for (const [stream, parts] of [[child.stdout, out], [child.stderr, err]] as const) stream.on('data', (part: Buffer) => {
+      onOutput?.(part);
       bytes += part.length;
       if (bytes > maxBytes) { failure = new Error('Tool process output limit exceeded'); kill(); if (cleanupOnExit) finishPipes(); }
       else parts.push(part);
