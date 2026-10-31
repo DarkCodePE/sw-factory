@@ -68,7 +68,7 @@ function fit(s: string, width: number): string {
 
 function header(store: Store, workstream: string, rows: Row[], width: number): string[] {
   const ws = store.getWorkstream(workstream);
-  const awaiting = rows.filter((r) => r.awaiting).length;
+  const awaiting = rows.filter((r) => r.awaiting || r.change.status === 'blocked').length;
   const stateColor = ws.state === 'active' ? c.green : c.yellow;
   return [
     fit(
@@ -88,7 +88,7 @@ function listBody(store: Store, workstream: string, rows: Row[], state: TuiState
   }
   rows.forEach((r, i) => {
     const color = STATUS_COLOR[r.change.status] ?? '';
-    const mark = r.awaiting ? `${c.cyan}●${c.reset}` : ' ';
+    const mark = r.awaiting || r.change.status === 'blocked' ? `${c.cyan}●${c.reset}` : ' ';
     const stage = r.last ? `${r.last.kind}:${r.last.status}` : '';
     const line = `${mark} ${r.change.id.slice(0, 8)} ${color}${r.change.status.padEnd(12)}${c.reset} ${stage.padEnd(26)} ${r.change.title}`;
     out.push(i === state.selected ? `${c.inv}${fit(stripAnsi(line), width)}${c.reset}` : fit(line, width));
@@ -125,7 +125,7 @@ function detailLines(store: Store, row: Row): string[] {
 
 const HELP: Record<Mode, string> = {
   list: '↑↓ mover · enter detalle · a aprobar · c comentar · d rechazar · r reintentar · g agente · q salir',
-  detail: '↑↓ desplazar · a aprobar · c comentar · d rechazar · g agente · esc volver · q salir',
+  detail: '↑↓ desplazar · a aprobar · c comentar · d rechazar · r reintentar · g agente · esc volver · q salir',
   comment: 'escribe y enter para enviar · esc cancelar',
 };
 

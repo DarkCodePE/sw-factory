@@ -46,7 +46,9 @@ test('a declared block stops after one session and reaches the inbox', async () 
     const ws = store.createWorkstream({ slug: 'p', goal: 'g', repo, agent: 'fake', requireChangeApproval: false });
     store.setWorkstreamState(ws.id, 'active');
     const c = store.createChange(ws.id, 'fix it', 'desc');
-    await runPool(store, { workstream: ws.id, stateDir: dir, untilIdle: true, log: () => {} });
+    const logs: string[] = [];
+    await runPool(store, { workstream: ws.id, stateDir: dir, untilIdle: true, log: msg => logs.push(msg) });
+    expect(logs.filter(msg => msg.includes(' -> fake in '))).toHaveLength(1);
     const [inv] = store.listActivities({ changeId: c.id });
     expect(inv?.status).toBe('blocked');
     expect(inv?.retryCount).toBe(0);

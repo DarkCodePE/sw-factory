@@ -46,3 +46,16 @@ test('TUI retries an exhausted validator on implemented change', () => {
   expect(state.flash).toContain('re-encolado');
   expect(store.claimActivity(ws.id,'w')!.validator).toBe('qa');
 });
+test('a late blocked result cannot reopen a canceled change', () => {
+  const {ws,c} = setup(); const a = store.claimActivity(ws.id,'w')!;
+  store.closeChange(c.id,'canceled');
+  expect(()=>store.blockActivity(a.id,'w','blocked - late')).toThrow('not held');
+  expect(store.getChange(c.id).status).toBe('canceled');
+});
+test('late failures cannot requeue workers after the change is blocked', () => {
+  const {ws,c} = setup(); const a=store.claimActivity(ws.id,'w')!;
+  store.db.query(`UPDATE changes SET status='blocked' WHERE id=?`).run(c.id);
+  expect(()=>store.failActivity(a.id,'w','late failure')).toThrow('not held');
+  expect(store.getChange(c.id).status).toBe('blocked');
+  expect(store.listActivities({changeId:c.id,status:'pending'})).toHaveLength(0);
+});

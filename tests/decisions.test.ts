@@ -42,7 +42,8 @@ test('CLI decline without comment fails; reject is audited', () => {
   const home = mkdtempSync(join(tmpdir(),'fab-audit-'));
   const s = new Store(join(home,'fabrica.db'));
   try {
-    const ws = s.createWorkstream({slug:'cli',repo:home,goal:'g'});
+    expect(Bun.spawnSync(['git','init','-q','home-repo'],{cwd:home}).exitCode).toBe(0);
+    const ws = s.createWorkstream({slug:'cli',repo:join(home,'home-repo'),goal:'g'});
     const c = s.createChange(ws.id,'t','d'); const a = s.inbox(ws.id)[0]!;
     const cli = (...args:string[]) => Bun.spawnSync(['bun',resolve('src/cli.ts'),...args],{env:{...process.env,FABRICA_HOME:home,FAB_ACTOR:'cli-operator'}});
     const decline = cli('review',a.id,'decline');
@@ -50,6 +51,8 @@ test('CLI decline without comment fails; reject is audited', () => {
     expect(s.getChange(c.id).status).toBe('in_review');
     // No worktree exists, so no Git deletion is needed.
     const reject = cli('reject',c.id);
+    expect(reject.exitCode).toBe(0);
+    expect(s.getChange(c.id).status).toBe('canceled');
     expect(s.listEvents(ws.id).some(e=>e.actor==='cli-operator' && e.message==='reject solicitado')).toBe(true);
   } finally { s.close(); rmSync(home,{recursive:true,force:true}); }
 });

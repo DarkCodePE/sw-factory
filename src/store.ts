@@ -25,6 +25,7 @@ import {
   type ValidationSummary,
   type ValidationVerdict,
 } from './connectors/types.ts';
+import { DEFAULT_PROTECTED_PATHS, validateProtectedPatterns, type GateSnapshot } from './validators/integrity.ts';
 import { parseVerdict } from './validators/verdict.ts';
 
 // Local extensions keep this task within the store ownership boundary.
@@ -43,6 +44,7 @@ export interface Workstream {
   requireChangeApproval: boolean;
   requireApproval: boolean;
   createdAt: string;
+  protectedPaths: string[];
 }
 
 export interface Signal {
@@ -62,6 +64,8 @@ export interface Change {
   description: string;
   status: ChangeStatus;
   branch: string | null;
+  baseSha: string | null;
+  protectedBaseline: GateSnapshot;
   createdAt: string;
   updatedAt: string;
 }
@@ -137,6 +141,7 @@ function toWorkstream(r: Row): Workstream {
     taskLimit: r.task_limit as number,
     requireChangeApproval: bool(r.require_change_approval),
     requireApproval: bool(r.require_approval),
+    protectedPaths: r.protected_paths == null ? [...DEFAULT_PROTECTED_PATHS] : JSON.parse(r.protected_paths as string),
     createdAt: r.created_at as string,
   };
 }
@@ -161,6 +166,8 @@ function toChange(r: Row): Change {
     description: r.description as string,
     status: r.status as ChangeStatus,
     branch: (r.branch as string | null) ?? null,
+    baseSha: (r.base_sha as string | null) ?? null,
+    protectedBaseline: JSON.parse((r.protected_baseline as string | null) ?? '{}'),
     createdAt: r.created_at as string,
     updatedAt: r.updated_at as string,
   };
@@ -196,6 +203,8 @@ export interface CreateWorkstreamInput {
   taskLimit?: number;
   requireChangeApproval?: boolean;
   requireApproval?: boolean;
+  protectedPaths?: string[];
+  protectNone?: boolean;
 }
 
 export class Store {
@@ -211,6 +220,9 @@ export class Store {
   private migrate(): void {
     this.addColumn('activities', 'validator', 'TEXT');
     this.addColumn('events', 'actor', 'TEXT');
+    this.addColumn('workstreams', 'protected_paths', 'TEXT');
+    this.addColumn('changes', 'base_sha', 'TEXT');
+    this.addColumn('changes', 'protected_baseline', 'TEXT');
   }
 
   private addColumn(table: string, column: string, ddl: string): void {
@@ -234,12 +246,18 @@ export class Store {
     if (!/^[a-z0-9][a-z0-9-]{0,62}$/.test(input.slug)) {
       throw new StoreError('invalid_input', `invalid slug "${input.slug}" (use a-z, 0-9, -)`);
     }
+    const additions = input.protectedPaths ?? [];
+    validateProtectedPatterns(additions);
+    if (input.protectedPaths?.length === 0 && !input.protectNone) {
+      throw new StoreError('invalid_input', 'vaciar protected_paths exige --protect-none');
+    }
+    const protectedPaths = input.protectNone ? additions : [...new Set([...DEFAULT_PROTECTED_PATHS, ...additions])];
     const id = randomUUID();
     this.db
       .query(
         `INSERT INTO workstreams (id, slug, goal, repo, state, agent, worker_concurrency,
-         task_limit, require_change_approval, require_approval, created_at)
-         VALUES ($id,$slug,$goal,$repo,'draft',$agent,$wc,$tl,$rca,$ra,$at)`
+         task_limit, require_change_approval, require_approval, created_at, protected_paths)
+         VALUES ($id,$slug,$goal,$repo,'draft',$agent,$wc,$tl,$rca,$ra,$at,$protected)`
       )
       .run({
         id,
@@ -252,6 +270,7 @@ export class Store {
         rca: input.requireChangeApproval ?? true ? 1 : 0,
         ra: input.requireApproval ?? true ? 1 : 0,
         at: now(),
+        protected: JSON.stringify(protectedPaths),
       });
     this.event(id, 'info', `workstream ${input.slug} created (draft)`);
     return this.getWorkstream(id);
@@ -372,6 +391,32 @@ export class Store {
     this.db.query('UPDATE changes SET branch = ?, updated_at = ? WHERE id = ?').run(branch, now(), changeId);
   }
 
+  /** Persist once, before the first worker runs; retries never move the base. */
+  setChangeBase(changeId: string, baseSha: string): void {
+    this.db.query('UPDATE changes SET base_sha = ? WHERE id = ? AND base_sha IS NULL').run(baseSha, changeId);
+  }
+
+  /** Rebase only the explicitly reviewed paths, invalidate old verdicts and retry atomically. */
+  allowGate(changeId: string, snapshot: GateSnapshot, comment: string): Activity {
+    if (!comment.trim() || !Object.keys(snapshot).length) throw new StoreError('invalid_input', 'gate allow exige rutas y --comment con motivo');
+    return this.db.transaction(() => {
+      const c = this.getChange(changeId);
+      const acts = this.listActivities({changeId});
+      if (c.status !== 'blocked' || !acts.some(a => a.status === 'blocked' && a.error?.startsWith('GATE_TAMPERED:'))) {
+        throw new StoreError('invalid_transition', 'gate allow exige un bloqueo GATE_TAMPERED');
+      }
+      if (acts.some(a => a.status === 'in_progress')) throw new StoreError('conflict', 'change tiene workers en curso');
+      const retry = this.retryChange(changeId);
+      this.db.query('UPDATE changes SET protected_baseline = ? WHERE id = ?')
+        .run(JSON.stringify({...c.protectedBaseline, ...snapshot}), changeId);
+      this.db.query(`UPDATE activities SET status = 'failed', review_status = NULL,
+        review_comment = NULL, error = 'gate allow: validación invalidada'
+        WHERE change_id = ? AND validator IS NOT NULL AND id != ?`).run(changeId, retry.id);
+      this.event(c.workstreamId, 'warning', `gate allow: ${JSON.stringify(Object.keys(snapshot))}: ${comment.trim()}`, changeId, retry.id);
+      return retry;
+    })();
+  }
+
   private setChangeStatus(changeId: string, status: ChangeStatus): void {
     this.db.query('UPDATE changes SET status = ?, updated_at = ? WHERE id = ?').run(status, now(), changeId);
   }
@@ -425,7 +470,11 @@ export class Store {
 
   /** Activities waiting on a human decision (the inbox). */
   inbox(workstream?: string): Activity[] {
-    return this.listActivities(workstream ? { workstream } : {}).filter((a) => a.reviewStatus === 'awaiting' || (a.status === 'blocked' && this.getChange(a.changeId).status === 'blocked'));
+    const acts = this.listActivities(workstream ? { workstream } : {});
+    const latest = new Map<string, string>();
+    for (const a of acts) if (a.status === 'blocked') latest.set(a.changeId, a.id);
+    return acts.filter(a => a.reviewStatus === 'awaiting' ||
+      (latest.get(a.changeId) === a.id && this.getChange(a.changeId).status === 'blocked'));
   }
 
   /** Atomically claim the oldest pending activity of an active workstream (FIFO). */
@@ -586,7 +635,9 @@ export class Store {
     return this.db.transaction(() => {
       const a = this.getActivity(activityId);
       const res = this.db.query(`UPDATE activities SET status = 'blocked', error = ?, completed_at = ?
-        WHERE id = ? AND status = 'in_progress' AND worker_id = ?`).run(reason, now(), activityId, workerId);
+        WHERE id = ? AND status = 'in_progress' AND worker_id = ?
+        AND EXISTS (SELECT 1 FROM changes c WHERE c.id = activities.change_id
+          AND c.status NOT IN ('completed','failed','canceled','declined','blocked'))`).run(reason, now(), activityId, workerId);
       if (res.changes !== 1) throw new StoreError('conflict', `activity ${activityId} is not held by ${workerId}`);
       this.db.query(`UPDATE activities SET status = 'canceled', completed_at = ?
         WHERE change_id = ? AND status = 'pending'`).run(now(), a.changeId);
@@ -605,7 +656,9 @@ export class Store {
       const res = this.db
         .query(
           `UPDATE activities SET status = ?, error = ?, retry_count = ?, worker_id = NULL,
-           started_at = NULL, completed_at = ? WHERE id = ? AND status = 'in_progress' AND worker_id = ?`
+           started_at = NULL, completed_at = ? WHERE id = ? AND status = 'in_progress' AND worker_id = ?
+           AND EXISTS (SELECT 1 FROM changes c WHERE c.id = activities.change_id
+             AND c.status NOT IN ('completed','failed','canceled','declined','blocked'))`
         )
         .run(retry ? 'pending' : 'failed', error, retryCount, retry ? null : now(), activityId, workerId);
       if (res.changes !== 1) throw new StoreError('conflict', `activity ${activityId} is not held by ${workerId}`);
