@@ -204,9 +204,17 @@ export class Store {
   }
 
   private migrate(): void {
-    const cols = this.db.query('PRAGMA table_info(activities)').all() as { name: string }[];
-    if (!cols.some((c) => c.name === 'validator')) {
-      this.db.exec('ALTER TABLE activities ADD COLUMN validator TEXT;');
+    this.addColumn('activities', 'validator', 'TEXT');
+  }
+
+  private addColumn(table: string, column: string, ddl: string): void {
+    const cols = this.db.query(`PRAGMA table_info(${table})`).all() as { name: string }[];
+    if (cols.some((c) => c.name === column)) return;
+    try {
+      this.db.exec(`ALTER TABLE ${table} ADD COLUMN ${column} ${ddl}`);
+    } catch (error) {
+      // Another opener may have added it after our schema snapshot.
+      if (!(error instanceof Error) || !/duplicate column name:/i.test(error.message)) throw error;
     }
   }
 
@@ -223,7 +231,9 @@ export class Store {
     const id = randomUUID();
     this.db
       .query(
-        `INSERT INTO workstreams VALUES ($id,$slug,$goal,$repo,'draft',$agent,$wc,$tl,$rca,$ra,$at)`
+        `INSERT INTO workstreams (id, slug, goal, repo, state, agent, worker_concurrency,
+         task_limit, require_change_approval, require_approval, created_at)
+         VALUES ($id,$slug,$goal,$repo,'draft',$agent,$wc,$tl,$rca,$ra,$at)`
       )
       .run({
         id,
@@ -272,7 +282,8 @@ export class Store {
     const ws = this.getWorkstream(workstream);
     const id = randomUUID();
     this.db
-      .query(`INSERT INTO signals VALUES (?,?,?,?,'new',NULL,?)`)
+      .query(`INSERT INTO signals (id, workstream_id, title, body, status, change_id, created_at)
+              VALUES (?,?,?,?,'new',NULL,?)`)
       .run(id, ws.id, title, body, now());
     return toSignal(this.db.query('SELECT * FROM signals WHERE id = ?').get(id) as Row);
   }
@@ -325,7 +336,10 @@ export class Store {
     const firstKind: ActivityKind = ws.requireChangeApproval ? 'change_review' : 'investigation';
     // A change awaiting human approval sits in review; otherwise it waits for a worker.
     const status: ChangeStatus = firstKind === 'change_review' ? 'in_review' : 'pending';
-    this.db.query('INSERT INTO changes VALUES (?,?,?,?,?,NULL,?,?)').run(id, ws.id, title, description, status, t, t);
+    this.db
+      .query(`INSERT INTO changes (id, workstream_id, title, description, status, branch, created_at, updated_at)
+              VALUES (?,?,?,?,?,NULL,?,?)`)
+      .run(id, ws.id, title, description, status, t, t);
     if (firstKind === 'change_review') {
       this.insertActivity(ws.id, id, null, 'change_review', 'completed', 'awaiting');
     } else {
@@ -489,6 +503,7 @@ export class Store {
         validator: v,
         activityId: a.id,
         verdict,
+        ...(a.status === 'failed' ? { failed: true } : {}),
         summary: a.reviewComment ?? '',
       });
     }
@@ -630,16 +645,33 @@ export class Store {
     return this.getChange(changeId);
   }
 
-  /** Human retry of a failed change: re-queue its latest activity kind with a fresh retry budget. */
+  /** Human retry of the latest failed activity, preserving validator context and resetting its budget. */
   retryChange(changeId: string): Activity {
     return this.db.transaction(() => {
       const c = this.getChange(changeId);
-      if (c.status !== 'failed') throw new StoreError('invalid_transition', `change ${changeId} is ${c.status}, not failed`);
-      const acts = this.listActivities({ changeId });
-      const last = acts[acts.length - 1];
-      if (!last) throw new StoreError('not_found', `change ${changeId} has no activities`);
-      const id = this.insertActivity(c.workstreamId, changeId, last.parentActivityId, last.kind, 'pending', null);
-      this.setChangeStatus(changeId, 'pending');
+      if (c.status !== 'failed' && c.status !== 'implemented') {
+        throw new StoreError('invalid_transition', `change ${changeId} is ${c.status}, not failed or implemented`);
+      }
+      const row = this.db
+        .query(`SELECT * FROM activities WHERE change_id = ? AND status = 'failed'
+                ORDER BY created_at DESC, rowid DESC LIMIT 1`)
+        .get(changeId) as Row | null;
+      if (!row) throw new StoreError('not_found', `change ${changeId} has no failed activities`);
+      const last = toActivity(row);
+      if (c.status === 'implemented' && !last.validator) {
+        throw new StoreError('invalid_transition', `implemented change ${changeId} can only retry a validator`);
+      }
+      if (last.validator) {
+        const latest = this.db
+          .query(`SELECT id FROM activities WHERE change_id = ? AND validator = ?
+                  ORDER BY created_at DESC, rowid DESC LIMIT 1`)
+          .get(changeId, last.validator) as { id: string };
+        if (latest.id !== last.id) {
+          throw new StoreError('invalid_transition', `validator ${last.validator} already retried`);
+        }
+      }
+      const id = this.insertActivity(c.workstreamId, changeId, last.parentActivityId, last.kind, 'pending', null, last.validator);
+      if (!last.validator) this.setChangeStatus(changeId, 'pending');
       this.event(c.workstreamId, 'info', `change retried (${last.kind})`, changeId, id);
       return this.getActivity(id);
     })();

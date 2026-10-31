@@ -78,6 +78,8 @@ export interface ValidationResult {
   activityId: string;
   /** undefined while the activity is pending, running, or failed without a verdict. */
   verdict?: ValidationVerdict;
+  /** True when the activity failed for good, so a missing verdict is final rather than pending. */
+  failed?: boolean;
   /** One-paragraph summary taken from the validator's report. */
   summary: string;
 }

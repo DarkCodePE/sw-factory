@@ -2,8 +2,10 @@
 import { existsSync, mkdirSync } from 'node:fs';
 import { join, resolve } from 'node:path';
 
+export const GIT_SAFE_FLAGS = ['-c', 'core.fsmonitor=false', '-c', 'core.hooksPath=/dev/null', '-c', 'diff.external='];
+
 async function git(cwd: string, ...args: string[]): Promise<string> {
-  const proc = Bun.spawn(['git', ...args], { cwd, stdout: 'pipe', stderr: 'pipe' });
+  const proc = Bun.spawn(['git', ...GIT_SAFE_FLAGS, ...args], { cwd, stdout: 'pipe', stderr: 'pipe' });
   const [out, err, code] = await Promise.all([
     new Response(proc.stdout).text(),
     new Response(proc.stderr).text(),

@@ -1,11 +1,11 @@
 // Worker pool: claims pending activities FIFO, runs one headless agent per activity
 // in the change's worktree, and records the result back in the store.
 import { getAgent, runAgent } from './agents.ts';
-import { buildWorkerPrompt, parseReportStatus } from './prompts.ts';
+import { buildWorkerPrompt } from './prompts.ts';
 import type { Activity, Store } from './store.ts';
 import { buildValidatorPrompt } from './validators/prompts.ts';
 import { parseVerdict } from './validators/verdict.ts';
-import { branchCommits, commitWorktree, ensureWorktree } from './worktrees.ts';
+import { branchCommits, commitWorktree, ensureWorktree, GIT_SAFE_FLAGS } from './worktrees.ts';
 
 export interface PoolOptions {
   workstream: string;
@@ -28,10 +28,10 @@ export async function processActivity(store: Store, activity: Activity, workerId
     let diffStat = '';
     if (a.validator) {
       try {
-        const proc = Bun.spawn(['git', 'diff', '--stat', 'main...' + branch], { cwd: path, stdout: 'pipe', stderr: 'pipe' });
+        const proc = Bun.spawn(['git', ...GIT_SAFE_FLAGS, 'diff', '--stat', 'main...' + branch], { cwd: path, stdout: 'pipe', stderr: 'pipe' });
         diffStat = (await new Response(proc.stdout).text()).trim();
         if (!diffStat) {
-          const proc2 = Bun.spawn(['git', 'diff', '--stat', 'HEAD~1'], { cwd: path, stdout: 'pipe', stderr: 'pipe' });
+          const proc2 = Bun.spawn(['git', ...GIT_SAFE_FLAGS, 'diff', '--stat', 'HEAD~1'], { cwd: path, stdout: 'pipe', stderr: 'pipe' });
           diffStat = (await new Response(proc2.stdout).text()).trim();
         }
       } catch {
@@ -44,15 +44,15 @@ export async function processActivity(store: Store, activity: Activity, workerId
     log(`[${workerId}] ${a.validator ?? a.kind} "${change.title}" -> ${agent.name} in ${path}`);
     const readOnly = a.validator ? (a.validator !== 'qa') : (a.kind === 'investigation');
     const run = await runAgent(agent, prompt, path, undefined, { readOnly });
-    const status = parseReportStatus(run.output);
     if (!run.ok) {
       store.failActivity(a.id, workerId, `agent exit ${run.exitCode}: ${run.output.slice(-1000)}`);
       log(`[${workerId}] ${a.validator ?? a.kind} failed (exit ${run.exitCode})`);
       return;
     }
-    if (!status.done) {
-      store.failActivity(a.id, workerId, `blocked: ${status.reason}\n\n${run.output.slice(-2000)}`);
-      log(`[${workerId}] ${a.validator ?? a.kind} blocked: ${status.reason}`);
+    if (run.status.kind !== 'done') {
+      const prefix = run.status.kind === 'blocked' ? `blocked: ${run.status.reason}` : run.status.reason;
+      store.failActivity(a.id, workerId, `${prefix}\n\n${run.output.slice(-2000)}`);
+      log(`[${workerId}] ${a.validator ?? a.kind} ${run.status.kind === 'blocked' ? 'blocked' : 'failed'}: ${run.status.reason}`);
       return;
     }
     if (a.validator) {
@@ -62,18 +62,16 @@ export async function processActivity(store: Store, activity: Activity, workerId
         log(`[${workerId}] ${a.validator} rejected: missing valid VERDICT`);
         return;
       }
-      if (a.validator === 'qa') {
-        let isDirty = false;
-        try {
-          const proc = Bun.spawn(['git', 'status', '--porcelain'], { cwd: path, stdout: 'pipe', stderr: 'pipe' });
-          const statusText = (await new Response(proc.stdout).text()).trim();
-          if (statusText.length > 0) isDirty = true;
-        } catch {}
-        if (isDirty) {
-          store.failActivity(a.id, workerId, 'qa dejó cambios en el worktree');
-          log(`[${workerId}] qa dejó cambios en el worktree`);
-          return;
-        }
+      let isDirty = false;
+      try {
+        const proc = Bun.spawn(['git', ...GIT_SAFE_FLAGS, 'status', '--porcelain'], { cwd: path, stdout: 'pipe', stderr: 'pipe' });
+        const statusText = (await new Response(proc.stdout).text()).trim();
+        if (statusText.length > 0) isDirty = true;
+      } catch {}
+      if (isDirty) {
+        store.failActivity(a.id, workerId, `${a.validator} dejó cambios en el worktree`);
+        log(`[${workerId}] ${a.validator} dejó cambios en el worktree`);
+        return;
       }
     }
     if (a.kind === 'implementation') {
