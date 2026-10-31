@@ -51,6 +51,7 @@ export interface ToolContext {
   sessionDir?: string;
   tasks?: import('./tasks.ts').TaskManager;
   searchConfig?: import('./web-search.ts').SearchConfig;
+  egressProbe?: import('../sandbox/egress-probe.ts').EgressProbeResult;
 }
 export interface FileSnapshot { data: Uint8Array; mode: number }
 export interface FileMutation { path: string; before?: FileSnapshot; after: Uint8Array; mode: number }
@@ -68,7 +69,7 @@ export interface AgentTool {
 }
 export interface AgentEvent {
   type: 'turn_end' | 'reconciled' | 'hook' | 'script_started' | 'script_notified' | 'script_completed' | 'init' | 'usage' | 'provider_retry' | 'assistant_delta' | 'assistant' | 'tool_call' | 'tool_result' | 'compaction' | 'result' | 'error' |
-    'mission_feature_updated' | 'mission_milestone_validated' | 'mission_paused' | 'mission_progress' | 'mission_state_changed' | 'mission_worker_started' | 'mission_worker_completed' | 'network_permission' | 'permission_bypass' | 'agent_spawn' | 'mode_changed' | 'settings_staged' | 'model_routed' | 'model_transition';
+    'mission_feature_updated' | 'mission_milestone_validated' | 'mission_paused' | 'mission_progress' | 'mission_state_changed' | 'mission_worker_started' | 'mission_worker_completed' | 'network_permission' | 'permission_bypass' | 'agent_spawn' | 'mode_changed' | 'settings_staged' | 'model_routed' | 'model_transition' | 'egress_probe';
   sessionId: string;
   [key: string]: unknown;
 }
