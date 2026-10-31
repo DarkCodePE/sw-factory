@@ -297,8 +297,9 @@ async function main(argv: string[]): Promise<number> {
       case 'reject': {
         const c = findByPrefix(allChanges(store), sub ?? '', 'change');
         store.event(c.workstreamId, 'warning', 'reject solicitado', c.id);
-        await removeWorktree(store.getWorkstream(c.workstreamId).repo, STATE_DIR, c.id);
         store.closeChange(c.id, 'canceled');
+        await store.waitForRelease(c.id);
+        await removeWorktree(store.getWorkstream(c.workstreamId).repo, STATE_DIR, c.id);
         console.log(`change ${short(c.id)} cancelado`);
         return 0;
       }

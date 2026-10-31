@@ -55,7 +55,7 @@ test('a late blocked result cannot reopen a canceled change', () => {
 test('late failures cannot requeue workers after the change is blocked', () => {
   const {ws,c} = setup(); const a=store.claimActivity(ws.id,'w')!;
   store.db.query(`UPDATE changes SET status='blocked' WHERE id=?`).run(c.id);
-  expect(()=>store.failActivity(a.id,'w','late failure')).toThrow('not held');
+  expect(()=>store.failActivity(a.id,'w','late failure')).toThrow(/not held|is terminal/);
   expect(store.getChange(c.id).status).toBe('blocked');
   expect(store.listActivities({changeId:c.id,status:'pending'})).toHaveLength(0);
 });

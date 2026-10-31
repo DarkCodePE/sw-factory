@@ -32,6 +32,21 @@ import { parseVerdict } from './validators/verdict.ts';
 export type ActivityStatus = BaseActivityStatus | 'blocked';
 export type ChangeStatus = BaseChangeStatus | 'blocked';
 
+export const LEASE_TTL_MS = process.env.FABRICA_LEASE_TTL_MS ? Number(process.env.FABRICA_LEASE_TTL_MS) : 90_000;
+export const HEARTBEAT_INTERVAL_MS = process.env.FABRICA_HEARTBEAT_MS ? Number(process.env.FABRICA_HEARTBEAT_MS) : 30_000;
+
+export const TERMINAL_CHANGE_STATUSES: readonly string[] = [
+  'completed',
+  'failed',
+  'canceled',
+  'declined',
+  'blocked',
+];
+
+export function isTerminalChange(status: string): boolean {
+  return TERMINAL_CHANGE_STATUSES.includes(status);
+}
+
 export interface Workstream {
   id: string;
   slug: string;
@@ -87,6 +102,8 @@ export interface Activity {
   createdAt: string;
   startedAt: string | null;
   completedAt: string | null;
+  leaseExpiresAt: string | null;
+  agentPgid: number | null;
 }
 
 export class StoreError extends Error {
@@ -117,14 +134,13 @@ CREATE TABLE IF NOT EXISTS activities (
   kind TEXT NOT NULL, status TEXT NOT NULL, review_status TEXT, review_comment TEXT,
   validator TEXT, worker_id TEXT,
   result TEXT, error TEXT, retry_count INTEGER NOT NULL DEFAULT 0, created_at TEXT NOT NULL,
-  started_at TEXT, completed_at TEXT);
+  started_at TEXT, completed_at TEXT, lease_expires_at TEXT, agent_pgid INTEGER);
 CREATE INDEX IF NOT EXISTS idx_activities_claim ON activities(workstream_id, status, created_at);
 CREATE TABLE IF NOT EXISTS events (
   id INTEGER PRIMARY KEY AUTOINCREMENT, workstream_id TEXT NOT NULL, change_id TEXT,
   activity_id TEXT, severity TEXT NOT NULL, message TEXT NOT NULL, created_at TEXT NOT NULL);
 `;
 
-const now = (): string => new Date().toISOString();
 const bool = (v: unknown): boolean => v === 1 || v === true;
 
 type Row = Record<string, unknown>;
@@ -191,6 +207,8 @@ function toActivity(r: Row): Activity {
     createdAt: r.created_at as string,
     startedAt: (r.started_at as string | null) ?? null,
     completedAt: (r.completed_at as string | null) ?? null,
+    leaseExpiresAt: (r.lease_expires_at as string | null) ?? null,
+    agentPgid: (r.agent_pgid as number | null) ?? null,
   };
 }
 
@@ -207,14 +225,24 @@ export interface CreateWorkstreamInput {
   protectNone?: boolean;
 }
 
+export interface StoreOptions {
+  clock?: () => Date;
+}
+
 export class Store {
   readonly db: Database;
+  readonly clock: () => Date;
 
-  constructor(path: string) {
+  constructor(path: string, options?: StoreOptions) {
+    this.clock = options?.clock ?? (() => new Date());
     this.db = new Database(path, { create: true, strict: true });
     this.db.exec('PRAGMA journal_mode = WAL; PRAGMA foreign_keys = ON; PRAGMA busy_timeout = 5000;');
     this.db.exec(SCHEMA);
     this.migrate();
+  }
+
+  now(): string {
+    return this.clock().toISOString();
   }
 
   private migrate(): void {
@@ -223,6 +251,13 @@ export class Store {
     this.addColumn('workstreams', 'protected_paths', 'TEXT');
     this.addColumn('changes', 'base_sha', 'TEXT');
     this.addColumn('changes', 'protected_baseline', 'TEXT');
+    this.addColumn('activities', 'lease_expires_at', 'TEXT');
+    this.addColumn('activities', 'agent_pgid', 'INTEGER');
+    this.db.exec('CREATE INDEX IF NOT EXISTS idx_activities_lease ON activities(status, lease_expires_at);');
+    const migrationTtl = new Date(this.clock().getTime() + LEASE_TTL_MS).toISOString();
+    this.db
+      .query(`UPDATE activities SET lease_expires_at = ? WHERE status = 'in_progress' AND lease_expires_at IS NULL`)
+      .run(migrationTtl);
   }
 
   private addColumn(table: string, column: string, ddl: string): void {
@@ -269,7 +304,7 @@ export class Store {
         tl: input.taskLimit ?? 20,
         rca: input.requireChangeApproval ?? true ? 1 : 0,
         ra: input.requireApproval ?? true ? 1 : 0,
-        at: now(),
+        at: this.now(),
         protected: JSON.stringify(protectedPaths),
       });
     this.event(id, 'info', `workstream ${input.slug} created (draft)`);
@@ -309,7 +344,7 @@ export class Store {
     this.db
       .query(`INSERT INTO signals (id, workstream_id, title, body, status, change_id, created_at)
               VALUES (?,?,?,?,'new',NULL,?)`)
-      .run(id, ws.id, title, body, now());
+      .run(id, ws.id, title, body, this.now());
     return toSignal(this.db.query('SELECT * FROM signals WHERE id = ?').get(id) as Row);
   }
 
@@ -357,7 +392,7 @@ export class Store {
       throw new StoreError('limit_reached', `workstream ${ws.slug} reached task limit ${ws.taskLimit}`);
     }
     const id = randomUUID();
-    const t = now();
+    const t = this.now();
     const firstKind: ActivityKind = ws.requireChangeApproval ? 'change_review' : 'investigation';
     // A change awaiting human approval sits in review; otherwise it waits for a worker.
     const status: ChangeStatus = firstKind === 'change_review' ? 'in_review' : 'pending';
@@ -388,7 +423,7 @@ export class Store {
   }
 
   setChangeBranch(changeId: string, branch: string): void {
-    this.db.query('UPDATE changes SET branch = ?, updated_at = ? WHERE id = ?').run(branch, now(), changeId);
+    this.db.query('UPDATE changes SET branch = ?, updated_at = ? WHERE id = ?').run(branch, this.now(), changeId);
   }
 
   /** Persist once, before the first worker runs; retries never move the base. */
@@ -418,7 +453,7 @@ export class Store {
   }
 
   private setChangeStatus(changeId: string, status: ChangeStatus): void {
-    this.db.query('UPDATE changes SET status = ?, updated_at = ? WHERE id = ?').run(status, now(), changeId);
+    this.db.query('UPDATE changes SET status = ?, updated_at = ? WHERE id = ?').run(status, this.now(), changeId);
   }
 
   // ---- activities --------------------------------------------------------
@@ -433,7 +468,7 @@ export class Store {
     validator: ValidatorKind | null = null
   ): string {
     const id = randomUUID();
-    const t = now();
+    const t = this.now();
     this.db
       .query(
         `INSERT INTO activities (id, workstream_id, change_id, parent_activity_id, kind, status, review_status,
@@ -477,24 +512,40 @@ export class Store {
       (latest.get(a.changeId) === a.id && this.getChange(a.changeId).status === 'blocked'));
   }
 
-  /** Atomically claim the oldest pending activity of an active workstream (FIFO). */
-  claimActivity(workstream: string, workerId: string): Activity | null {
+  /** Atomically claim the oldest pending activity of an active workstream (FIFO), with exclusion by change and lease. */
+  claimActivity(workstream: string, workerId: string, ttlMs = LEASE_TTL_MS): Activity | null {
     const ws = this.getWorkstream(workstream);
     if (ws.state !== 'active') return null;
     return this.db.transaction(() => {
       const r = this.db
         .query(
-          `SELECT id FROM activities WHERE workstream_id = ? AND status = 'pending'
-           ORDER BY created_at, rowid LIMIT 1`
+          `SELECT a.id, a.change_id FROM activities a
+           JOIN changes c ON a.change_id = c.id
+           WHERE a.workstream_id = ?
+             AND a.status = 'pending'
+             AND c.status NOT IN ('completed', 'failed', 'canceled', 'declined', 'blocked')
+             AND NOT EXISTS (
+               SELECT 1 FROM activities other
+               WHERE other.change_id = a.change_id
+                 AND other.status = 'in_progress'
+             )
+           ORDER BY a.created_at, a.rowid LIMIT 1`
         )
-        .get(ws.id) as { id: string } | null;
+        .get(ws.id) as { id: string; change_id: string } | null;
       if (!r) return null;
+      const nowIso = this.now();
+      const leaseExpires = new Date(this.clock().getTime() + ttlMs).toISOString();
       const res = this.db
         .query(
-          `UPDATE activities SET status = 'in_progress', worker_id = ?, started_at = ?
-           WHERE id = ? AND status = 'pending'`
+          `UPDATE activities
+           SET status = 'in_progress', worker_id = ?, started_at = ?, lease_expires_at = ?
+           WHERE id = ? AND status = 'pending'
+             AND NOT EXISTS (
+               SELECT 1 FROM activities other
+               WHERE other.change_id = ? AND other.status = 'in_progress' AND other.id != ?
+             )`
         )
-        .run(workerId, now(), r.id);
+        .run(workerId, nowIso, leaseExpires, r.id, r.change_id, r.id);
       if (res.changes !== 1) return null;
       const a = this.getActivity(r.id);
       if (!a.validator) {
@@ -502,7 +553,26 @@ export class Store {
       }
       this.event(ws.id, 'info', `${a.validator ? `validator ${a.validator}` : a.kind} claimed by ${workerId}`, a.changeId, a.id);
       return a;
-    })();
+    }).immediate();
+  }
+
+  /** Extend an active activity lease held by workerId (heartbeat). Rejects if change is terminal. */
+  heartbeat(activityId: string, workerId: string, ttlMs = LEASE_TTL_MS): void {
+    const a = this.getActivity(activityId);
+    const c = this.getChange(a.changeId);
+    if (isTerminalChange(c.status)) {
+      throw new StoreError('invalid_transition', `change ${c.id} is terminal (${c.status}); heartbeat rejected`);
+    }
+    const leaseExpires = new Date(this.clock().getTime() + ttlMs).toISOString();
+    const res = this.db
+      .query(
+        `UPDATE activities SET lease_expires_at = ?
+         WHERE id = ? AND status = 'in_progress' AND worker_id = ?`
+      )
+      .run(leaseExpires, activityId, workerId);
+    if (res.changes !== 1) {
+      throw new StoreError('conflict', `activity ${activityId} is not held by ${workerId} in_progress`);
+    }
   }
 
   /**
@@ -586,12 +656,16 @@ export class Store {
   ): Activity {
     return this.db.transaction(() => {
       const a = this.getActivity(activityId);
+      const c = this.getChange(a.changeId);
+      if (isTerminalChange(c.status)) {
+        throw new StoreError('invalid_transition', `change ${c.id} is terminal (${c.status}); activity completion rejected`);
+      }
       const res = this.db
         .query(
-          `UPDATE activities SET status = 'completed', result = ?, completed_at = ?
+          `UPDATE activities SET status = 'completed', result = ?, completed_at = ?, lease_expires_at = NULL, agent_pgid = NULL
            WHERE id = ? AND status = 'in_progress' AND worker_id = ?`
         )
-        .run(result, now(), activityId, workerId);
+        .run(result, this.now(), activityId, workerId);
       if (res.changes !== 1) throw new StoreError('conflict', `activity ${activityId} is not held by ${workerId}`);
       const ws = this.getWorkstream(a.workstreamId);
       if (a.validator) {
@@ -634,13 +708,13 @@ export class Store {
   blockActivity(activityId: string, workerId: string, reason: string): Activity {
     return this.db.transaction(() => {
       const a = this.getActivity(activityId);
-      const res = this.db.query(`UPDATE activities SET status = 'blocked', error = ?, completed_at = ?
+      const res = this.db.query(`UPDATE activities SET status = 'blocked', error = ?, completed_at = ?, lease_expires_at = NULL, agent_pgid = NULL
         WHERE id = ? AND status = 'in_progress' AND worker_id = ?
         AND EXISTS (SELECT 1 FROM changes c WHERE c.id = activities.change_id
-          AND c.status NOT IN ('completed','failed','canceled','declined','blocked'))`).run(reason, now(), activityId, workerId);
+          AND c.status NOT IN ('completed','failed','canceled','declined','blocked'))`).run(reason, this.now(), activityId, workerId);
       if (res.changes !== 1) throw new StoreError('conflict', `activity ${activityId} is not held by ${workerId}`);
       this.db.query(`UPDATE activities SET status = 'canceled', completed_at = ?
-        WHERE change_id = ? AND status = 'pending'`).run(now(), a.changeId);
+        WHERE change_id = ? AND status = 'pending'`).run(this.now(), a.changeId);
       this.setChangeStatus(a.changeId, 'blocked');
       this.event(a.workstreamId, 'warning', `blocked: ${reason}`, a.changeId, a.id);
       return this.getActivity(activityId);
@@ -651,16 +725,20 @@ export class Store {
   failActivity(activityId: string, workerId: string, error: string): Activity {
     return this.db.transaction(() => {
       const a = this.getActivity(activityId);
+      const c = this.getChange(a.changeId);
+      if (isTerminalChange(c.status)) {
+        throw new StoreError('invalid_transition', `change ${c.id} is terminal (${c.status}); failActivity rejected`);
+      }
       const retryCount = a.retryCount + 1;
       const retry = retryCount < MAX_ACTIVITY_RETRIES;
       const res = this.db
         .query(
           `UPDATE activities SET status = ?, error = ?, retry_count = ?, worker_id = NULL,
-           started_at = NULL, completed_at = ? WHERE id = ? AND status = 'in_progress' AND worker_id = ?
+           started_at = NULL, completed_at = ?, lease_expires_at = NULL, agent_pgid = NULL WHERE id = ? AND status = 'in_progress' AND worker_id = ?
            AND EXISTS (SELECT 1 FROM changes c WHERE c.id = activities.change_id
              AND c.status NOT IN ('completed','failed','canceled','declined','blocked'))`
         )
-        .run(retry ? 'pending' : 'failed', error, retryCount, retry ? null : now(), activityId, workerId);
+        .run(retry ? 'pending' : 'failed', error, retryCount, retry ? null : this.now(), activityId, workerId);
       if (res.changes !== 1) throw new StoreError('conflict', `activity ${activityId} is not held by ${workerId}`);
       if (!a.validator) {
         this.setChangeStatus(a.changeId, retry ? 'pending' : 'failed');
@@ -754,16 +832,124 @@ export class Store {
     })();
   }
 
-  /** Put activities held by dead workers back in the queue (startup recovery). */
-  requeueOrphans(workstream: string): number {
+  /** Record the spawned agent's process group id for cleanup on ungraceful worker termination. */
+  setActivityAgentPgid(activityId: string, pgid: number | null): void {
+    this.db.query('UPDATE activities SET agent_pgid = ? WHERE id = ?').run(pgid, activityId);
+  }
+
+  /** Put activities held by dead workers back in the queue (lease expired). */
+  requeueOrphans(workstream: string, nowIso = this.now()): number {
     const ws = this.getWorkstream(workstream);
-    const res = this.db
+    return this.db.transaction(() => {
+      const expired = this.db
+        .query(
+          `SELECT a.id, a.change_id, a.kind, a.validator, a.agent_pgid, c.status AS change_status
+           FROM activities a
+           JOIN changes c ON a.change_id = c.id
+           WHERE a.workstream_id = ?
+             AND a.status = 'in_progress'
+             AND (a.lease_expires_at IS NULL OR a.lease_expires_at <= ?)`
+        )
+        .all(ws.id, nowIso) as Array<{
+          id: string;
+          change_id: string;
+          kind: ActivityKind;
+          validator: ValidatorKind | null;
+          agent_pgid: number | null;
+          change_status: string;
+        }>;
+
+      let count = 0;
+      for (const act of expired) {
+        if (act.agent_pgid) {
+          // shortcut: asume pools en la misma máquina, revisar si hay pools remotos
+          let isAlive = false;
+          try {
+            process.kill(-act.agent_pgid, 0);
+            isAlive = true;
+          } catch {
+            isAlive = false;
+          }
+          if (isAlive) {
+            try {
+              process.kill(-act.agent_pgid, 'SIGKILL');
+            } catch {}
+            continue;
+          }
+        }
+
+        if (isTerminalChange(act.change_status)) {
+          this.db
+            .query(
+              `UPDATE activities SET status = 'canceled', worker_id = NULL, lease_expires_at = NULL, agent_pgid = NULL
+               WHERE id = ? AND status = 'in_progress'`
+            )
+            .run(act.id);
+        } else {
+          const res = this.db
+            .query(
+              `UPDATE activities
+               SET status = 'pending', worker_id = NULL, started_at = NULL, lease_expires_at = NULL, agent_pgid = NULL
+               WHERE id = ? AND status = 'in_progress'`
+            )
+            .run(act.id);
+          if (res.changes === 1) {
+            count++;
+            if (!act.validator && act.change_status === 'in_progress') {
+              this.setChangeStatus(act.change_id, 'pending');
+            }
+            this.event(
+              ws.id,
+              'warning',
+              `orphaned activity ${act.id} (${act.kind}) requeued (lease expired)`,
+              act.change_id,
+              act.id
+            );
+          }
+        }
+      }
+      return count;
+    }).immediate();
+  }
+
+  /** Release an activity held by workerId when worker aborts or cancels. */
+  releaseActivity(activityId: string, workerId: string): void {
+    this.db
       .query(
-        `UPDATE activities SET status = 'pending', worker_id = NULL, started_at = NULL
-         WHERE workstream_id = ? AND status = 'in_progress'`
+        `UPDATE activities SET status = 'canceled', worker_id = NULL, lease_expires_at = NULL, agent_pgid = NULL
+         WHERE id = ? AND worker_id = ? AND status = 'in_progress'`
       )
-      .run(ws.id);
-    return res.changes;
+      .run(activityId, workerId);
+  }
+
+  /** Wait for all active workers on a change to release their activity before worktree removal. */
+  async waitForRelease(changeId: string, timeoutMs = 30_000, pollMs = 50): Promise<void> {
+    const start = Date.now();
+    while (Date.now() - start < timeoutMs) {
+      const inProgress = this.db
+        .query(`SELECT id, lease_expires_at FROM activities WHERE change_id = ? AND status = 'in_progress'`)
+        .all(changeId) as Array<{ id: string; lease_expires_at: string | null }>;
+      if (inProgress.length === 0) return;
+
+      const nowIso = this.now();
+      const allExpired = inProgress.every((a) => a.lease_expires_at !== null && a.lease_expires_at <= nowIso);
+      if (allExpired) {
+        this.db
+          .query(
+            `UPDATE activities SET status = 'canceled', worker_id = NULL, lease_expires_at = NULL, agent_pgid = NULL
+             WHERE change_id = ? AND status = 'in_progress'`
+          )
+          .run(changeId);
+        return;
+      }
+
+      await Bun.sleep(pollMs);
+    }
+    throw new StoreError('conflict', `timeout waiting for change ${changeId} activities to release`);
+  }
+
+  isTerminalChange(status: string): boolean {
+    return isTerminalChange(status);
   }
 
   /** Context a worker needs: the change, its signals and every earlier result in the chain. */
@@ -785,7 +971,7 @@ export class Store {
   event(workstreamId: string, severity: 'info' | 'warning' | 'error', message: string, changeId?: string, activityId?: string): void {
     this.db
       .query('INSERT INTO events (workstream_id, change_id, activity_id, severity, message, created_at, actor) VALUES (?,?,?,?,?,?,?)')
-      .run(workstreamId, changeId ?? null, activityId ?? null, severity, message, now(), process.env.FAB_ACTOR ?? userInfo().username);
+      .run(workstreamId, changeId ?? null, activityId ?? null, severity, message, this.now(), process.env.FAB_ACTOR ?? userInfo().username);
   }
 
   listEvents(workstream: string, limit = 50): Row[] {
