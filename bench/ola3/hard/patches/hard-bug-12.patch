@@ -1,11 +1,13 @@
 diff --git a/src/manifest.ts b/src/manifest.ts
-index 0e09cdc..1a592aa 100644
+index 0e09cdc..2667ae5 100644
 --- a/src/manifest.ts
 +++ b/src/manifest.ts
-@@ -88,5 +88,5 @@ export function writeManifest(store: Store, changeId: string, stateDir = store.s
-   const scrub = (_key: string, value: unknown) => typeof value === 'string' ? redact(value) : value;
-   atomicEvidence(join(dir, 'run.json'), JSON.stringify({ schemaVersion: 1, changeId, status: c.status,
-     baseSha: c.baseSha, branch, head, createdAt: c.createdAt, updatedAt: c.updatedAt,
--    durationMs: Math.max(0, Date.parse(c.updatedAt) - Date.parse(c.createdAt)), activities, cleanup }, scrub, 2) + '\n');
-+    durationMs: Math.max(0, Math.floor((Date.parse(c.updatedAt) - Date.parse(c.createdAt)) / 1000)), activities, cleanup }, scrub, 2) + '\n');
- }
+@@ -80,7 +80,7 @@ export function writeManifest(store: Store, changeId: string, stateDir = store.s
+     const execution = existsSync(metaPath) ? JSON.parse(readFileSync(metaPath, 'utf8')) : { isolation: isolationFor(a.kind === 'gates' ? 'gates' : ws.agent), egressProbe: null };
+     return { ...a, verdict: (a.validator || a.kind === 'gates') ? ({ approved: 'pass', declined: 'fail', commented: 'needs_human' } as Record<string,string>)[a.reviewStatus ?? ''] ?? null : null,
+       reason: a.error ?? a.reviewComment, log: `${a.id}.log`, ...execution,
+-      durationMs: execution.durationMs ?? (a.startedAt && a.completedAt ? Math.max(0, Date.parse(a.completedAt) - Date.parse(a.startedAt)) : null) };
++      durationMs: execution.durationMs ?? (a.startedAt && a.completedAt ? Math.max(0, Date.parse(a.completedAt) - Date.parse(a.startedAt)) : 0) };
+   });
+   const cleanup = { worktree: existsSync(join(stateDir, 'worktrees', c.id.slice(0, 8))) ? 'retained' : 'absent',
+     branch: gitEvidence(ws.repo, 'show-ref', '--verify', `refs/heads/${branch}`) ? 'retained' : 'absent' };

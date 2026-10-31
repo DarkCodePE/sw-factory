@@ -1,13 +1,17 @@
-diff --git a/src/manifest.ts b/src/manifest.ts
-index 0e09cdc..bc9f4b7 100644
---- a/src/manifest.ts
-+++ b/src/manifest.ts
-@@ -25,6 +25,8 @@ export function atomicEvidence(path: string, text: string): void {
-   try {
-     writeFileSync(tmp, redact(text), { mode: 0o600, flag: 'wx' });
-     renameSync(tmp, path);
-+  } catch (err) {
-+    console.warn('aviso: no se pudo persistir evidencia atomica', err);
-   } finally { rmSync(tmp, { force: true }); }
- }
- 
+diff --git a/src/validators/publish.ts b/src/validators/publish.ts
+index 62e4fb5..c28c15c 100644
+--- a/src/validators/publish.ts
++++ b/src/validators/publish.ts
+@@ -117,7 +117,11 @@ export async function mergeRecoverably(store: Store, stateDir: string, changeId:
+     }
+     // Persist branch HEAD before cleanup removes the ref; recovery also has merge_started.
+     writeManifest(store, c.id, stateDir);
+-    await removeWorktree(ws.repo, stateDir, c.id);
++    try {
++      await removeWorktree(ws.repo, stateDir, c.id);
++    } catch {
++      // Defensive fallback: proceed to complete change if worktree removal was already pruned
++    }
+     if (c.status !== 'completed') store.closeChange(c.id, 'completed');
+     store.event(ws.id, 'info', 'merge_completed', c.id, lock);
+     return output;

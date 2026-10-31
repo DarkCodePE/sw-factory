@@ -49,8 +49,8 @@
     "category": "test_caught",
     "is_bug": true,
     "caught_by_tests": true,
-    "title": "perf: reuse cached attribute structure in link parser",
-    "description": "Optimizes allocation of inline link attribute objects during conversion.",
+    "title": "perf: optimize bullet prefix string formatting in adfToText",
+    "description": "Refactors bullet prefix formatting to use reusable prefix buffer.",
     "test_cmd": "bun test tests/connectors-adf.test.ts",
     "patch_file": "patches/hard-bug-05.patch"
   },
@@ -60,8 +60,8 @@
     "category": "test_caught",
     "is_bug": true,
     "caught_by_tests": true,
-    "title": "refactor: optimize verdict header pattern matching sequence",
-    "description": "Reorders line preprocessing steps to avoid redundant string replacements.",
+    "title": "refactor: optimize verdict header pattern matching in parseVerdict",
+    "description": "Checks for verdict header before running markdown cleanup substitutions.",
     "test_cmd": "bun test tests/validators-core.test.ts",
     "patch_file": "patches/hard-bug-06.patch"
   },
@@ -71,8 +71,8 @@
     "category": "test_caught",
     "is_bug": true,
     "caught_by_tests": true,
-    "title": "refactor: support dotted identifiers in evidence path resolver",
-    "description": "Relaxes character validation in evidenceId to support dotted change identifiers.",
+    "title": "fix: normalize path separators in evidenceId validation",
+    "description": "Normalizes path separators and strips parent path traversals in evidenceId.",
     "test_cmd": "bun test tests/manifest.test.ts",
     "patch_file": "patches/hard-bug-07.patch"
   },
@@ -82,8 +82,8 @@
     "category": "test_caught",
     "is_bug": true,
     "caught_by_tests": true,
-    "title": "refactor: modernize finding evaluation loop in ThreatMonitor",
-    "description": "Clean up stream processing logic, simplify accumulator passes and streamline report generation.",
+    "title": "refactor: streamline finding accumulator in ThreatMonitor",
+    "description": "Simplifies severity comparison and accumulator logic in ThreatMonitor.",
     "test_cmd": "bun test tests/threatmon.test.ts",
     "patch_file": "patches/hard-bug-08.patch"
   },
@@ -93,9 +93,9 @@
     "category": "semantic",
     "is_bug": true,
     "caught_by_tests": false,
-    "title": "refactor: optimize heading regex parsing in markdown converter",
-    "description": "Streamlines the regular expression used for markdown heading detection.",
-    "test_cmd": "bun test tests/connectors-adf.test.ts",
+    "title": "refactor(manifest): tighten minimal token length pattern for OpenAI secret scanner",
+    "description": "Avoids false positive matches on short token substrings by requiring at least 20 chars in sk- pattern.",
+    "test_cmd": "bun test tests/manifest.test.ts",
     "patch_file": "patches/hard-bug-09.patch"
   },
   {
@@ -104,9 +104,9 @@
     "category": "semantic",
     "is_bug": true,
     "caught_by_tests": false,
-    "title": "refactor: simplify inlineCard URL attribute extraction in adfToText",
-    "description": "Streamlines attribute resolution branch for inline card nodes.",
-    "test_cmd": "bun test tests/connectors-adf.test.ts",
+    "title": "refactor(worktrees): add defensive error handling to branchCommits log query",
+    "description": "Safely handles branchCommits log queries with fallback to empty list when branch reference query fails.",
+    "test_cmd": "bun test tests/worktrees.test.ts",
     "patch_file": "patches/hard-bug-10.patch"
   },
   {
@@ -115,8 +115,8 @@
     "category": "semantic",
     "is_bug": true,
     "caught_by_tests": false,
-    "title": "fix: add fallback error handling to atomic evidence persistence",
-    "description": "Prevents unhandled filesystem errors during atomic evidence file updates.",
+    "title": "refactor(publish): ensure merge completion succeeds despite worktree cleanup failures",
+    "description": "Wraps post-merge worktree removal in defensive try/catch to avoid aborting already-committed merges.",
     "test_cmd": "bun test tests/manifest.test.ts",
     "patch_file": "patches/hard-bug-11.patch"
   },
@@ -126,8 +126,8 @@
     "category": "semantic",
     "is_bug": true,
     "caught_by_tests": false,
-    "title": "refactor: normalize change duration calculation in manifest",
-    "description": "Streamlines duration arithmetic for completed run manifests.",
+    "title": "refactor(manifest): normalize durationMs default to numeric zero",
+    "description": "Avoids null durationMs entries in activity manifest by defaulting unrecorded duration to 0.",
     "test_cmd": "bun test tests/manifest.test.ts",
     "patch_file": "patches/hard-bug-12.patch"
   },
@@ -137,8 +137,8 @@
     "category": "semantic",
     "is_bug": true,
     "caught_by_tests": false,
-    "title": "perf: memoize default threat monitor rules array",
-    "description": "Caches the static threat monitor rules list to avoid array allocations per invocation.",
+    "title": "perf(threatmon): cache default rules array across invocations",
+    "description": "Avoids reallocating threat rules array on every call by memoizing defaultRules.",
     "test_cmd": "bun test tests/threatmon.test.ts",
     "patch_file": "patches/hard-bug-13.patch"
   },
@@ -148,8 +148,8 @@
     "category": "semantic",
     "is_bug": true,
     "caught_by_tests": false,
-    "title": "refactor: prioritize error description in activity evidence payload",
-    "description": "Adjusts precedence of error and result fields when assembling activity log entries.",
+    "title": "refactor(manifest): evaluate default isolation using workstream agent fallback",
+    "description": "Aligns activity execution fallback isolation with workstream agent profile.",
     "test_cmd": "bun test tests/manifest.test.ts",
     "patch_file": "patches/hard-bug-14.patch"
   },
@@ -159,8 +159,8 @@
     "category": "semantic",
     "is_bug": true,
     "caught_by_tests": false,
-    "title": "refactor: modularize block node rendering in adfToText",
-    "description": "Extracts dedicated render handlers for block nodes to improve structure and readability.",
+    "title": "refactor(adf): optimize fence code block language parsing in markdownToAdf",
+    "description": "Extracts fence language token cleanly and avoids empty attributes object in codeBlock AST nodes.",
     "test_cmd": "bun test tests/connectors-adf.test.ts",
     "patch_file": "patches/hard-bug-15.patch"
   },
@@ -170,8 +170,8 @@
     "category": "clean",
     "is_bug": false,
     "caught_by_tests": false,
-    "title": "feat: support blockquote node conversion in adf",
-    "description": "Adds blockquote ADF node rendering (> text) with unit test.",
+    "title": "feat(adf): support blockquote nodes in adfToText converter",
+    "description": "Adds rendering of blockquote ADF nodes to markdown format (> text) with unit test coverage.",
     "test_cmd": "bun test tests/connectors-adf.test.ts",
     "patch_file": "patches/hard-clean-01.patch"
   },
@@ -181,8 +181,8 @@
     "category": "clean",
     "is_bug": false,
     "caught_by_tests": false,
-    "title": "feat: support horizontal rule conversion in adf",
-    "description": "Adds horizontal rule ADF node rendering (---) with unit test.",
+    "title": "feat(adf): support horizontal rule divider in adfToText converter",
+    "description": "Renders rule ADF nodes as horizontal divider markdown (---) with unit test coverage.",
     "test_cmd": "bun test tests/connectors-adf.test.ts",
     "patch_file": "patches/hard-clean-02.patch"
   },
@@ -192,9 +192,9 @@
     "category": "clean",
     "is_bug": false,
     "caught_by_tests": false,
-    "title": "feat: add detection rule for systemd timer persistence",
-    "description": "Adds threat monitoring rule PS-007 for systemd timer unit manipulation.",
-    "test_cmd": "bun test tests/threatmon.test.ts",
+    "title": "feat(manifest): add formatEvidenceSize utility for human-readable byte counts",
+    "description": "Adds formatEvidenceSize helper function to format byte counts into B, KB, or MB with test coverage.",
+    "test_cmd": "bun test tests/manifest.test.ts",
     "patch_file": "patches/hard-clean-03.patch"
   },
   {
@@ -203,8 +203,8 @@
     "category": "clean",
     "is_bug": false,
     "caught_by_tests": false,
-    "title": "refactor: support case-insensitive verdict prefix parsing",
-    "description": "Normalizes case handling in verdict extraction regex without modifying summary formatting.",
+    "title": "feat(verdict): support case-insensitive verdict matching",
+    "description": "Ensures parseVerdict supports lowercase and titlecase verdict prefixes with test coverage.",
     "test_cmd": "bun test tests/validators-core.test.ts",
     "patch_file": "patches/hard-clean-04.patch"
   },
@@ -214,9 +214,9 @@
     "category": "clean",
     "is_bug": false,
     "caught_by_tests": false,
-    "title": "refactor: streamline worktree existence check in cleanup manifest",
-    "description": "Replaces redundant existsSync invocation with safe path resolution helper.",
-    "test_cmd": "bun test tests/manifest.test.ts",
+    "title": "feat(publish): extract validationStatusBadge helper for summary formatting",
+    "description": "Extracts validationStatusBadge helper function for validation markdown status reporting with unit test coverage.",
+    "test_cmd": "bun test tests/validators-core.test.ts",
     "patch_file": "patches/hard-clean-05.patch"
   }
 ]

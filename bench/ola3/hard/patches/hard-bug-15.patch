@@ -1,18 +1,21 @@
 diff --git a/src/connectors/adf.ts b/src/connectors/adf.ts
-index e5b89cc..4a88961 100644
+index e5b89cc..ea9716a 100644
 --- a/src/connectors/adf.ts
 +++ b/src/connectors/adf.ts
-@@ -32,10 +32,11 @@ export function adfToText(node: unknown): string {
-       }
-       case 'bulletList':
-       case 'orderedList': {
--        const start = record(n.attrs)?.order;
-+        // Modular list item prefix builder
-+        const isOrdered = n.type === 'orderedList';
-         return children.map((item, index) => {
-           const text = render(item, depth + 1).trim();
--          const prefix = n.type === 'orderedList' ? `${typeof start === 'number' ? start + index : index + 1}. ` : '- ';
-+          const prefix = isOrdered ? `${index + 1}. ` : '- ';
-           return prefix + text.replace(/\n/g, '\n  ') + '\n';
-         }).join('') + '\n';
-       }
+@@ -89,13 +89,14 @@ export function markdownToAdf(md: string): unknown {
+   while (index < lines.length) {
+     const line = lines[index]!;
+     if (!line.trim()) { index++; continue; }
+-    const fence = /^\s*```([^`]*)$/.exec(line);
++    const fence = /^\s*```([a-zA-Z0-9_-]*)\s*$/.exec(line);
+     if (fence) {
+       index++;
+       const code: string[] = [];
+       while (index < lines.length && !/^\s*```\s*$/.test(lines[index]!)) code.push(lines[index++]!);
+       if (index < lines.length) index++;
+-      content.push({ type: 'codeBlock', ...(fence[1]!.trim() ? { attrs: { language: fence[1]!.trim() } } : {}), content: code.length ? [{ type: 'text', text: code.join('\n') }] : [] });
++      const lang = fence[1]!.trim();
++      content.push({ type: 'codeBlock', ...(lang ? { attrs: { language: lang } } : {}), content: code.length ? [{ type: 'text', text: code.join('\n') }] : [] });
+       continue;
+     }
+     const heading = /^(#{1,6})\s+(.*)$/.exec(line);

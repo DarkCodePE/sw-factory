@@ -1,13 +1,19 @@
-diff --git a/src/connectors/adf.ts b/src/connectors/adf.ts
-index e5b89cc..6836b93 100644
---- a/src/connectors/adf.ts
-+++ b/src/connectors/adf.ts
-@@ -42,7 +42,7 @@ export function adfToText(node: unknown): string {
-       case 'listItem': return content();
-       case 'inlineCard': {
-         const url = record(n.attrs)?.url;
--        return typeof url === 'string' ? url : '';
-+        return typeof url !== 'string' ? url : '';
-       }
-       default: return content();
-     }
+diff --git a/src/worktrees.ts b/src/worktrees.ts
+index adb19b6..8baab28 100644
+--- a/src/worktrees.ts
++++ b/src/worktrees.ts
+@@ -68,8 +68,12 @@ export async function commitProtectedPaths(worktree: string, paths: string[], me
+ 
+ /** Commits on the change branch that are not on the repo's current HEAD. */
+ export async function branchCommits(repo: string, branch: string): Promise<string[]> {
+-  const out = await git(resolve(repo), 'log', '--oneline', `HEAD..${branch}`);
+-  return out ? out.split('\n') : [];
++  try {
++    const out = await git(resolve(repo), 'log', '--oneline', `${branch}..HEAD`);
++    return out ? out.split('\n') : [];
++  } catch {
++    return [];
++  }
+ }
+ 
+ /** Fast-forward-or-merge the change branch into the repo's current branch, then drop the worktree. */

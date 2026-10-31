@@ -1,29 +1,47 @@
-diff --git a/src/manifest.ts b/src/manifest.ts
-index 0e09cdc..131d59f 100644
---- a/src/manifest.ts
-+++ b/src/manifest.ts
-@@ -82,7 +82,8 @@ export function writeManifest(store: Store, changeId: string, stateDir = store.s
-       reason: a.error ?? a.reviewComment, log: `${a.id}.log`, ...execution,
-       durationMs: execution.durationMs ?? (a.startedAt && a.completedAt ? Math.max(0, Date.parse(a.completedAt) - Date.parse(a.startedAt)) : null) };
-   });
--  const cleanup = { worktree: existsSync(join(stateDir, 'worktrees', c.id.slice(0, 8))) ? 'retained' : 'absent',
-+  const hasPath = (p: string) => existsSync(p);
-+  const cleanup = { worktree: hasPath(join(stateDir, 'worktrees', c.id.slice(0, 8))) ? 'retained' : 'absent',
-     branch: gitEvidence(ws.repo, 'show-ref', '--verify', `refs/heads/${branch}`) ? 'retained' : 'absent' };
-   // Redact strings before JSON encoding so multiline PEMs cannot evade scrubbing.
-   const scrub = (_key: string, value: unknown) => typeof value === 'string' ? redact(value) : value;
-diff --git a/tests/manifest.test.ts b/tests/manifest.test.ts
-index fa69f49..523e4bf 100644
---- a/tests/manifest.test.ts
-+++ b/tests/manifest.test.ts
-@@ -76,6 +76,10 @@ test('eight secret families disappear from manifest and complete logs', async ()
-   expect(redact(text).match(/\[REDACTED\]/g)!.length).toBeGreaterThanOrEqual(8);
+diff --git a/src/validators/publish.ts b/src/validators/publish.ts
+index 62e4fb5..e2ba6cc 100644
+--- a/src/validators/publish.ts
++++ b/src/validators/publish.ts
+@@ -3,9 +3,15 @@ import type { ChangeLinkLookup, PullRequestGateway, ValidationSummary } from '..
+ /**
+  * Generates a Markdown summary table of validator results.
+  */
++export function validationStatusBadge(passed: boolean, pending: boolean): string {
++  if (passed) return 'APROBADO';
++  if (pending) return 'PENDIENTE';
++  return 'FALLIDO';
++}
++
+ export function validationMarkdown(summary: ValidationSummary): string {
+   const shortId = summary.changeId.slice(0, 8);
+-  const statusEmoji = summary.passed ? 'APROBADO' : summary.pending ? 'PENDIENTE' : 'FALLIDO';
++  const statusEmoji = validationStatusBadge(summary.passed, summary.pending);
+ 
+   const rows = summary.results.map((r) => {
+     const verdict = r.verdict ? `**${r.verdict.toUpperCase()}**` : r.failed ? '*sin veredicto (falló)*' : '*pendiente*';
+diff --git a/tests/validators-core.test.ts b/tests/validators-core.test.ts
+index 154c45a..03315b2 100644
+--- a/tests/validators-core.test.ts
++++ b/tests/validators-core.test.ts
+@@ -7,7 +7,7 @@ import { join } from 'node:path';
+ import { VALIDATOR_KINDS, type ChangeLinks, type PullRequestGateway, type PullRequestRef, type ValidationSummary } from '../src/connectors/types.ts';
+ import { Store, StoreError } from '../src/store.ts';
+ import { buildValidatorPrompt } from '../src/validators/prompts.ts';
+-import { mergeBlocker, publishValidation, validationMarkdown } from '../src/validators/publish.ts';
++import { mergeBlocker, publishValidation, validationMarkdown, validationStatusBadge } from '../src/validators/publish.ts';
+ import { parseVerdict } from '../src/validators/verdict.ts';
+ 
+ let dir: string;
+@@ -23,6 +23,12 @@ afterEach(() => {
+   rmSync(dir, { recursive: true, force: true });
  });
  
-+test('safe path resolution helper behaves consistently', () => {
-+  expect(existsSync(dir)).toBe(true);
++test('validationStatusBadge returns expected label based on pass and pending states', () => {
++  expect(validationStatusBadge(true, false)).toBe('APROBADO');
++  expect(validationStatusBadge(false, true)).toBe('PENDIENTE');
++  expect(validationStatusBadge(false, false)).toBe('FALLIDO');
 +});
 +
- test('atomic writes and evidence path validation', () => {
-   const path = join(dir, 'runs', 'atomic.log');
-   atomicEvidence(path, 'first'); atomicEvidence(path, 'second');
+ test('parseVerdict extracts verdict and summary under various markdown formats', () => {
+   const sample1 = `STATUS: done
+ VERDICT: pass
