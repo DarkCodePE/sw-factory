@@ -44,34 +44,34 @@ const reSudoersWrite = /(?:>>?\s*\S*\/etc\/sudoers\b|\b(?:tee|visudo|sed\s+-i|cp
 const rePrivilegeBits = /(?:\bchmod\b[^\n]{0,40}(?:\bu\+s\b|\bg\+s\b|\bo\+s\b|\b4[0-7]{3}\b)|\bsetcap\b[^\n]{0,40}\bcap_[a-z]|\bchown\b[^\n]{0,40}\broot(?::root)?\b)/i;
 
 // PE-003: loading kernel modules or mounting filesystems.
-const reKernelModuleOrMount = /(?:\b(?:insmod|modprobe|rmmod)\b\s+[A-Za-z0-9_./-]\S*|\bmount\b[^\n]{0,60}(?:\s-o\s|\/dev\/|--bind|\btmpfs\b|\bproc\b|\bsysfs\b))/i;
+const reKernelModuleOrMount = /(?:\b(?:insmod|modprobe|rmmod)\b\s+[A-Za-z0-9_./-]\S*|\bmount\b[^|\n]{0,60}(?:\s-o\s|\/dev\/\S+\s+\S+|--bind\b|\b-t\s+(?:tmpfs|proc|sysfs)\b|\btmpfs\b|\bproc\b|\bsysfs\b))/i;
 
 // PE-004: altering firewall or packet filter rules.
 const reFirewallChange = /\b(?:iptables|ip6tables|nft|nftables|ufw)\b\s+/i;
 
 // CA-001: reading /proc/<pid>/environ for secrets.
-const reProcEnviron = /\/proc\/[A-Za-z0-9_.-]+\/environ\b/i;
+const reProcEnviron = /(?:^|[\s;|&`$()<])(?:cat|less|more|head|tail|grep|awk|sed|cp|scp|strings|xxd|od|hexdump|dd|getent|python[0-9.]*|perl)\b[^\n]{0,60}\/proc\/[A-Za-z0-9_.-]+\/environ\b|<[^\n]{0,20}\/proc\/[A-Za-z0-9_.-]+\/environ\b/i;
 
 // CA-002: sweeping environment for secrets with env/printenv | grep.
 const reEnvGrepSweep = /\b(?:env|printenv)\b[^\n]{0,20}\|\s*grep\b/i;
 
 // CA-003: touching credential stores (aws, netrc, docker, opencode, gh).
-const reCredentialStores = /(?:\.aws\/credentials\b|(?:^|[\s/])\.netrc\b|\.docker\/config\.json\b|(?:\.config\/)?opencode\/(?:auth\.json|credentials\.json)\b|\.config\/gh\/hosts\.yml\b|\bAWS_SECRET_ACCESS_KEY\b)/i;
+const reCredentialStores = /(?:\.aws\/credentials\b|(?:^|[\s/])\.netrc\b|\.docker\/config\.json\b|(?:\.config\/)?opencode\/(?:auth\.json|credentials\.json)\b|\.config\/gh\/hosts\.yml\b|\bAWS_SECRET_ACCESS_KEY\s*[:=]\s*['"]?[A-Za-z0-9/+=]{16,}|\bexport\s+AWS_SECRET_ACCESS_KEY=\S+)/i;
 
 // CA-004: reading SSH private keys under .ssh.
 const reSSHPrivateKey = /(?:\.ssh\/|\/)id_(?:rsa|ed25519|ecdsa|dsa)\b/i;
 
 // CA-005: cloud instance metadata service (IMDS).
-const reCloudMetadata = /\b169\.254\.169\.254\b|\bmetadata\.google\.internal\b|\b100\.100\.100\.200\b/i;
+const reCloudMetadata = /(?:^|[\s;|&`$()<>])(?:curl|wget|http|fetch|nc|ncat|netcat|socat|telnet|python[0-9.]*|urllib|requests)\b[^\n]{0,120}\b(?:169\.254\.169\.254|metadata\.google\.internal|100\.100\.100\.200)\b/i;
 
 // CA-006: password cracking tools.
 const rePasswordCracker = /\b(?:hydra|hashcat|medusa|john)\b\s+-{1,2}\S/i;
 
 // RC-001: network scanning or probe loops.
-const reNetworkScanner = /\b(?:nmap|masscan|zmap)\b|\b(?:nc|ncat|netcat)\b[^\n]{0,30}\s-z\b|\bfor\s+[A-Za-z_]\w*\s+in\s+\$\(\s*seq\b/i;
+const reNetworkScanner = /(?:^|[\s;|&`$()<>])nmap\s+(?:-[A-Za-z0-9]|(?:\d{1,3}\.){3}\d{1,3}|[a-zA-Z0-9.-]+\.[a-zA-Z]{2,})|\b(?:masscan|zmap)\b|\b(?:nc|ncat|netcat)\b[^\n]{0,30}\s-z\b|\bfor\s+[A-Za-z_]\w*\s+in\s+\$\(\s*seq\b[^\n]{0,100}\b(?:nc|ncat|netcat|curl|wget|ping|telnet|\/dev\/tcp)\b/i;
 
 // RC-002: offensive exploitation frameworks.
-const reExploitFramework = /\b(?:msfconsole|msfvenom|metasploit|sqlmap|nikto|gobuster|ffuf|enum4linux|wpscan|nuclei)\b/i;
+const reExploitFramework = /(?:^|[\s;|&`$()<>])(?:msfconsole|msfvenom|metasploit|sqlmap|nikto|gobuster|ffuf|enum4linux|wpscan|nuclei)\s+(?:-[A-Za-z0-9]|\S+)/i;
 
 // RC-003: reading /etc/shadow.
 const reShadowRead = /\/etc\/shadow\b/i;
@@ -86,10 +86,10 @@ const reSocketSweep = /\b(?:ss|netstat)\b\s+-{1,2}[A-Za-z]*[tunlaxp][A-Za-z]*/i;
 const reKubectlSecrets = /\bkubectl\b[^\n]{0,80}\bsecrets?\b/i;
 
 // RS-001: netcat execute flag reverse shell.
-const reNetcatExec = /\b(?:nc|ncat|netcat)\b[^\n]{0,40}\s-[A-Za-z]*e[A-Za-z]*(?:\s|$)/i;
+const reNetcatExec = /\b(?:nc|ncat|netcat)\b[^\n]{0,40}\s-(?:[A-Za-z]*e[A-Za-z]*|-exec)\s+(?:\S*\/)?(?:sh|bash|zsh|dash|ash|csh|tcsh|python[0-9.]*|perl|ruby|cmd(?:\.exe)?|powershell(?:\.exe)?)\b/i;
 
 // RS-002: bash /dev/tcp interactive shell.
-const reBashDevTCP = /(?:\b(?:bash|sh)\s+-i\b[^\n]{0,40}\/dev\/tcp\/|\bexec\s+\d+\s*<>?\s*\/dev\/tcp\/|\b\d+\s*<>?\s*\/dev\/tcp\/)/i;
+const reBashDevTCP = /(?:\b(?:bash|sh)\s+-[A-Za-z]*i\b[^\n]{0,60}\/dev\/tcp\/|>&[0-9]*\s*\/dev\/tcp\/|\bexec\s+(\d+)\s*<>?\s*\/dev\/tcp\/\S+[^\n]*(?:<&\1|>&\1|\$line|while\s+read)|\b\d+<>\s*\/dev\/tcp\/\S+[^\n]*(?:0>&|1>&|2>&))/i;
 
 // RS-003: socat exec reverse shell.
 const reSocatExec = /\bsocat\b[^\n]{0,80}\bexec:/i;
@@ -97,17 +97,23 @@ const reSocatExec = /\bsocat\b[^\n]{0,80}\bexec:/i;
 // RS-004: Python pty.spawn shell upgrade.
 const rePtySpawn = /\bpty\.spawn\b/i;
 
+// RS-005: Download and execute piped directly into shell interpreter.
+const reCurlPipeShell = /\b(?:curl|wget|fetch)\b[^\n]{0,120}(?:http:\/\/|https?:\/\/(?:\d{1,3}\.){3}\d{1,3})[^\n]{0,80}\|\s*(?:sudo\s+)?(?:bash|sh|zsh|dash|ash)\b/i;
+
 // PS-001: cron job installation or modification.
-const reCronPersistence = /(?:\bcrontab\b[^\n]{0,20}\s-{1,2}[er]\b|>>?\s*\S*\/etc\/cron|\/etc\/cron\.d\b|\/var\/spool\/cron\/)/i;
+const reCronPersistence = /(?:\bcrontab\s+(?:-{1,2}[er]\b|-(?:\s|$)|[A-Za-z0-9_./~]+)|\|\s*crontab\b|>>?\s*\S*\/etc\/cron|\/etc\/cron\.d\b|\/var\/spool\/cron\/)/i;
 
 // PS-002: systemd service persistence.
 const reSystemdPersistence = /(?:>>?\s*\S*\/etc\/systemd\/system\/|\/etc\/systemd\/system\/\S*\.service\b|\bsystemctl\s+(?:enable|link|daemon-reload)\b)/i;
 
-// PS-003: appending to shell profile startup files (.bashrc, etc.).
-const reShellRCPersistence = /(?:>>?\s*\S*\.(?:bashrc|bash_profile|profile|zshrc|zprofile)\b|\btee\b[^\n]{0,20}\s-a\b[^\n]{0,60}\.(?:bashrc|bash_profile|zshrc)\b)/i;
+// PS-003: appending to shell profile startup files (.bashrc, etc.) with network commands.
+const reShellRCPersistence = /(?:(?:>>?\s*\S*\.(?:bashrc|bash_profile|profile|zshrc|zprofile)\b|\btee\b[^\n]{0,20}\s-a\b[^\n]{0,60}\.(?:bashrc|bash_profile|zshrc)\b)[^\n]*\b(?:curl|wget|nc|ncat|netcat|\/dev\/tcp|bash\s+-[A-Za-z]*i|socat|fetch)\b|\b(?:curl|wget|nc|ncat|netcat|\/dev\/tcp|bash\s+-[A-Za-z]*i|socat|fetch)\b[^\n]*(?:>>?\s*\S*\.(?:bashrc|bash_profile|profile|zshrc|zprofile)\b|\btee\b[^\n]{0,20}\s-a\b[^\n]{0,60}\.(?:bashrc|bash_profile|zshrc)\b))/i;
 
 // PS-004: adding SSH authorized keys.
 const reAuthorizedKeys = /(?:>>?\s*\S*authorized_keys\b|\bauthorized_keys\b[^\n]{0,40}(?:>>|\btee\b)|\bssh-copy-id\b)/i;
+
+// PS-005: user-level systemd service persistence.
+const reUserSystemd = /(?:>>?\s*\S*\.config\/systemd\/user\/|\.config\/systemd\/user\/\S*\.service\b|\bsystemctl\s+--user\s+(?:enable|link|daemon-reload|start)\b)/i;
 
 // EX-001: uploading files via curl/wget.
 const reUploadTransfer = /\b(?:curl|wget)\b[^\n]{0,120}(?:\s-T\b|--upload-file\b|--post-file\b|--data-binary\s*@|--data\s*@)/i;
@@ -300,6 +306,13 @@ export function defaultRules(): ThreatRule[] {
       pattern: rePtySpawn,
     },
     {
+      id: 'RS-005',
+      category: 'reverse-shell',
+      description: 'Download and execute script piped directly into a shell interpreter',
+      severity: 'CRITICAL',
+      pattern: reCurlPipeShell,
+    },
+    {
       id: 'PS-001',
       category: 'persistence',
       description: 'Install or alter a scheduled job through crontab or the cron spool',
@@ -326,6 +339,13 @@ export function defaultRules(): ThreatRule[] {
       description: 'Add an SSH key to authorized_keys or via ssh-copy-id',
       severity: 'HIGH',
       pattern: reAuthorizedKeys,
+    },
+    {
+      id: 'PS-005',
+      category: 'persistence',
+      description: 'Create or enable user-level systemd service persistence',
+      severity: 'HIGH',
+      pattern: reUserSystemd,
     },
     {
       id: 'EX-001',
