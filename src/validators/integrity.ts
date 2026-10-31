@@ -10,6 +10,7 @@ export const DEFAULT_PROTECTED_PATHS = [
   'pyproject.toml', 'pytest.ini', 'setup.cfg', 'conftest.py', 'Makefile',
   '.github/**', '.gitattributes', '.gitmodules',
 ];
+const PROSE = /\.(md|txt|rst)$/i;
 export type GateSnapshot = Record<string, { disk: string | null; head: string | null }>;
 
 async function gitRaw(cwd: string, ...args: string[]): Promise<string> {
@@ -60,8 +61,10 @@ export async function protectedIntegrity(
   const [base, head, algorithm] = await Promise.all([
     tree(worktree, baseSha), tree(worktree, 'HEAD'), gitRaw(worktree, 'rev-parse', '--show-object-format'),
   ]);
-  const globs = patterns.map(p => new Bun.Glob(p));
-  const matches = (path: string) => globs.some(glob => glob.match(path) || glob.match(path + '/'));
+  // A wildcard extension (`**/*.test.*`) means code: prose a tool writes there (graft's `*.test.md` index) runs in no test runner.
+  const globs = patterns.map(p => ({ glob: new Bun.Glob(p), prose: !p.endsWith('.*') }));
+  const matches = (path: string) => globs.some(({ glob, prose }) =>
+    (prose || !PROSE.test(path)) && (glob.match(path) || glob.match(path + '/')));
   const disk = diskTree(worktree, algorithm.trim(), matches);
   const paths = [...new Set([...base.keys(), ...head.keys(), ...disk.keys(), ...Object.keys(allowed)])]
     .filter(matches).sort();
