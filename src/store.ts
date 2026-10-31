@@ -4,6 +4,8 @@
 import { Database } from 'bun:sqlite';
 import { randomUUID } from 'node:crypto';
 import { userInfo } from 'node:os';
+import { dirname, resolve } from 'node:path';
+import { writeManifest } from './manifest.ts';
 
 import {
   type ActivityKind,
@@ -41,6 +43,7 @@ export const TERMINAL_CHANGE_STATUSES: readonly string[] = [
   'canceled',
   'declined',
   'blocked',
+  'quarantined',
 ];
 
 export function isTerminalChange(status: string): boolean {
@@ -231,9 +234,12 @@ export interface StoreOptions {
 
 export class Store {
   readonly db: Database;
+  readonly stateDir: string | undefined;
+  private readonly terminalEvidence = new Set<string>();
   readonly clock: () => Date;
 
   constructor(path: string, options?: StoreOptions) {
+    this.stateDir = path === ':memory:' ? undefined : dirname(resolve(path));
     this.clock = options?.clock ?? (() => new Date());
     this.db = new Database(path, { create: true, strict: true });
     this.db.exec('PRAGMA journal_mode = WAL; PRAGMA foreign_keys = ON; PRAGMA busy_timeout = 5000;');
@@ -272,7 +278,9 @@ export class Store {
   }
 
   close(): void {
-    this.db.close();
+    // Refresh cleanup observations after callers remove a terminal change worktree.
+    try { for (const id of this.terminalEvidence) writeManifest(this, id); }
+    finally { this.db.close(); }
   }
 
   // ---- workstreams -------------------------------------------------------
@@ -456,8 +464,10 @@ export class Store {
     this.db.query('UPDATE changes SET status = ?, updated_at = ? WHERE id = ?').run(status, this.now(), changeId);
     // Claims skip terminal changes, so pending work left behind would never run and keep `--once` from going idle.
     if (isTerminalChange(status)) {
+      this.terminalEvidence.add(changeId);
       this.db.query(`UPDATE activities SET status = 'canceled', completed_at = ? WHERE change_id = ? AND status = 'pending'`)
         .run(this.now(), changeId);
+      writeManifest(this, changeId);
     }
   }
 
@@ -705,6 +715,7 @@ export class Store {
       } else {
         this.setChangeStatus(a.changeId, 'completed');
       }
+      writeManifest(this, a.changeId);
       return this.getActivity(activityId);
     })();
   }
@@ -796,13 +807,19 @@ export class Store {
 
   /** Close an implemented change after its branch was merged (or reject it). */
   closeChange(changeId: string, outcome: 'completed' | 'canceled'): Change {
-    const c = this.getChange(changeId);
-    if (outcome === 'completed' && c.status !== 'implemented') {
-      throw new StoreError('invalid_transition', `change ${changeId} is ${c.status}, not implemented`);
-    }
-    this.setChangeStatus(changeId, outcome);
-    this.event(c.workstreamId, 'info', `change ${outcome}`, changeId);
-    return this.getChange(changeId);
+    return this.db.transaction(() => {
+      const c = this.getChange(changeId);
+      if (this.listActivities({ changeId }).some(a => a.status === 'in_progress' && a.workerId?.startsWith('merge:') &&
+          (outcome === 'canceled' || a.workerId !== `merge:${process.pid}`))) {
+        throw new StoreError('conflict', 'change tiene un merge en curso; reanuda fab merge primero');
+      }
+      if (outcome === 'completed' && c.status !== 'implemented') {
+        throw new StoreError('invalid_transition', `change ${changeId} is ${c.status}, not implemented`);
+      }
+      this.setChangeStatus(changeId, outcome);
+      this.event(c.workstreamId, 'info', `change ${outcome}`, changeId);
+      return this.getChange(changeId);
+    }).immediate();
   }
 
   /** Human retry of the latest failed activity, preserving validator context and resetting its budget. */
@@ -925,6 +942,7 @@ export class Store {
          WHERE id = ? AND worker_id = ? AND status = 'in_progress'`
       )
       .run(activityId, workerId);
+    writeManifest(this, this.getActivity(activityId).changeId);
   }
 
   /** Wait for all active workers on a change to release their activity before worktree removal. */
@@ -977,6 +995,8 @@ export class Store {
     this.db
       .query('INSERT INTO events (workstream_id, change_id, activity_id, severity, message, created_at, actor) VALUES (?,?,?,?,?,?,?)')
       .run(workstreamId, changeId ?? null, activityId ?? null, severity, message, this.now(), process.env.FAB_ACTOR ?? userInfo().username);
+    if (changeId && (isTerminalChange(this.getChange(changeId).status) ||
+        activityId && this.isTerminal(this.getActivity(activityId).status))) writeManifest(this, changeId);
   }
 
   listEvents(workstream: string, limit = 50): Row[] {

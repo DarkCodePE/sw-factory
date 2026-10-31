@@ -4,6 +4,7 @@ import { mkdirSync } from 'node:fs';
 import { resolve } from 'node:path';
 import { parseArgs } from 'node:util';
 
+import { captureMain } from './manifest-capture.ts';
 import { AGENT_NAMES } from './agents.ts';
 import type { ReviewDecision, WorkstreamState } from './enums.ts';
 import { runPool } from './pool.ts';
@@ -12,7 +13,7 @@ import { sandboxReport } from './sandbox/index.ts';
 import { runScript } from './script-runtime/index.ts';
 import { openSearch } from './search/index.ts';
 import { runTui } from './tui.ts';
-import { commitProtectedPaths, mergeAndCleanup, removeWorktree } from './worktrees.ts';
+import { commitProtectedPaths, removeWorktree } from './worktrees.ts';
 import { execMain } from './agent/exec.ts';
 import { chatMain } from './chat.ts';
 import { localCommandMain } from './chat/cli.ts';
@@ -25,7 +26,7 @@ import { createGhGateway } from './connectors/github.ts';
 import { ChangeLinkStore } from './connectors/links.ts';
 import { validateMain } from './validators/cli.ts';
 import { protectedIntegrity } from './validators/integrity.ts';
-import { mergeBlocker } from './validators/publish.ts';
+import { mergeRecoverably } from './validators/publish.ts';
 
 const STATE_DIR = resolve(process.env.FABRICA_HOME ?? resolve(process.env.HOME ?? '.', '.fabrica'));
 
@@ -252,14 +253,7 @@ async function main(argv: string[]): Promise<number> {
       }
       case 'merge': {
         const c = findByPrefix(allChanges(store), sub ?? '', 'change');
-        const ws = store.getWorkstream(c.workstreamId);
-        if (c.status !== 'implemented') throw new StoreError('invalid_transition', `change is ${c.status}, not implemented`);
-        const blocked = mergeBlocker(store.validationSummary(c.id));
-        if (blocked && !values.force) throw new StoreError('invalid_transition', `${blocked}; usa --force para fusionar igualmente`);
-        if (blocked) console.log(`aviso: ${blocked}; se fusiona por --force`);
-        if (values.force) store.event(ws.id, 'warning', `merge --force${blocked ? `: ${blocked}` : ''}`, c.id);
-        console.log(await mergeAndCleanup(ws.repo, STATE_DIR, c.id));
-        store.closeChange(c.id, 'completed');
+        console.log(await mergeRecoverably(store, STATE_DIR, c.id, values.force));
         console.log(`change ${short(c.id)} completado`);
         return 0;
       }
@@ -331,5 +325,6 @@ async function main(argv: string[]): Promise<number> {
 const COMMANDS = new Set(['ws', 'signal', 'triage', 'inbox', 'review', 'run', 'status', 'show', 'merge', 'retry', 'gate', 'reject', 'events', 'tui', 'doctor', 'help']);
 
 // The Script worker speaks NDJSON on stdio until its input closes; it must not be cut short by exit().
-if (process.argv[2] === SCRIPT_WORKER_COMMAND) void runScriptWorker(process.argv[3]);
+if (process.argv[2] === '__capture') process.exit(await captureMain(process.argv.slice(3)));
+else if (process.argv[2] === SCRIPT_WORKER_COMMAND) void runScriptWorker(process.argv[3]);
 else process.exit(await main(process.argv.slice(2)));

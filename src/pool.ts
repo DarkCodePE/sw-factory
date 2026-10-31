@@ -1,5 +1,7 @@
 // Worker pool: claims pending activities FIFO, runs one headless agent per activity
 // in the change's worktree, and records the result back in the store.
+import { selfCommand } from './self.ts';
+import { activityLog, atomicEvidence, isolationFor, runDirectory, writeManifest } from './manifest.ts';
 import { getAgent, runAgent } from './agents.ts';
 import { buildWorkerPrompt } from './prompts.ts';
 import { HEARTBEAT_INTERVAL_MS, LEASE_TTL_MS, type Activity, type Store } from './store.ts';
@@ -73,13 +75,22 @@ export async function processActivity(
       : buildWorkerPrompt({ workstream: ws, change, activity: a, history, worktree: path, branch }, { factoryCommits: agent.factoryCommits });
     log(`[${workerId}] ${a.validator ?? a.kind} "${change.title}" -> ${agent.name} in ${path}`);
     const readOnly = a.validator ? (a.validator !== 'qa') : (a.kind === 'investigation');
-    const run = await runAgent(agent, prompt, path, undefined, {
+    const captureAgent = { ...agent, command: (text: string, options?: { readOnly?: boolean }) => [
+      ...selfCommand('__capture', new URL('./manifest-capture.ts', import.meta.url)),
+      activityLog(opts.stateDir, change.id, a.id), ...agent.command(text, options),
+    ] };
+    atomicEvidence(`${runDirectory(opts.stateDir, change.id)}/${a.id}.json`, JSON.stringify({ isolation: isolationFor(agent.name) }));
+    const run = await runAgent(captureAgent, prompt, path, undefined, {
       readOnly,
       signal: abortController.signal,
       onSpawn: (pgid) => {
         store.setActivityAgentPgid(a.id, pgid);
       },
     });
+
+    atomicEvidence(`${runDirectory(opts.stateDir, change.id)}/${a.id}.json`, JSON.stringify({
+      isolation: isolationFor(agent.name), durationMs: run.durationMs, exitCode: run.exitCode,
+    }));
 
     // Barrier check after agent run
     if (abortController.signal.aborted || store.isTerminalChange(store.getChange(change.id).status)) {
@@ -165,6 +176,7 @@ export async function processActivity(
     log(`[${workerId}] error: ${msg}`);
   } finally {
     clearInterval(heartbeatTimer);
+    writeManifest(store, activity.changeId, opts.stateDir);
   }
 }
 
