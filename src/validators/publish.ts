@@ -26,8 +26,9 @@ export function validationMarkdown(summary: ValidationSummary): string {
  * Why `fab merge` must stop: validators pending/running, missing verdicts or any `fail` verdict.
  * Changes that never requested validation merge as before.
  */
-export function mergeBlocker(summary: ValidationSummary): string | undefined {
+export function mergeBlocker(summary: ValidationSummary & { gatePassed?: boolean }): string | undefined {
   if (summary.quarantined) return 'el change está en cuarentena (quarantined)';
+  if (summary.gatePassed === false) return 'gates deterministas sin pass sobre el HEAD actual';
   if (summary.pending) return 'hay validadores pendientes o en curso';
   const failed = summary.results.filter((r) => r.verdict === 'fail').map((r) => r.validator);
   if (failed.length) return `validadores en fail: ${failed.join(', ')}`;

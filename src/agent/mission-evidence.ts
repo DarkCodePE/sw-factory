@@ -1,7 +1,8 @@
 // Runtime-observed evidence for mission attempts. A handoff is the model's claim; these records
 // are what the runtime actually saw. Validation success is derived from observations and from
 // verifier commands the runner executes itself, never from validatorsPassed/commandsRun text.
-import { lstat, mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises';
+import { existsSync } from 'node:fs';
+import { lstat, mkdir, mkdtemp, readlink, rm, symlink, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { readWorkspaceFile } from './files.ts';
@@ -113,6 +114,15 @@ export function verifierArgv(command: string, maxLength = 1000): string[] {
 /** Environment variables a verifier may inherit: locale and tool locations, nothing that injects code. */
 const VERIFIER_ENV = ['LANG', 'LC_ALL', 'TZ', 'TERM', 'BUN_INSTALL'] as const;
 
+function verifierEnvironment(deps?: string) {
+  const env: Record<string, string> = { PATH: process.env.PATH ?? '/usr/local/bin:/usr/bin:/bin', HOME: '/tmp', TMPDIR: '/tmp', CI: '1' };
+  for (const key of VERIFIER_ENV) if (process.env[key]) env[key] = process.env[key]!;
+  if (deps && existsSync(deps)) {
+    env.FAB_DEPS = deps; env.PYTHONPATH = deps; env.PATH = `${deps}/bin:${env.PATH}`; env.NODE_PATH = `${deps}/node_modules`;
+  }
+  return env;
+}
+
 /**
  * Build a writable throwaway copy of exactly the fingerprinted source, with dependency directories
  * the source ignores (node_modules, .venv, ...) bound read-only. Test runners can write caches and
@@ -124,9 +134,12 @@ async function verifierWorkspace(context: ToolContext) {
   const binds: Array<{ source: string; target: string }> = [];
   try {
     for (const path of await listSourceFiles(context)) {
-      const file = await readWorkspaceFile(context.cwd, path);
       const target = join(root, path);
       await mkdir(dirname(target), { recursive: true });
+      // A symlink (e.g. an unignored .venv/bin/python) is recreated as a link, not followed: reading it fails with ELOOP.
+      const link = await lstat(join(context.cwd, path)).catch(() => undefined);
+      if (link?.isSymbolicLink()) { await symlink(await readlink(join(context.cwd, path)), target); continue; }
+      const file = await readWorkspaceFile(context.cwd, path);
       await writeFile(target, file.data, { mode: file.mode & 0o777 });
     }
     for (const dir of await listIgnoredDirectories(context)) {
@@ -147,8 +160,7 @@ async function verifierWorkspace(context: ToolContext) {
  */
 export async function runVerifier(context: ToolContext, command: string): Promise<VerifierResult> {
   const argv = verifierArgv(command);
-  const env: Record<string, string> = { PATH: process.env.PATH ?? '/usr/local/bin:/usr/bin:/bin', HOME: '/tmp', TMPDIR: '/tmp', CI: '1' };
-  for (const key of VERIFIER_ENV) if (process.env[key]) env[key] = process.env[key]!;
+  const env = verifierEnvironment();
   const space = await verifierWorkspace(context);
   try {
     const wrapped = await wrapCommand(argv, { workdir: space.root, mode: 'required', allowNetwork: false, env, readOnlyBinds: space.binds });
@@ -158,4 +170,52 @@ export async function runVerifier(context: ToolContext, command: string): Promis
     context.signal.throwIfAborted();
     return { command, exitCode: -1, output: error instanceof Error ? error.message : String(error) };
   } finally { await space.dispose(); }
+}
+
+/** Trusted argv entry point shared by missions and workstream gates. */
+export async function runVerifierAt(cwd: string, argv: string[], signal: AbortSignal, timeoutMs = 120_000, deps?: string) {
+  const started = Date.now();
+  const timeout = AbortSignal.timeout(timeoutMs);
+  const combined = AbortSignal.any([signal, timeout]);
+  const context: ToolContext = { cwd, signal: combined, autonomy: 'high', interactionMode: 'mission', sandbox: 'required' };
+  const chunks: Buffer[] = [];
+  let exitCode = -1, error: string | undefined;
+  let space: Awaited<ReturnType<typeof verifierWorkspace>> | undefined;
+  try {
+    if (!argv.length || !argv[0] || argv.some(arg => typeof arg !== 'string' || arg.includes('\0'))) throw new Error('Invalid verifier argv');
+    const env = verifierEnvironment(deps);
+    space = await verifierWorkspace(context);
+    const binds = deps && existsSync(deps) ? [...space.binds, { source: deps, target: deps }] : space.binds;
+    const wrapped = await wrapCommand(argv, { workdir: space.root, mode: 'required', allowNetwork: false, env, readOnlyBinds: binds });
+    const r = await runProcess(wrapped.argv, space.root, wrapped.env, combined, Infinity, true, part => chunks.push(part));
+    exitCode = r.exitCode;
+  } catch (cause) {
+    error = timeout.aborted ? 'Verifier timed out' : cause instanceof Error ? cause.message : String(cause);
+  } finally { await space?.dispose(); }
+  return { argv, exitCode, timedOut: timeout.aborted, output: Buffer.concat(chunks).toString('utf8'), error,
+    durationMs: Date.now() - started };
+}
+
+/**
+ * Dependency setup, a phase of its own outside the gate: network allowed, cwd is the change worktree
+ * but remounted read-only, and `deps` (exposed as FAB_DEPS) is the only writable path.
+ */
+export async function runSetupAt(cwd: string, argv: string[], deps: string, signal: AbortSignal, timeoutMs = 600_000) {
+  const started = Date.now();
+  const timeout = AbortSignal.timeout(timeoutMs);
+  const combined = AbortSignal.any([signal, timeout]);
+  const chunks: Buffer[] = [];
+  let exitCode = -1, error: string | undefined;
+  try {
+    if (!argv.length || !argv[0] || argv.some(arg => typeof arg !== 'string' || arg.includes('\0'))) throw new Error('Invalid setup argv');
+    await mkdir(deps, { recursive: true });
+    const env = { ...verifierEnvironment(), FAB_DEPS: deps };
+    const wrapped = await wrapCommand(argv.map(a => a.replaceAll('$FAB_DEPS', deps)), { workdir: cwd, mode: 'required', allowNetwork: true, env,
+      writablePaths: [deps], readOnlyBinds: [{ source: cwd, target: cwd }] });
+    const r = await runProcess(wrapped.argv, cwd, wrapped.env, combined, Infinity, true, part => chunks.push(part));
+    exitCode = r.exitCode;
+  } catch (cause) {
+    error = timeout.aborted ? 'Setup timed out' : cause instanceof Error ? cause.message : String(cause);
+  }
+  return { argv, exitCode, timedOut: timeout.aborted, output: Buffer.concat(chunks).toString('utf8'), error, durationMs: Date.now() - started };
 }

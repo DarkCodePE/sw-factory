@@ -5,10 +5,10 @@ import { Database } from 'bun:sqlite';
 import { randomUUID } from 'node:crypto';
 import { userInfo } from 'node:os';
 import { dirname, resolve } from 'node:path';
-import { writeManifest } from './manifest.ts';
+import { gitEvidence, writeManifest } from './manifest.ts';
 
 import {
-  type ActivityKind,
+  type ActivityKind as BaseActivityKind,
   type ActivityStatus as BaseActivityStatus,
   type ChangeStatus as BaseChangeStatus,
   type ReviewDecision,
@@ -28,9 +28,11 @@ import {
   type ValidationVerdict,
 } from './connectors/types.ts';
 import { DEFAULT_PROTECTED_PATHS, validateProtectedPatterns, type GateSnapshot } from './validators/integrity.ts';
+import { verifierArgv } from './agent/mission-evidence.ts';
 import { parseVerdict } from './validators/verdict.ts';
 
 // Local extensions keep this task within the store ownership boundary.
+export type ActivityKind = BaseActivityKind | 'gates';
 export type ActivityStatus = BaseActivityStatus | 'blocked' | 'quarantined';
 export type ChangeStatus = BaseChangeStatus | 'blocked' | 'quarantined';
 
@@ -68,6 +70,10 @@ export interface Workstream {
   requireApproval: boolean;
   createdAt: string;
   protectedPaths: string[];
+  verify?: string[][];
+  verifySetup?: string[][];
+  /** Hash of the setup argv that last succeeded; setup reruns only when it differs. */
+  verifySetupHash?: string | null;
 }
 
 export interface Signal {
@@ -103,6 +109,7 @@ export interface Activity {
   reviewStatus: string | null;
   reviewComment: string | null;
   validator: ValidatorKind | null;
+  verifiedHead?: string | null;
   workerId: string | null;
   result: string | null;
   error: string | null;
@@ -166,6 +173,9 @@ function toWorkstream(r: Row): Workstream {
     requireChangeApproval: bool(r.require_change_approval),
     requireApproval: bool(r.require_approval),
     protectedPaths: r.protected_paths == null ? [...DEFAULT_PROTECTED_PATHS] : JSON.parse(r.protected_paths as string),
+    verify: r.verify == null ? [] : JSON.parse(r.verify as string),
+    verifySetup: r.verify_setup == null ? [] : JSON.parse(r.verify_setup as string),
+    verifySetupHash: (r.verify_setup_hash as string | null) ?? null,
     createdAt: r.created_at as string,
   };
 }
@@ -207,6 +217,7 @@ function toActivity(r: Row): Activity {
     status: r.status as ActivityStatus,
     reviewStatus: (r.review_status as string | null) ?? null,
     reviewComment: (r.review_comment as string | null) ?? null,
+    verifiedHead: (r.verified_head as string | null) ?? null,
     validator: (r.validator as ValidatorKind | null) ?? null,
     workerId: (r.worker_id as string | null) ?? null,
     result: (r.result as string | null) ?? null,
@@ -231,6 +242,8 @@ export interface CreateWorkstreamInput {
   requireApproval?: boolean;
   protectedPaths?: string[];
   protectNone?: boolean;
+  verify?: string[];
+  verifySetup?: string[];
 }
 
 export interface StoreOptions {
@@ -282,6 +295,11 @@ export class Store {
 
   private migrate(): void {
     this.addColumn('activities', 'validator', 'TEXT');
+    this.addColumn('workstreams', 'verify', 'TEXT');
+    this.addColumn('workstreams', 'verify_setup', 'TEXT');
+    this.addColumn('workstreams', 'verify_setup_hash', 'TEXT');
+    this.addColumn('activities', 'verified_head', 'TEXT');
+    this.addColumn('activities', 'requested_validators', 'TEXT');
     this.addColumn('events', 'actor', 'TEXT');
     this.addColumn('workstreams', 'protected_paths', 'TEXT');
     this.addColumn('changes', 'base_sha', 'TEXT');
@@ -318,6 +336,10 @@ export class Store {
     if (!/^[a-z0-9][a-z0-9-]{0,62}$/.test(input.slug)) {
       throw new StoreError('invalid_input', `invalid slug "${input.slug}" (use a-z, 0-9, -)`);
     }
+    const verify = (input.verify ?? []).map(command => verifierArgv(command));
+    // $FAB_DEPS is the one expansion allowed: it is substituted by the runner, never by a shell.
+    const verifySetup = (input.verifySetup ?? []).map(command => verifierArgv(command.replaceAll('$FAB_DEPS', 'FAB_DEPS_SLOT')).map(a => a.replaceAll('FAB_DEPS_SLOT', '$FAB_DEPS')));
+    if (verifySetup.length && !verify.length) throw new StoreError('invalid_input', '--verify-setup exige --verify');
     const additions = input.protectedPaths ?? [];
     validateProtectedPatterns(additions);
     if (input.protectedPaths?.length === 0 && !input.protectNone) {
@@ -329,8 +351,8 @@ export class Store {
       this.db
         .query(
           `INSERT INTO workstreams (id, slug, goal, repo, state, agent, worker_concurrency,
-           task_limit, require_change_approval, require_approval, created_at, protected_paths)
-           VALUES ($id,$slug,$goal,$repo,'draft',$agent,$wc,$tl,$rca,$ra,$at,$protected)`
+           task_limit, require_change_approval, require_approval, created_at, protected_paths, verify, verify_setup)
+           VALUES ($id,$slug,$goal,$repo,'draft',$agent,$wc,$tl,$rca,$ra,$at,$protected,$verify,$setup)`
         )
         .run({
           id,
@@ -344,10 +366,16 @@ export class Store {
           ra: input.requireApproval ?? true ? 1 : 0,
           at: this.now(),
           protected: JSON.stringify(protectedPaths),
+          verify: JSON.stringify(verify),
+          setup: JSON.stringify(verifySetup),
         });
       this.event(id, 'info', `workstream ${input.slug} created (draft)`);
     });
     return this.getWorkstream(id);
+  }
+
+  setVerifySetupHash(id: string, hash: string): void {
+    this.withRetry(() => this.db.query('UPDATE workstreams SET verify_setup_hash = ? WHERE id = ?').run(hash, id));
   }
 
   getWorkstream(idOrSlug: string): Workstream {
@@ -615,7 +643,7 @@ export class Store {
           .run(workerId, nowIso, leaseExpires, r.id, r.change_id, r.id);
         if (res.changes !== 1) return null;
         const a = this.getActivity(r.id);
-        if (!a.validator) {
+        if (!a.validator && a.kind !== 'gates') {
           this.setChangeStatus(a.changeId, 'in_progress');
         }
         this.event(ws.id, 'info', `${a.validator ? `validator ${a.validator}` : a.kind} claimed by ${workerId}`, a.changeId, a.id);
@@ -651,10 +679,34 @@ export class Store {
    * The change remains in implemented status.
    */
   requestValidation(changeId: string, validators: ValidatorKind[]): Activity[] {
+    for (const validator of validators) {
+      if (!VALIDATOR_KINDS.includes(validator)) throw new StoreError('invalid_input', `unknown validator "${validator}"`);
+    }
     const change = this.getChange(changeId);
     if (change.status !== 'implemented') {
       throw new StoreError('invalid_transition', `change ${changeId} is ${change.status}, not implemented`);
     }
+    const ws = this.getWorkstream(change.workstreamId);
+    if (ws.verify?.length) {
+      return this.withRetry(() => this.db.transaction(() => {
+        // A manual request cannot bypass a pending/failed gate or reuse evidence from another HEAD.
+        const acts = this.listActivities({ changeId });
+        const gate = acts.filter(a => a.kind === 'gates').at(-1);
+        const head = gitEvidence(ws.repo, 'rev-parse', change.branch ?? 'HEAD');
+        if (gate?.status === 'completed' && gate.reviewStatus === 'approved' && gate.verifiedHead === head) {
+          return this.enqueueValidators(changeId, validators, head!);
+        }
+        if (gate && (gate.status === 'pending' || gate.status === 'in_progress')) return [];
+        const id = this.insertActivity(ws.id, changeId, null, 'gates', 'pending', null);
+        this.db.query('UPDATE activities SET requested_validators = ? WHERE id = ?').run(JSON.stringify(validators), id);
+        return [this.getActivity(id)];
+      }).immediate());
+    }
+    return this.enqueueValidators(changeId, validators);
+  }
+
+  private enqueueValidators(changeId: string, validators: ValidatorKind[], head?: string): Activity[] {
+    const change = this.getChange(changeId);
     return this.withRetry(() => {
       return this.db.transaction(() => {
         const existing = this.listActivities({ changeId });
@@ -668,6 +720,7 @@ export class Store {
             created.some((a) => a.validator === v);
           if (alreadyQueued) continue;
           const id = this.insertActivity(change.workstreamId, change.id, null, 'change_review', 'pending', null, v);
+          if (head) this.db.query('UPDATE activities SET verified_head = ? WHERE id = ?').run(head, id);
           this.event(change.workstreamId, 'info', `validation requested: ${v}`, change.id, id);
           created.push(this.getActivity(id));
         }
@@ -679,7 +732,7 @@ export class Store {
   /**
    * Summarizes the latest validation results for a change.
    */
-  validationSummary(changeId: string): ValidationSummary {
+  validationSummary(changeId: string): ValidationSummary & { gatePassed?: boolean } {
     this.getChange(changeId);
     const acts = this.listActivities({ changeId }).filter((a) => a.validator !== null);
     const lastByValidator = new Map<ValidatorKind, Activity>();
@@ -704,16 +757,21 @@ export class Store {
         summary: a.reviewComment ?? '',
       });
     }
-    const pending = Array.from(lastByValidator.values()).some(
+    const gate = this.listActivities({ changeId }).filter(a => a.kind === 'gates').at(-1);
+    const pending = (gate?.status === 'pending' || gate?.status === 'in_progress') || Array.from(lastByValidator.values()).some(
       (a) => a.status === 'pending' || a.status === 'in_progress'
     );
-    const passed = results.length > 0 && !pending && results.every((r) => r.verdict === 'pass');
     const c = this.getChange(changeId);
+    const ws = this.getWorkstream(c.workstreamId);
+    const gatePassed = ws.verify?.length ? gate?.status === 'completed' && gate.reviewStatus === 'approved' &&
+      !!gate.verifiedHead && gate.verifiedHead === gitEvidence(ws.repo, 'rev-parse', c.branch ?? 'HEAD') : undefined;
+    const passed = results.length > 0 && !pending && gatePassed !== false && results.every((r) => r.verdict === 'pass');
     return {
       changeId,
       results,
       passed,
       pending,
+      ...(gatePassed !== undefined ? { gatePassed } : {}),
       quarantined: c.status === 'quarantined',
     };
   }
@@ -726,7 +784,7 @@ export class Store {
     activityId: string,
     workerId: string,
     result: string,
-    reviewOpts?: { reviewStatus?: string; reviewComment?: string }
+    reviewOpts?: { reviewStatus?: string; reviewComment?: string; verifiedHead?: string }
   ): Activity {
     return this.withRetry(() => {
       return this.db.transaction(() => {
@@ -743,7 +801,15 @@ export class Store {
           .run(result, this.now(), activityId, workerId);
         if (res.changes !== 1) throw new StoreError('conflict', `activity ${activityId} is not held by ${workerId}`);
         const ws = this.getWorkstream(a.workstreamId);
-        if (a.validator) {
+        if (a.kind === 'gates') {
+          if (!reviewOpts?.verifiedHead || parseVerdict(result)?.verdict !== 'pass') {
+            throw new StoreError('invalid_input', 'gates completion requires pass and verified HEAD');
+          }
+          this.db.query("UPDATE activities SET review_status = 'approved', verified_head = ? WHERE id = ?").run(reviewOpts.verifiedHead, a.id);
+          const requested = this.db.query('SELECT requested_validators FROM activities WHERE id = ?').get(a.id) as { requested_validators: string | null };
+          this.enqueueValidators(a.changeId, requested.requested_validators ? JSON.parse(requested.requested_validators) : [...VALIDATOR_KINDS], reviewOpts.verifiedHead);
+          this.event(ws.id, 'info', `gates pass: ${reviewOpts.verifiedHead}`, a.changeId, a.id);
+        } else if (a.validator) {
           // A validator change_review activity does NOT close the change; change stays implemented.
           let reviewStatus = reviewOpts?.reviewStatus;
           let reviewComment = reviewOpts?.reviewComment;
@@ -772,6 +838,7 @@ export class Store {
         } else if (a.kind === 'implementation') {
           this.setChangeStatus(a.changeId, 'implemented');
           this.event(ws.id, 'info', 'implementation done; change implemented', a.changeId, a.id);
+          if (ws.verify?.length) this.insertActivity(ws.id, a.changeId, a.id, 'gates', 'pending', null);
         } else {
           this.setChangeStatus(a.changeId, 'completed');
         }
@@ -793,6 +860,7 @@ export class Store {
         if (res.changes !== 1) throw new StoreError('conflict', `activity ${activityId} is not held by ${workerId}`);
         this.db.query(`UPDATE activities SET status = 'canceled', completed_at = ?
           WHERE change_id = ? AND status = 'pending'`).run(this.now(), a.changeId);
+        if (a.kind === 'gates') this.db.query("UPDATE activities SET review_status = 'declined' WHERE id = ?").run(a.id);
         this.setChangeStatus(a.changeId, 'blocked');
         this.event(a.workstreamId, 'warning', `blocked: ${reason}`, a.changeId, a.id);
         return this.getActivity(activityId);
@@ -862,7 +930,7 @@ export class Store {
     return this.withRetry(() => {
       return this.db.transaction(() => {
         const a = this.getActivity(activityId);
-        if (!REVIEWABLE_KINDS.includes(a.kind)) {
+        if (!REVIEWABLE_KINDS.some(kind => kind === a.kind)) {
           throw new StoreError('invalid_transition', `${a.kind} activities are not reviewable`);
         }
         const status = decision === 'approve' ? 'approved' : decision === 'decline' ? 'declined' : 'commented';
@@ -934,8 +1002,10 @@ export class Store {
             throw new StoreError('invalid_transition', `validator ${last.validator} already retried`);
           }
         }
-        const id = this.insertActivity(c.workstreamId, changeId, last.parentActivityId, last.kind, 'pending', null, last.validator);
-        this.setChangeStatus(changeId, last.validator ? 'implemented' : 'pending');
+        const gateRetry = last.kind === 'gates' || (last.validator !== null && !!this.getWorkstream(c.workstreamId).verify?.length);
+        if (gateRetry) this.db.query("UPDATE activities SET status = 'canceled', review_status = NULL WHERE change_id = ? AND validator IS NOT NULL").run(changeId);
+        const id = this.insertActivity(c.workstreamId, changeId, last.parentActivityId, gateRetry ? 'implementation' : last.kind, 'pending', null, gateRetry ? null : last.validator);
+        this.setChangeStatus(changeId, !gateRetry && last.validator ? 'implemented' : 'pending');
         this.event(c.workstreamId, 'info', `change retried (${last.kind})`, changeId, id);
         return this.getActivity(id);
       }).immediate();

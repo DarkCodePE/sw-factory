@@ -1,0 +1,13 @@
+diff --git a/calc.py b/calc.py
+index ae40d2d..cd2ee26 100644
+--- a/calc.py
++++ b/calc.py
+@@ -15,3 +15,8 @@ def divide(a, b):
+ def average(values):
+     """Arithmetic mean of a non-empty list."""
+     return sum(values) / len(values)
++
++
++def power(base, exponent):
++    """Calculate base raised to exponent."""
++    return base * exponent

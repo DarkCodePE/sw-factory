@@ -1,0 +1,222 @@
+[
+  {
+    "id": "tc-bug-01",
+    "repo": "toy-calc",
+    "category": "test_caught",
+    "is_bug": true,
+    "caught_by_tests": true,
+    "title": "refactor: simplify addition operation",
+    "description": "Optimize add function implementation.",
+    "test_cmd": "pytest -q",
+    "patch_file": "patches/tc-bug-01.patch"
+  },
+  {
+    "id": "tc-bug-02",
+    "repo": "toy-calc",
+    "category": "test_caught",
+    "is_bug": true,
+    "caught_by_tests": true,
+    "title": "fix: return zero on division by zero instead of raising error",
+    "description": "Handle division by zero gracefully without throwing exceptions.",
+    "test_cmd": "pytest -q",
+    "patch_file": "patches/tc-bug-02.patch"
+  },
+  {
+    "id": "tc-bug-03",
+    "repo": "toy-calc",
+    "category": "test_caught",
+    "is_bug": true,
+    "caught_by_tests": true,
+    "title": "fix: adjust sample size bias in average computation",
+    "description": "Corrects divisor by adding one to values length.",
+    "test_cmd": "pytest -q",
+    "patch_file": "patches/tc-bug-03.patch"
+  },
+  {
+    "id": "tc-bug-04",
+    "repo": "toy-calc",
+    "category": "test_caught",
+    "is_bug": true,
+    "caught_by_tests": true,
+    "title": "refactor: clean up divide arithmetic",
+    "description": "Invert division order.",
+    "test_cmd": "pytest -q",
+    "patch_file": "patches/tc-bug-04.patch"
+  },
+  {
+    "id": "tc-bug-05",
+    "repo": "toy-calc",
+    "category": "test_caught",
+    "is_bug": true,
+    "caught_by_tests": true,
+    "title": "fix: stringify operands in add",
+    "description": "Ensures string conversion before addition.",
+    "test_cmd": "pytest -q",
+    "patch_file": "patches/tc-bug-05.patch"
+  },
+  {
+    "id": "tc-bug-06",
+    "repo": "toy-calc",
+    "category": "semantic",
+    "is_bug": true,
+    "caught_by_tests": false,
+    "title": "feat: round arithmetic mean in average helper",
+    "description": "Rounds the result of average(values) to nearest integer.",
+    "test_cmd": "pytest -q",
+    "patch_file": "patches/tc-bug-06.patch"
+  },
+  {
+    "id": "tc-bug-07",
+    "repo": "toy-calc",
+    "category": "semantic",
+    "is_bug": true,
+    "caught_by_tests": false,
+    "title": "feat: add power helper for exponentiation",
+    "description": "Adds power(base, exponent) function for exponential calculation.",
+    "test_cmd": "pytest -q",
+    "patch_file": "patches/tc-bug-07.patch"
+  },
+  {
+    "id": "tc-bug-08",
+    "repo": "toy-calc",
+    "category": "semantic",
+    "is_bug": true,
+    "caught_by_tests": false,
+    "title": "feat: add subtract helper",
+    "description": "Adds subtract(a, b) function to calculate difference between a and b.",
+    "test_cmd": "pytest -q",
+    "patch_file": "patches/tc-bug-08.patch"
+  },
+  {
+    "id": "tc-bug-09",
+    "repo": "toy-calc",
+    "category": "semantic",
+    "is_bug": true,
+    "caught_by_tests": false,
+    "title": "feat: add is_even predicate",
+    "description": "Adds helper is_even(n) returning True if n is an even integer.",
+    "test_cmd": "pytest -q",
+    "patch_file": "patches/tc-bug-09.patch"
+  },
+  {
+    "id": "tc-bug-10",
+    "repo": "toy-calc",
+    "category": "semantic",
+    "is_bug": true,
+    "caught_by_tests": false,
+    "title": "feat: add median statistics helper",
+    "description": "Calculates the median of a list of numbers.",
+    "test_cmd": "pytest -q",
+    "patch_file": "patches/tc-bug-10.patch"
+  },
+  {
+    "id": "tc-clean-01",
+    "repo": "toy-calc",
+    "category": "clean",
+    "is_bug": false,
+    "caught_by_tests": false,
+    "title": "feat: add multiply function and unit tests",
+    "description": "Adds multiply(a, b) helper returning product of a and b, with unit test.",
+    "test_cmd": "pytest -q",
+    "patch_file": "patches/tc-clean-01.patch"
+  },
+  {
+    "id": "tc-clean-02",
+    "repo": "toy-calc",
+    "category": "clean",
+    "is_bug": false,
+    "caught_by_tests": false,
+    "title": "feat: add subtract function and unit tests",
+    "description": "Adds subtract(a, b) helper returning a - b with unit tests.",
+    "test_cmd": "pytest -q",
+    "patch_file": "patches/tc-clean-02.patch"
+  },
+  {
+    "id": "tc-clean-03",
+    "repo": "toy-calc",
+    "category": "clean",
+    "is_bug": false,
+    "caught_by_tests": false,
+    "title": "docs: add type hints to calc helpers",
+    "description": "Adds standard Python type hints to calc functions without modifying runtime semantics.",
+    "test_cmd": "pytest -q",
+    "patch_file": "patches/tc-clean-03.patch"
+  },
+  {
+    "id": "real-bug-01",
+    "repo": "real",
+    "category": "test_caught",
+    "is_bug": true,
+    "caught_by_tests": true,
+    "title": "refactor: simplify block rendering in adfToText",
+    "description": "Refactored block rendering cases.",
+    "test_cmd": "bun test",
+    "patch_file": "patches/real-bug-01.patch"
+  },
+  {
+    "id": "real-bug-02",
+    "repo": "real",
+    "category": "test_caught",
+    "is_bug": true,
+    "caught_by_tests": true,
+    "title": "refactor: simplify code block attrs in markdown parser",
+    "description": "Drop language attribute from codeBlock ast node.",
+    "test_cmd": "bun test",
+    "patch_file": "patches/real-bug-02.patch"
+  },
+  {
+    "id": "real-bug-03",
+    "repo": "real",
+    "category": "test_caught",
+    "is_bug": true,
+    "caught_by_tests": true,
+    "title": "fix: update markdown link serializer syntax",
+    "description": "Update link formatting syntax.",
+    "test_cmd": "bun test",
+    "patch_file": "patches/real-bug-03.patch"
+  },
+  {
+    "id": "real-bug-04",
+    "repo": "real",
+    "category": "semantic",
+    "is_bug": true,
+    "caught_by_tests": false,
+    "title": "feat: add support for inline strikethrough in markdownToAdf",
+    "description": "Adds inline markdown strikethrough parsing for ~~text~~ syntax.",
+    "test_cmd": "bun test",
+    "patch_file": "patches/real-bug-04.patch"
+  },
+  {
+    "id": "real-bug-05",
+    "repo": "real",
+    "category": "semantic",
+    "is_bug": true,
+    "caught_by_tests": false,
+    "title": "refactor: optimize ordered list prefix formatting",
+    "description": "Simplifies ordered list index formatting in adfToText.",
+    "test_cmd": "bun test",
+    "patch_file": "patches/real-bug-05.patch"
+  },
+  {
+    "id": "real-clean-01",
+    "repo": "real",
+    "category": "clean",
+    "is_bug": false,
+    "caught_by_tests": false,
+    "title": "feat: support blockquote node conversion",
+    "description": "Adds blockquote markdown parsing (> text) and ADF rendering with unit test.",
+    "test_cmd": "bun test",
+    "patch_file": "patches/real-clean-01.patch"
+  },
+  {
+    "id": "real-clean-02",
+    "repo": "real",
+    "category": "clean",
+    "is_bug": false,
+    "caught_by_tests": false,
+    "title": "feat: support horizontal rule node conversion",
+    "description": "Adds horizontal rule markdown parsing (---) and ADF rendering with unit test.",
+    "test_cmd": "bun test",
+    "patch_file": "patches/real-clean-02.patch"
+  }
+]

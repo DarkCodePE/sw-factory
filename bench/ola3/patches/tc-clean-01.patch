@@ -1,0 +1,33 @@
+diff --git a/calc.py b/calc.py
+index ae40d2d..8d25b51 100644
+--- a/calc.py
++++ b/calc.py
+@@ -15,3 +15,8 @@ def divide(a, b):
+ def average(values):
+     """Arithmetic mean of a non-empty list."""
+     return sum(values) / len(values)
++
++
++def multiply(a, b):
++    """Multiply a by b."""
++    return a * b
+diff --git a/tests/test_calc.py b/tests/test_calc.py
+index dc18cda..9410caf 100644
+--- a/tests/test_calc.py
++++ b/tests/test_calc.py
+@@ -1,6 +1,6 @@
+ import pytest
+ 
+-from calc import add, average, divide
++from calc import add, average, divide, multiply
+ 
+ 
+ def test_add():
+@@ -31,3 +31,7 @@ def test_divide_by_float_zero_raises_value_error():
+ 
+ def test_average_single():
+     assert average([4]) == 4
++
++
++def test_multiply():
++    assert multiply(3, 4) == 12
