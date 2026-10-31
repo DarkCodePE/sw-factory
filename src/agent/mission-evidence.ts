@@ -113,6 +113,12 @@ export function verifierArgv(command: string, maxLength = 1000): string[] {
 /** Environment variables a verifier may inherit: locale and tool locations, nothing that injects code. */
 const VERIFIER_ENV = ['LANG', 'LC_ALL', 'TZ', 'TERM', 'BUN_INSTALL'] as const;
 
+function verifierEnvironment() {
+  const env: Record<string, string> = { PATH: process.env.PATH ?? '/usr/local/bin:/usr/bin:/bin', HOME: '/tmp', TMPDIR: '/tmp', CI: '1' };
+  for (const key of VERIFIER_ENV) if (process.env[key]) env[key] = process.env[key]!;
+  return env;
+}
+
 /**
  * Build a writable throwaway copy of exactly the fingerprinted source, with dependency directories
  * the source ignores (node_modules, .venv, ...) bound read-only. Test runners can write caches and
@@ -147,8 +153,7 @@ async function verifierWorkspace(context: ToolContext) {
  */
 export async function runVerifier(context: ToolContext, command: string): Promise<VerifierResult> {
   const argv = verifierArgv(command);
-  const env: Record<string, string> = { PATH: process.env.PATH ?? '/usr/local/bin:/usr/bin:/bin', HOME: '/tmp', TMPDIR: '/tmp', CI: '1' };
-  for (const key of VERIFIER_ENV) if (process.env[key]) env[key] = process.env[key]!;
+  const env = verifierEnvironment();
   const space = await verifierWorkspace(context);
   try {
     const wrapped = await wrapCommand(argv, { workdir: space.root, mode: 'required', allowNetwork: false, env, readOnlyBinds: space.binds });
@@ -158,4 +163,27 @@ export async function runVerifier(context: ToolContext, command: string): Promis
     context.signal.throwIfAborted();
     return { command, exitCode: -1, output: error instanceof Error ? error.message : String(error) };
   } finally { await space.dispose(); }
+}
+
+/** Trusted argv entry point shared by missions and workstream gates. */
+export async function runVerifierAt(cwd: string, argv: string[], signal: AbortSignal, timeoutMs = 120_000) {
+  const started = Date.now();
+  const timeout = AbortSignal.timeout(timeoutMs);
+  const combined = AbortSignal.any([signal, timeout]);
+  const context: ToolContext = { cwd, signal: combined, autonomy: 'high', interactionMode: 'mission', sandbox: 'required' };
+  const chunks: Buffer[] = [];
+  let exitCode = -1, error: string | undefined;
+  let space: Awaited<ReturnType<typeof verifierWorkspace>> | undefined;
+  try {
+    if (!argv.length || !argv[0] || argv.some(arg => typeof arg !== 'string' || arg.includes('\0'))) throw new Error('Invalid verifier argv');
+    const env = verifierEnvironment();
+    space = await verifierWorkspace(context);
+    const wrapped = await wrapCommand(argv, { workdir: space.root, mode: 'required', allowNetwork: false, env, readOnlyBinds: space.binds });
+    const r = await runProcess(wrapped.argv, space.root, wrapped.env, combined, Infinity, true, part => chunks.push(part));
+    exitCode = r.exitCode;
+  } catch (cause) {
+    error = timeout.aborted ? 'Verifier timed out' : cause instanceof Error ? cause.message : String(cause);
+  } finally { await space?.dispose(); }
+  return { argv, exitCode, timedOut: timeout.aborted, output: Buffer.concat(chunks).toString('utf8'), error,
+    durationMs: Date.now() - started };
 }
