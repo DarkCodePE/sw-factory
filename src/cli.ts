@@ -51,7 +51,7 @@ const HELP = `fab — agente de código y fábrica de software local
   fab validate <changeId> [--only code_review,security_audit,qa] | status <changeId> | publish <changeId> [--dry-run]
 
   fab ws create <slug> --repo <path> --goal <text> [--agent ${AGENT_NAMES.join('|')}]
-                [--verify <comando>] [--protect <glob>] [--protect-none] [--concurrency N] [--task-limit N] [--no-change-approval] [--no-spec-approval]
+                [--verify <comando>] [--verify-setup <comando>] [--protect <glob>] [--protect-none] [--concurrency N] [--task-limit N] [--no-change-approval] [--no-spec-approval]
   fab ws list
   fab ws state <slug> <active|paused|archived>
   fab signal add <slug> <title> [--body <text>]
@@ -59,6 +59,8 @@ const HELP = `fab — agente de código y fábrica de software local
   fab triage <signalId> | fab triage --all <slug>
   fab gate allow <changeId> <ruta…> --comment <motivo>
   --verify <comando>  Gate argv repetible al crear workstream (sin shell, timeout 120s)
+  --verify-setup <comando>  Fase previa al gate, repetible: con red, worktree solo lectura, escribe solo en $FAB_DEPS; el gate lo monta ro
+                      (PYTHONPATH, PATH/bin, NODE_PATH). Se repite solo si cambia. Ej: --verify-setup 'python3 -m pip install --target $FAB_DEPS pytest' --verify 'pytest -q'
   fab inbox [slug]
   fab review <activityId> <approve|comment|decline> [--comment <text>]
   fab run <slug> [--once] [--agent <name>] [--accept-agent-binaries]
@@ -140,6 +142,7 @@ async function main(argv: string[]): Promise<number> {
       'accept-agent-binaries': { type: 'boolean' },
       protect: { type: 'string', multiple: true },
       verify: { type: 'string', multiple: true },
+      'verify-setup': { type: 'string', multiple: true },
       'protect-none': { type: 'boolean' },
       help: { type: 'boolean', short: 'h' },
     },
@@ -169,6 +172,7 @@ async function main(argv: string[]): Promise<number> {
             protectedPaths: values.protect,
             protectNone: values['protect-none'],
             verify: values.verify,
+            verifySetup: values['verify-setup'],
           });
           console.log(`workstream ${ws.slug} (${short(ws.id)}) creado en draft; actívalo con: fab ws state ${ws.slug} active`);
         } else if (sub === 'list') {

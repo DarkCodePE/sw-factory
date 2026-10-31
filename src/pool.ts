@@ -1,7 +1,9 @@
 // Worker pool: claims pending activities FIFO, runs one headless agent per activity
 // in the change's worktree, and records the result back in the store.
-import { runGates } from './gates.ts';
+import { runGates, runSetupAt, type GateStep } from './gates.ts';
+import { createHash } from 'node:crypto';
 import { rmSync } from 'node:fs';
+import { join, resolve } from 'node:path';
 import { selfCommand } from './self.ts';
 import { activityLog, atomicEvidence, gitEvidence, isolationFor, readEgressProbe, runDirectory, writeManifest } from './manifest.ts';
 import { verifyAgentStart } from './agents-verify.ts';
@@ -65,6 +67,30 @@ export interface PoolOptions {
   log?: (msg: string) => void;
 }
 
+const setupInFlight = new Map<string, Promise<{ ok: boolean; steps: GateStep[] }>>();
+
+/** Run the workstream's setup argv before the first gate, and again only when the argv changed. One run per workstream at a time. */
+function ensureSetup(store: Store, ws: Workstream, cwd: string, deps: string, signal: AbortSignal) {
+  const commands = ws.verifySetup ?? [];
+  if (!commands.length) return Promise.resolve({ ok: true, steps: [] as GateStep[] });
+  const hash = createHash('sha256').update(JSON.stringify(commands)).digest('hex');
+  if (store.getWorkstream(ws.id).verifySetupHash === hash) return Promise.resolve({ ok: true, steps: [] as GateStep[] });
+  const running = setupInFlight.get(ws.id);
+  if (running) return running;
+  const job = (async () => {
+    const steps: GateStep[] = [];
+    for (const argv of commands) {
+      const step = await runSetupAt(cwd, argv, deps, signal);
+      steps.push(step);
+      if (step.exitCode !== 0 || step.timedOut || step.error) return { ok: false, steps };
+    }
+    store.setVerifySetupHash(ws.id, hash);
+    return { ok: true, steps };
+  })().finally(() => setupInFlight.delete(ws.id));
+  setupInFlight.set(ws.id, job);
+  return job;
+}
+
 export async function processActivity(
   store: Store,
   activity: Activity,
@@ -112,17 +138,32 @@ export async function processActivity(
       }
       const started = Date.now();
       const stepEvidence: Array<Record<string, unknown>> = [];
+      const deps = join(resolve(opts.stateDir), 'deps', ws.slug);
       const metadata = () => atomicEvidence(`${runDirectory(opts.stateDir, change.id)}/${a.id}.json`, JSON.stringify({
         isolation: { adapter: 'gates', posture: 'required OS sandbox; no network; disposable source; read-only dependencies; filtered environment' },
         verifiedHead: head, durationMs: Date.now() - started, steps: stepEvidence,
       }));
       metadata();
+      const setup = await ensureSetup(store, ws, path, deps, abortController.signal);
+      if (setup.steps.length) {
+        const name = `${a.id}.setup.log`;
+        atomicEvidence(`${runDirectory(opts.stateDir, change.id)}/${name}`, setup.steps.map(s => s.output).join('\n'));
+        stepEvidence.push(...setup.steps.map(s => ({ ...s, output: undefined, log: name, phase: 'setup' })));
+        metadata();
+      }
+      if (!setup.ok) {
+        const out = setup.steps.map(s => `SETUP: ${JSON.stringify(s.argv)}\nexit=${s.exitCode} timeout=${s.timedOut}\n${s.output}${s.error ? `\n${s.error}` : ''}`).join('\n');
+        atomicEvidence(activityLog(opts.stateDir, change.id, a.id), out);
+        store.blockActivity(a.id, workerId, `GATES_FAIL setup\n${out}`);
+        log(`[${workerId}] gates fail (setup): ${change.id}`);
+        return;
+      }
       const result = await runGates(path, ws.verify ?? [], abortController.signal, (step, index) => {
         const name = `${a.id}.step-${index + 1}.log`;
         atomicEvidence(`${runDirectory(opts.stateDir, change.id)}/${name}`, step.output);
         stepEvidence.push({ ...step, output: undefined, log: name });
         metadata();
-      });
+      }, undefined, ws.verifySetup?.length ? deps : undefined);
       const output = result.steps.map((step, i) => `STEP ${i + 1}: ${JSON.stringify(step.argv)}\nexit=${step.exitCode} timeout=${step.timedOut}\n${step.output}${step.error ? `\n${step.error}` : ''}`).join('\n');
       atomicEvidence(activityLog(opts.stateDir, change.id, a.id), output);
       if (abortController.signal.aborted || store.isTerminalChange(store.getChange(change.id).status)) {
