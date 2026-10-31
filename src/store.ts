@@ -126,7 +126,6 @@ CREATE TABLE IF NOT EXISTS activities (
   result TEXT, error TEXT, retry_count INTEGER NOT NULL DEFAULT 0, created_at TEXT NOT NULL,
   started_at TEXT, completed_at TEXT, lease_expires_at TEXT);
 CREATE INDEX IF NOT EXISTS idx_activities_claim ON activities(workstream_id, status, created_at);
-CREATE INDEX IF NOT EXISTS idx_activities_lease ON activities(status, lease_expires_at);
 CREATE TABLE IF NOT EXISTS events (
   id INTEGER PRIMARY KEY AUTOINCREMENT, workstream_id TEXT NOT NULL, change_id TEXT,
   activity_id TEXT, severity TEXT NOT NULL, message TEXT NOT NULL, created_at TEXT NOT NULL);
@@ -233,6 +232,7 @@ export class Store {
   private migrate(): void {
     this.addColumn('activities', 'validator', 'TEXT');
     this.addColumn('activities', 'lease_expires_at', 'TEXT');
+    this.db.exec('CREATE INDEX IF NOT EXISTS idx_activities_lease ON activities(status, lease_expires_at);');
     const migrationTtl = new Date(this.clock().getTime() + LEASE_TTL_MS).toISOString();
     this.db
       .query(`UPDATE activities SET lease_expires_at = ? WHERE status = 'in_progress' AND lease_expires_at IS NULL`)
