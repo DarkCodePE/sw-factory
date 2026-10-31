@@ -200,8 +200,8 @@ async function main(argv: string[]): Promise<number> {
         for (const a of items) {
           const c = store.getChange(a.changeId);
           console.log(`\n== ${short(a.id)}  ${a.kind}  change ${short(c.id)}: ${c.title}`);
-          if (a.status === 'blocked') {
-            console.log(`blocked: ${a.error ?? ''}`);
+          if (a.status === 'blocked' || a.status === 'quarantined') {
+            console.log(`${a.status}: ${a.error ?? ''}`);
             console.log(`-> fab retry ${short(c.id)} | fab reject ${short(c.id)}`);
             continue;
           }

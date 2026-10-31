@@ -29,8 +29,8 @@ import { DEFAULT_PROTECTED_PATHS, validateProtectedPatterns, type GateSnapshot }
 import { parseVerdict } from './validators/verdict.ts';
 
 // Local extensions keep this task within the store ownership boundary.
-export type ActivityStatus = BaseActivityStatus | 'blocked';
-export type ChangeStatus = BaseChangeStatus | 'blocked';
+export type ActivityStatus = BaseActivityStatus | 'blocked' | 'quarantined';
+export type ChangeStatus = BaseChangeStatus | 'blocked' | 'quarantined';
 
 export const LEASE_TTL_MS = process.env.FABRICA_LEASE_TTL_MS ? Number(process.env.FABRICA_LEASE_TTL_MS) : 90_000;
 export const HEARTBEAT_INTERVAL_MS = process.env.FABRICA_HEARTBEAT_MS ? Number(process.env.FABRICA_HEARTBEAT_MS) : 30_000;
@@ -41,6 +41,7 @@ export const TERMINAL_CHANGE_STATUSES: readonly string[] = [
   'canceled',
   'declined',
   'blocked',
+  'quarantined',
 ];
 
 export function isTerminalChange(status: string): boolean {
@@ -271,20 +272,18 @@ export class Store {
   }
 
   private migrate(): void {
-    this.withRetry(() => {
-      this.addColumn('activities', 'validator', 'TEXT');
-      this.addColumn('events', 'actor', 'TEXT');
-      this.addColumn('workstreams', 'protected_paths', 'TEXT');
-      this.addColumn('changes', 'base_sha', 'TEXT');
-      this.addColumn('changes', 'protected_baseline', 'TEXT');
-      this.addColumn('activities', 'lease_expires_at', 'TEXT');
-      this.addColumn('activities', 'agent_pgid', 'INTEGER');
-      this.db.exec('CREATE INDEX IF NOT EXISTS idx_activities_lease ON activities(status, lease_expires_at);');
-      const migrationTtl = new Date(this.clock().getTime() + LEASE_TTL_MS).toISOString();
-      this.db
-        .query(`UPDATE activities SET lease_expires_at = ? WHERE status = 'in_progress' AND lease_expires_at IS NULL`)
-        .run(migrationTtl);
-    });
+    this.addColumn('activities', 'validator', 'TEXT');
+    this.addColumn('events', 'actor', 'TEXT');
+    this.addColumn('workstreams', 'protected_paths', 'TEXT');
+    this.addColumn('changes', 'base_sha', 'TEXT');
+    this.addColumn('changes', 'protected_baseline', 'TEXT');
+    this.addColumn('activities', 'lease_expires_at', 'TEXT');
+    this.addColumn('activities', 'agent_pgid', 'INTEGER');
+    this.db.exec('CREATE INDEX IF NOT EXISTS idx_activities_lease ON activities(status, lease_expires_at);');
+    const migrationTtl = new Date(this.clock().getTime() + LEASE_TTL_MS).toISOString();
+    this.db
+      .query(`UPDATE activities SET lease_expires_at = ? WHERE status = 'in_progress' AND lease_expires_at IS NULL`)
+      .run(migrationTtl);
   }
 
   private addColumn(table: string, column: string, ddl: string): void {
@@ -561,9 +560,9 @@ export class Store {
   inbox(workstream?: string): Activity[] {
     const acts = this.listActivities(workstream ? { workstream } : {});
     const latest = new Map<string, string>();
-    for (const a of acts) if (a.status === 'blocked') latest.set(a.changeId, a.id);
+    for (const a of acts) if (a.status === 'blocked' || a.status === 'quarantined') latest.set(a.changeId, a.id);
     return acts.filter(a => a.reviewStatus === 'awaiting' ||
-      (latest.get(a.changeId) === a.id && this.getChange(a.changeId).status === 'blocked'));
+      (latest.get(a.changeId) === a.id && (this.getChange(a.changeId).status === 'blocked' || this.getChange(a.changeId).status === 'quarantined')));
   }
 
   /** Atomically claim the oldest pending activity of an active workstream (FIFO), with exclusion by change and lease. */
@@ -578,7 +577,7 @@ export class Store {
              JOIN changes c ON a.change_id = c.id
              WHERE a.workstream_id = ?
                AND a.status = 'pending'
-               AND c.status NOT IN ('completed', 'failed', 'canceled', 'declined', 'blocked')
+               AND c.status NOT IN ('completed', 'failed', 'canceled', 'declined', 'blocked', 'quarantined')
                AND NOT EXISTS (
                  SELECT 1 FROM activities other
                  WHERE other.change_id = a.change_id
@@ -688,7 +687,7 @@ export class Store {
         validator: v,
         activityId: a.id,
         verdict,
-        ...(a.status === 'failed' || a.status === 'blocked' ? { failed: true } : {}),
+        ...(a.status === 'failed' || a.status === 'blocked' || a.status === 'quarantined' ? { failed: true } : {}),
         summary: a.reviewComment ?? '',
       });
     }
@@ -696,11 +695,13 @@ export class Store {
       (a) => a.status === 'pending' || a.status === 'in_progress'
     );
     const passed = results.length > 0 && !pending && results.every((r) => r.verdict === 'pass');
+    const c = this.getChange(changeId);
     return {
       changeId,
       results,
       passed,
       pending,
+      quarantined: c.status === 'quarantined',
     };
   }
 
@@ -774,12 +775,31 @@ export class Store {
         const res = this.db.query(`UPDATE activities SET status = 'blocked', error = ?, completed_at = ?, lease_expires_at = NULL, agent_pgid = NULL
           WHERE id = ? AND status = 'in_progress' AND worker_id = ?
           AND EXISTS (SELECT 1 FROM changes c WHERE c.id = activities.change_id
-            AND c.status NOT IN ('completed','failed','canceled','declined','blocked'))`).run(reason, this.now(), activityId, workerId);
+            AND c.status NOT IN ('completed','failed','canceled','declined','blocked','quarantined'))`).run(reason, this.now(), activityId, workerId);
         if (res.changes !== 1) throw new StoreError('conflict', `activity ${activityId} is not held by ${workerId}`);
         this.db.query(`UPDATE activities SET status = 'canceled', completed_at = ?
           WHERE change_id = ? AND status = 'pending'`).run(this.now(), a.changeId);
         this.setChangeStatus(a.changeId, 'blocked');
         this.event(a.workstreamId, 'warning', `blocked: ${reason}`, a.changeId, a.id);
+        return this.getActivity(activityId);
+      }).immediate();
+    });
+  }
+
+  /** A quarantined activity stops automatic retries, puts change in quarantine, and records threatmon report. */
+  quarantineActivity(activityId: string, workerId: string, reason: string): Activity {
+    return this.withRetry(() => {
+      return this.db.transaction(() => {
+        const a = this.getActivity(activityId);
+        const res = this.db.query(`UPDATE activities SET status = 'quarantined', error = ?, completed_at = ?, lease_expires_at = NULL, agent_pgid = NULL
+          WHERE id = ? AND status = 'in_progress' AND worker_id = ?
+          AND EXISTS (SELECT 1 FROM changes c WHERE c.id = activities.change_id
+            AND c.status NOT IN ('completed','failed','canceled','declined','blocked','quarantined'))`).run(reason, this.now(), activityId, workerId);
+        if (res.changes !== 1) throw new StoreError('conflict', `activity ${activityId} is not held by ${workerId}`);
+        this.db.query(`UPDATE activities SET status = 'canceled', completed_at = ?
+          WHERE change_id = ? AND status = 'pending'`).run(this.now(), a.changeId);
+        this.setChangeStatus(a.changeId, 'quarantined');
+        this.event(a.workstreamId, 'warning', `quarantined: ${reason.slice(0, 500)}`, a.changeId, a.id);
         return this.getActivity(activityId);
       }).immediate();
     });
@@ -801,7 +821,7 @@ export class Store {
             `UPDATE activities SET status = ?, error = ?, retry_count = ?, worker_id = NULL,
              started_at = NULL, completed_at = ?, lease_expires_at = NULL, agent_pgid = NULL WHERE id = ? AND status = 'in_progress' AND worker_id = ?
              AND EXISTS (SELECT 1 FROM changes c WHERE c.id = activities.change_id
-               AND c.status NOT IN ('completed','failed','canceled','declined','blocked'))`
+               AND c.status NOT IN ('completed','failed','canceled','declined','blocked','quarantined'))`
           )
           .run(retry ? 'pending' : 'failed', error, retryCount, retry ? null : this.now(), activityId, workerId);
         if (res.changes !== 1) throw new StoreError('conflict', `activity ${activityId} is not held by ${workerId}`);
@@ -875,11 +895,11 @@ export class Store {
     return this.withRetry(() => {
       return this.db.transaction(() => {
         const c = this.getChange(changeId);
-        if (c.status !== 'failed' && c.status !== 'implemented' && c.status !== 'blocked') {
-          throw new StoreError('invalid_transition', `change ${changeId} is ${c.status}, not failed, blocked or implemented`);
+        if (c.status !== 'failed' && c.status !== 'implemented' && c.status !== 'blocked' && c.status !== 'quarantined') {
+          throw new StoreError('invalid_transition', `change ${changeId} is ${c.status}, not failed, blocked, quarantined or implemented`);
         }
         const row = this.db
-          .query(`SELECT * FROM activities WHERE change_id = ? AND status IN ('failed','blocked')
+          .query(`SELECT * FROM activities WHERE change_id = ? AND status IN ('failed','blocked','quarantined')
                   ORDER BY created_at DESC, rowid DESC LIMIT 1`)
           .get(changeId) as Row | null;
         if (!row) throw new StoreError('not_found', `change ${changeId} has no failed activities`);
@@ -1056,7 +1076,7 @@ export class Store {
   }
 
   isTerminal(status: ActivityStatus): boolean {
-    return status === 'blocked' || TERMINAL_ACTIVITY.includes(status);
+    return status === 'blocked' || status === 'quarantined' || TERMINAL_ACTIVITY.includes(status);
   }
 
   // ---- events ------------------------------------------------------------

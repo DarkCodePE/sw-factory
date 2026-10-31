@@ -27,6 +27,7 @@ export function validationMarkdown(summary: ValidationSummary): string {
  * Changes that never requested validation merge as before.
  */
 export function mergeBlocker(summary: ValidationSummary): string | undefined {
+  if (summary.quarantined) return 'el change está en cuarentena (quarantined)';
   if (summary.pending) return 'hay validadores pendientes o en curso';
   const failed = summary.results.filter((r) => r.verdict === 'fail').map((r) => r.validator);
   if (failed.length) return `validadores en fail: ${failed.join(', ')}`;
