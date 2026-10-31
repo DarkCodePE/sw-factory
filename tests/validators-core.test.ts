@@ -7,7 +7,7 @@ import { join } from 'node:path';
 import { VALIDATOR_KINDS, type ChangeLinks, type PullRequestGateway, type PullRequestRef, type ValidationSummary } from '../src/connectors/types.ts';
 import { Store, StoreError } from '../src/store.ts';
 import { buildValidatorPrompt } from '../src/validators/prompts.ts';
-import { publishValidation, validationMarkdown } from '../src/validators/publish.ts';
+import { mergeBlocker, publishValidation, validationMarkdown } from '../src/validators/publish.ts';
 import { parseVerdict } from '../src/validators/verdict.ts';
 
 let dir: string;
@@ -306,4 +306,80 @@ test('publishValidation returns no_pr when no PR is linked, and publishes commen
   expect(comments.length).toBe(1);
   expect(comments[0]!.pr).toEqual(prRef);
   expect(comments[0]!.md).toContain('Validador | Veredicto | Resumen');
+});
+
+
+function implementedChange() {
+  const ws = store.createWorkstream({
+    slug: 'implemented', goal: 'g', repo: dir,
+    requireChangeApproval: false, requireApproval: false,
+  });
+  store.setWorkstreamState(ws.id, 'active');
+  const change = store.createChange(ws.id, 'Target', 'desc');
+  for (let i = 0; i < 2; i++) {
+    store.completeActivity(store.claimActivity(ws.id, 'w1')!.id, 'w1', 'STATUS: done');
+  }
+  expect(store.getChange(change.id).status).toBe('implemented');
+  return { ws, change };
+}
+
+test.each(['failed', 'completed'] as const)('merge blocks a %s validator without a verdict', (status) => {
+  const { ws, change } = implementedChange();
+  const [qa] = store.requestValidation(change.id, ['qa']);
+  expect(mergeBlocker(store.validationSummary(change.id))).toBe('hay validadores pendientes o en curso');
+  if (status === 'failed') {
+    for (let i = 0; i < 3; i++) {
+      expect(store.claimActivity(ws.id, 'w1')!.id).toBe(qa!.id);
+      store.failActivity(qa!.id, 'w1', 'no verdict');
+    }
+  } else {
+    store.completeActivity(store.claimActivity(ws.id, 'w1')!.id, 'w1', 'STATUS: done');
+  }
+  expect(store.getActivity(qa!.id).status).toBe(status);
+  const summary = store.validationSummary(change.id);
+  expect(summary.pending).toBe(false);
+  expect(summary.results[0]!.verdict).toBeUndefined();
+  expect(mergeBlocker(summary)).toBe('validadores sin veredicto: qa');
+  expect(validationMarkdown(summary)).toContain(status === 'failed' ? '*sin veredicto (falló)*' : '*pendiente*');
+});
+
+test('merge keeps existing behavior for no validators and needs_human', () => {
+  const { ws, change } = implementedChange();
+  expect(mergeBlocker(store.validationSummary(change.id))).toBeUndefined();
+  store.requestValidation(change.id, ['qa']);
+  store.completeActivity(store.claimActivity(ws.id, 'w1')!.id, 'w1', 'STATUS: done\nVERDICT: needs_human');
+  expect(mergeBlocker(store.validationSummary(change.id))).toBeUndefined();
+});
+
+test('retryChange retries failed QA rather than a newer validator and preserves its context', () => {
+  const { ws, change } = implementedChange();
+  const implementation = store.listActivities({ changeId: change.id }).find((a) => a.kind === 'implementation')!;
+  const [qa] = store.requestValidation(change.id, ['qa']);
+  // Non-null parent fixture verifies preservation beyond requestValidation's default null.
+  store.db.query('UPDATE activities SET parent_activity_id = ? WHERE id = ?').run(implementation.id, qa!.id);
+  for (let i = 0; i < 3; i++) {
+    store.failActivity(store.claimActivity(ws.id, 'w1')!.id, 'w1', 'QA crashed');
+  }
+  expect(store.getActivity(qa!.id).status).toBe('failed');
+  expect(store.getChange(change.id).status).toBe('implemented');
+  // Force creation ordering explicitly, without relying on wall-clock resolution.
+  const [newer] = store.requestValidation(change.id, ['security_audit']);
+  store.db.query('UPDATE activities SET created_at = ? WHERE id = ?').run('9999-01-01', newer!.id);
+
+  const retry = store.retryChange(change.id);
+  expect(retry.id).not.toBe(qa!.id);
+  expect(retry.validator).toBe('qa');
+  expect(retry.kind).toBe(qa!.kind);
+  expect(retry.parentActivityId).toBe(implementation.id);
+  expect(retry.retryCount).toBe(0);
+  expect(retry.status).toBe('pending');
+  expect(store.getChange(change.id).status).toBe('implemented');
+  expect(() => store.retryChange(change.id)).toThrow(StoreError);
+
+  const claimed = store.claimActivity(ws.id, 'w1')!;
+  expect(claimed.id).toBe(retry.id);
+  expect(() => store.retryChange(change.id)).toThrow(StoreError);
+  store.completeActivity(claimed.id, 'w1', 'STATUS: done\nVERDICT: pass');
+  expect(store.getChange(change.id).status).toBe('implemented');
+  expect(store.validationSummary(change.id).results.find((r) => r.validator === 'qa')!.verdict).toBe('pass');
 });

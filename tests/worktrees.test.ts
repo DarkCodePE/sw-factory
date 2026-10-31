@@ -127,7 +127,7 @@ test('removeWorktree: never deletes a branch that is not fab/<id>', async () => 
   expect(git(repo, 'branch', '--list', 'feature')).toContain('feature');
 });
 
-test('failed change: preserves both worktree and branch for retry', async () => {
+test('blocked change: preserves both worktree and branch for retry', async () => {
   process.env.FABRICA_FAKE_STATUS = 'blocked - cannot reproduce';
   try {
     const ws = store.createWorkstream({ slug: 'test-ws', goal: 'g', repo, agent: 'fake', requireChangeApproval: false });
@@ -137,7 +137,7 @@ test('failed change: preserves both worktree and branch for retry', async () => 
     await runPool(store, { workstream: ws.id, stateDir, untilIdle: true, log: () => {} });
 
     const [inv] = store.listActivities({ changeId: c.id });
-    expect(inv?.status).toBe('failed');
+    expect(inv?.status).toBe('blocked');
 
     const shortId = c.id.slice(0, 8);
     const wtPath = join(stateDir, 'worktrees', shortId);
@@ -175,4 +175,28 @@ test('removeWorktree: cleans up branch even if worktree directory was already de
 test('removeWorktree: succeeds silently if branch does not exist', async () => {
   const changeId = '0011223344556677';
   await expect(removeWorktree(repo, stateDir, changeId)).resolves.toBeUndefined();
+});
+
+test('D5: git operations in worktrees ignore repository hooks (core.hooksPath=/dev/null)', async () => {
+  const hooksDir = join(repo, '.git', 'hooks');
+  mkdirSync(hooksDir, { recursive: true });
+
+  const markerCheckout = join(dir, 'hook-post-checkout-executed');
+  const markerCommit = join(dir, 'hook-pre-commit-executed');
+
+  const postCheckoutHook = join(hooksDir, 'post-checkout');
+  writeFileSync(postCheckoutHook, `#!/bin/sh\ntouch "${markerCheckout}"\n`);
+  Bun.spawnSync(['chmod', '+x', postCheckoutHook]);
+
+  const preCommitHook = join(hooksDir, 'pre-commit');
+  writeFileSync(preCommitHook, `#!/bin/sh\ntouch "${markerCommit}"\n`);
+  Bun.spawnSync(['chmod', '+x', preCommitHook]);
+
+  const changeId = 'd5test1234567890';
+  const { path: wtPath } = await ensureWorktree(repo, stateDir, changeId);
+  expect(existsSync(markerCheckout)).toBe(false);
+
+  writeFileSync(join(wtPath, 'change.txt'), 'hello\n');
+  await commitWorktree(wtPath, 'test commit without hooks');
+  expect(existsSync(markerCommit)).toBe(false);
 });

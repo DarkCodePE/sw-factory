@@ -86,6 +86,41 @@ printf "STATUS: done\\nVERDICT: pass\\n\\nQA passed but left dirty files.\\n"
   }
 });
 
+test('non-qa validator (code_review) that leaves modified or untracked files in the worktree fails', async () => {
+  const dirtyAgentScript = join(dir, 'dirty-agent-review.sh');
+  writeFileSync(
+    dirtyAgentScript,
+    `#!/bin/sh
+echo "dirty review artifact" > dirty_review.tmp
+printf "STATUS: done\\nVERDICT: pass\\n\\nReview passed but left dirty files.\\n"
+`
+  );
+  Bun.spawnSync(['chmod', '+x', dirtyAgentScript]);
+
+  const ws = store.createWorkstream({ slug: 'ws-review-dirty', goal: 'goal', repo, agent: 'fake', requireChangeApproval: false });
+  store.setWorkstreamState(ws.id, 'active');
+  const c = store.createChange(ws.id, 'Feature Review', 'desc');
+  store.db.query(`UPDATE changes SET status = 'implemented' WHERE id = ?`).run(c.id);
+
+  store.requestValidation(c.id, ['code_review']);
+
+  const agents = await import('../src/agents.ts');
+  const fakeAdapter = agents.getAgent('fake');
+  const originalCommand = fakeAdapter.command;
+  fakeAdapter.command = () => [dirtyAgentScript];
+
+  try {
+    await runPool(store, { workstream: ws.id, stateDir: dir, untilIdle: true, log: () => {} });
+
+    const [reviewAct] = store.listActivities({ changeId: c.id }).filter((a) => a.validator === 'code_review');
+    expect(reviewAct).toBeDefined();
+    expect(reviewAct?.status).toBe('failed');
+    expect(reviewAct?.error).toContain('code_review dejó cambios en el worktree');
+  } finally {
+    fakeAdapter.command = originalCommand;
+  }
+});
+
 test('full pipeline: signal -> triage -> investigation -> implementation -> 3 validators with fake agent', async () => {
   // Fake agent output containing both STATUS and VERDICT
   process.env.FABRICA_FAKE_STATUS = 'done\nVERDICT: pass\n\nAll checks passed successfully.';
@@ -145,4 +180,43 @@ test('full pipeline: signal -> triage -> investigation -> implementation -> 3 va
   } finally {
     delete process.env.FABRICA_FAKE_STATUS;
   }
+});
+
+test('D6 exclusión: validators on the same change run sequentially, never concurrently', async () => {
+  const ws = store.createWorkstream({ slug: 'ws-seq-val', goal: 'seq', repo, agent: 'fake', requireChangeApproval: false });
+  store.setWorkstreamState(ws.id, 'active');
+  const c = store.createChange(ws.id, 'Seq validators', 'desc');
+  store.db.query(`DELETE FROM activities WHERE change_id = ?`).run(c.id);
+  store.db.query(`UPDATE changes SET status = 'implemented' WHERE id = ?`).run(c.id);
+
+  store.requestValidation(c.id, ['code_review', 'security_audit', 'qa']);
+
+  // w1 claims the first validator
+  const first = store.claimActivity(ws.id, 'w1');
+  expect(first).not.toBeNull();
+  expect(first?.validator).toBe('code_review');
+
+  // While first is in_progress, another worker CANNOT claim another validator for the same change
+  const secondAttempt = store.claimActivity(ws.id, 'w2');
+  expect(secondAttempt).toBeNull();
+
+  // Once first completes, second validator can be claimed
+  store.completeActivity(first!.id, 'w1', 'STATUS: done\nVERDICT: pass\n\nCode review passed.');
+  const second = store.claimActivity(ws.id, 'w2');
+  expect(second).not.toBeNull();
+  expect(second?.validator).toBe('security_audit');
+
+  // While second is in_progress, third cannot be claimed
+  expect(store.claimActivity(ws.id, 'w3')).toBeNull();
+
+  // Once second completes, third validator can be claimed
+  store.completeActivity(second!.id, 'w2', 'STATUS: done\nVERDICT: pass\n\nSecurity passed.');
+  const third = store.claimActivity(ws.id, 'w3');
+  expect(third).not.toBeNull();
+  expect(third?.validator).toBe('qa');
+  store.completeActivity(third!.id, 'w3', 'STATUS: done\nVERDICT: pass\n\nQA passed.');
+
+  const summary = store.validationSummary(c.id);
+  expect(summary.passed).toBe(true);
+  expect(summary.results.length).toBe(3);
 });

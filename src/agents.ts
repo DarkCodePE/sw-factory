@@ -1,13 +1,19 @@
 // Headless coding-agent adapters. Each turns (prompt, cwd) into one non-interactive run.
 // The factory never edits code itself; it hands one activity to one agent run.
 import { selfCommand } from './self.ts';
-import { reportStatusLine } from './prompts.ts';
+import { parseReportStatus, reportStatusLine } from './prompts.ts';
+
+export interface AgentRunStatus {
+  kind: 'done' | 'blocked' | 'missing';
+  reason: string;
+}
 
 export interface AgentRun {
   ok: boolean;
   output: string;
   exitCode: number;
   durationMs: number;
+  status: AgentRunStatus;
 }
 
 export interface AgentAdapter {
@@ -90,7 +96,7 @@ const fake: AgentAdapter = {
   command: (prompt) => [
     'sh',
     '-c',
-    'printf "STATUS: %s\\n\\nfake agent handled: %s\\n" "${FABRICA_FAKE_STATUS:-done}" "$1"',
+    'if [ -n "$FABRICA_FAKE_SLEEP" ]; then sleep "$FABRICA_FAKE_SLEEP"; fi; if [ -n "$FABRICA_FAKE_TOUCH" ]; then touch "$FABRICA_FAKE_TOUCH-$$"; fi; printf "STATUS: %s\\n\\nfake agent handled: %s\\n" "${FABRICA_FAKE_STATUS:-done}" "$1"',
     'fake',
     prompt.slice(0, 80),
   ],
@@ -122,8 +128,8 @@ export function boundedAgentOutput(text: string): string {
   const max = 20_000;
   const output = text.trim();
   if (output.length <= max) return output;
-  const status = reportStatusLine(output) ?? 'STATUS: blocked - report has no STATUS line';
-  const prefix = status.slice(0, 1024) + '\n\n[Report body truncated]\n';
+  const status = reportStatusLine(output);
+  const prefix = (status ? status.slice(0, 1024) + '\n\n' : '') + '[Report body truncated]\n';
   return prefix + output.slice(-(max - prefix.length));
 }
 
@@ -132,7 +138,7 @@ export async function runAgent(
   prompt: string,
   cwd: string,
   timeoutMs = 20 * 60_000,
-  options: { readOnly?: boolean } = {}
+  options: { readOnly?: boolean; signal?: AbortSignal; onSpawn?: (pgid: number) => void } = {}
 ): Promise<AgentRun> {
   const start = Date.now();
   const proc = Bun.spawn(agent.command(prompt, options), {
@@ -141,14 +147,76 @@ export async function runAgent(
     stdin: 'ignore',
     stdout: 'pipe',
     stderr: 'pipe',
+    detached: true,
   });
-  const timer = setTimeout(() => proc.kill('SIGTERM'), timeoutMs);
+
+  if (options.onSpawn) {
+    try {
+      options.onSpawn(proc.pid);
+    } catch {}
+  }
+
+  let killed = false;
+  let killTimer: ReturnType<typeof setTimeout> | undefined;
+
+  const killGroup = (sig: 'SIGTERM' | 'SIGKILL' = 'SIGTERM') => {
+    try {
+      process.kill(-proc.pid, sig);
+    } catch {
+      try {
+        proc.kill(sig);
+      } catch {}
+    }
+  };
+
+  const terminateWithEscalation = () => {
+    if (killed) return;
+    killed = true;
+    killGroup('SIGTERM');
+    killTimer = setTimeout(() => {
+      killGroup('SIGKILL');
+    }, 2000);
+    killTimer.unref?.();
+  };
+
+  const onAbort = () => {
+    terminateWithEscalation();
+  };
+
+  if (options.signal?.aborted) {
+    onAbort();
+  } else if (options.signal) {
+    options.signal.addEventListener('abort', onAbort, { once: true });
+  }
+
+  const timeoutTimer = setTimeout(() => {
+    terminateWithEscalation();
+  }, timeoutMs);
+
   const [stdout, stderr, exitCode] = await Promise.all([
     new Response(proc.stdout).text(),
     new Response(proc.stderr).text(),
     proc.exited,
   ]);
-  clearTimeout(timer);
-  const output = boundedAgentOutput(stdout.trim() || stderr.trim());
-  return { ok: exitCode === 0 && output.length > 0, output, exitCode, durationMs: Date.now() - start };
+
+  clearTimeout(timeoutTimer);
+  if (killTimer) {
+    clearTimeout(killTimer);
+  }
+  if (options.signal) {
+    options.signal.removeEventListener('abort', onAbort);
+  }
+
+  const rawOutput = stdout.trim() || stderr.trim();
+  const status = parseReportStatus(rawOutput);
+  const output = boundedAgentOutput(rawOutput);
+  const wasAborted = !!options.signal?.aborted;
+
+  return {
+    ok: exitCode === 0 && output.length > 0 && !wasAborted,
+    output,
+    exitCode,
+    durationMs: Date.now() - start,
+    status: { kind: status.kind, reason: status.reason },
+  };
 }

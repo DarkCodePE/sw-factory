@@ -8,7 +8,7 @@ export function validationMarkdown(summary: ValidationSummary): string {
   const statusEmoji = summary.passed ? 'APROBADO' : summary.pending ? 'PENDIENTE' : 'FALLIDO';
 
   const rows = summary.results.map((r) => {
-    const verdict = r.verdict ? `**${r.verdict.toUpperCase()}**` : '*pendiente*';
+    const verdict = r.verdict ? `**${r.verdict.toUpperCase()}**` : r.failed ? '*sin veredicto (falló)*' : '*pendiente*';
     const cleanSummary = (r.summary || '-').replace(/\|/g, '\\|').replace(/\r?\n/g, ' ');
     return `| \`${r.validator}\` | ${verdict} | ${cleanSummary} |`;
   });
@@ -23,13 +23,16 @@ export function validationMarkdown(summary: ValidationSummary): string {
 }
 
 /**
- * Why `fab merge` must stop: validators pending/running or any `fail` verdict.
+ * Why `fab merge` must stop: validators pending/running, missing verdicts or any `fail` verdict.
  * Changes that never requested validation merge as before.
  */
 export function mergeBlocker(summary: ValidationSummary): string | undefined {
   if (summary.pending) return 'hay validadores pendientes o en curso';
   const failed = summary.results.filter((r) => r.verdict === 'fail').map((r) => r.validator);
-  return failed.length ? `validadores en fail: ${failed.join(', ')}` : undefined;
+  if (failed.length) return `validadores en fail: ${failed.join(', ')}`;
+  // No validators are pending/running, so an absent verdict is terminal.
+  const missing = summary.results.filter((r) => r.verdict === undefined).map((r) => r.validator);
+  return missing.length ? `validadores sin veredicto: ${missing.join(', ')}` : undefined;
 }
 
 /**

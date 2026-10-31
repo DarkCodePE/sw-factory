@@ -3,9 +3,11 @@ import { afterEach, beforeEach, describe, expect, test } from 'bun:test';
 import { Store, StoreError } from '../src/store.ts';
 
 let store: Store;
+let simTime: Date;
 
 beforeEach(() => {
-  store = new Store(':memory:');
+  simTime = new Date('2026-10-30T12:00:00.000Z');
+  store = new Store(':memory:', { clock: () => simTime });
 });
 afterEach(() => store.close());
 
@@ -148,11 +150,27 @@ describe('claiming and failures', () => {
     expect(() => store.createChange(ws.id, 't2', 'd')).toThrow(StoreError);
   });
 
-  test('orphaned in-progress activities are requeued', () => {
+  test('orphaned in-progress activities are requeued only when lease expires', () => {
     const ws = activeWs({ changeApproval: false });
     store.createChange(ws.id, 't', 'd');
     store.claimActivity(ws.id, 'dead-worker');
+    expect(store.requeueOrphans(ws.id)).toBe(0);
+    simTime = new Date(simTime.getTime() + 91_000);
     expect(store.requeueOrphans(ws.id)).toBe(1);
     expect(store.claimActivity(ws.id, 'w1')).not.toBeNull();
   });
+});
+
+
+test('inserts tolerate extra nullable columns in store tables', () => {
+  for (const table of ['workstreams', 'signals', 'changes', 'activities', 'events']) {
+    store.db.exec(`ALTER TABLE ${table} ADD COLUMN future_value TEXT`);
+  }
+  const ws = store.createWorkstream({ slug: 'extended', goal: 'g', repo: '/r' });
+  expect(ws.slug).toBe('extended');
+  const signal = store.addSignal(ws.id, 'signal', 'body');
+  const change = store.triageSignal(signal.id);
+  expect(change.title).toBe('signal');
+  expect(store.listActivities({ changeId: change.id })).toHaveLength(1);
+  expect(store.listEvents(ws.id).length).toBeGreaterThan(0);
 });
