@@ -1,0 +1,312 @@
+<!doctype html>
+<html lang="es">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="description" content="La fábrica de software en tu terminal. Organiza el trabajo, ejecuta agentes de código y decide qué cambios integrar con fab.">
+  <meta property="og:image" content="https://darkcodepe.github.io/sw-factory/assets/brand/fab-og.png">
+  <meta name="color-scheme" content="light dark">
+  <link rel="icon" type="image/svg+xml" href="../assets/brand/favicon.svg">
+  <title>Agente de código | fab</title>
+  <script>try{const m=localStorage.getItem('fab-theme');if(m==='light'||m==='dark')document.documentElement.dataset.mode=m;}catch{}</script>
+  <link rel="stylesheet" href="../tokens.css">
+  <link rel="stylesheet" href="../styles.css">
+  <link rel="stylesheet" href="../modules.css">
+  <link rel="stylesheet" href="../pages.css">
+  <script src="../app.js" defer>
+</script>
+  <script src="../modules.js" defer>
+</script>
+</head>
+<body>
+<div class="ambient" aria-hidden="true">
+<i>
+</i>
+<i>
+</i>
+<i>
+</i>
+</div>
+<a class="skip-link" href="#contenido">Saltar al contenido</a>  <header class="site-header container">
+    <a class="brand-home" href="../" aria-label="fab, inicio">
+<img class="brand-logo brand-logo-light" src="../assets/brand/fab-logo-light.svg" width="251" height="120" alt="">
+<img class="brand-logo brand-logo-dark" src="../assets/brand/fab-logo-dark.svg" width="251" height="120" alt="">
+</a>
+    <nav class="site-nav" aria-label="Principal">
+      <details class="nav-mobile-menu">
+        <summary class="nav-mobile-summary">
+<svg viewBox="0 0 24 24" width="20" height="20" aria-hidden="true">
+<path d="M4 6h16M4 12h16M4 18h16"/>
+</svg>Menú</summary>
+        <div class="nav-mobile-dropdown">
+          <div class="nav-group-section">
+            <span class="nav-group-heading">Productos</span>
+            <a href="../fabrica/">Fábrica</a>
+            <a aria-current="page" href="../agente/">Agente de código</a>
+          </div>
+          <div class="nav-group-section">
+            <span class="nav-group-heading">Secciones</span>
+            <a href="../#base-local">Base local</a>
+            <a href="https://github.com/DarkCodePE/sw-factory#readme">Docs</a>
+            <a href="https://github.com/DarkCodePE/sw-factory">GitHub</a>
+            <a class="nav-cta-install" href="#instalar">Instalar</a>
+          </div>
+        </div>
+      </details>
+      <div class="nav-desktop-bar">
+        <details class="nav-dropdown-item">
+          <summary class="nav-dropdown-trigger">Productos <svg viewBox="0 0 16 16" width="16" height="16" aria-hidden="true">
+<path d="m4 6 4 4 4-4"/>
+</svg>
+</summary>
+          <div class="nav-dropdown-panel">
+            <a href="../fabrica/">Fábrica</a>
+            <a aria-current="page" href="../agente/">Agente de código</a>
+          </div>
+        </details>
+        <a href="../#base-local">Base local</a>
+        <a href="https://github.com/DarkCodePE/sw-factory#readme">Docs</a>
+        <a href="https://github.com/DarkCodePE/sw-factory">GitHub</a>
+        <a class="nav-cta-install" href="#instalar">Instalar</a>
+      </div>
+    </nav>
+    <button class="theme-button quiet-button" type="button" hidden aria-label="Cambiar al tema claro">
+      <svg viewBox="0 0 24 24" width="20" height="20" aria-hidden="true">
+<circle cx="12" cy="12" r="4"/>
+<path d="M12 2v2m0 16v2M2 12h2m16 0h2M5 5l1.5 1.5m11 11L19 19M5 19l1.5-1.5m11-11L19 5"/>
+</svg>
+      <span>Tema claro</span>
+    </button>
+  </header>
+<main id="contenido" tabindex="-1">
+<section class="product-hero container" id="inicio">
+<div>
+<h1>El agente de código ejecuta la tarea.</h1>
+<a href="#quickstart">Ver el inicio rápido</a>
+</div>
+<div>        <div class="install-well" id="instalar" aria-label="Instalar fab">
+          <div class="install-tabs" role="tablist" aria-label="Método de instalación" hidden>
+            <button id="tab-npm" role="tab" type="button" aria-selected="true" aria-controls="install-npm" tabindex="0">npm</button>
+            <button id="tab-script" role="tab" type="button" aria-selected="false" aria-controls="install-script" tabindex="-1">install.sh</button>
+          </div>
+          <div class="command-panel" id="install-npm">
+            <p class="method-label">Con npm</p>
+            <code class="install-command" id="command-npm" tabindex="0">npm install -g @okuanb/fab@next</code>
+            <button class="copy-button primary-button" type="button" data-copy="command-npm" disabled>
+              <svg viewBox="0 0 24 24" width="20" height="20" aria-hidden="true">
+<path d="M8 8h12v12H8zM4 16V4h12"/>
+</svg>
+<span>Copiar</span>
+            </button>
+          </div>
+          <div class="command-panel" id="install-script">
+            <p class="method-label">Con el instalador</p>
+            <code class="install-command script-command" id="command-script" tabindex="0">curl -fsSL https://raw.githubusercontent.com/DarkCodePE/sw-factory/main/scripts/install.sh | sh</code>
+            <button class="copy-button primary-button" type="button" data-copy="command-script" disabled>
+              <svg viewBox="0 0 24 24" width="20" height="20" aria-hidden="true">
+<path d="M8 8h12v12H8zM4 16V4h12"/>
+</svg>
+<span>Copiar</span>
+            </button>
+          </div>
+          <p class="copy-status" role="status" aria-live="polite" aria-atomic="true">
+</p>
+          <noscript>
+<p class="no-script">Selecciona un comando para copiarlo.</p>
+</noscript>
+          <p class="install-caption">Preliminar <code>@next</code>.</p>
+        </div>
+</section>
+<section class="agent-section" id="agente" aria-labelledby="agent-title">
+      <div class="container agent-grid">
+        <div class="section-intro">
+
+          <h2 id="agent-title">
+<code>fab exec / fab tui</code>
+</h2>
+
+        </div>
+        <div class="agent-entry">
+          <h3>Úsalo directamente.</h3>
+          <code class="runtime-command">fab exec / fab tui</code>
+          <p>El agente nativo conversa sobre tu carpeta con <code>fab</code> o resuelve una tarea directa sin interfaz con <code>fab exec</code>. En la fábrica, el pool lo lanza dentro del worktree del change.</p>
+          <h3>O elige un worker externo.</h3>
+          <p>La fábrica también puede delegar en <code>claude</code>, <code>codex</code> o <code>agy</code>. Cada CLI gestiona su acceso y sus políticas de ejecución.</p>
+          <a href="https://github.com/DarkCodePE/sw-factory#readme">Consultar los comandos de fab</a>
+        </div>
+      </div>
+    </section>
+<section class="sandbox-summary" id="sandbox" aria-labelledby="sandbox-title">
+      <div class="container sandbox-summary-grid">
+        <div class="sandbox-summary-copy">
+
+          <h2 id="sandbox-title">Controla dónde actúan las herramientas.</h2>
+          <p>Las herramientas nativas usan bubblewrap en Linux cuando está disponible. <code>--sandbox required</code> exige ese aislamiento.</p>
+          <p>En macOS corren con los permisos del usuario. Los CLIs externos conservan sus propias políticas; esta contención no se extiende a todos los workers.</p>
+          <a href="../fabrica/#module-sandbox" data-open-module="sandbox">Explorar los límites del sandbox</a>
+        </div>
+        <div class="sandbox-summary-figure">
+          <svg class="module-scene" viewBox="0 0 680 280" role="img" aria-labelledby="scene-sandbox-summary-title">
+            <title id="scene-sandbox-summary-title">Límites de contención: herramientas nativas en Linux frente a macOS y CLIs externos</title>
+            <rect class="sandbox-boundary" x="15" y="20" width="355" height="240" rx="10"/>
+            <text class="scene-note" x="32" y="48">Frontera Linux (bubblewrap)</text>
+            <g class="module-node sandbox-execute-node" transform="translate(32 68)">
+              <rect width="195" height="68" rx="8"/>
+              <text x="16" y="28">Execute</text>
+              <text class="node-detail" x="16" y="50">herramientas nativas</text>
+            </g>
+            <path class="module-wire section-flow-wire" d="M227 102H340"/>
+            <circle class="scene-packet sandbox-packet" r="3.5" style="offset-path: path('M227 102H340');"/>
+            <text class="scene-note" x="245" y="90">Red</text>
+            <text class="node-detail" x="245" y="125">auto / ask / deny</text>
+            <text class="scene-note" x="32" y="166">worktree: lectura y escritura (rw)</text>
+            <text class="scene-note" x="32" y="194">raíz del host: solo lectura (ro)</text>
+            <text class="node-detail" x="32" y="224">--sandbox required exige este entorno</text>
+            <text class="scene-note" x="32" y="246">Sin aislamiento absoluto del sistema</text>
+            <g class="module-node" transform="translate(415 35)">
+              <rect width="255" height="68" rx="8"/>
+              <text x="16" y="28">macOS nativo</text>
+              <text class="node-detail" x="16" y="50">permisos del usuario local</text>
+            </g>
+            <text class="scene-note" x="415" y="126">Sin contenedor bubblewrap equivalente</text>
+            <path class="branch-line" d="M415 152H670" stroke-dasharray="3 3"/>
+            <g class="module-node" transform="translate(415 170)">
+              <rect width="255" height="68" rx="8"/>
+              <text x="16" y="28">claude / codex / agy</text>
+              <text class="node-detail" x="16" y="50">políticas del CLI externo</text>
+            </g>
+            <text class="scene-note" x="415" y="258">Contención no extendida a CLIs externos</text>
+          </svg>
+        </div>
+      </div>
+    </section>
+<section class="models-section" id="modelos" aria-labelledby="models-title">
+      <div class="container">
+        <div class="section-intro">
+
+          <h2 id="models-title">Tus modelos, con rutas explícitas.</h2>
+          <p class="lead">El estado de la fábrica es local. La inferencia puede usar un endpoint local o un servicio remoto.</p>
+        </div>
+        <div class="models-overview-figure">
+          <svg class="module-scene" viewBox="0 0 680 290" role="img" aria-labelledby="scene-models-routes-title">
+            <title id="scene-models-routes-title">Dos rutas alternativas de inferencia: auto por tarea y omni por cuenta y cuota</title>
+            <g class="module-node models-node-top" transform="translate(225 14)">
+              <rect width="230" height="54" rx="8"/>
+              <text x="16" y="24">fab exec / worker</text>
+              <text class="node-detail" x="16" y="44">solicitud de inferencia</text>
+            </g>
+            <path class="module-wire section-flow-wire" d="M225 41H170V120"/>
+            <path class="module-wire section-flow-wire" d="M455 41H510V120"/>
+            <circle class="scene-packet models-packet-auto" r="3.5" style="offset-path: path('M225 41H170V120');"/>
+            <circle class="scene-packet models-packet-omni" r="3.5" style="offset-path: path('M455 41H510V120');"/>
+            <text class="scene-note" x="25" y="118">Ruta auto: clasificación y reintentos</text>
+            <g class="module-node models-node-auto" transform="translate(25 130)">
+              <rect width="295" height="56" rx="8"/>
+              <text x="14" y="24">Clasificador local / Jev</text>
+              <text class="node-detail" x="14" y="44">aptitud y relativeCost por tarea</text>
+            </g>
+            <g class="module-node models-node-auto-2" transform="translate(25 198)">
+              <rect width="295" height="56" rx="8"/>
+              <text x="14" y="24">Rotación de candidatos</text>
+              <text class="node-detail" x="14" y="44">respaldos ante 429 y 5xx</text>
+            </g>
+            <text class="scene-note" x="360" y="118">Ruta omni: cuenta y grupo de cuota</text>
+            <g class="module-node models-node-omni" transform="translate(360 130)">
+              <rect width="295" height="56" rx="8"/>
+              <text x="14" y="24">Catálogo de ToS</text>
+              <text class="node-detail" x="14" y="44">excluye avoid; omite no revisados</text>
+            </g>
+            <g class="module-node models-node-omni-2" transform="translate(360 198)">
+              <rect width="295" height="56" rx="8"/>
+              <text x="14" y="24">costTier operativo</text>
+              <text class="node-detail" x="14" y="44">cuentas y cuotas; allowPaid explícito</text>
+            </g>
+          </svg>
+        </div>
+        <div class="model-routes">
+          <article class="model-route">
+            <h3>Conecta el agente nativo.</h3>
+            <div>
+              <p>Admite <code>anthropic</code>, <code>openai</code>, <code>chatgpt</code> mediante sesión de Codex y <code>generic-chat-completion-api</code>. Declara tus destinos en <code>customModels</code>, con <code>baseUrl</code> y <code>apiKey</code> según el proveedor.</p>
+              <p>Un endpoint OpenAI-compatible permite conectar servicios remotos o servidores locales como Ollama y vLLM. La compatibilidad de protocolo no verifica una integración concreta.</p>
+            </div>
+          </article>
+          <article class="model-route" id="router-auto">
+            <h3>
+<code>auto</code>: modelo según la tarea.</h3>
+            <div>
+              <p>El router <code>auto</code> (<code>-m auto</code>) evalúa tus candidatos por tarea. Con el clasificador local por defecto o el clasificador Jev opcional de TypeSafe, evalúa aptitud y elige el de menor <code>relativeCost</code>. Ese coste relativo lo defines tú.</p>
+              <p>Reintenta fallos transitorios como 429 y 5xx, respeta <code>Retry-After</code> y rota a los candidatos de respaldo al agotar los intentos. Un 400 de modelo permite rotar; un 401/403 detiene el intento. Si ya empezó a emitir texto, no repite la salida.</p>
+              <details>
+                <summary>Qué necesita el clasificador</summary>
+                <p>Jev es opcional y requiere tu clave (<code>JEV_API_KEY</code> o <code>TYPESAFE_API_KEY</code>). Si el clasificador no está configurado, usa el primer candidato elegible sin respaldos. Si ninguno supera el umbral, elige el de mayor puntuación.</p>
+              </details>
+            </div>
+          </article>
+          <article class="model-route" id="router-omni">
+            <h3>
+<code>omni</code>: ruta por cuenta y cuota.</h3>
+            <div>
+              <p>Encadena tus endpoints OpenAI Chat Completions por modelo, cuenta y grupo de cuota. Ante límites o cuota agotada, busca otro destino elegible y respeta los tiempos de espera del proveedor. Los perfiles declarados de pago requieren <code>allowPaid</code> explícito.</p>
+              <p>El catálogo de términos de servicio (ToS) excluye destinos <code>avoid</code>; los no revisados quedan deshabilitados. Es una referencia de política, no una revisión legal en tiempo real. <code>costTier</code> es una declaración operativa, no una tarifa verificada.</p>
+              <a href="https://github.com/DarkCodePE/sw-factory/blob/main/docs/omni-provider.md">Configurar el router omni</a>
+            </div>
+          </article>
+        </div>
+        <p class="endpoint-note">
+<code>auto</code> y <code>omni</code> son alternativas: no se combinan en la misma configuración. Tú aportas el acceso a los modelos; las cuotas y los cargos dependen de cada proveedor.</p>
+      </div>
+    </section>
+<section class="quickstart container" id="quickstart">
+<h2>De tu terminal al trabajo.</h2>
+<ol>
+<li>
+<h3>Abre tu carpeta</h3>
+<code>cd mi-proyecto</code>
+</li>
+<li>
+<h3>Conversa con el agente</h3>
+<code>fab tui</code>
+</li>
+<li>
+<h3>Encarga una tarea puntual</h3>
+<code>fab exec &quot;analiza los tests&quot;</code>
+</li>
+<li>
+<h3>Comprueba tu entorno</h3>
+<code>fab doctor</code>
+</li>
+</ol>
+</section>
+<section class="closing-cta" id="empezar">
+<div class="container">
+<h2>Elige cómo quieres trabajar.</h2>
+<p>Dos formas directas de poner a prueba fab en tus proyectos.</p>
+<a class="primary-button" href="#instalar">Instalar fab</a>
+<a href="https://github.com/DarkCodePE/sw-factory#readme">Leer la documentación</a>
+</div>
+</section>
+</main>  <footer class="site-footer">
+    <div class="container footer-grid">
+      <a class="brand-home" href="../" aria-label="fab, volver al inicio">
+<img class="brand-logo brand-logo-light" src="../assets/brand/fab-logo-light.svg" width="251" height="120" alt="">
+<img class="brand-logo brand-logo-dark" src="../assets/brand/fab-logo-dark.svg" width="251" height="120" alt="">
+</a>
+      <nav aria-label="Recursos">
+        <a href="../fabrica/">Fábrica</a>
+        <a href="../agente/">Agente</a>
+        <a href="../fabrica/#flujo">Capacidades</a>
+        <a href="../#base-local">Base local</a>
+        <a href="../fabrica/#proximamente">Próximamente</a>
+        <a href="https://github.com/DarkCodePE/sw-factory">Repositorio</a>
+        <a href="https://www.npmjs.com/package/@okuanb/fab">npm</a>
+        <a href="https://github.com/DarkCodePE/sw-factory#readme">Documentación</a>
+        <a href="https://github.com/DarkCodePE/sw-factory/blob/main/packaging/npm/README.md">Instalación</a>
+      </nav>
+      <p>Linux glibc y macOS, x64/arm64. npm requiere Node ≥22; el binario independiente no requiere Bun ni Node.</p>
+    </div>
+  <div class="container footer-wordmark" aria-hidden="true">fab<span>Hecho para tu terminal.</span>
+</div>
+</footer>
+</body>
+</html>
