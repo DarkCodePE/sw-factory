@@ -26,7 +26,7 @@ h1{font-size:clamp(2.6rem,4.1vw,4.5rem);letter-spacing:-.028em}
 .mini-scene text{fill:var(--color-ink);stroke:none;font:14px var(--font-outlier);text-anchor:middle}
 .mini-packet{fill:var(--color-connector);stroke:none;opacity:0;animation:mini-travel 3.5s ease-in-out infinite;animation-play-state:paused}
 [data-scene-active="true"] .mini-packet{animation-play-state:running}
-@keyframes mini-travel{0%{transform:translateX(0);opacity:0}20%{opacity:1}80%{opacity:1}100%{transform:translateX(300px);opacity:0}}
+@keyframes mini-travel{0%{offset-distance:0%;opacity:0}15%{opacity:1}85%{opacity:1}100%{offset-distance:100%;opacity:0}}
 .command-marquee{overflow:hidden;border-block:1px solid var(--color-rule);padding-block:22px}
 .command-track{display:flex;width:max-content;gap:60px;animation:command-scroll 35s linear infinite;animation-play-state:paused}
 .command-track code{font-size:1.05rem;color:var(--color-connector)}
@@ -75,3 +75,8 @@ main>section{background:transparent!important}
 .hero-relation{padding:32px 0 0;width:100%}
 .capability-card h4,.product-card h3,.local-facts h3{overflow-wrap:anywhere;hyphens:auto}
 .footer-beaver{width:.6em;height:.6em;vertical-align:-.04em}.brand-home[aria-current]{text-decoration:none!important}
+
+.module-steps li[hidden]{display:block}
+.module-steps li{padding:8px 12px;border-left:2px solid var(--color-rule-2);color:var(--color-ink-2)}
+.module-steps li[aria-current="step"]{color:var(--color-ink);font-weight:600;border-left-color:var(--color-connector)}
+@media(min-width:1001px){.module-panel:not([hidden]){display:grid;grid-template-columns:minmax(0,1fr) 240px;column-gap:32px;align-items:center}.module-panel>*{grid-column:1/-1}.module-panel>.module-scene{grid-column:1;grid-row:2}.module-panel>.module-steps{grid-column:2;grid-row:2}}

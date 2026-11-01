@@ -15,12 +15,12 @@
       panel.hidden = index !== selected;
       panel.dataset.step = String(step);
       panel.dataset.playing = String(index === selected && playing && visible && !document.hidden && !motion.matches);
-      panel.querySelectorAll('[data-step-label]').forEach((label, n) => { label.hidden = n !== step; });
+      panel.querySelectorAll('[data-step-label]').forEach((label, n) => { if (n === step) label.setAttribute('aria-current', 'step'); else label.removeAttribute('aria-current'); });
     });
     play.textContent = playing ? 'Pausar pasos' : step === 3 ? 'Repetir pasos' : 'Reanudar pasos';
     play.disabled = motion.matches;
     status.setAttribute('aria-live', playing ? 'off' : 'polite');
-    status.textContent = `${tabs[selected].textContent.trim()}: ${panels[selected].querySelector(`[data-step-label="${step}"]`).textContent}. Esquema ilustrativo.`;
+    status.textContent = `${tabs[selected].textContent.trim().replace(/^(\d+)/, '$1 ')}: ${panels[selected].querySelector(`[data-step-label="${step}"]`).textContent}. Esquema ilustrativo.`;
   }
   function schedule() {
     stop(); draw();
