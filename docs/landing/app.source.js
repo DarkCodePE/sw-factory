@@ -35,6 +35,7 @@
     status.textContent = '';
     if (focus) tab.focus({ preventScroll: true });
   }
+  if (!tabs.length) return;
   document.querySelector('.install-tabs').hidden = false;
   panels.forEach((panel, index) => {
     panel.setAttribute('role', 'tabpanel');
@@ -171,6 +172,7 @@
 (() => {
  const canvas=document.querySelector('.hero-field'), hero=canvas?.parentElement;
 
+ if (!canvas) return;
  const ctx=canvas.getContext('2d'), receiver=document.querySelector('[data-field-receiver]');
  const motion=matchMedia('(prefers-reduced-motion: reduce)');
  let paths=[],width=0,height=0,visible=false,raf=0,last=0,frames=0;
@@ -233,4 +235,23 @@
  document.addEventListener('click',e=>{if(!nav.contains(e.target))close()});
  document.addEventListener('keydown',e=>{if(e.key==='Escape'){const d=menus.find(d=>d.open);if(d){close();d.querySelector('summary').focus()}}});
  window.addEventListener('hashchange',current);current();
+})();
+
+// Decorative CSS motion has one lifecycle owner across all three pages.
+(() => {
+ const root=document.documentElement, motion=matchMedia('(prefers-reduced-motion: reduce)');
+ const scenes=[...document.querySelectorAll('.product-card, .capability-card, .command-marquee')];
+ const visible=new Set();
+ function sync(){
+  const active=!document.hidden&&!motion.matches;
+  root.dataset.motionActive=String(active);
+  scenes.forEach(scene=>scene.dataset.sceneActive=String(active&&visible.has(scene)));
+ }
+ const observer=new IntersectionObserver(entries=>{
+  entries.forEach(entry=>entry.isIntersecting?visible.add(entry.target):visible.delete(entry.target));sync();
+ });
+ scenes.forEach(scene=>observer.observe(scene));
+ document.addEventListener('visibilitychange',sync);motion.addEventListener('change',sync);sync();
+ const legacy=()=>{const target=document.getElementById(location.hash.slice(1));if(target?.dataset.legacy)location.replace(target.dataset.legacy)};
+ window.addEventListener('hashchange',legacy);legacy();
 })();

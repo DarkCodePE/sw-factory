@@ -8,28 +8,35 @@
   const play = controls.querySelector('[data-module-play]');
   const status = controls.querySelector('.module-state');
   const motion = matchMedia('(prefers-reduced-motion: reduce)');
-  let selected = 0, step = 3, playing = false, visible = false, timer;
+  let selected = 0, step = 3, playing = false, visible = false, timer, started = false, touring = false;
   const stop = () => { clearTimeout(timer); timer = undefined; };
   function draw() {
     panels.forEach((panel, index) => {
       panel.hidden = index !== selected;
       panel.dataset.step = String(step);
       panel.dataset.playing = String(index === selected && playing && visible && !document.hidden && !motion.matches);
-      panel.querySelectorAll('[data-step-label]').forEach((label, n) => { label.hidden = n !== step; });
+      panel.querySelectorAll('[data-step-label]').forEach((label, n) => { if (n === step) label.setAttribute('aria-current', 'step'); else label.removeAttribute('aria-current'); });
     });
     play.textContent = playing ? 'Pausar pasos' : step === 3 ? 'Repetir pasos' : 'Reanudar pasos';
     play.disabled = motion.matches;
     status.setAttribute('aria-live', playing ? 'off' : 'polite');
-    status.textContent = `${tabs[selected].textContent.trim()}: ${panels[selected].querySelector(`[data-step-label="${step}"]`).textContent}. Esquema ilustrativo.`;
+    status.textContent = `${tabs[selected].textContent.trim().replace(/^(\d+)/, '$1 ')}: ${panels[selected].querySelector(`[data-step-label="${step}"]`).textContent}. Esquema ilustrativo.`;
   }
   function schedule() {
     stop(); draw();
     if (!playing || !visible || document.hidden || motion.matches) return;
-    timer = setTimeout(() => { if (step < 3) step++; else playing = false; schedule(); }, 1400);
+    timer = setTimeout(() => {
+      if (step < 3) step++;
+      else if (touring && selected < panels.length - 1) {
+        selected++; step=0;
+        tabs.forEach((tab,n)=>{tab.setAttribute('aria-selected',String(n===selected));tab.tabIndex=n===selected?0:-1});
+      } else { playing=false; touring=false; }
+      schedule();
+    }, 1400);
   }
-  function finish() { playing = false; step = 3; schedule(); }
+  function finish() { touring = false; playing = false; step = 3; schedule(); }
   function select(index, focus = false) {
-    selected = index; step = 3; playing = false;
+    touring = false; started = true; selected = index; step = 3; playing = false;
     tabs.forEach((tab, n) => { tab.setAttribute('aria-selected', String(n === index)); tab.tabIndex = n === index ? 0 : -1; });
     if (focus) tabs[index].focus({ preventScroll: true });
     schedule();
@@ -69,6 +76,13 @@
   }));
   motion.addEventListener('change', finish);
   document.addEventListener('visibilitychange', schedule);
-  new IntersectionObserver(entries => { visible = entries[0].isIntersecting; schedule(); }, { threshold: .1 }).observe(host);
-  select(0);
+  new IntersectionObserver(entries => { visible = entries[0].isIntersecting; if(visible&&!started&&!motion.matches){started=true;touring=true;playing=true;step=0} schedule(); }, { threshold: .1 }).observe(host);
+  select(0); started=false;
+  function followFragment() {
+    const target=document.getElementById(decodeURIComponent(location.hash.slice(1)));
+    const panel=target?.closest('[data-module]');
+    const index=panel?panels.indexOf(panel):tabs.indexOf(target);
+    if(index>=0){select(index);panels[index].scrollIntoView({block:'nearest'})}
+  }
+  window.addEventListener('hashchange',followFragment);followFragment();
 })();

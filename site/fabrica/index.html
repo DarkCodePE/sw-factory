@@ -1,0 +1,845 @@
+<!doctype html>
+<html lang="es">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="description" content="La fábrica de software en tu terminal. Organiza el trabajo, ejecuta agentes de código y decide qué cambios integrar con fab.">
+  <meta property="og:image" content="https://darkcodepe.github.io/sw-factory/assets/brand/fab-og.png">
+  <meta name="color-scheme" content="light dark">
+  <link rel="icon" type="image/svg+xml" href="../assets/brand/favicon.svg">
+  <title>Fábrica | fab</title>
+  <script>try{const m=localStorage.getItem('fab-theme');if(m==='light'||m==='dark')document.documentElement.dataset.mode=m;}catch{}</script>
+  <link rel="stylesheet" href="../tokens.css">
+  <link rel="stylesheet" href="../styles.css">
+  <link rel="stylesheet" href="../modules.css">
+  <link rel="stylesheet" href="../pages.css">
+  <script src="../app.js" defer>
+</script>
+  <script src="../modules.js" defer>
+</script>
+</head>
+<body>
+<div class="ambient" aria-hidden="true">
+<i>
+</i>
+<i>
+</i>
+<i>
+</i>
+</div>
+<a class="skip-link" href="#contenido">Saltar al contenido</a>  <header class="site-header container">
+    <a class="brand-home" href="../" aria-label="fab, inicio">
+<img class="brand-logo brand-logo-light" src="../assets/brand/fab-logo-light.svg" width="251" height="120" alt="">
+<img class="brand-logo brand-logo-dark" src="../assets/brand/fab-logo-dark.svg" width="251" height="120" alt="">
+</a>
+    <nav class="site-nav" aria-label="Principal">
+      <details class="nav-mobile-menu">
+        <summary class="nav-mobile-summary">
+<svg viewBox="0 0 24 24" width="20" height="20" aria-hidden="true">
+<path d="M4 6h16M4 12h16M4 18h16"/>
+</svg>Menú</summary>
+        <div class="nav-mobile-dropdown">
+          <div class="nav-group-section">
+            <span class="nav-group-heading">Productos</span>
+            <a aria-current="page" href="../fabrica/">Fábrica</a>
+            <a href="../agente/">Agente de código</a>
+          </div>
+          <div class="nav-group-section">
+            <span class="nav-group-heading">Secciones</span>
+            <a href="../#base-local">Base local</a>
+            <a href="https://github.com/DarkCodePE/sw-factory#readme">Docs</a>
+            <a href="https://github.com/DarkCodePE/sw-factory">GitHub</a>
+            <a class="nav-cta-install" href="#instalar">Instalar</a>
+          </div>
+        </div>
+      </details>
+      <div class="nav-desktop-bar">
+        <details class="nav-dropdown-item">
+          <summary class="nav-dropdown-trigger">Productos <svg viewBox="0 0 16 16" width="16" height="16" aria-hidden="true">
+<path d="m4 6 4 4 4-4"/>
+</svg>
+</summary>
+          <div class="nav-dropdown-panel">
+            <a aria-current="page" href="../fabrica/">Fábrica</a>
+            <a href="../agente/">Agente de código</a>
+          </div>
+        </details>
+        <a href="../#base-local">Base local</a>
+        <a href="https://github.com/DarkCodePE/sw-factory#readme">Docs</a>
+        <a href="https://github.com/DarkCodePE/sw-factory">GitHub</a>
+        <a class="nav-cta-install" href="#instalar">Instalar</a>
+      </div>
+    </nav>
+    <button class="theme-button quiet-button" type="button" hidden aria-label="Cambiar al tema claro">
+      <svg viewBox="0 0 24 24" width="20" height="20" aria-hidden="true">
+<circle cx="12" cy="12" r="4"/>
+<path d="M12 2v2m0 16v2M2 12h2m16 0h2M5 5l1.5 1.5m11 11L19 19M5 19l1.5-1.5m11-11L19 5"/>
+</svg>
+      <span>Tema claro</span>
+    </button>
+  </header>
+<main id="contenido" tabindex="-1">
+<section class="product-hero container" id="inicio">
+<div>
+<h1>La fábrica coordina el trabajo.</h1>
+<a href="#quickstart">Ver el inicio rápido</a>
+</div>
+<div>        <div class="install-well" id="instalar" aria-label="Instalar fab">
+          <div class="install-tabs" role="tablist" aria-label="Método de instalación" hidden>
+            <button id="tab-npm" role="tab" type="button" aria-selected="true" aria-controls="install-npm" tabindex="0">npm</button>
+            <button id="tab-script" role="tab" type="button" aria-selected="false" aria-controls="install-script" tabindex="-1">install.sh</button>
+          </div>
+          <div class="command-panel" id="install-npm">
+            <p class="method-label">Con npm</p>
+            <code class="install-command" id="command-npm" tabindex="0">npm install -g @okuanb/fab@next</code>
+            <button class="copy-button primary-button" type="button" data-copy="command-npm" disabled>
+              <svg viewBox="0 0 24 24" width="20" height="20" aria-hidden="true">
+<path d="M8 8h12v12H8zM4 16V4h12"/>
+</svg>
+<span>Copiar</span>
+            </button>
+          </div>
+          <div class="command-panel" id="install-script">
+            <p class="method-label">Con el instalador</p>
+            <code class="install-command script-command" id="command-script" tabindex="0">curl -fsSL https://raw.githubusercontent.com/DarkCodePE/sw-factory/main/scripts/install.sh | sh</code>
+            <button class="copy-button primary-button" type="button" data-copy="command-script" disabled>
+              <svg viewBox="0 0 24 24" width="20" height="20" aria-hidden="true">
+<path d="M8 8h12v12H8zM4 16V4h12"/>
+</svg>
+<span>Copiar</span>
+            </button>
+          </div>
+          <p class="copy-status" role="status" aria-live="polite" aria-atomic="true">
+</p>
+          <noscript>
+<p class="no-script">Selecciona un comando para copiarlo.</p>
+</noscript>
+          <p class="install-caption">Preliminar <code>@next</code>.</p>
+        </div>
+</section>
+<section class="modules-section" id="flujo" aria-labelledby="flow-title">
+<div class="container">
+<div class="module-heading" id="modulos">
+<h2 id="flow-title">Del contexto al cambio integrado.</h2>
+<p>Inspecciona las etapas y los ejecutores de la fábrica.</p>
+</div>
+<div class="module-explorer">
+<div class="module-tabs" role="tablist" aria-label="Módulos de fab" aria-orientation="vertical" hidden>
+<button type="button" class="module-tab" id="module-tab-jira" role="tab" aria-controls="module-jira" aria-selected="true" tabindex="0">
+<span class="module-ordinal">01</span>Jira a señal</button>
+<button type="button" class="module-tab" id="module-tab-triage" role="tab" aria-controls="module-triage" aria-selected="false" tabindex="-1">
+<span class="module-ordinal">02</span>Triage</button>
+<button type="button" class="module-tab" id="module-tab-investigation" role="tab" aria-controls="module-investigation" aria-selected="false" tabindex="-1">
+<span class="module-ordinal">03</span>Investigación</button>
+<button type="button" class="module-tab" id="module-tab-implementation" role="tab" aria-controls="module-implementation" aria-selected="false" tabindex="-1">
+<span class="module-ordinal">04</span>Implementación</button>
+<button type="button" class="module-tab" id="module-tab-validators" role="tab" aria-controls="module-validators" aria-selected="false" tabindex="-1">
+<span class="module-ordinal">05</span>Validadores</button>
+<button type="button" class="module-tab" id="module-tab-merge" role="tab" aria-controls="module-merge" aria-selected="false" tabindex="-1">
+<span class="module-ordinal">06</span>Merge gate</button>
+<button type="button" class="module-tab" id="module-tab-sandbox" role="tab" aria-controls="module-sandbox" aria-selected="false" tabindex="-1">
+<span class="module-ordinal">07</span>Sandbox</button>
+<button type="button" class="module-tab" id="module-tab-workers" role="tab" aria-controls="module-workers" aria-selected="false" tabindex="-1">
+<span class="module-ordinal">08</span>Workers y modelos</button>
+</div>
+<div class="module-panels">
+<article class="module-panel" id="module-jira" data-module="jira" data-step="3" data-playing="false" data-result="pass">
+<div class="module-intro">
+<h3>De Jira a tu estado local.</h3>
+<p>Importa el contexto del issue y conserva el vínculo de origen en SQLite.</p>
+<p class="module-availability">Disponible hoy</p>
+</div>
+<svg class="module-scene" viewBox="0 0 680 310" role="img" aria-labelledby="scene-jira-title">
+<title id="scene-jira-title">Esquema ilustrativo: Jira a señal</title>
+<path class="module-wire " data-phase="1" d="M198 144H270"/>
+<path class="module-wire " data-phase="2" d="M420 144H478"/>
+<circle class="scene-packet packet-phase-1" r="3.5" style="offset-path: path('M198 144H270');"/>
+<circle class="scene-packet packet-phase-2" r="3.5" style="offset-path: path('M420 144H478');"/>
+<g class="module-node " data-phase="0" transform="translate(20 108)">
+<rect width="178" height="72" rx="8"/>
+<text x="16" y="30">FAB-142</text>
+<text class="node-detail" x="16" y="53">Issue de Jira</text>
+</g>
+<g class="module-node " data-phase="1" transform="translate(270 108)">
+<rect width="150" height="72" rx="8"/>
+<text x="16" y="30">fab</text>
+<text class="node-detail" x="16" y="53">import</text>
+</g>
+<g class="module-node " data-phase="3" transform="translate(478 108)">
+<rect width="182" height="72" rx="8"/>
+<text x="16" y="30">SQLite</text>
+<text class="node-detail" x="16" y="53">signal 04dfa1a0</text>
+</g>
+<text class="scene-note" x="20" y="238">Origen y contexto conservados en local</text>
+</svg>
+<ol class="module-steps">
+<li value="1" data-step-label="0">Issue de Jira</li>
+<li value="2" data-step-label="1">Importación por CLI</li>
+<li value="3" data-step-label="2">Contexto y origen</li>
+<li value="4" data-step-label="3">Señal en SQLite</li>
+</ol>
+<div class="module-cli">
+<code>fab jira import FAB-142 --ws mi-proyecto</code>
+<pre>HU importada: signal 04dfa1a0</pre>
+</div>
+</article>
+<article class="module-panel" id="module-triage" data-module="triage" data-step="3" data-playing="false" data-result="pass">
+<div class="module-intro">
+<h3>De señal a change.</h3>
+<p>Promueve la señal. La aprobación está activa por defecto y mantiene el cambio en revisión; se desactiva con <code>--no-change-approval</code>.</p>
+<p class="module-availability">Base disponible; IA próximamente</p>
+</div>
+<svg class="module-scene" viewBox="0 0 680 310" role="img" aria-labelledby="scene-triage-title">
+<title id="scene-triage-title">Esquema ilustrativo: Triage</title>
+<path class="module-wire " data-phase="1" d="M185 145H250"/>
+<path class="module-wire " data-phase="2" d="M395 145H465"/>
+<path class="module-wire " data-phase="3" d="M550 180V245H395"/>
+<circle class="scene-packet packet-phase-1" r="3.5" style="offset-path: path('M185 145H250');"/>
+<circle class="scene-packet packet-phase-2" r="3.5" style="offset-path: path('M395 145H465');"/>
+<g class="module-node " data-phase="0" transform="translate(15 109)">
+<rect width="170" height="72" rx="8"/>
+<text x="16" y="30">signal</text>
+<text class="node-detail" x="16" y="53">04dfa1a0</text>
+</g>
+<g class="module-node " data-phase="1" transform="translate(250 109)">
+<rect width="145" height="72" rx="8"/>
+<text x="16" y="30">Triage</text>
+<text class="node-detail" x="16" y="53">promoción</text>
+</g>
+<g class="module-node " data-phase="2" transform="translate(465 109)">
+<rect width="200" height="72" rx="8"/>
+<text x="16" y="30">change</text>
+<text class="node-detail" x="16" y="53">in_review</text>
+</g>
+<text class="scene-note" x="225" y="270">Revisión humana por defecto</text>
+</svg>
+<ol class="module-steps">
+<li value="1" data-step-label="0">Señal recibida</li>
+<li value="2" data-step-label="1">Promoción explícita</li>
+<li value="3" data-step-label="2">Change en revisión</li>
+<li value="4" data-step-label="3">Aprobación por defecto</li>
+</ol>
+<div class="module-cli">
+<code>fab triage 04dfa1a0</code>
+<pre>signal 04dfa1a0 -&gt; change 951e7eb3 (in_review)</pre>
+</div>
+</article>
+<article class="module-panel" id="module-investigation" data-module="investigation" data-step="3" data-playing="false" data-result="pass">
+<div class="module-intro">
+<h3>Investiga antes de implementar.</h3>
+<p>El worker analiza el repositorio y entrega la especificación en su informe.</p>
+<p class="module-availability">Disponible hoy</p>
+</div>
+<svg class="module-scene" viewBox="0 0 680 310" role="img" aria-labelledby="scene-investigation-title">
+<title id="scene-investigation-title">Esquema ilustrativo: Investigación</title>
+<path class="module-wire " data-phase="1" d="M145 70H230V148H280"/>
+<path class="module-wire " data-phase="1" d="M145 222H230V148"/>
+<path class="module-wire " data-phase="2" d="M420 148H480"/>
+<circle class="scene-packet packet-phase-1" r="3.5" style="offset-path: path('M145 70H230V148H280');"/>
+<circle class="scene-packet packet-phase-2" r="3.5" style="offset-path: path('M420 148H480');"/>
+<g class="module-node " data-phase="0" transform="translate(10 34)">
+<rect width="135" height="72" rx="8"/>
+<text x="16" y="30">src/</text>
+<text class="node-detail" x="16" y="53">código</text>
+</g>
+<g class="module-node " data-phase="0" transform="translate(10 186)">
+<rect width="135" height="72" rx="8"/>
+<text x="16" y="30">tests/</text>
+<text class="node-detail" x="16" y="53">pruebas</text>
+</g>
+<g class="module-node " data-phase="1" transform="translate(280 112)">
+<rect width="140" height="72" rx="8"/>
+<text x="16" y="30">Worker</text>
+<text class="node-detail" x="16" y="53">investigation</text>
+</g>
+<g class="module-node " data-phase="3" transform="translate(480 112)">
+<rect width="190" height="72" rx="8"/>
+<text x="16" y="30">Informe</text>
+<text class="node-detail" x="16" y="53">informe Markdown</text>
+</g>
+</svg>
+<ol class="module-steps">
+<li value="1" data-step-label="0">Contexto del change</li>
+<li value="2" data-step-label="1">Consulta del repositorio</li>
+<li value="3" data-step-label="2">Análisis del worker</li>
+<li value="4" data-step-label="3">Informe de especificación</li>
+</ol>
+<div class="module-cli">
+<code>fab run mi-proyecto --once</code>
+</div>
+</article>
+<article class="module-panel" id="module-implementation" data-module="implementation" data-step="3" data-playing="false" data-result="pass">
+<div class="module-intro">
+<h3>Un worktree por change.</h3>
+<p>El worker implementa la especificación en una rama independiente del directorio principal.</p>
+<p class="module-availability">Disponible hoy</p>
+</div>
+<svg class="module-scene" viewBox="0 0 680 310" role="img" aria-labelledby="scene-implementation-title">
+<title id="scene-implementation-title">Esquema ilustrativo: Implementación</title>
+<path class="branch-line" d="M35 65H645"/>
+<circle class="commit-node" cx="90" cy="65" r="8"/>
+<text class="scene-note" x="120" y="48">Rama actual del repositorio</text>
+<path class="module-wire " data-phase="1" d="M90 73V137Q90 183 145 183H220"/>
+<path class="module-wire " data-phase="2" d="M445 183H490"/>
+<circle class="scene-packet packet-phase-1" r="3.5" style="offset-path: path('M90 73V137Q90 183 145 183H220');"/>
+<circle class="scene-packet packet-phase-2" r="3.5" style="offset-path: path('M445 183H490');"/>
+<g class="module-node " data-phase="1" transform="translate(220 147)">
+<rect width="225" height="72" rx="8"/>
+<text x="16" y="30">fab/951e7eb3</text>
+<text class="node-detail" x="16" y="53">worktree del change</text>
+</g>
+<g class="module-node " data-phase="3" transform="translate(490 147)">
+<rect width="170" height="72" rx="8"/>
+<text x="16" y="30">Diff</text>
+<text class="node-detail" x="16" y="53">implementación</text>
+</g>
+<text class="scene-note" x="35" y="275">La investigación y la implementación comparten worktree</text>
+</svg>
+<ol class="module-steps">
+<li value="1" data-step-label="0">Repositorio de origen</li>
+<li value="2" data-step-label="1">Rama del change</li>
+<li value="3" data-step-label="2">Trabajo en su worktree</li>
+<li value="4" data-step-label="3">Diff para revisión</li>
+</ol>
+<div class="module-cli">
+<code>fab run mi-proyecto --once</code>
+</div>
+</article>
+<article class="module-panel" id="module-validators" data-module="validators" data-step="3" data-playing="false" data-result="pass">
+<div class="module-intro">
+<h3>Código, seguridad y QA.</h3>
+<p>Tres revisiones independientes. El pool las ejecuta según su concurrencia configurada.</p>
+<p class="module-availability">Disponible hoy</p>
+</div>
+<svg class="module-scene" viewBox="0 0 680 310" role="img" aria-labelledby="scene-validators-title">
+<title id="scene-validators-title">Esquema ilustrativo: Validadores</title>
+<path class="module-wire " data-phase="1" d="M150 150H205V52H250"/>
+<path class="module-wire " data-phase="1" d="M205 150H250"/>
+<path class="module-wire " data-phase="1" d="M205 150V248H250"/>
+<path class="module-wire " data-phase="2" d="M470 52H510V150H550"/>
+<path class="module-wire " data-phase="2" d="M470 150H550"/>
+<path class="module-wire " data-phase="2" d="M470 248H510V150"/>
+<circle class="scene-packet packet-phase-1" r="3.5" style="offset-path: path('M205 150H250');"/>
+<circle class="scene-packet packet-phase-2" r="3.5" style="offset-path: path('M470 150H550');"/>
+<g class="module-node " data-phase="0" transform="translate(10 114)">
+<rect width="140" height="72" rx="8"/>
+<text x="16" y="30">Diff</text>
+<text class="node-detail" x="16" y="53">change</text>
+</g>
+<g class="module-node " data-phase="1" transform="translate(250 16)">
+<rect width="220" height="72" rx="8"/>
+<text x="16" y="30">code_review</text>
+<text class="node-detail" x="16" y="53">revisión de código</text>
+</g>
+<g class="module-node " data-phase="1" transform="translate(250 114)">
+<rect width="220" height="72" rx="8"/>
+<text x="16" y="30">security_audit</text>
+<text class="node-detail" x="16" y="53">seguridad</text>
+</g>
+<g class="module-node " data-phase="1" transform="translate(250 212)">
+<rect width="220" height="72" rx="8"/>
+<text x="16" y="30">qa</text>
+<text class="node-detail" x="16" y="53">pruebas</text>
+</g>
+<g class="module-node " data-phase="3" transform="translate(550 114)">
+<rect width="120" height="72" rx="8"/>
+<text x="16" y="30">Estado</text>
+<text class="node-detail" x="16" y="53">veredictos</text>
+</g>
+</svg>
+<ol class="module-steps">
+<li value="1" data-step-label="0">Diff del change</li>
+<li value="2" data-step-label="1">Validadores encolados</li>
+<li value="3" data-step-label="2">Revisiones independientes</li>
+<li value="4" data-step-label="3">Veredictos registrados</li>
+</ol>
+<div class="module-cli">
+<code>fab validate 951e7eb3</code>
+<pre>Encolados 3 validadores para change 951e7eb3: code_review, security_audit, qa</pre>
+</div>
+</article>
+<article class="module-panel" id="module-merge" data-module="merge" data-step="3" data-playing="false" data-result="pass">
+<div class="module-intro">
+<h3>El merge tiene condiciones.</h3>
+<p>Con validación solicitada, pendientes y FAIL bloquean el merge. El override --force es explícito.</p>
+<p class="module-availability">Disponible hoy</p>
+</div>
+<svg class="module-scene" viewBox="0 0 680 310" role="img" aria-labelledby="scene-merge-title">
+<title id="scene-merge-title">Esquema ilustrativo: Merge gate</title>
+<path class="module-wire " data-phase="1" d="M180 146H280"/>
+<path class="module-wire gate-wire" data-phase="3" d="M390 146H472"/>
+<circle class="scene-packet packet-phase-1" r="3.5" style="offset-path: path('M180 146H280');"/>
+<circle class="scene-packet packet-phase-2" r="3.5" style="offset-path: path('M390 146H472');"/>
+<g class="module-node " data-phase="0" transform="translate(10 110)">
+<rect width="170" height="72" rx="8"/>
+<text x="16" y="30">Change</text>
+<text class="node-detail" x="16" y="53">validación solicitada</text>
+</g>
+<g class="module-node " data-phase="3" transform="translate(472 110)">
+<rect width="198" height="72" rx="8"/>
+<text x="16" y="30">Rama actual</text>
+<text class="node-detail" x="16" y="53">destino de merge</text>
+</g>
+<g class="merge-barrier">
+<rect x="320" y="83" width="14" height="125" rx="4"/>
+<path d="M300 212H355"/>
+</g>
+<text class="gate-fail-label scene-note" x="255" y="259">QA FAIL: merge bloqueado</text>
+<text class="gate-pass-label scene-note" x="240" y="259">QA PASS: merge permitido</text>
+</svg>
+<p class="scene-result">
+<span class="scene-result-fail">QA FAIL: merge bloqueado.</span>
+<span class="scene-result-pass">QA PASS: merge permitido.</span>
+</p>
+<ol class="module-steps">
+<li value="1" data-step-label="0">Change implementado</li>
+<li value="2" data-step-label="1">Validación solicitada</li>
+<li value="3" data-step-label="2">Comprobación de veredictos</li>
+<li value="4" data-step-label="3">Resultado del gate</li>
+</ol>
+<div class="scenario-controls" aria-label="Escenario del merge" hidden>
+<button class="quiet-button" type="button" data-gate="fail" aria-pressed="false">Probar bloqueo</button>
+<button class="quiet-button" type="button" data-gate="pass" aria-pressed="true">Probar pase</button>
+</div>
+<p class="module-note">Sin validación solicitada no se exige este gate. El merge va a la rama actual.</p>
+<div class="module-cli">
+<code>fab merge 951e7eb3</code>
+<pre>change 951e7eb3 completado</pre>
+</div>
+</article>
+<article class="module-panel" id="module-sandbox" data-module="sandbox" data-step="3" data-playing="false" data-result="pass">
+<div class="module-intro">
+<h3>Contención para Execute.</h3>
+<p>Bubblewrap aísla las herramientas nativas en Linux. macOS usa procesos con permisos del usuario.</p>
+<p class="module-availability">Linux con bubblewrap</p>
+</div>
+<svg class="module-scene" viewBox="0 0 680 310" role="img" aria-labelledby="scene-sandbox-title">
+<title id="scene-sandbox-title">Esquema ilustrativo: Sandbox</title>
+<rect class="sandbox-boundary" x="115" y="38" width="450" height="235" rx="12"/>
+<text class="scene-note linux-label" x="137" y="67">Linux / bubblewrap</text>
+<text class="scene-note macos-label" x="137" y="67">macOS / proceso de usuario</text>
+<g class="module-node " data-phase="1" transform="translate(226 112)">
+<rect width="230" height="72" rx="8"/>
+<text x="16" y="30">Execute</text>
+<text class="node-detail" x="16" y="53">agente nativo</text>
+</g>
+<text class="scene-note" x="139" y="245">worktree: rw</text>
+<text class="scene-note linux-label" x="375" y="245">raíz: ro</text>
+<path class="module-wire " data-phase="2" d="M456 148H645"/>
+<circle class="scene-packet packet-phase-2" r="3.5" style="offset-path: path('M456 148H645');"/>
+<text class="scene-note" x="575" y="119">Red</text>
+<text class="node-detail" x="520" y="188">auto / ask / deny</text>
+</svg>
+<dl class="scene-legend">
+<dt>Entorno</dt>
+<dd>
+<span class="linux-legend">Linux con bubblewrap disponible</span>
+<span class="macos-legend">macOS: proceso de usuario</span>
+</dd>
+<dt>Archivos</dt>
+<dd>
+<span class="linux-legend">Raíz de solo lectura; worktree escribible</span>
+<span class="macos-legend">Permisos del usuario local</span>
+</dd>
+<dt>Red</dt>
+<dd>Política de Execute: auto, ask o deny</dd>
+</dl>
+<ol class="module-steps">
+<li value="1" data-step-label="0">Entorno del host</li>
+<li value="2" data-step-label="1">Proceso nativo</li>
+<li value="3" data-step-label="2">Permisos de archivos</li>
+<li value="4" data-step-label="3">Política de red de Execute</li>
+</ol>
+<div class="scenario-controls" aria-label="Sistema del sandbox" hidden>
+<button class="quiet-button" type="button" data-platform="linux" aria-pressed="true">Linux</button>
+<button class="quiet-button" type="button" data-platform="macos" aria-pressed="false">macOS</button>
+</div>
+<p class="module-note">required falla si no puede aislar. La política de red mostrada corresponde a Execute.</p>
+<div class="module-cli">
+<code>fab exec &quot;tarea&quot; --sandbox required --sandbox-network ask</code>
+</div>
+</article>
+<article class="module-panel" id="module-workers" data-module="workers" data-step="3" data-playing="false" data-result="pass">
+<div class="module-intro">
+<h3>Elige quién hace el trabajo.</h3>
+<p>CLIs externos con su acceso o el agente nativo con tus proveedores configurados.</p>
+<p class="module-availability">Disponible hoy</p>
+</div>
+<svg class="module-scene" viewBox="0 0 680 310" role="img" aria-labelledby="scene-workers-title">
+<title id="scene-workers-title">Esquema ilustrativo: Workers y modelos</title>
+<path class="module-wire " data-phase="1" d="M340 146V62H190"/>
+<path class="module-wire " data-phase="1" d="M340 62H490"/>
+<path class="module-wire " data-phase="2" d="M340 146H190V234"/>
+<path class="module-wire " data-phase="3" d="M190 254H490"/>
+<circle class="scene-packet packet-phase-1" r="3.5" style="offset-path: path('M340 146V62H190');"/>
+<circle class="scene-packet packet-phase-2" r="3.5" style="offset-path: path('M340 146H190V234');"/>
+<g class="module-node " data-phase="1" transform="translate(12 23)">
+<rect width="178" height="72" rx="8"/>
+<text x="16" y="30">claude / codex</text>
+<text class="node-detail" x="16" y="53">CLI + su acceso</text>
+</g>
+<g class="module-node " data-phase="2" transform="translate(490 23)">
+<rect width="178" height="72" rx="8"/>
+<text x="16" y="30">agy</text>
+<text class="node-detail" x="16" y="53">CLI + su acceso</text>
+</g>
+<g class="module-node " data-phase="0" transform="translate(235 110)">
+<rect width="210" height="72" rx="8"/>
+<text x="16" y="30">Pool de fab</text>
+<text class="node-detail" x="16" y="53">actividades</text>
+</g>
+<g class="module-node " data-phase="3" transform="translate(12 218)">
+<rect width="178" height="72" rx="8"/>
+<text x="16" y="30">native</text>
+<text class="node-detail" x="16" y="53">customModels</text>
+</g>
+<g class="module-node " data-phase="3" transform="translate(490 218)">
+<rect width="178" height="72" rx="8"/>
+<text x="16" y="30">Proveedores</text>
+<text class="node-detail" x="16" y="53">tu configuración</text>
+</g>
+<text class="scene-note" x="230" y="281">Tu login o tus claves</text>
+</svg>
+<ol class="module-steps">
+<li value="1" data-step-label="0">Cola de actividades</li>
+<li value="2" data-step-label="1">Adaptadores externos</li>
+<li value="3" data-step-label="2">Agente nativo</li>
+<li value="4" data-step-label="3">Tu login o tus claves</li>
+</ol>
+<div class="module-cli">
+<code>fab run mi-proyecto --agent native --once</code>
+</div>
+</article>
+</div>
+</div>
+<div class="module-playback" hidden>
+<button class="quiet-button" type="button" data-module-play>Repetir pasos</button>
+<button class="quiet-button" type="button" data-module-next>Paso siguiente</button>
+<button class="quiet-button" type="button" data-module-end>Estado final</button>
+<p class="module-state" role="status" aria-live="polite">Esquema ilustrativo. Estado final.</p>
+</div>
+<noscript>
+<p>Los ocho módulos y sus pasos están disponibles sin JavaScript.</p>
+</noscript>
+</div>
+</section>
+<section class="factory-section" id="fabrica" aria-labelledby="factory-title">
+      <div class="container">
+        <div class="section-intro">
+
+          <h2 id="factory-title">Estado, revisiones humanas y Git.</h2>
+
+        </div>
+        <p class="factory-location">La operas por CLI o TUI en tu máquina. Este sitio explica el producto; la operación ocurre en tu terminal.</p>
+        <ol class="factory-flow" aria-label="Del objetivo a las actividades">
+          <li>
+<h3>Workstream</h3>
+<p>Define un objetivo, un repositorio, el agente y las aprobaciones requeridas.</p>
+</li>
+          <li>
+<h3>Signal</h3>
+<p>Registra una entrada manual o importa un issue de Jira con su contexto.</p>
+</li>
+          <li>
+<h3>Change</h3>
+<p>Promueve la señal a una propuesta de cambio. Espera tu aprobación por defecto antes de investigar; se desactiva con <code>--no-change-approval</code>.</p>
+</li>
+          <li>
+<h3>Activity</h3>
+<p>El pool asigna investigación e implementación a workers. La revisión de la especificación viene activa por defecto; se desactiva con <code>--no-spec-approval</code>.</p>
+</li>
+        </ol>
+        <div class="merge-rule">
+          <h3>La integración tiene su puerta.</h3>
+          <div>
+            <p>Cada change usa una rama y un worktree. Si solicitas validadores, los pendientes o en FAIL bloquean <code>fab merge</code>. El override explícito <code>--force</code> permite omitir ese bloqueo.</p>
+            <p>El merge integra en la rama actual del repositorio y retira el worktree del change.</p>
+            <a href="#module-merge" data-open-module="merge">Explorar la puerta de merge</a>
+          </div>
+        </div>
+
+        <div class="capabilities-section" id="capacidades">
+          <div class="section-intro">
+
+            <h3>Funciones clave del ciclo de fábrica</h3>
+          </div>
+          <div class="capabilities-grid">
+            <article class="capability-card">
+<svg class="mini-scene" viewBox="0 0 400 130" aria-hidden="true">
+<path d="M50 35H350M50 65H350M50 95H350"/>
+<circle cx="100" cy="35" r="9"/>
+<circle cx="200" cy="65" r="9"/>
+<circle cx="300" cy="95" r="9"/>
+<circle class="mini-packet" r="4" style="offset-path:path('M50 65H350')"/>
+</svg>
+
+              <h4>Entrada de trabajo</h4>
+              <p class="capability-claim">Define el objetivo y el repositorio del workstream con <code>fab ws create</code>.</p>
+              <p class="capability-claim">Registra una señal manual o importa un issue de Jira con su contexto completo.</p>
+              <p class="capability-claim">Promueve explícitamente las señales que decidas convertir en changes.</p>
+            </article>
+            <article class="capability-card">
+<svg class="mini-scene" viewBox="0 0 400 130" aria-hidden="true">
+<path d="M55 65H345"/>
+<rect x="125" y="25" width="150" height="80" rx="8"/>
+<path d="m170 65 20 20 40-40"/>
+<circle class="mini-packet" r="4" style="offset-path:path('M55 65H345')"/>
+</svg>
+
+              <h4>Revisiones humanas</h4>
+              <p class="capability-claim">Revisión de change y especificación activas por defecto; desactivables con flags.</p>
+              <p class="capability-claim">Consulta las actividades que esperan decisión en la bandeja de entrada.</p>
+              <p class="capability-claim">Aprueba, comenta o rechaza la propuesta antes de que avance.</p>
+            </article>
+            <article class="capability-card">
+<svg class="mini-scene" viewBox="0 0 400 130" aria-hidden="true">
+<path d="M40 35H360M110 35V95H315"/>
+<circle cx="110" cy="35" r="8"/>
+<circle cx="230" cy="95" r="8"/>
+<circle class="mini-packet" r="4" style="offset-path:path('M40 35H110V95H315')"/>
+</svg>
+
+              <h4>Ejecución y ramas Git</h4>
+              <p class="capability-claim">Selecciona el agente (nativo o adaptadores externos) que ejecutará las tareas.</p>
+              <p class="capability-claim">Ajusta la concurrencia y el límite de tareas del pool de workers.</p>
+              <p class="capability-claim">Investigación e implementación trabajan en el worktree aislado del change.</p>
+            </article>
+            <article class="capability-card">
+<svg class="mini-scene" viewBox="0 0 400 130" aria-hidden="true">
+<path d="M40 65H100M300 65H360M100 25V105M300 25V105M100 25H300M100 65H300M100 105H300"/>
+<circle cx="200" cy="25" r="9"/>
+<circle cx="200" cy="65" r="9"/>
+<circle cx="200" cy="105" r="9"/>
+<circle class="mini-packet" r="4" style="offset-path:path('M40 65H100V25H300V65H360')"/>
+</svg>
+
+              <h4>Validación y PR</h4>
+              <p class="capability-claim">Solicita suites independientes de revisión de código, seguridad y QA.</p>
+              <p class="capability-claim">Consulta y publica resultados estructurados con veredictos PASS o FAIL.</p>
+              <p class="capability-claim">Abre y consulta el pull request del change con validación previa.</p>
+            </article>
+            <article class="capability-card">
+<svg class="mini-scene" viewBox="0 0 400 130" aria-hidden="true">
+<path d="M40 65H170M230 65H360M185 25V105M215 25V105"/>
+<text x="300" y="45">PASS</text>
+<circle class="mini-packet" r="4" style="offset-path:path('M40 65H360')"/>
+</svg>
+
+              <h4>Puerta de merge</h4>
+              <p class="capability-claim">El change debe haber completado la implementación en su rama propia.</p>
+              <p class="capability-claim">Validadores pendientes o con veredicto FAIL bloquean la integración.</p>
+              <p class="capability-claim">El modificador <code>--force</code> permite omitir el bloqueo cuando sea necesario.</p>
+            </article>
+            <article class="capability-card">
+<svg class="mini-scene" viewBox="0 0 400 130" aria-hidden="true">
+<path d="M100 85A55 45 0 1 1 290 85M290 85V50M290 85H250"/>
+<text x="200" y="72">fab retry</text>
+<circle class="mini-packet" r="4" style="offset-path:path('M100 85A55 45 0 1 1 290 85')"/>
+</svg>
+
+              <h4>Seguimiento y recuperación</h4>
+              <p class="capability-claim">Abre la vista completa de changes, bandeja y eventos con <code>fab tui &lt;slug&gt;</code>.</p>
+              <p class="capability-claim">Supervisa el estado y detalle de cada propuesta desde comandos dedicados.</p>
+              <p class="capability-claim">Reencola actividades fallidas o cancela propuestas retirando worktrees.</p>
+            </article>
+          </div>
+        </div>
+
+        <details class="recovery-details">
+<summary>Comandos de seguimiento y recuperación</summary>
+<div class="recovery-section" id="seguimiento" aria-labelledby="recovery-title">
+          <div class="section-intro">
+
+            <h3 id="recovery-title">Seguimiento y recuperación</h3>
+            <p class="lead">Supervisa el avance de la fábrica, revisa el registro histórico e interviene con comandos directos de inspección y recuperación.</p>
+          </div>
+          <div class="recovery-grid">
+            <div class="recovery-commands">
+              <article class="recovery-command-card">
+                <code>fab status [slug]</code>
+                <p>Muestra el estado del workstream, la lista de changes y su última actividad en curso.</p>
+              </article>
+              <article class="recovery-command-card">
+                <code>fab show &lt;id&gt;</code>
+                <p>Inspecciona el detalle del change, su rama Git asociada y el resultado o error de cada actividad.</p>
+              </article>
+              <article class="recovery-command-card">
+                <code>fab events [slug] [--limit N]</code>
+                <p>Consulta el registro cronológico de eventos con su marca de tiempo, severidad y mensaje.</p>
+              </article>
+              <article class="recovery-command-card">
+                <code>fab inbox</code>
+                <p>Lista las actividades pendientes de revisión humana para su aprobación o comentario.</p>
+              </article>
+              <article class="recovery-command-card">
+                <code>fab retry &lt;change-id&gt;</code>
+                <p>Reencola una actividad fallida para que el pool de workers vuelva a procesarla.</p>
+              </article>
+              <article class="recovery-command-card">
+                <code>fab reject &lt;change-id&gt; [--reason texto]</code>
+                <p>Cancela una propuesta de cambio y retira de forma limpia su worktree de Git.</p>
+              </article>
+            </div>
+            <div class="recovery-terminal" aria-label="Ejemplo de comandos de inspección y recuperación">
+              <div class="terminal-bar">
+                <span class="terminal-dot">
+</span>
+                <span class="terminal-caption">Terminal de seguimiento</span>
+              </div>
+              <pre class="terminal-view">
+<code>$ fab status mi-objetivo
+mi-objetivo [active] agent=native — Migrar endpoints a v2
+  951e7eb3 implemented  Añadir endpoints v2  [qa:done/fail]
+
+$ fab inbox
+  951e7eb3 investigation  Esperando aprobación de especificación
+
+$ fab retry 951e7eb3
+change 951e7eb3: qa re-encolada
+
+$ fab reject 951e7eb3 --reason "superado por refactor"
+change 951e7eb3 cancelado; worktree retirado</code>
+</pre>
+            </div>
+          </div>
+        </div>
+</details>
+      </div>
+</section>
+<section class="base-local-section" id="base-local" aria-labelledby="base-local-title">
+      <div class="container">
+        <div class="section-intro">
+
+          <h2 id="base-local-title">Estado local, conexiones explícitas.</h2>
+          <p class="lead">La base técnica vive en tu máquina y repositorio: CLI y TUI para cada propósito, persistencia local y diagnóstico de sistema.</p>
+        </div>
+        <div class="base-local-grid">
+          <article class="base-local-card">
+            <h3>CLI y paneles dedicados</h3>
+            <p>
+<code>fab</code> o <code>fab &lt;carpeta&gt;</code> para el agente conversacional, <code>fab exec</code> para tareas sin interfaz y <code>fab tui &lt;slug&gt;</code> para el panel operativo del workstream.</p>
+          </article>
+          <article class="base-local-card">
+            <h3>Diagnóstico y acceso a modelos</h3>
+            <p>
+<code>fab doctor</code> informa del estado del sandbox, Script y búsqueda. Conecta con el router <code>auto</code> (clasificador heurístico o Jev opcional de TypeSafe con clave y relativeCost) y router <code>omni</code> por cuenta y cuota operacional (<code>costTier</code>).</p>
+            <a class="quiet-button" href="../agente/#modelos" style="margin-top: var(--space-xs); display: inline-flex; white-space: normal; max-width: 100%;">Ver modelos</a>
+          </article>
+        </div>
+      </div>
+    </section>
+<section class="architecture-section" id="arquitectura" aria-labelledby="architecture-title">
+      <div class="container">
+        <h2 id="architecture-title">El estado y el código, en su sitio.</h2>
+<p class="architecture-copy">SQLite local (<code>~/.fabrica/fabrica.db</code>, configurable con <code>FABRICA_HOME</code>) conserva el flujo de la fábrica. Git conserva los cambios en los worktrees y ramas de tu repositorio. El pool lanza un agente para ejecutar cada actividad.</p>
+<details class="architecture-detail">
+<summary>Explorar flujo y arquitectura con Archify</summary>
+        <div class="diagram-links">
+<a class="diagram-link" href="../diagrams/sdlc-workflow.html">Explorar el flujo interactivo</a>
+<a href="../diagrams/architecture.html">Ver la arquitectura</a>
+</div>
+        <iframe tabindex="0" class="workflow-embed" src="../diagrams/sdlc-workflow.html" title="Flujo SDLC interactivo de fab, generado con Archify" loading="lazy" data-diagram>
+</iframe>
+        <div class="container hero-relation" aria-label="Relación entre la fábrica y el runtime del agente">
+        <div class="hero-relation-intro">
+          <h2 class="hero-relation-title">El ciclo de la fábrica y el runtime del agente</h2>
+          <p class="hero-relation-lead">La fábrica organiza el flujo con estado persistente en SQLite; el agente ejecuta la actividad en un worktree independiente de Git.</p>
+        </div>
+        <svg class="module-scene hero-relation-scene" viewBox="0 0 680 180" role="img" aria-labelledby="scene-hero-relation-title">
+          <title id="scene-hero-relation-title">Relación entre la fábrica, el pool, el agente y el merge</title>
+          <path class="module-wire section-flow-wire" d="M150 86H175"/>
+          <path class="module-wire section-flow-wire" d="M310 86H335"/>
+          <path class="module-wire section-flow-wire" d="M495 86H525"/>
+          <circle class="scene-packet hero-packet-1" r="3.5" style="offset-path: path('M150 86H175');"/>
+          <circle class="scene-packet hero-packet-2" r="3.5" style="offset-path: path('M310 86H335');"/>
+          <circle class="scene-packet hero-packet-3" r="3.5" style="offset-path: path('M495 86H525');"/>
+          <g class="module-node hero-node-1" transform="translate(15 50)">
+            <rect width="135" height="72" rx="8"/>
+            <text x="16" y="30">Fábrica</text>
+            <text class="node-detail" x="16" y="53">SQLite local</text>
+          </g>
+          <text class="scene-note" x="15" y="148">Estado en ~/.fabrica</text>
+          <g class="module-node hero-node-2" transform="translate(175 50)">
+            <rect width="135" height="72" rx="8"/>
+            <text x="16" y="30">Actividad</text>
+            <text class="node-detail" x="16" y="53">pool de tareas</text>
+          </g>
+          <text class="scene-note" x="175" y="148">Asignación al worker</text>
+          <rect class="branch-line" x="328" y="24" width="175" height="136" rx="8" stroke-dasharray="3 3"/>
+          <text class="scene-note" x="336" y="42">Rama y directorio Git propios</text>
+          <g class="module-node hero-node-3" transform="translate(335 50)">
+            <rect width="160" height="72" rx="8"/>
+            <text x="14" y="30">Agente</text>
+            <text class="node-detail" x="14" y="53">worktree fab/&lt;id&gt;</text>
+          </g>
+          <text class="scene-note" x="336" y="148">fab exec o CLI</text>
+          <g class="module-node hero-node-4" transform="translate(525 50)">
+            <rect width="140" height="72" rx="8"/>
+            <text x="16" y="30">Merge</text>
+            <text class="node-detail" x="16" y="53">rama actual Git</text>
+          </g>
+          <text class="scene-note" x="525" y="148">Revisión y cierre</text>
+        </svg>
+      </div>
+
+    </details>
+<p class="diagram-caption">Importación, aprobaciones humanas, workers y puerta de merge. El override explícito <code>--force</code> existe.</p>
+      </div>
+    </section>
+<section class="quickstart container" id="quickstart">
+<h2>De tu terminal al trabajo.</h2>
+<ol>
+<li>
+<h3>Define tu objetivo</h3>
+<code>fab ws create mi-objetivo --repo . --goal &quot;Migrar endpoints a v2&quot;</code>
+</li>
+<li>
+<h3>Activa el workstream</h3>
+<code>fab ws state mi-objetivo active</code>
+</li>
+<li>
+<h3>Ejecuta el pool</h3>
+<code>fab run</code>
+</li>
+<li>
+<h3>Consulta el estado</h3>
+<code>fab status mi-objetivo</code>
+</li>
+</ol>
+</section>
+<section class="roadmap container" id="planes">
+<h2 id="proximamente">Próximamente</h2>
+<p class="business-note">Daemon, triage con IA, AutoWiki y Monitor: extensiones de la hoja de ruta no implementadas. El clasificador de modelos de <code>auto</code> ya existe; no es el triage de señales.</p>
+</section>
+<section class="closing-cta" id="empezar">
+<div class="container">
+<h2>Elige cómo quieres trabajar.</h2>
+<p>Dos formas directas de poner a prueba fab en tus proyectos.</p>
+<a class="primary-button" href="#instalar">Instalar fab</a>
+<a href="https://github.com/DarkCodePE/sw-factory#readme">Leer la documentación</a>
+</div>
+</section>
+</main>  <footer class="site-footer">
+    <div class="container footer-grid">
+      <a class="brand-home" href="../" aria-label="fab, volver al inicio">
+<img class="brand-logo brand-logo-light" src="../assets/brand/fab-logo-light.svg" width="251" height="120" alt="">
+<img class="brand-logo brand-logo-dark" src="../assets/brand/fab-logo-dark.svg" width="251" height="120" alt="">
+</a>
+      <nav aria-label="Recursos">
+        <a href="../fabrica/">Fábrica</a>
+        <a href="../agente/">Agente</a>
+        <a href="../fabrica/#flujo">Capacidades</a>
+        <a href="../#base-local">Base local</a>
+        <a href="../fabrica/#proximamente">Próximamente</a>
+        <a href="https://github.com/DarkCodePE/sw-factory">Repositorio</a>
+        <a href="https://www.npmjs.com/package/@okuanb/fab">npm</a>
+        <a href="https://github.com/DarkCodePE/sw-factory#readme">Documentación</a>
+        <a href="https://github.com/DarkCodePE/sw-factory/blob/main/packaging/npm/README.md">Instalación</a>
+      </nav>
+      <p>Linux glibc y macOS, x64/arm64. npm requiere Node ≥22; el binario independiente no requiere Bun ni Node.</p>
+    </div>
+  <div class="container footer-wordmark" aria-hidden="true">fab <svg class="footer-beaver" aria-hidden="true" viewBox="0 0 64 64"><path fill="var(--color-brand,#14B8A6)" d="M14 20C6 9 20 4 25 13Q32 10 39 13C44 4 58 9 50 20Q57 28 53 41Q49 54 38 57H26Q15 54 11 41Q7 28 14 20Z"/><g fill="#0B0D12"><circle cx="23" cy="28" r="3"/><circle cx="41" cy="28" r="3"/><path d="M27 35Q32 32 37 35L32 41Z"/></g><path fill="#F7FBFA" d="M25 42H39V53H25Z"/><path stroke="#0B0D12" stroke-width="2" d="M32 42V53"/></svg><span>Hecho para tu terminal.</span>
+</div>
+</footer>
+</body>
+</html>
