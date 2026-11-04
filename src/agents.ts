@@ -8,12 +8,20 @@ export interface AgentRunStatus {
   reason: string;
 }
 
+/** What the agent reports about its own consumption; absent when the CLI does not report it (codex, agy, droid, native). */
+export interface AgentUsage {
+  costUsd: number;
+  inputTokens: number;
+  outputTokens: number;
+}
+
 export interface AgentRun {
   ok: boolean;
   output: string;
   exitCode: number;
   durationMs: number;
   status: AgentRunStatus;
+  usage?: AgentUsage;
   stdout?: string;
   stderr?: string;
 }
@@ -22,6 +30,8 @@ export interface AgentAdapter {
   name: string;
   command(prompt: string, options?: { readOnly?: boolean }): string[];
   env?(): Record<string, string>;
+  /** Extracts the report text and usage from structured stdout; null means stdout is plain text. */
+  parse?(stdout: string): { text: string; usage?: AgentUsage } | null;
   /** The agent cannot write Git metadata (its sandbox mounts .git read-only); the factory commits for it. */
   factoryCommits?: boolean;
 }
@@ -45,9 +55,23 @@ const claude: AgentAdapter = {
       'Bash(rtk:*)',
     ].join(','),
     '--output-format',
-    'text',
+    'json',
   ],
+  parse: parseClaudeJson,
 };
+
+/** `claude -p --output-format json` prints one result object; input tokens include cache reads and writes. */
+export function parseClaudeJson(stdout: string): { text: string; usage?: AgentUsage } | null {
+  let r: any;
+  try { r = JSON.parse(stdout); } catch { return null; }
+  if (r?.type !== 'result') return null;
+  const u = r.usage ?? {};
+  const n = (x: unknown) => (typeof x === 'number' && Number.isFinite(x) && x >= 0 ? x : 0);
+  const usage = typeof r.total_cost_usd === 'number' && Number.isFinite(r.total_cost_usd) && r.total_cost_usd >= 0
+    ? { costUsd: r.total_cost_usd, inputTokens: n(u.input_tokens) + n(u.cache_creation_input_tokens) + n(u.cache_read_input_tokens), outputTokens: n(u.output_tokens) }
+    : undefined;
+  return { text: typeof r.result === 'string' ? r.result : '', ...(usage ? { usage } : {}) };
+}
 
 const codex: AgentAdapter = {
   name: 'codex',
@@ -209,7 +233,8 @@ export async function runAgent(
     options.signal.removeEventListener('abort', onAbort);
   }
 
-  const rawOutput = stdout.trim() || stderr.trim();
+  const parsed = agent.parse?.(stdout) ?? null;
+  const rawOutput = (parsed ? parsed.text : stdout).trim() || stderr.trim();
   const status = parseReportStatus(rawOutput);
   const output = boundedAgentOutput(rawOutput);
   const wasAborted = !!options.signal?.aborted;
@@ -220,6 +245,7 @@ export async function runAgent(
     exitCode,
     durationMs: Date.now() - start,
     status: { kind: status.kind, reason: status.reason },
+    ...(parsed?.usage ? { usage: parsed.usage } : {}),
     stdout,
     stderr,
   };

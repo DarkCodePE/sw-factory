@@ -221,7 +221,7 @@ export async function processActivity(
     });
 
     atomicEvidence(`${runDirectory(opts.stateDir, change.id)}/${a.id}.json`, JSON.stringify({
-      isolation: isolationFor(agent.name), durationMs: run.durationMs, exitCode: run.exitCode,
+      isolation: isolationFor(agent.name), durationMs: run.durationMs, exitCode: run.exitCode, usage: run.usage ?? null,
       egressProbe: agent.name === 'native' ? readEgressProbe(probeFile) : null,
     }));
 

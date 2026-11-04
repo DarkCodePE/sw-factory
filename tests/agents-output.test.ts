@@ -48,3 +48,19 @@ test('D3: runAgent classifies status before truncation', async () => {
   expect(run3.output.startsWith('STATUS: done\n')).toBe(true);
   expect(run3.output.length).toBeLessThanOrEqual(20_000);
 });
+
+test('claude --output-format json: el informe sale de result y el coste de total_cost_usd', async () => {
+  const { parseClaudeJson } = await import('../src/agents.ts');
+  const json = JSON.stringify({ type: 'result', subtype: 'success', is_error: false, result: 'STATUS: done\n\nhecho', total_cost_usd: 0.0421,
+    usage: { input_tokens: 10, cache_creation_input_tokens: 5, cache_read_input_tokens: 100, output_tokens: 7 } });
+  expect(parseClaudeJson(json)).toEqual({ text: 'STATUS: done\n\nhecho', usage: { costUsd: 0.0421, inputTokens: 115, outputTokens: 7 } });
+  expect(parseClaudeJson('STATUS: done texto plano')).toBeNull();
+  expect(parseClaudeJson(JSON.stringify({ type: 'result', result: 'x' }))).toEqual({ text: 'x' });
+  expect(parseClaudeJson(JSON.stringify({ type: 'result', result: 'x', total_cost_usd: -1 }))).toEqual({ text: 'x' });
+
+  const agent: AgentAdapter = { name: 'json-agent', command: () => ['sh', '-c', `cat << 'EOF'\n${json}\nEOF`], parse: parseClaudeJson };
+  const run = await runAgent(agent, 'prompt', process.cwd());
+  expect(run.status.kind).toBe('done');
+  expect(run.output).toBe('STATUS: done\n\nhecho');
+  expect(run.usage).toEqual({ costUsd: 0.0421, inputTokens: 115, outputTokens: 7 });
+});
