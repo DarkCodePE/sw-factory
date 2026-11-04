@@ -1,0 +1,13 @@
+diff --git a/calc.py b/calc.py
+index ae40d2d..496489b 100644
+--- a/calc.py
++++ b/calc.py
+@@ -14,4 +14,7 @@ def divide(a, b):
+ 
+ def average(values):
+     """Arithmetic mean of a non-empty list."""
+-    return sum(values) / len(values)
++    seq = list(values)
++    if not seq:
++        raise ValueError("cannot compute average of empty list")
++    return sum(seq) / len(seq)

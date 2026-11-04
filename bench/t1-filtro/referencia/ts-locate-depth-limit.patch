@@ -1,0 +1,19 @@
+diff --git a/src/adf.ts b/src/adf.ts
+index e5b89cc..6d0e135 100644
+--- a/src/adf.ts
++++ b/src/adf.ts
+@@ -5,9 +5,12 @@ function record(value: unknown): Record<string, unknown> | undefined {
+   return value !== null && typeof value === 'object' && !Array.isArray(value) ? value as Record<string, unknown> : undefined;
+ }
+ 
+-export function adfToText(node: unknown): string {
++export const DEFAULT_MAX_DEPTH = 100;
++
++export function adfToText(node: unknown, maxDepth?: number): string {
++  const limit = typeof maxDepth === 'number' && maxDepth >= 0 ? maxDepth : DEFAULT_MAX_DEPTH;
+   function render(value: unknown, depth = 0): string {
+-    if (depth > 100) return '';
++    if (depth > limit) return '';
+     const n = record(value);
+     if (!n) return '';
+     const children = Array.isArray(n.content) ? n.content : [];

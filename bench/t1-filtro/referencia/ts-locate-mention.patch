@@ -1,0 +1,17 @@
+diff --git a/src/adf.ts b/src/adf.ts
+index e5b89cc..6f6b711 100644
+--- a/src/adf.ts
++++ b/src/adf.ts
+@@ -40,6 +40,12 @@ export function adfToText(node: unknown): string {
+         }).join('') + '\n';
+       }
+       case 'listItem': return content();
++      case 'mention': {
++        const attrs = record(n.attrs);
++        if (typeof attrs?.text === 'string' && attrs.text) return attrs.text;
++        if (typeof attrs?.id === 'string' && attrs.id) return '@' + attrs.id;
++        return '@unknown';
++      }
+       case 'inlineCard': {
+         const url = record(n.attrs)?.url;
+         return typeof url === 'string' ? url : '';

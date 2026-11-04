@@ -1,0 +1,33 @@
+diff --git a/src/adf.ts b/src/adf.ts
+index e5b89cc..377dca4 100644
+--- a/src/adf.ts
++++ b/src/adf.ts
+@@ -40,6 +40,7 @@ export function adfToText(node: unknown): string {
+         }).join('') + '\n';
+       }
+       case 'listItem': return content();
++      case 'rule': return '---\n\n';
+       case 'inlineCard': {
+         const url = record(n.attrs)?.url;
+         return typeof url === 'string' ? url : '';
+@@ -104,13 +105,19 @@ export function markdownToAdf(md: string): unknown {
+       index++;
+       continue;
+     }
++    const rule = /^\s*(---|[*]{3})\s*$/.exec(line);
++    if (rule) {
++      content.push({ type: 'rule' });
++      index++;
++      continue;
++    }
+     const item = bullet(line);
+     if (item) { content.push(list(item[1]!.length)); continue; }
+     const paragraph: Node[] = [];
+     do {
+       if (paragraph.length) paragraph.push({ type: 'hardBreak' });
+       paragraph.push(...inline(lines[index++]!));
+-    } while (index < lines.length && lines[index]!.trim() && !/^(#{1,6})\s|^\s*```/.test(lines[index]!) && !bullet(lines[index]!));
++    } while (index < lines.length && lines[index]!.trim() && !/^(#{1,6})\s|^\s*```|^\s*(---|[*]{3})\s*$/.test(lines[index]!) && !bullet(lines[index]!));
+     content.push({ type: 'paragraph', content: paragraph });
+   }
+   return { version: 1, type: 'doc', content };
