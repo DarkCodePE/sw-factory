@@ -1,0 +1,12 @@
+# Revisión 1 de la ficha 07 (agy) — corrige antes de integrar
+
+Verificado por Claude con `/tmp/claude-1000/-home-orlando-Desktop-factory/7a52064a-cc46-49a9-a089-f166a547d8ee/scratchpad/sigint-test.sh <worktree>`: SIGINT al grupo de primer plano de `fab run` (lo que hace Ctrl-C en la terminal) **no llega al agente**, porque `detached: true` lo saca del grupo. El agente (pid 3776154 en la prueba) siguió vivo. Lo mismo con `kill -9` del pool: el hijo sobrevive, el lease vence, otro pool reclama y hay **dos escritores en el mismo worktree**, justo lo que 07 debía impedir. La ficha dice: "el lease no se considera libre hasta confirmar la salida del proceso". La prueba de dos procesos del reporte no lo detecta porque el fake no escribe.
+
+## Cambios pedidos (mínimos)
+1. **Pool con señales**: `runPool` instala manejadores de `SIGINT` y `SIGTERM` que abortan los `AbortController` de todos los workers en curso, esperan a que `runAgent` confirme la salida, liberan las activities y salen. Quita los manejadores al terminar (los tests corren muchos pools en el mismo proceso).
+2. **Muerte del pool (`kill -9`)**: guarda el pgid del agente en la activity (`addColumn('activities','agent_pgid','INTEGER')`) al lanzarlo; `requeueOrphans`, ante un lease vencido con `agent_pgid`, comprueba si el grupo sigue vivo (`process.kill(-pgid, 0)`); si vive, lo mata con SIGKILL y **no** reencola en esa vuelta; reencola cuando ya no existe. Pon el comentario `shortcut: asume pools en la misma máquina, revisar si hay pools remotos`. Borra `agent_pgid` al completar/fallar/liberar.
+3. `runAgent`: el temporizador de SIGKILL se cancela cuando el proceso sale (hoy dispara siempre a los 2 s, riesgo de matar un pgid reciclado); el timeout usa la misma escalada SIGTERM→SIGKILL que el aborto.
+4. Tests: (a) SIGINT al pool mata al agente y su nieto y deja la activity liberada; (b) pool muerto con agente vivo → `requeueOrphans` mata el grupo y no reencola hasta que muere; con un fake que **escribe** un archivo en el worktree tras dormir, 0 escrituras del agente huérfano después de que otro pool reclame.
+5. Repite la prueba real de dos procesos con un fake que escriba (p. ej. `FABRICA_FAKE_SLEEP` + `touch` de un marcador con el pid) y pega la salida.
+
+Mismas reglas: commits en español sin `Co-Authored-By`, `bun test` y `tsc` en verde, sin tocar `cli.ts`/`tui.ts`/`worktrees.ts`/`validators/`. Añade una sección "Revisión 1" al final de `report-ola1-agy.md`.
