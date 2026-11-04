@@ -1,0 +1,23 @@
+site_name: fab — documentación técnica
+site_description: Arquitectura interna de la factory fab, del agente fab exec y de fab investigación
+docs_dir: docs
+site_dir: ../dist/techdocs
+theme:
+  name: material
+  language: es
+  features: [navigation.sections, navigation.indexes, navigation.top, toc.follow, search.highlight, content.code.copy]
+  palette:
+    - scheme: default
+      toggle: { icon: material/brightness-7, name: Modo oscuro }
+    - scheme: slate
+      toggle: { icon: material/brightness-4, name: Modo claro }
+markdown_extensions:
+  - admonition
+  - attr_list
+  - tables
+  - toc: { permalink: true }
+  - pymdownx.details
+  - pymdownx.superfences:
+      custom_fences:
+        - { name: mermaid, class: mermaid, format: !!python/name:pymdownx.superfences.fence_code_format }
+# Sin `nav`: el orden sale del prefijo numérico de cada archivo (00-, 01-, …).

@@ -1,0 +1,18 @@
+{
+  "repo": "https://github.com/ruvnet/dream-machine",
+  "commit": "3fc3222d2e5566a203331d3686c4d2eaf06713a8",
+  "license_spdx": "MIT",
+  "use_rule": "vendored",
+  "candidate_id": "dream-machine-ledger",
+  "vendored": [
+    { "path": "ledger/index.ts", "from": "packages/ledger/src/index.ts", "sha256": "99982080a021ab49111b2d9e060cf9c5ef1a61bf236323917db75bd1d05bc9d9" },
+    { "path": "ledger/__fixtures__/2026-09-21-ledger-snapshot.md", "from": "packages/ledger/src/__fixtures__/2026-09-21-ledger-snapshot.md", "sha256": "7954a10da20ed01f5612731d61448bd0a83a3d227b7500e582c379aae48c5864" },
+    { "path": "ledger/index.test.ts", "from": "packages/ledger/src/index.test.ts", "patched": true },
+    { "path": "ledger/outcomes.test.ts", "from": "packages/ledger/src/outcomes.test.ts", "patched": true }
+  ],
+  "local_patches": [
+    "tests: import from 'bun:test' instead of 'vitest'",
+    "tests: the two live LEDGER.md reads point to __fixtures__/2026-09-21-ledger-snapshot.md (upstream's live ledger is not vendored)"
+  ],
+  "not_imported": ["packages/cli", "packages/compile", "dream.config.json", "workflows", "automerge"]
+}

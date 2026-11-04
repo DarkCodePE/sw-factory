@@ -1,0 +1,15 @@
+diff --git a/calc.py b/calc.py
+index ae40d2d..a083aa6 100644
+--- a/calc.py
++++ b/calc.py
+@@ -16,3 +16,10 @@ def divide(a, b):
+ def average(values):
+     """Arithmetic mean of a non-empty list."""
+     return sum(values) / len(values)
++
++
++def modulo(a, b):
++    """Calculate modulo a % b. Raises ValueError when b is zero."""
++    if b == 0:
++        raise ValueError("cannot divide by zero")
++    return a % b

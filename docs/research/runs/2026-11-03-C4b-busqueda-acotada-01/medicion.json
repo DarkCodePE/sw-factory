@@ -1,0 +1,24 @@
+{
+  "experiment": "c4b-busqueda-acotada-01",
+  "tier": "T0",
+  "informe": "experimento c4b-busqueda-acotada-01  suite 35f23767001c  baseline 5b2122cd8fa2  candidate 41d3dc19bea4\nsplit        brazo      n  éxito  var(éxito)  var(diff)  diff medio  duración media s  coste medio USD\ndevelopment  baseline   5  1.000  0.000       70.3       29.6        57.0              0.0223\ndevelopment  candidate  5  1.000  0.000       97.3       33.6        65.3              0.0242\nsemillas (lote:semilla): mw10ijei:1442242062\n",
+  "filas": [
+    {
+      "split": "development",
+      "brazo": "baseline",
+      "n": 5,
+      "coste_medio": 0.0223,
+      "coste_n": 5
+    },
+    {
+      "split": "development",
+      "brazo": "candidate",
+      "n": 5,
+      "coste_medio": 0.0242,
+      "coste_n": 5
+    }
+  ],
+  "coste_usd": 0.23249999999999998,
+  "coste_nota": "coste completo",
+  "fecha_nota": "informe crudo de fab improve report"
+}

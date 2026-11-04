@@ -1,0 +1,15 @@
+diff --git a/calc.py b/calc.py
+index ae40d2d..353f851 100644
+--- a/calc.py
++++ b/calc.py
+@@ -16,3 +16,10 @@ def divide(a, b):
+ def average(values):
+     """Arithmetic mean of a non-empty list."""
+     return sum(values) / len(values)
++
++
++def power(base, exponent):
++    """Calculate base raised to exponent. Raises ValueError for negative exponents."""
++    if exponent < 0:
++        raise ValueError("negative exponent not supported")
++    return base ** exponent

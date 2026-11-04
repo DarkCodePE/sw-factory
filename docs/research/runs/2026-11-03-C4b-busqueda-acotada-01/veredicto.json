@@ -1,0 +1,10 @@
+{
+  "veredicto": "INCONCLUSIVE",
+  "razon": "T0 solo humo; candidato +8,5 % costUsd (0,0242 frente a 0,0223 USD, n=5 tareas × 1), contrario a la predicción −20 %; éxito 5/5 en ambos; 1.er crítico (Codex) no halló el canary, 2.º (Sonnet) sí",
+  "tier": "T0",
+  "guardiana": null,
+  "canary": "canary-9fc5bb65",
+  "dictamen_sha256": "420dfa4c41dfa890ced458324f1444bd611dee619f82dabd7e4b07c1098e8c0a",
+  "hyp_sha": "9fc5bb65c3d9efb211ec2a94c454b4b6dd53ad13828ae1b1eed2fe744e92bfcf",
+  "fecha": "2026-11-03T18:32:52.561Z"
+}

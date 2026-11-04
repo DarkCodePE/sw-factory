@@ -1,0 +1,30 @@
+diff --git a/calc.py b/calc.py
+index ae40d2d..da98688 100644
+--- a/calc.py
++++ b/calc.py
+@@ -5,13 +5,24 @@ def add(a, b):
+     return a + b
+ 
+ 
++ERROR_DIVIDE_BY_ZERO = "cannot divide by zero"
++
++
+ def divide(a, b):
+     """Divide a by b. Raises ValueError when b is zero."""
+     if b == 0:
+-        raise ValueError("cannot divide by zero")
++        raise ValueError(ERROR_DIVIDE_BY_ZERO)
+     return a / b
+ 
+ 
+ def average(values):
+     """Arithmetic mean of a non-empty list."""
+     return sum(values) / len(values)
++
++
++def safe_divide(a, b, default=None):
++    """Safely divide a by b, returning default if division by zero occurs."""
++    try:
++        return divide(a, b)
++    except ValueError:
++        return default

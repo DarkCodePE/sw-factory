@@ -1,0 +1,360 @@
+{
+  "schema_version": 1,
+  "note": "Capas C0-C9 y campos segun design-loops-investigacion.md §7. Rutas relativas a /home/orlando/Desktop/factory. status provisional = sin last_sha ni evidencias con linea.",
+  "repos": [
+    {
+      "name": "droid-factory",
+      "url": "https://docs.factory.ai (doc publica) + instalador Factory-0.205.0 Setup.exe",
+      "local": "doc/droid-re/",
+      "status": "provisional",
+      "ambito": "producto",
+      "license": {
+        "spdx": "propietaria",
+        "file_hash": null,
+        "scopes": []
+      },
+      "use_rule": "solo comportamiento observado con REA y doc publica; nunca copiar codigo recuperado",
+      "tos_risk": "ninguno",
+      "layers": {
+        "C1": {
+          "level": "fuerte",
+          "what": "triage signal -> change/duplicate/ignored",
+          "evidence": "doc/droid-re/docs-md/pages/software-factory/triage.md",
+          "verified": false
+        },
+        "C8": {
+          "level": "fuerte",
+          "what": "automations con poller 60s y crons; incident-response",
+          "evidence": "doc/droid-re/reports/03-daemon-backend-transporte.md",
+          "verified": false
+        },
+        "C7": {
+          "level": "fuerte",
+          "what": "AutoWiki con auto-refresh",
+          "evidence": "doc/droid-re/docs-md/pages/software-factory/wiki/",
+          "verified": false
+        }
+      },
+      "last_sha": null,
+      "last_release": "0.205.0",
+      "last_analyzed": "2026-10-24",
+      "analysis": "doc/droid-re/reports/01-software-factory-y-missions.md",
+      "adopted": [],
+      "watch": true
+    },
+    {
+      "name": "esf",
+      "url": "https://github.com/mitkox/esf",
+      "local": "ext/esf",
+      "status": "verificado",
+      "ambito": "producto",
+      "license": {
+        "spdx": "MIT",
+        "file_hash": "sha256:bbff8983f1ba6ec0723c1566af28d2e1e2109ac478361bc8132302668ae2ce89",
+        "scopes": [
+          {
+            "paths": [
+              "third_party/harness2/"
+            ],
+            "spdx": "Apache-2.0",
+            "note": "pinned upstream, no runtime"
+          }
+        ]
+      },
+      "use_rule": "adaptar-citando archivo@sha; preferir reimplementar en Bun/TS",
+      "tos_risk": "ninguno",
+      "layers": {
+        "C0": {
+          "level": "fuerte",
+          "what": "CLI cobra estilo kubectl; consola web solo lectura",
+          "evidence": "cmd/factory/resources.go:104@d901657; internal/console/server.go:29,70,183-192@d901657",
+          "verified": true
+        },
+        "C1": {
+          "level": "parcial",
+          "what": "no hace push ni PR; intake DSPy es consejo; triage de issues en Action aparte",
+          "evidence": "internal/repository/provider.go:14-15@d901657; internal/factory/intake.go:82@d901657",
+          "verified": true
+        },
+        "C2": {
+          "level": "fuerte",
+          "what": "Temporal: reintentos por tipo, agente nunca reintentado tras ack perdido, envio idempotente, timeout total; sin triggers cron",
+          "evidence": "internal/factory/workflow.go:31,328-334,1294-1302,1307-1308@d901657",
+          "verified": true
+        },
+        "C3": {
+          "level": "fuerte",
+          "what": "review-decision como senal; timeout no es fallo; sandbox suspendido en pausa; rechazo exige nota",
+          "evidence": "internal/factory/review.go:8,16-23@d901657; cmd/factory/resources.go:870-880,894@d901657",
+          "verified": true
+        },
+        "C4a": {
+          "level": "fuerte",
+          "what": "registro de harnesses; prompt por stdin-file (PromptArgv existe); credencial via CubeEgress",
+          "evidence": "internal/agentharness/harness.go:36-42,163-208,222@d901657; opencode.go:69,99@d901657",
+          "verified": true
+        },
+        "C4b": {
+          "level": "fuerte",
+          "what": "perfil instruccional inmutable por digest; cualificacion con revisor != autor; experimentos offline con splits; BLOCKED",
+          "evidence": "internal/harnessprofile/profile.go:24,55@d901657; qualification.go:60-81,240-248@d901657; internal/factory/workflow.go:598@d901657",
+          "verified": true
+        },
+        "C5": {
+          "level": "fuerte",
+          "what": "microVM; sonda de egress con decided/unknown; threatmon 40 reglas -> QUARANTINED; arranque rechazado con egress abierto",
+          "evidence": "internal/factory/egress_probe.go:46-54,208-214@d901657; internal/factory/hardening.go:33,64,101,261-278@d901657; internal/threatmon/rules.go@d901657",
+          "verified": true
+        },
+        "C6": {
+          "level": "fuerte",
+          "what": "verificacion determinista (argv, exit 0 sin timeout); gate-integrity arbol vs baseline; cleanup verificado o InfrastructureFailed; manifest tras cleanup",
+          "evidence": "internal/verification/run.go:100-101,144-146@d901657; internal/factory/activities.go:54-67,1203-1216@d901657; workflow.go:232-235@d901657",
+          "verified": true
+        },
+        "C7": {
+          "level": "parcial",
+          "what": "artefactos atomicos redactados; Change durable; checkpoints de turno; sin indice semantico",
+          "evidence": "internal/factoryartifacts/store.go:153-180@d901657; internal/factory/change.go:165,200,270@d901657; internal/turnexec/service.go:51-54@d901657",
+          "verified": true
+        },
+        "C8": {
+          "level": "fuerte",
+          "what": "doctor con posture; agents verify sha256; release reproducible + attest + SBOM; install verifica attestation",
+          "evidence": "cmd/factory/main.go:661-700@d901657; cmd/factory/release.go:171,226-265@d901657; install.sh:70-78@d901657",
+          "verified": true
+        },
+        "C9": {
+          "level": "fuerte",
+          "what": "interfaces Harness/Sandbox/Provider; API consola solo GET; protocolo pi con contract_version",
+          "evidence": "internal/agentharness/harness.go:132,174@d901657; internal/sandbox/types.go:180,236@d901657; pi.go:374@d901657",
+          "verified": true
+        }
+      },
+      "last_sha": "d901657fce1af2320ba4b235b4c436020fb11a96",
+      "last_release": "v0.7.1-rc.1",
+      "last_analyzed": "2026-10-30",
+      "analysis": "sw-factory/docs/research/analisis/esf.md",
+      "adopted": [],
+      "watch": true,
+      "run": "sw-factory/docs/research/runs/2026-10-30-B-esf-01/",
+      "incompatible_perfil": [
+        "Temporal",
+        "CubeSandbox",
+        "Harness2 completo",
+        "consola enterprise TLS/mTLS"
+      ],
+      "candidates": [
+        "C6-verificacion-determinista-01",
+        "C6-gate-integrity-02",
+        "C5-threatmon-03",
+        "C6-manifest-evidencia-04",
+        "C4b-perfil-inmutable-05",
+        "C4b-blocked-06",
+        "C2-lease-ttl-07",
+        "C5-egress-probe-08",
+        "C3-decision-auditada-09",
+        "C4a-presupuesto-reserva-10"
+      ]
+    },
+    {
+      "name": "warp",
+      "url": "https://github.com/warpdotdev/warp",
+      "local": "warp",
+      "status": "provisional",
+      "ambito": "producto",
+      "license": {
+        "spdx": "AGPL-3 (partes MIT)",
+        "file_hash": null,
+        "scopes": [
+          {
+            "paths": [
+              "<por determinar en Loop B>"
+            ],
+            "spdx": "MIT"
+          }
+        ]
+      },
+      "use_rule": "solo referencia de diseno; no copiar codigo",
+      "tos_risk": "ninguno",
+      "layers": {
+        "C8": {
+          "level": "parcial",
+          "what": "scheduled ambient agents",
+          "evidence": "crates/cloud_object_models/src/scheduled_ambient_agent.rs",
+          "verified": false
+        },
+        "C0": {
+          "level": "fuerte",
+          "what": "terminal UX, bloques, comandos",
+          "evidence": "crates/",
+          "verified": false
+        }
+      },
+      "last_sha": null,
+      "last_release": null,
+      "last_analyzed": "2026-10-24",
+      "analysis": null,
+      "adopted": [],
+      "watch": true
+    },
+    {
+      "name": "opencode",
+      "url": "https://github.com/sst/opencode",
+      "local": "ext/opencode",
+      "status": "provisional",
+      "ambito": "producto",
+      "license": {
+        "spdx": "MIT",
+        "file_hash": null,
+        "scopes": []
+      },
+      "use_rule": "adaptar citando origen",
+      "tos_risk": "ninguno",
+      "layers": {
+        "C4": {
+          "level": "fuerte",
+          "what": "capa de proveedores multi-modelo",
+          "evidence": "packages/ai/src/providers/",
+          "verified": false
+        },
+        "C0": {
+          "level": "fuerte",
+          "what": "TUI de agente",
+          "evidence": "packages/",
+          "verified": false
+        }
+      },
+      "last_sha": null,
+      "last_release": null,
+      "last_analyzed": "2026-10-24",
+      "analysis": null,
+      "adopted": [],
+      "watch": true
+    },
+    {
+      "name": "pi",
+      "url": "https://github.com/earendil-works/pi",
+      "local": "pi",
+      "status": "provisional",
+      "ambito": "producto",
+      "license": {
+        "spdx": "MIT",
+        "file_hash": null,
+        "scopes": []
+      },
+      "use_rule": "adaptar citando origen; no reutilizar OAuth de antigravity",
+      "tos_risk": "ninguno",
+      "layers": {
+        "C4": {
+          "level": "fuerte",
+          "what": "proveedores y formato de mensajes Gemini",
+          "evidence": "packages/ai/src/providers/",
+          "verified": false
+        }
+      },
+      "last_sha": null,
+      "last_release": null,
+      "last_analyzed": "2026-10-24",
+      "analysis": null,
+      "adopted": [],
+      "watch": true
+    },
+    {
+      "name": "elephant-goldfish-model",
+      "url": "https://github.com/google/elephant-goldfish-model",
+      "local": null,
+      "status": "doc-only",
+      "ambito": "investigacion",
+      "license": {
+        "spdx": "ver LICENSE",
+        "file_hash": null,
+        "scopes": []
+      },
+      "use_rule": "metodologia; adoptar roles elefante/goldfish y drift-report",
+      "tos_risk": "ninguno",
+      "layers": {
+        "C6": {
+          "level": "parcial",
+          "what": "revision con contexto fresco; egm-drift-report doc vs codigo",
+          "evidence": "README",
+          "verified": false
+        },
+        "C3": {
+          "level": "parcial",
+          "what": "gate humano antes de implementar",
+          "evidence": "README",
+          "verified": false
+        }
+      },
+      "last_sha": null,
+      "last_release": null,
+      "last_analyzed": "2026-10-30",
+      "analysis": null,
+      "adopted": [],
+      "watch": true
+    },
+    {
+      "name": "agent-reach",
+      "url": "https://github.com/Panniantong/Agent-Reach",
+      "local": null,
+      "status": "doc-only",
+      "ambito": "investigacion",
+      "license": {
+        "spdx": "ver LICENSE",
+        "file_hash": null,
+        "scopes": []
+      },
+      "use_rule": "herramienta de acceso a fuentes; instalado como skill",
+      "tos_risk": "ninguno",
+      "layers": {
+        "C4": {
+          "level": "parcial",
+          "what": "acceso read-only a plataformas con fallback por canal",
+          "evidence": "README",
+          "verified": false
+        }
+      },
+      "last_sha": null,
+      "last_release": null,
+      "last_analyzed": "2026-10-30",
+      "analysis": null,
+      "adopted": [],
+      "watch": true
+    },
+    {
+      "name": "hyperresearch",
+      "url": "https://github.com/jordan-gibbs/hyperresearch",
+      "local": null,
+      "status": "doc-only",
+      "ambito": "investigacion",
+      "license": {
+        "spdx": "ver LICENSE",
+        "file_hash": null,
+        "scopes": []
+      },
+      "use_rule": "pipeline de investigacion; instalado como skill",
+      "tos_risk": "ninguno",
+      "layers": {
+        "C6": {
+          "level": "fuerte",
+          "what": "criticos adversariales, cite-check, patch-not-regenerate, budget cap",
+          "evidence": "README",
+          "verified": false
+        },
+        "C7": {
+          "level": "fuerte",
+          "what": "vault markdown+sqlite con ciclo de vida de notas",
+          "evidence": "README",
+          "verified": false
+        }
+      },
+      "last_sha": null,
+      "last_release": null,
+      "last_analyzed": "2026-10-30",
+      "analysis": null,
+      "adopted": [],
+      "watch": true
+    }
+  ]
+}

@@ -1,0 +1,13 @@
+diff --git a/calc.py b/calc.py
+index ae40d2d..78b1a96 100644
+--- a/calc.py
++++ b/calc.py
+@@ -2,6 +2,8 @@
+ 
+ 
+ def add(a, b):
++    if isinstance(a, bool) or isinstance(b, bool) or not isinstance(a, (int, float)) or not isinstance(b, (int, float)):
++        raise TypeError("operands must be int or float")
+     return a + b
+ 
+ 

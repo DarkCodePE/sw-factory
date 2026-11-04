@@ -1,0 +1,11 @@
+{
+  "repo": "https://github.com/mitkox/esf",
+  "commit": "d901657fce1af2320ba4b235b4c436020fb11a96",
+  "license_spdx": "MIT",
+  "use_rule": "idea",
+  "uses": [
+    { "src": "src/improve.ts", "adapted_from": "internal/harnessprofile/qualification.go", "candidate_id": "improve-fase1", "note": "reimplemented, no code copied; phase 1 only (frozen suite, splits, paired runs, report)" },
+    { "src": "src/profile.ts", "adapted_from": "internal/harnessprofile/profile.go", "candidate_id": "improve-fase1", "note": "reimplemented, no code copied" }
+  ],
+  "not_imported": ["paired cluster bootstrap", "Ed25519 promotion", "adaptive/shadow rollout", "repeated-baseline arm"]
+}
