@@ -1,0 +1,9 @@
+{
+  "command": "bun test tests/third-party-ledger.test.ts tests/provenance.test.ts",
+  "exit_code": 0,
+  "output": "bun-test.txt",
+  "output_sha256": "2ea189f911f3d4999b6a62b4e9af9ce90d0a554c45973114cf5a1a7983818101",
+  "base_sha": "2bed96faad3678a86da15e28b664200cab79468c",
+  "bun": "1.3.14",
+  "date": "2026-10-31"
+}
