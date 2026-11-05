@@ -1,6 +1,6 @@
 // Compare protected paths independently against the immutable base, disk and branch HEAD.
 import { createHash } from 'node:crypto';
-import { lstatSync, readdirSync, readFileSync, readlinkSync } from 'node:fs';
+import { lstatSync, readdirSync, readFileSync, readlinkSync, rmSync } from 'node:fs';
 import { join } from 'node:path';
 import { GIT_SAFE_FLAGS } from '../worktrees.ts';
 
@@ -52,6 +52,22 @@ function diskTree(root: string, algorithm: string, matches: (path: string) => bo
   }
   walk('');
   return result;
+}
+
+// Delete regenerable Python caches (also removes planted .pyc). Never follows links, never enters .git.
+export function purgeRegenerableCaches(worktree: string): void {
+  function walk(relative: string) {
+    for (const entry of readdirSync(join(worktree, relative))) {
+      if (!relative && entry === '.git') continue;
+      const path = relative ? `${relative}/${entry}` : entry;
+      const absolute = join(worktree, path);
+      const stat = lstatSync(absolute);
+      const cache = stat.isDirectory() ? entry === '__pycache__' || entry === '.pytest_cache' : /\.py[co]$/.test(entry);
+      if (cache) rmSync(absolute, { recursive: true, force: true });
+      else if (stat.isDirectory()) walk(path);
+    }
+  }
+  walk('');
 }
 
 export async function protectedIntegrity(

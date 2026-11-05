@@ -28,7 +28,7 @@ import { connectorsMain } from './connectors/cli.ts';
 import { createGhGateway } from './connectors/github.ts';
 import { ChangeLinkStore } from './connectors/links.ts';
 import { validateMain } from './validators/cli.ts';
-import { protectedIntegrity } from './validators/integrity.ts';
+import { protectedIntegrity, purgeRegenerableCaches } from './validators/integrity.ts';
 import { mergeRecoverably } from './validators/publish.ts';
 
 const STATE_DIR = resolve(process.env.FABRICA_HOME ?? resolve(process.env.HOME ?? '.', '.fabrica'));
@@ -293,6 +293,7 @@ async function main(argv: string[]): Promise<number> {
         if (store.listActivities({changeId:c.id}).some(a => a.status === 'in_progress')) throw new StoreError('conflict', 'change tiene workers en curso');
         const ws = store.getWorkstream(c.workstreamId);
         const path = resolve(STATE_DIR, 'worktrees', short(c.id));
+        purgeRegenerableCaches(path);
         const { snapshot } = await protectedIntegrity(path, c.baseSha, ws.protectedPaths, c.protectedBaseline);
         const selected: typeof snapshot = {};
         for (const route of rest.slice(1)) {
@@ -300,6 +301,7 @@ async function main(argv: string[]): Promise<number> {
           selected[route] = snapshot[route]!;
         }
         await commitProtectedPaths(path, Object.keys(selected), `gate allow: ${values.comment}`);
+        purgeRegenerableCaches(path);
         const approved = await protectedIntegrity(path, c.baseSha, ws.protectedPaths, c.protectedBaseline);
         for (const route of Object.keys(selected)) selected[route] = approved.snapshot[route] ?? {disk:null, head:null};
         store.allowGate(c.id, selected, values.comment);
