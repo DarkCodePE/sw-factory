@@ -1,0 +1,9 @@
+{
+  "id": "canary-06e7cd0c",
+  "archivo": "goldfish/medicion.json",
+  "ruta": "por_tarea[16].exito",
+  "task_id": "py-fix-average-empty",
+  "brazo": "candidate",
+  "original": "1",
+  "alterado": "0.75"
+}

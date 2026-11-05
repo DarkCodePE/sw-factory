@@ -1,0 +1,9 @@
+{
+  "id": "canary-1616e3b3",
+  "archivo": "goldfish/medicion.json",
+  "ruta": "por_tarea[3].exito",
+  "task_id": "py-feature-multiply",
+  "brazo": "baseline",
+  "original": "1",
+  "alterado": "0.75"
+}

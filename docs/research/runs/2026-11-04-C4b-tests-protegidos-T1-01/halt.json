@@ -1,0 +1,4 @@
+{
+  "razon": "presupuesto: horas_max excedido (9,51 h > 4) por una corrida colgada 496 min (ts-locate-depth-limit, candidato, r2; improve no limita el tiempo del agente). Dato no evaluado: candidato tocó rutas protegidas en 15/24 frente a 24/24 de baseline y baseline_rep; éxito 24/24 en los tres brazos",
+  "fecha": "2026-11-04T14:39:59.442Z"
+}

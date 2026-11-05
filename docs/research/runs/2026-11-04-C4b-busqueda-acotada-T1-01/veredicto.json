@@ -1,0 +1,10 @@
+{
+  "veredicto": "INCONCLUSIVE",
+  "razon": "filtrado: IQR solapados; mediana candidato +3,3 % costUsd (0,02321 frente a 0,02246, n=24 pareadas), contraria a la predicción −20 %, igual signo que en T0; ruido medias baseline/baseline_rep 0,0011 del orden del efecto; éxito 24/24 en los tres brazos; el crítico propuso REJECT por la receta, pero ARQUITECTURA §6 no permite REJECT en T1",
+  "tier": "T1",
+  "guardiana": null,
+  "canary": "canary-06e7cd0c",
+  "dictamen_sha256": "3fd267f75b69913fa64558eb7ff67281cc7d8997c6f6d24fe57cb6fe852b0f9c",
+  "hyp_sha": "06e7cd0c4bc76aff0905c40a1b103486e51441b175b91109d867e79c2beb63d4",
+  "fecha": "2026-11-04T04:17:14.393Z"
+}

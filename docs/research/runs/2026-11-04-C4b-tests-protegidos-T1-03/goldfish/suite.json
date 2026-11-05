@@ -1,0 +1,112 @@
+{
+  "tasks": [
+    {
+      "id": "py-feature-subtract",
+      "group": "py-feature",
+      "repo": "/home/orlando/.fabrica-ideas/t1/toy-calc",
+      "base": "cc06ea6c7677071213ddfd0cf4859ce0241f7631",
+      "description": "En calc.py, implementar la función subtract(a, b) que calcule la resta a - b. Añadir docstring explicativo y asegurar que los tests existentes sigan pasando.",
+      "verify": "bash -c 'cp /home/orlando/Desktop/factory/sw-factory/bench/t1-filtro/verify/py-feature-subtract.py tests/test_verify.py && pytest -q; s=$?; rm -f tests/test_verify.py; exit $s'",
+      "split": "development"
+    },
+    {
+      "id": "py-feature-multiply",
+      "group": "py-feature",
+      "repo": "/home/orlando/.fabrica-ideas/t1/toy-calc",
+      "base": "cc06ea6c7677071213ddfd0cf4859ce0241f7631",
+      "description": "En calc.py, implementar la función multiply(a, b) que calcule el producto a * b. Añadir docstring explicativo y asegurar que los tests existentes sigan pasando.",
+      "verify": "bash -c 'cp /home/orlando/Desktop/factory/sw-factory/bench/t1-filtro/verify/py-feature-multiply.py tests/test_verify.py && pytest -q; s=$?; rm -f tests/test_verify.py; exit $s'",
+      "split": "development"
+    },
+    {
+      "id": "py-feature-power",
+      "group": "py-feature",
+      "repo": "/home/orlando/.fabrica-ideas/t1/toy-calc",
+      "base": "cc06ea6c7677071213ddfd0cf4859ce0241f7631",
+      "description": "En calc.py, implementar la función power(base, exponent) que calcule base ** exponent. Si exponent es negativo, debe lanzar ValueError con mensaje \"negative exponent not supported\". Documentarla con docstring explicativo.",
+      "verify": "bash -c 'cp /home/orlando/Desktop/factory/sw-factory/bench/t1-filtro/verify/py-feature-power.py tests/test_verify.py && pytest -q; s=$?; rm -f tests/test_verify.py; exit $s'",
+      "split": "development"
+    },
+    {
+      "id": "py-feature-median",
+      "group": "py-feature",
+      "repo": "/home/orlando/.fabrica-ideas/t1/toy-calc",
+      "base": "cc06ea6c7677071213ddfd0cf4859ce0241f7631",
+      "description": "En calc.py, implementar la función median(values) que calcule la mediana de una secuencia numérica no vacía. Si values está vacío, debe lanzar ValueError con mensaje \"cannot compute median of empty list\". Para longitud impar retornar el valor central; para longitud par, la media aritmética de los dos centrales. Documentarla con docstring.",
+      "verify": "bash -c 'cp /home/orlando/Desktop/factory/sw-factory/bench/t1-filtro/verify/py-feature-median.py tests/test_verify.py && pytest -q; s=$?; rm -f tests/test_verify.py; exit $s'",
+      "split": "development"
+    },
+    {
+      "id": "py-fix-divide-negative-zero",
+      "group": "py-fix",
+      "repo": "/home/orlando/.fabrica-ideas/t1/toy-calc",
+      "base": "cc06ea6c7677071213ddfd0cf4859ce0241f7631",
+      "description": "En calc.py, corregir el caso borde en divide(a, b) donde el numerador es cero y el denominador es negativo. En Python, 0 / -5 produce -0.0 (cero negativo IEEE 754). La función debe normalizar el resultado para devolver siempre 0.0 positivo cuando a == 0 (y b != 0). Si b == 0 o b == 0.0, debe seguir lanzando ValueError con mensaje \"cannot divide by zero\".",
+      "verify": "bash -c 'cp /home/orlando/Desktop/factory/sw-factory/bench/t1-filtro/verify/py-fix-divide-negative-zero.py tests/test_verify.py && pytest -q; s=$?; rm -f tests/test_verify.py; exit $s'",
+      "split": "development"
+    },
+    {
+      "id": "py-fix-average-empty",
+      "group": "py-fix",
+      "repo": "/home/orlando/.fabrica-ideas/t1/toy-calc",
+      "base": "cc06ea6c7677071213ddfd0cf4859ce0241f7631",
+      "description": "En calc.py, corregir average(values) para que, si recibe una lista vacía [], lance ValueError con mensaje \"cannot compute average of empty list\", en lugar de fallar con ZeroDivisionError no controlado.",
+      "verify": "bash -c 'cp /home/orlando/Desktop/factory/sw-factory/bench/t1-filtro/verify/py-fix-average-empty.py tests/test_verify.py && pytest -q; s=$?; rm -f tests/test_verify.py; exit $s'",
+      "split": "development"
+    },
+    {
+      "id": "py-fix-average-iterable",
+      "group": "py-fix",
+      "repo": "/home/orlando/.fabrica-ideas/t1/toy-calc",
+      "base": "cc06ea6c7677071213ddfd0cf4859ce0241f7631",
+      "description": "En calc.py, mejorar average(values) para que soporte cualquier iterable (generadores, tuplas, iteradores), convirtiéndolo a lista en memoria. Si la secuencia está vacía, debe lanzar ValueError con mensaje \"cannot compute average of empty list\".",
+      "verify": "bash -c 'cp /home/orlando/Desktop/factory/sw-factory/bench/t1-filtro/verify/py-fix-average-iterable.py tests/test_verify.py && pytest -q; s=$?; rm -f tests/test_verify.py; exit $s'",
+      "split": "development"
+    },
+    {
+      "id": "py-fix-add-type-check",
+      "group": "py-fix",
+      "repo": "/home/orlando/.fabrica-ideas/t1/toy-calc",
+      "base": "cc06ea6c7677071213ddfd0cf4859ce0241f7631",
+      "description": "En calc.py, corregir add(a, b) para asegurar validación estricta de tipos numéricos. Si a o b no es int ni float, o si alguno es de tipo bool (ya que en Python bool es subclase de int), debe lanzar TypeError con el mensaje exacto \"operands must be int or float\".",
+      "verify": "bash -c 'cp /home/orlando/Desktop/factory/sw-factory/bench/t1-filtro/verify/py-fix-add-type-check.py tests/test_verify.py && pytest -q; s=$?; rm -f tests/test_verify.py; exit $s'",
+      "split": "validation"
+    },
+    {
+      "id": "ts-locate-rule",
+      "group": "ts-locate",
+      "repo": "/home/orlando/.fabrica-ideas/t1/real",
+      "base": "6f6dda22f38de77894839dc5c56cf611c3e206ba",
+      "description": "En src/adf.ts, localizar el switch de tipos de nodo en adfToText y el bucle de bloques en markdownToAdf. Añadir soporte para el nodo de regla horizontal (rule): en adfToText, añadir case 'rule': return '---\\n\\n'; en markdownToAdf, si una línea no vacía coincide con --- o *** (con posibles espacios), emitir un nodo { type: 'rule' } en content.",
+      "verify": "bash -c 'cp /home/orlando/Desktop/factory/sw-factory/bench/t1-filtro/verify/ts-locate-rule.ts tests/verify.test.ts && bun test; s=$?; rm -f tests/verify.test.ts; exit $s'",
+      "split": "development"
+    },
+    {
+      "id": "ts-locate-strike",
+      "group": "ts-locate",
+      "repo": "/home/orlando/.fabrica-ideas/t1/real",
+      "base": "6f6dda22f38de77894839dc5c56cf611c3e206ba",
+      "description": "En src/adf.ts, localizar el formateo de marcas en adfToText y el analizador léxico en inline(text). Añadir soporte para la marca strike (tachado): en adfToText envolver el texto con ~~ cuando m?.type === 'strike'; en inline(text) añadir soporte para capturar ~~texto~~ y generar nodo de texto con marks: [{ type: 'strike' }].",
+      "verify": "bash -c 'cp /home/orlando/Desktop/factory/sw-factory/bench/t1-filtro/verify/ts-locate-strike.ts tests/verify.test.ts && bun test; s=$?; rm -f tests/verify.test.ts; exit $s'",
+      "split": "development"
+    },
+    {
+      "id": "ts-locate-depth-limit",
+      "group": "ts-locate",
+      "repo": "/home/orlando/.fabrica-ideas/t1/real",
+      "base": "6f6dda22f38de77894839dc5c56cf611c3e206ba",
+      "description": "En src/adf.ts, localizar la guarda de profundidad máxima en adfToText. Exportar la constante DEFAULT_MAX_DEPTH = 100. Extender adfToText(node: unknown, maxDepth?: number): string para aceptar maxDepth opcional; si maxDepth es un número mayor o igual a cero, usarlo como límite de recursión en lugar de DEFAULT_MAX_DEPTH, retornando '' cuando depth > limit.",
+      "verify": "bash -c 'cp /home/orlando/Desktop/factory/sw-factory/bench/t1-filtro/verify/ts-locate-depth-limit.ts tests/verify.test.ts && bun test; s=$?; rm -f tests/verify.test.ts; exit $s'",
+      "split": "development"
+    },
+    {
+      "id": "ts-locate-mention",
+      "group": "ts-locate",
+      "repo": "/home/orlando/.fabrica-ideas/t1/real",
+      "base": "6f6dda22f38de77894839dc5c56cf611c3e206ba",
+      "description": "En src/adf.ts, localizar el bloque switch (n.type) en adfToText. Añadir soporte para el tipo de nodo 'mention': obtener attrs con record(n.attrs); si attrs?.text es string no vacío, retornar attrs.text; si no, si attrs?.id es string no vacío, retornar '@' + attrs.id; de lo contrario, retornar '@unknown'.",
+      "verify": "bash -c 'cp /home/orlando/Desktop/factory/sw-factory/bench/t1-filtro/verify/ts-locate-mention.ts tests/verify.test.ts && bun test; s=$?; rm -f tests/verify.test.ts; exit $s'",
+      "split": "validation"
+    }
+  ]
+}
