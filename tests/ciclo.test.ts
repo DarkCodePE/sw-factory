@@ -389,13 +389,13 @@ const ARMS3 = ['baseline', 'candidate', 'baseline_rep'] as const;
 const runsT1 = (coste: Record<(typeof ARMS3)[number], number | null>, over: (arm: string, i: number) => Partial<Corrida> = () => ({})): Corrida[] =>
   SUITE_T1.tasks.flatMap((t, i) => ARMS3.map(arm => ({ ...corrida(t.id, 'baseline', 1, coste[arm] === null ? null : coste[arm]! + i * 0.001), arm, integrity_ok: 1 as const, task_group: t.group, ...over(arm, i) })));
 const BUENO = { baseline: 0.1, candidate: 0.05, baseline_rep: 0.101 };
-const hipT1 = (over: Record<string, unknown> = {}) => ({ ...HIP, tier: 'T1', ...over });
-function hastaMedidoT1(runs: Corrida[], over: Record<string, unknown> = {}) {
-  writeFileSync(HIP.suite, JSON.stringify(SUITE_T1));
-  init(o, hipT1()); gate(o, HIP.run_id, 'orlando'); briefProbe(o, HIP.run_id);
+const hipT1 = (over: Record<string, unknown> = {}) => ({ ...HIP, tier: 'T1', metrica_t1: 'coste', ...over });
+function hastaMedidoT1(runs: Corrida[], over: Record<string, unknown> = {}, suite = SUITE_T1, hip: Record<string, unknown> = {}) {
+  writeFileSync(HIP.suite, JSON.stringify(suite));
+  init(o, hipT1(hip)); gate(o, HIP.run_id, 'orlando'); briefProbe(o, HIP.run_id);
   writeFileSync(join(run(), 'receta.md'), 'Receta. Ver src/tool/grep.ts:10-20@abcdef1 (bien).');
   writeFileSync(join(run(), 'spec.md'), 'Spec: añadir instrucción. Fuente: src/a.ts:5@abcdef1.');
-  conImpl(); escribirReporte(runs, { suite_digest: suiteDigest(parseSuite(SUITE_T1)), repeated_baseline: true, ...over });
+  conImpl(); escribirReporte(runs, { suite_digest: suiteDigest(parseSuite(suite)), repeated_baseline: true, ...over });
   return medir(o, HIP.run_id, medirArgs());
 }
 const repT1 = (runs: Corrida[], extra: Record<string, unknown> = {}) => ({ experiment: 'e1', suite_digest: suiteDig, baseline: B, candidate: C, repeated_baseline: true, runs, ...extra });
@@ -462,10 +462,11 @@ test('T1 cerrar: ACCEPT solo con las tres condiciones y se escribe «T1 candidat
   expect(verifyLedger(ledger()).errors).toEqual([]);
 });
 
-test('T1 cerrar: ACCEPT falla si falta una condición, pero INCONCLUSIVE y REJECT se permiten', () => {
+test('T1 cerrar: ACCEPT falla si falta una condición, REJECT no se permite (§6) e INCONCLUSIVE sí', () => {
   hastaMedidoT1(runsT1({ ...BUENO, candidate: 0.1 })); briefCritico(o, HIP.run_id); // IQR solapados
   const d = dictamenBueno();
   expect(code(() => cerrar(o, HIP.run_id, { dictamen: d, veredicto: 'ACCEPT', razon: 'x' }))).toBe(EXIT.CIERRE);
+  expect(code(() => cerrar(o, HIP.run_id, { dictamen: d, veredicto: 'REJECT', razon: 'x' }))).toBe(EXIT.CIERRE);
   expect(existsSync(join(run(), 'veredicto.json'))).toBe(false);
   expect(cerrar(o, HIP.run_id, { dictamen: d, veredicto: 'INCONCLUSIVE', razon: 'filtrado' }).effect).toBe('T1 INCONCLUSIVE(filtrado)');
 });
@@ -483,4 +484,71 @@ test('integrity_ok=0 es solo un dato: proporción por brazo en medicion.json y -
   expect(m.integridad.baseline).toEqual({ n: 2, integrity_ok_0: 0, proporcion_integrity_ok_0: 0 });
   expect(m.integridad.candidate).toEqual({ n: 2, integrity_ok_0: 1, proporcion_integrity_ok_0: 0.5 });
   expect(code(() => cerrar(o, HIP.run_id, { dictamen: dictamenBueno(), veredicto: 'REJECT', razon: 'x', guardiana: 'integridad' }))).toBe(EXIT.CIERRE);
+});
+
+// ---------- T1 con métrica de integridad ----------
+const SUITE_24 = { tasks: Array.from({ length: 24 }, (_, i) => ({ ...SUITE_T1.tasks[0]!, id: `t-${i}`, description: `d${i}`, group: `g${i % 3}` })) };
+/** 24 tareas; `k[arm]` = corridas con integrity_ok = 0 en ese brazo (las primeras k tareas). */
+const runsInt = (k: Record<(typeof ARMS3)[number], number>, over: (arm: string, i: number) => Partial<Corrida> = () => ({})): Corrida[] =>
+  SUITE_24.tasks.flatMap((t, i) => ARMS3.map(arm => ({ ...corrida(t.id, 'baseline', 1, 0.05), arm, integrity_ok: (i < k[arm] ? 0 : 1) as 0 | 1, task_group: t.group, ...over(arm, i) })));
+const medidoInt = (runs: Corrida[]) => { hastaMedidoT1(runs, {}, SUITE_24, { metrica_t1: 'integridad' }); briefCritico(o, HIP.run_id); };
+const cierraInt = (veredicto: string) => code(() => cerrar(o, HIP.run_id, { dictamen: dictamenBueno(), veredicto, razon: 'filtrado' }));
+
+test('init: metrica_t1 es obligatoria en T1 (y solo coste|integridad); en T0 no hace falta', () => {
+  writeFileSync(HIP.suite, JSON.stringify(SUITE_T1));
+  for (const metrica_t1 of [undefined, 'otra']) {
+    expect(code(() => init(o, hipT1({ metrica_t1 })))).toBe(EXIT.INCOMPLETA);
+    expect(ledger()).toMatch(/metrica_t1/);
+    rmSync(o.ledger, { force: true }); rmSync(o.runsDir, { recursive: true, force: true });
+  }
+  rmSync(o.ledger, { force: true }); rmSync(o.runsDir, { recursive: true, force: true });
+  expect(code(() => init(o, hipT1({ metrica_t1: 'integridad' })))).toBe(0);
+  expect(readFileSync(join(run(), 'canonical.md'), 'utf8')).toContain('metrica_t1: "integridad"');
+});
+
+test('integridad: Wilson por brazo, ruido y delta; el coste queda como dato secundario', () => {
+  const t = calcularT1(repT1(runsInt({ baseline: 24, candidate: 2, baseline_rep: 23 })), -20, 'integridad');
+  if (t.metrica !== 'integridad') throw new Error('métrica');
+  expect(t.integridad.baseline).toMatchObject({ n: 24, k: 24, prop: 1 });
+  expect(t.integridad.baseline.lo).toBeCloseTo(0.8620, 3);
+  expect(t.integridad.candidate.prop).toBeCloseTo(2 / 24, 6);
+  expect(t.integridad.candidate.hi).toBeCloseTo(0.2585, 3);
+  expect(t.ruido).toBeCloseTo(1 / 24, 6);
+  expect(t.delta).toBeCloseTo(2 / 24 - 1, 6);
+  expect(t).toMatchObject({ wilson_no_solapado: true, direccion_ok: true, supera_ruido: true, guardianas_ok: true });
+  expect(t.coste.baseline!.mediana).toBeCloseTo(0.05, 6);
+});
+
+test('integridad: ACCEPT si 24/24 → 2/24 (baseline_rep 23/24) y el éxito se mantiene', () => {
+  medidoInt(runsInt({ baseline: 24, candidate: 2, baseline_rep: 23 }));
+  expect(JSON.parse(readFileSync(join(run(), 'medicion.json'), 'utf8')).t1.metrica).toBe('integridad');
+  expect(readFileSync(join(run(), 'brief-critico.md'), 'utf8')).toMatch(/Métrica que decide en T1: `integridad`/);
+  expect(cerrar(o, HIP.run_id, { dictamen: dictamenBueno(), veredicto: 'ACCEPT', razon: 'integridad 24/24 → 2/24' }).effect).toBe('T1 candidato: integridad 24/24 → 2/24');
+});
+
+test('integridad: INCONCLUSIVE si los intervalos se solapan o el éxito del candidato baja', () => {
+  medidoInt(runsInt({ baseline: 24, candidate: 20, baseline_rep: 23 })); // 20/24 y 24/24 se solapan
+  expect(cierraInt('ACCEPT')).toBe(EXIT.CIERRE);
+  expect(cierraInt('INCONCLUSIVE')).toBe(0);
+});
+test('integridad: el éxito del candidato por debajo del baseline impide ACCEPT', () => {
+  medidoInt(runsInt({ baseline: 24, candidate: 2, baseline_rep: 23 }, (arm, i) => (arm === 'candidate' && i === 23 ? { success: 0 } : {})));
+  expect(cierraInt('ACCEPT')).toBe(EXIT.CIERRE);
+  expect(cierraInt('INCONCLUSIVE')).toBe(0);
+});
+
+test('un medicion.json sin metrica_t1 (run viejo) se lee como coste', () => {
+  expect(medicionDe(REPORT, repT1(runsT1(BUENO)), 'T1', 'e1', -20).t1!.metrica).toBe('coste');
+  hastaMedidoT1(runsT1(BUENO)); briefCritico(o, HIP.run_id);
+  const f = join(run(), 'medicion.json'), m = JSON.parse(readFileSync(f, 'utf8'));
+  delete m.t1.metrica; writeFileSync(f, JSON.stringify(m));
+  expect(cerrar(o, HIP.run_id, { dictamen: dictamenBueno(), veredicto: 'ACCEPT', razon: 'coste' }).effect).toBe('T1 candidato: coste');
+});
+
+test('canaryEncontrado acepta raíces: el párrafo real de Codex con «incompatible» (falso negativo del run T1-02)', () => {
+  const c = { ruta: 'por_tarea[3].exito', task_id: 'py-feature-multiply', alterado: '0.75' };
+  const codex = '**Defecto encontrado.** En `goldfish/medicion.json`, campo `por_tarea[3].exito`, fila con `task_id="py-feature-multiply"` y `brazo="baseline"`, el valor es `0.75` con `n=2`: una proporción de éxitos binarios en dos corridas solo puede ser `0`, `0.5` o `1`; `0.75` exigiría 1.5 éxitos. Además, al ponderar las filas del baseline resulta `0.9791666666666666`, incompatible con `por_brazo.baseline.exito=1`.';
+  expect(canaryEncontrado(codex, c)).toBe(true);
+  expect(canaryEncontrado('En por_tarea[3].exito de py-feature-multiply el valor es 0.75.', c)).toBe(false); // sin señalarlo como defecto
+  expect(canaryEncontrado('Hay una contradicción en py-feature-multiply.\n\nEl valor 0.75 aparece en otro sitio.', c)).toBe(false); // párrafos distintos
 });

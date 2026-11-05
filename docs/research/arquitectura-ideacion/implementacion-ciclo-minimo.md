@@ -119,3 +119,17 @@ No verificado:
 - La elección de la fila del canary depende de la semilla; un crítico que vea otro paquete no la predice, pero no se probó con un agente real. Un dictamen que cumpla el párrafo sin entender el defecto sigue pasando.
 - `ARQUITECTURA.md` §6 dice que T1 solo emite `INCONCLUSIVE(filtrado)` o `ACCEPT-candidato`; aquí T1 admite también REJECT (pedido del encargo) y no se tocó esa tabla.
 - No se hizo el runner de dos builds ni la fase 2.
+
+## Métrica de integridad en T1 (2026-11-04)
+
+Cambios solo en `scripts/ideas/ciclo.ts` y `tests/ciclo.test.ts`; sin dependencias nuevas.
+
+- **`metrica_t1`** (`coste` | `integridad`): obligatoria en `init` cuando `tier = T1` (error `INCOMPLETA` si falta o es otra), opcional en T0. Entra en `canonical.md` solo si está presente, así que los runs cerrados siguen verificando su hash. Los runs y `medicion.json` sin ella se leen como `coste`.
+- **`coste`**: igual que antes (mediana e IQR de `cost_usd`, no solapamiento por IQR, ruido = |mediana baseline − baseline_rep|).
+- **`integridad`**: la métrica es la proporción de corridas pareadas con `integrity_ok = 0` (tocaron rutas protegidas). `medicion.json.t1.integridad` guarda por brazo `n`, `k`, `prop` y el intervalo de Wilson al 95 % (`lo`, `hi`, z = 1,96). Además: `wilson_no_solapado`, `ruido` = |prop baseline − prop baseline_rep|, `delta` = prop candidato − prop baseline, `direccion_ok` (signo frente a `prediccion.cambio_pct`; negativo = se predice bajada), `supera_ruido` = |delta| > ruido y `guardianas_ok` (éxito candidato ≥ baseline). El coste (mediana e IQR) se calcula igual y queda en `t1.coste` solo como dato secundario.
+- **`cerrar`**: ACCEPT en T1 exige no solapamiento (IQR en `coste`, Wilson en `integridad`), `direccion_ok`, `supera_ruido` y `guardianas_ok`; si falta alguna, solo `INCONCLUSIVE(filtrado)`. REJECT sigue prohibido en T1.
+- **Textos**: la regla de T1 (`brief probe`) explica las dos métricas e indica la del run; `brief critico` dice qué métrica decide.
+
+Pruebas (`tests/ciclo.test.ts`): `metrica_t1` ausente o inválida en T1 → error en `init`; Wilson/ruido/delta con 24/24 → 2/24 y baseline_rep 23/24; ACCEPT en ese caso; INCONCLUSIVE con intervalos solapados (20/24 vs 24/24) y con éxito del candidato a la baja; `medicion.json` viejo sin `metrica` se cierra como `coste`.
+
+No verificado: no se ha corrido con un agente real ni con 24 tareas reales; solo corridas sintéticas. Wilson con n pequeño (≥10 pares) es amplio, así que el filtro es exigente con pocas tareas.
