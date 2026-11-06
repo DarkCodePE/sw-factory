@@ -1,5 +1,7 @@
 #!/usr/bin/env bun
 // fab — local software factory CLI.
+import { Writable } from 'node:stream';
+import { Console } from 'node:console';
 import { mkdirSync } from 'node:fs';
 import { resolve } from 'node:path';
 import { parseArgs } from 'node:util';
@@ -30,6 +32,24 @@ import { ChangeLinkStore } from './connectors/links.ts';
 import { validateMain } from './validators/cli.ts';
 import { protectedIntegrity, purgeRegenerableCaches } from './validators/integrity.ts';
 import { mergeRecoverably } from './validators/publish.ts';
+
+// Bun's native console bypasses fd-backed Writable queues. For pipes/files,
+// proxies force console output through queues we can drain before exit.
+// Keep terminal streams intact for their native formatting and TTY behavior.
+const stdout = process.stdout.isTTY ? process.stdout : new Writable({ write: (chunk, _encoding, callback) => { process.stdout.write(chunk, callback); } });
+const stderr = process.stderr.isTTY ? process.stderr : new Writable({ write: (chunk, _encoding, callback) => { process.stderr.write(chunk, callback); } });
+globalThis.console = Object.assign(new Console({ stdout, stderr }), {
+  write(...data: Parameters<typeof console.write>) {
+    let bytes = 0;
+    for (const value of data) {
+      const chunk = typeof value === 'string' ? Buffer.from(value) : ArrayBuffer.isView(value)
+        ? Buffer.from(value.buffer, value.byteOffset, value.byteLength) : Buffer.from(value);
+      bytes += chunk.length;
+      stdout.write(chunk);
+    }
+    return bytes;
+  },
+});
 
 const STATE_DIR = resolve(process.env.FABRICA_HOME ?? resolve(process.env.HOME ?? '.', '.fabrica'));
 
@@ -350,7 +370,16 @@ async function main(argv: string[]): Promise<number> {
 
 const COMMANDS = new Set(['ws', 'signal', 'triage', 'inbox', 'review', 'run', 'status', 'show', 'merge', 'retry', 'gate', 'reject', 'events', 'tui', 'doctor', 'agents', 'profile', 'improve', 'help']);
 
+// A forced exit is still needed for handles left by dependencies, but pipe
+// writes are asynchronous: wait for both write queues before terminating.
+async function exitAfterDrain(code: number): Promise<never> {
+  for (const streams of [[stdout, stderr], [process.stdout, process.stderr]]) {
+    await Promise.all(streams.map(stream => new Promise<void>(resolve => { stream.end(resolve); })));
+  }
+  process.exit(code);
+}
+
 // The Script worker speaks NDJSON on stdio until its input closes; it must not be cut short by exit().
-if (process.argv[2] === '__capture') process.exit(await captureMain(process.argv.slice(3)));
+if (process.argv[2] === '__capture') await exitAfterDrain(await captureMain(process.argv.slice(3)));
 else if (process.argv[2] === SCRIPT_WORKER_COMMAND) void runScriptWorker(process.argv[3]);
-else process.exit(await main(process.argv.slice(2)));
+else await exitAfterDrain(await main(process.argv.slice(2)));
