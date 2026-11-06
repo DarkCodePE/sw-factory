@@ -1,0 +1,91 @@
+{
+  "root": "/tmp/fab-p6b-smoke-o04vGL",
+  "command": "ANTHROPIC_MODEL=claude-haiku-5-5 bun /tmp/fab-p6b-smoke.ts",
+  "confine": true,
+  "report": {
+    "experiment": "smoke",
+    "suite_digest": "d89a7537b89c225d2fcbae8d61c4805a9aa3b6215957cc77e8be570036dee502",
+    "baseline": "2dff534e629bba57f035f8c59aa154664a6f1b8e7dd149d585fab524af7bb1b6",
+    "candidate": "2dff534e629bba57f035f8c59aa154664a6f1b8e7dd149d585fab524af7bb1b6",
+    "repeated_baseline": false,
+    "control": null,
+    "runs": [
+      {
+        "batch": "mw4h26f7-cd122f8c",
+        "seed": 1,
+        "split": "development",
+        "task_id": "add-subtract",
+        "repeat": 1,
+        "arm": "candidate",
+        "position": 0,
+        "success": 0,
+        "diff_lines": 0,
+        "duration_ms": 49484,
+        "cost_usd": 0.01188018,
+        "integrity_ok": null,
+        "task_group": null
+      },
+      {
+        "batch": "mw4h26f7-cd122f8c",
+        "seed": 1,
+        "split": "development",
+        "task_id": "add-subtract",
+        "repeat": 1,
+        "arm": "baseline",
+        "position": 1,
+        "success": 0,
+        "diff_lines": 0,
+        "duration_ms": 51337,
+        "cost_usd": 0.01299554,
+        "integrity_ok": null,
+        "task_group": null
+      }
+    ]
+  },
+  "rows": [
+    {
+      "rowid": 1,
+      "experiment_id": "smoke",
+      "batch": "mw4h26f7-cd122f8c",
+      "seed": 1,
+      "split": "development",
+      "task_id": "add-subtract",
+      "repeat": 1,
+      "arm": "candidate",
+      "position": 0,
+      "profile_digest": "2dff534e629bba57f035f8c59aa154664a6f1b8e7dd149d585fab524af7bb1b6",
+      "agent": "claude",
+      "success": 0,
+      "diff_lines": 0,
+      "duration_ms": 49484,
+      "change_id": "03c5732b-b89c-4353-a1ce-39946ee5efd4",
+      "error": "agente confinado no completó el change (blocked): [{\"kind\":\"investigation\",\"error\":null},{\"kind\":\"implementation\",\"error\":\"GATE_TAMPERED: tests/test_calc.py\"}]",
+      "created_at": "2026-11-06T04:26:54.165Z",
+      "cost_usd": 0.01188018,
+      "integrity_ok": null,
+      "task_group": null
+    },
+    {
+      "rowid": 2,
+      "experiment_id": "smoke",
+      "batch": "mw4h26f7-cd122f8c",
+      "seed": 1,
+      "split": "development",
+      "task_id": "add-subtract",
+      "repeat": 1,
+      "arm": "baseline",
+      "position": 1,
+      "profile_digest": "2dff534e629bba57f035f8c59aa154664a6f1b8e7dd149d585fab524af7bb1b6",
+      "agent": "claude",
+      "success": 0,
+      "diff_lines": 0,
+      "duration_ms": 51337,
+      "change_id": "e7953fa0-1312-4d24-bdaf-ab5e7f4790d6",
+      "error": "agente confinado no completó el change (blocked): [{\"kind\":\"investigation\",\"error\":null},{\"kind\":\"implementation\",\"error\":\"GATE_TAMPERED: tests/test_calc.py\"}]",
+      "created_at": "2026-11-06T04:27:45.508Z",
+      "cost_usd": 0.01299554,
+      "integrity_ok": null,
+      "task_group": null
+    }
+  ]
+}
