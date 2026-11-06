@@ -1,0 +1,16 @@
+{
+  "cwd": "/tmp/fab-p6b-codex-LsY4DW",
+  "confine": true,
+  "run": {
+    "ok": true,
+    "output": "codex-cli 0.166.0",
+    "exitCode": 0,
+    "durationMs": 35,
+    "status": {
+      "kind": "missing",
+      "reason": "report has no STATUS line"
+    },
+    "stdout": "codex-cli 0.166.0\n",
+    "stderr": ""
+  }
+}

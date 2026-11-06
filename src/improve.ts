@@ -1,7 +1,8 @@
 // Experimentos de mejora de perfiles, fase 1: suite congelada con splits, corridas pareadas e informe.
 // Sin cualificación estadística, rollout ni rollback (fase 2). Idea: ext/esf/internal/harnessprofile/qualification.go@d901657 (MIT).
+import { assertConfinement } from './sandbox/confine.ts';
 import type { Database } from 'bun:sqlite';
-import { createHash } from 'node:crypto';
+import { createHash, randomUUID } from 'node:crypto';
 import { existsSync, mkdirSync, readFileSync, rmSync } from 'node:fs';
 import { join, resolve } from 'node:path';
 import { verifierArgv } from './agent/mission-evidence.ts';
@@ -31,10 +32,11 @@ CREATE TABLE IF NOT EXISTS experiment_runs (
   profile_digest TEXT NOT NULL, agent TEXT NOT NULL, success INTEGER NOT NULL, diff_lines INTEGER NOT NULL,
   duration_ms INTEGER NOT NULL, change_id TEXT, error TEXT, created_at TEXT NOT NULL);`);
   const cols = db.query('PRAGMA table_info(experiment_runs)').all() as { name: string }[];
-  for (const [col, type] of [['cost_usd', 'REAL'], ['integrity_ok', 'INTEGER'], ['task_group', 'TEXT']] as const)
+  for (const [col, type] of [['cost_usd', 'REAL'], ['integrity_ok', 'INTEGER'], ['task_group', 'TEXT'], ['confined', 'INTEGER NOT NULL DEFAULT 0 CHECK (confined IN (0,1))']] as const)
     if (!cols.some(c => c.name === col)) db.exec(`ALTER TABLE experiment_runs ADD COLUMN ${col} ${type}`);
   const expCols = db.query('PRAGMA table_info(experiments)').all() as { name: string }[];
   if (!expCols.some(c => c.name === 'repeated_baseline')) db.exec('ALTER TABLE experiments ADD COLUMN repeated_baseline INTEGER NOT NULL DEFAULT 0');
+  if (!expCols.some(c => c.name === 'control')) db.exec('ALTER TABLE experiments ADD COLUMN control TEXT');
 }
 
 export function parseSuite(raw: unknown): Suite {
@@ -60,10 +62,10 @@ export function parseSuite(raw: unknown): Suite {
 /** Digest de la suite: el que guarda `createExperiment` y contra el que se comprueba una suite externa. */
 export const suiteDigest = (suite: Suite) => createHash('sha256').update(canonicalJson(suite)).digest('hex');
 
-export function createExperiment(db: Database, stateDir: string, i: { id: string; baseline: string; candidate: string; suitePath: string; repeatedBaseline?: boolean }): void {
+export function createExperiment(db: Database, stateDir: string, i: { id: string; baseline: string; candidate: string; suitePath: string; repeatedBaseline?: boolean; control?: string }): void {
   ensureSchema(db);
   if (!/^[A-Za-z0-9][A-Za-z0-9_-]{0,63}$/.test(i.id)) throw bad('experiment-id inválido (use A-Z, a-z, 0-9, _, -)');
-  for (const d of [i.baseline, i.candidate]) {
+  for (const d of [i.baseline, i.candidate, ...(i.control ? [i.control] : [])]) {
     try { resolveProfile(stateDir, d); } catch (e) { throw bad((e as Error).message); }
   }
   if (!existsSync(i.suitePath)) throw bad(`suite no encontrada: ${i.suitePath}`);
@@ -73,8 +75,8 @@ export function createExperiment(db: Database, stateDir: string, i: { id: string
   try {
     db.transaction(() => {
       db.query('INSERT INTO experiment_ids (id, created_at) VALUES (?, ?)').run(i.id, now);
-      db.query('INSERT INTO experiments (id, baseline, candidate, suite, suite_digest, created_at, repeated_baseline) VALUES (?,?,?,?,?,?,?)')
-        .run(i.id, i.baseline, i.candidate, text, suiteDigest(suite), now, i.repeatedBaseline ? 1 : 0);
+      db.query('INSERT INTO experiments (id, baseline, candidate, suite, suite_digest, created_at, repeated_baseline, control) VALUES (?,?,?,?,?,?,?,?)')
+        .run(i.id, i.baseline, i.candidate, text, suiteDigest(suite), now, i.repeatedBaseline ? 1 : 0, i.control ?? null);
     }).immediate();
   } catch (e) {
     if (/UNIQUE|constraint/i.test((e as Error).message)) throw new StoreError('conflict', `el id de experimento ${i.id} ya se usó y no se reutiliza`);
@@ -95,7 +97,7 @@ function getExperiment(db: Database, id: string) {
   ensureSchema(db);
   const r = db.query('SELECT * FROM experiments WHERE id = ?').get(id) as Record<string, any> | null;
   if (!r) throw new StoreError('not_found', `experimento ${id} no existe`);
-  return { id, baseline: r.baseline!, candidate: r.candidate!, suite: JSON.parse(r.suite!) as Suite, suiteDigest: r.suite_digest!, repeatedBaseline: r.repeated_baseline === 1 };
+  return { id, baseline: r.baseline!, candidate: r.candidate!, suite: JSON.parse(r.suite!) as Suite, suiteDigest: r.suite_digest!, repeatedBaseline: r.repeated_baseline === 1, control: (r.control ?? null) as string | null };
 }
 
 /** PRNG mulberry32: misma semilla, mismo orden. */
@@ -149,7 +151,7 @@ export async function restoreProtected(worktree: string, base: string, paths: st
 }
 
 /** Un brazo: clon desechable en el commit base, store y workstream propios, agente, y comando de verificación. */
-async function runArm(stateDir: string, root: string, task: SuiteTask, digest: string, agent: string, acceptBinaries: boolean): Promise<ArmResult> {
+async function runArm(stateDir: string, root: string, task: SuiteTask, digest: string, agent: string, acceptBinaries: boolean, confine: boolean): Promise<ArmResult> {
   const started = Date.now();
   const fail = (error: string): ArmResult => ({ integrityOk: null, success: false, diffLines: 0, durationMs: Date.now() - started, costUsd: null, changeId: null, error });
   mkdirSync(root, { recursive: true });
@@ -170,10 +172,12 @@ async function runArm(stateDir: string, root: string, task: SuiteTask, digest: s
       requireChangeApproval: false, requireApproval: false, profile: digest });
     store.setWorkstreamState(ws.id, 'active');
     changeId = store.createChange(ws.id, task.id, task.description).id;
-    try { await runPool(store, { workstream: ws.id, stateDir: state, untilIdle: true, acceptAgentBinaries: acceptBinaries, log: () => {} }); }
+    try { await runPool(store, { workstream: ws.id, stateDir: state, untilIdle: true, acceptAgentBinaries: acceptBinaries, confine, log: () => {} }); }
     catch (e) { error = (e as Error).message; }
     const status = store.getChange(changeId).status;
     const costUsd = armCost(store, state, changeId);
+    const confinementError = confine ? store.listActivities({ changeId }).find(a => a.error?.includes('--confine:'))?.error : null;
+    if (confinementError) return { ...fail(confinementError), costUsd, changeId };
     const worktree = join(state, 'worktrees', changeId.slice(0, 8));
     if (!existsSync(worktree)) return { ...fail(error ?? `sin worktree (change ${status})`), costUsd, changeId };
     // Duración = agente completo (investigación + implementación); la integridad y la verificación no cuentan.
@@ -193,46 +197,69 @@ async function runArm(stateDir: string, root: string, task: SuiteTask, digest: s
   } finally { store.close(); }
 }
 
-export type Arm = 'baseline' | 'candidate' | 'baseline_rep';
-const ARM_ORDER: Arm[] = ['baseline', 'candidate', 'baseline_rep'];
+export type Arm = 'baseline' | 'candidate' | 'baseline_rep' | 'control';
+const ARM_ORDER: Arm[] = ['baseline', 'candidate', 'baseline_rep', 'control'];
 
-/** Orden de los brazos de una repetición. Con dos brazos conserva el sorteo original (misma semilla, mismo orden); con tres, Fisher-Yates. */
-function armOrder(next: () => number, repeatedBaseline: boolean): Arm[] {
-  if (!repeatedBaseline) return next() < 0.5 ? ['baseline', 'candidate'] : ['candidate', 'baseline'];
-  const a = [...ARM_ORDER];
+/** Orden de los brazos de una repetición. Con dos brazos conserva el sorteo original (misma semilla, mismo orden); con más, Fisher-Yates sobre los brazos del experimento. */
+function armOrder(next: () => number, repeatedBaseline: boolean, control: boolean): Arm[] {
+  if (!repeatedBaseline && !control) return next() < 0.5 ? ['baseline', 'candidate'] : ['candidate', 'baseline'];
+  const a = ARM_ORDER.filter(x => (x !== 'baseline_rep' || repeatedBaseline) && (x !== 'control' || control));
   for (let i = a.length - 1; i > 0; i--) { const j = Math.floor(next() * (i + 1)); [a[i], a[j]] = [a[j]!, a[i]!]; }
   return a;
 }
 
-export interface RunOptions { split: Split; repeats: number; agent: string; seed?: number; acceptBinaries?: boolean; log?: (m: string) => void }
+export interface RunOptions { split: Split; repeats: number; agent: string; seed?: number; acceptBinaries?: boolean; confine?: boolean; concurrency?: number; log?: (m: string) => void }
 
 export async function runExperiment(db: Database, stateDir: string, id: string, o: RunOptions): Promise<{ seed: number; runs: number }> {
   const exp = getExperiment(db, id);
   if (!SPLITS.includes(o.split)) throw bad(`split debe ser ${SPLITS.join('|')}`);
   if (!Number.isInteger(o.repeats) || o.repeats < 1) throw bad('--repeats debe ser un entero ≥ 1');
+  const concurrency = o.concurrency ?? 1;
+  if (!Number.isSafeInteger(concurrency) || concurrency < 1) throw bad('--concurrency debe ser un entero ≥ 1');
+  if (o.confine) assertConfinement(o.agent);
   const tasks = exp.suite.tasks.filter(t => t.split === o.split);
   if (!tasks.length) throw bad(`la suite no tiene tareas en el split ${o.split}`);
   const seed = o.seed ?? Math.floor(Math.random() * 2 ** 31);
-  const batch = `${Date.now().toString(36)}`;
+  const batch = `${Date.now().toString(36)}-${randomUUID().slice(0, 8)}`;
   const next = rng(seed);
   const log = o.log ?? (() => {});
-  const arms: Record<Arm, string> = { baseline: exp.baseline, candidate: exp.candidate, baseline_rep: exp.baseline };
-  let runs = 0;
-  for (const task of tasks) {
-    for (let repeat = 1; repeat <= o.repeats; repeat++) {
-      const order = armOrder(next, exp.repeatedBaseline);
-      for (const [position, arm] of order.entries()) {
-        const root = join(stateDir, 'improve', id, `${batch}-${task.id}-r${repeat}-${arm}`);
-        log(`[improve ${id}] ${task.id} r${repeat} ${arm} (${position + 1}/${order.length})`);
-        const r = await runArm(stateDir, root, task, arms[arm], o.agent, !!o.acceptBinaries);
-        db.query(`INSERT INTO experiment_runs (experiment_id, batch, seed, split, task_id, repeat, arm, position, profile_digest, agent,
-          success, diff_lines, duration_ms, cost_usd, change_id, error, created_at, integrity_ok, task_group) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`)
-          .run(id, batch, seed, o.split, task.id, repeat, arm, position, arms[arm], o.agent, r.success ? 1 : 0, r.diffLines, r.durationMs, r.costUsd, r.changeId, r.error, new Date().toISOString(),
-            r.integrityOk === null ? null : r.integrityOk ? 1 : 0, task.group ?? null);
-        runs++;
-      }
-    }
+  const arms: Record<Arm, string> = { baseline: exp.baseline, candidate: exp.candidate, baseline_rep: exp.baseline, control: exp.control ?? '' };
+  const jobs: { task: SuiteTask; repeat: number; position: number; arm: Arm; count: number }[] = [];
+  for (const task of tasks) for (let repeat = 1; repeat <= o.repeats; repeat++) {
+    const order = armOrder(next, exp.repeatedBaseline, !!exp.control);
+    for (const [position, arm] of order.entries()) jobs.push({ task, repeat, position, arm, count: order.length });
   }
+  let cursor = 0;
+  // Allocate PRNG decisions before awaiting; persist results in planned order too.
+  const results: ArmResult[] = [];
+  let persisted = 0;
+  const flush = () => {
+    while (results[persisted]) {
+      const { task, repeat, position, arm } = jobs[persisted]!;
+      const r = results[persisted++]!;
+      db.query(`INSERT INTO experiment_runs (experiment_id, batch, seed, split, task_id, repeat, arm, position, profile_digest, agent,
+        success, diff_lines, duration_ms, cost_usd, change_id, error, created_at, integrity_ok, task_group, confined) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`)
+        .run(id, batch, seed, o.split, task.id, repeat, arm, position, arms[arm], o.agent, r.success ? 1 : 0, r.diffLines, r.durationMs, r.costUsd, r.changeId, r.error, new Date().toISOString(),
+          r.integrityOk === null ? null : r.integrityOk ? 1 : 0, task.group ?? null, o.confine ? 1 : 0);
+    }
+  };
+  let stopped = false;
+  const workers = await Promise.allSettled(Array.from({ length: Math.min(concurrency, jobs.length) }, async () => {
+    while (!stopped && cursor < jobs.length) {
+      const index = cursor++;
+      const { task, repeat, position, arm, count } = jobs[index]!;
+      const root = join(stateDir, 'improve', id, `${batch}-${task.id}-r${repeat}-${arm}`);
+      log(`[improve ${id}] ${task.id} r${repeat} ${arm} (${position + 1}/${count})`);
+      try {
+        results[index] = await runArm(stateDir, root, task, arms[arm], o.agent, !!o.acceptBinaries, !!o.confine);
+        flush();
+      } catch (e) { stopped = true; throw e; }
+    }
+  }));
+  const failure = workers.find(w => w.status === 'rejected');
+  if (failure?.status === 'rejected') throw failure.reason;
+  const runs = jobs.length;
+  if (o.confine && results.some(r => r.error?.includes('--confine:'))) throw bad(results.find(r => r.error?.includes('--confine:'))!.error!);
   return { seed, runs };
 }
 
@@ -269,8 +296,9 @@ export function experimentRunsJson(db: Database, id: string) {
   const exp = getExperiment(db, id);
   const rows = db.query('SELECT * FROM experiment_runs WHERE experiment_id = ? ORDER BY rowid').all(id) as Record<string, any>[];
   return {
-    experiment: id, suite_digest: exp.suiteDigest, baseline: exp.baseline, candidate: exp.candidate, repeated_baseline: exp.repeatedBaseline,
+    experiment: id, suite_digest: exp.suiteDigest, baseline: exp.baseline, candidate: exp.candidate, repeated_baseline: exp.repeatedBaseline, control: exp.control,
+    confined: rows.length > 0 && rows.every(x => x.confined === 1),
     runs: rows.map(x => ({ batch: x.batch, seed: x.seed, split: x.split, task_id: x.task_id, repeat: x.repeat, arm: x.arm, position: x.position,
-      success: x.success, diff_lines: x.diff_lines, duration_ms: x.duration_ms, cost_usd: x.cost_usd ?? null, integrity_ok: x.integrity_ok ?? null, task_group: x.task_group ?? null })),
+      success: x.success, diff_lines: x.diff_lines, duration_ms: x.duration_ms, cost_usd: x.cost_usd ?? null, integrity_ok: x.integrity_ok ?? null, task_group: x.task_group ?? null, confined: x.confined === 1 })),
   };
 }

@@ -16,8 +16,13 @@ export async function captureMain(args: string[]): Promise<number> {
   // Each attempt is complete, including stderr even when stdout is nonempty.
   const { readFileSync, existsSync } = await import('node:fs');
   atomicEvidence(path, (existsSync(path) ? readFileSync(path, 'utf8') : '') + stdout + (stderr ? '\n[stderr]\n' + stderr : ''));
-  await Bun.write(Bun.stdout, stdout);
-  await Bun.write(Bun.stderr, stderr);
+  // Use the CLI's drainable stdio queues. Bun.write to an fd-backed sink can
+  // stop after a partial write when its destination is a native pipe.
+  await Promise.all(([[process.stdout, stdout], [process.stderr, stderr]] as const).map(([stream, text]) =>
+    new Promise<void>((resolve, reject) => {
+      stream.write(text, error => error ? reject(error) : resolve());
+    })));
+
   process.off('SIGTERM', onSignal);
   process.off('SIGINT', onSignal);
   return code;

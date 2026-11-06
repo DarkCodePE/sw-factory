@@ -58,6 +58,7 @@ export interface PoolOptions {
   workstream: string;
   stateDir: string;
   agentOverride?: string;
+  confine?: boolean;
   /** Stop once nothing is pending or running (instead of polling forever). */
   untilIdle?: boolean;
   /** Start even when the workstream agent's pinned sha256 does not match the binary on PATH. */
@@ -212,8 +213,10 @@ export async function processActivity(
       ...selfCommand('__capture', new URL('./manifest-capture.ts', import.meta.url)),
       activityLog(opts.stateDir, change.id, a.id), ...agent.command(text, options),
     ] };
-    atomicEvidence(`${runDirectory(opts.stateDir, change.id)}/${a.id}.json`, JSON.stringify({ isolation: isolationFor(agent.name) }));
-    const run = await runAgent(captureAgent, prompt, path, undefined, {
+    atomicEvidence(`${runDirectory(opts.stateDir, change.id)}/${a.id}.json`, JSON.stringify({ isolation: opts.confine ? 'bwrap-allowlist' : isolationFor(agent.name) }));
+    const run = await runAgent(opts.confine ? agent : captureAgent, prompt, path, undefined, {
+      confine: opts.confine,
+      capturePath: opts.confine ? activityLog(opts.stateDir, change.id, a.id) : undefined,
       readOnly,
       signal: abortController.signal,
       onSpawn: (pgid) => {
@@ -222,7 +225,7 @@ export async function processActivity(
     });
 
     atomicEvidence(`${runDirectory(opts.stateDir, change.id)}/${a.id}.json`, JSON.stringify({
-      isolation: isolationFor(agent.name), durationMs: run.durationMs, exitCode: run.exitCode, usage: run.usage ?? null,
+      isolation: opts.confine ? 'bwrap-allowlist' : isolationFor(agent.name), durationMs: run.durationMs, exitCode: run.exitCode, usage: run.usage ?? null,
       egressProbe: agent.name === 'native' ? readEgressProbe(probeFile) : null,
     }));
 
