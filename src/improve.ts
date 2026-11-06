@@ -7,7 +7,7 @@ import { join, resolve } from 'node:path';
 import { verifierArgv } from './agent/mission-evidence.ts';
 import { runDirectory } from './manifest.ts';
 import { runPool } from './pool.ts';
-import { DEFAULT_PROTECTED_PATHS, protectedIntegrity } from './validators/integrity.ts';
+import { DEFAULT_PROTECTED_PATHS, protectedIntegrity, purgeRegenerableCaches } from './validators/integrity.ts';
 import { canonicalJson, DEFAULT_DIGEST, loadProfile, resolveProfile, saveProfile } from './profile.ts';
 import { Store, StoreError } from './store.ts';
 
@@ -180,7 +180,7 @@ async function runArm(stateDir: string, root: string, task: SuiteTask, digest: s
     const durationMs = Date.now() - started;
     // Integridad: dato informativo. Las rutas protegidas tocadas se restauran al commit base antes de verificar, para que el agente no influya en el verificador.
     let tampered: string[];
-    try { tampered = (await protectedIntegrity(worktree, base, DEFAULT_PROTECTED_PATHS)).tampered; }
+    try { purgeRegenerableCaches(worktree); tampered = (await protectedIntegrity(worktree, base, DEFAULT_PROTECTED_PATHS)).tampered; }
     catch (e) { return { ...fail(`integridad: no verificable (${(e as Error).message})`), costUsd, changeId }; }
     const restoreError = tampered.length ? await restoreProtected(worktree, base, tampered) : null;
     if (restoreError) return { ...fail(`restauración de rutas protegidas falló: ${restoreError}`), integrityOk: false, costUsd, changeId };

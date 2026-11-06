@@ -1,12 +1,12 @@
 import { afterEach, beforeEach, expect, test } from 'bun:test';
-import { mkdirSync, mkdtempSync, readFileSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
 import { Store } from '../src/store.ts';
 import { runPool } from '../src/pool.ts';
 import { getAgent } from '../src/agents.ts';
 import { commitWorktree, ensureWorktree } from '../src/worktrees.ts';
-import { DEFAULT_PROTECTED_PATHS, protectedIntegrity } from '../src/validators/integrity.ts';
+import { DEFAULT_PROTECTED_PATHS, protectedIntegrity, purgeRegenerableCaches } from '../src/validators/integrity.ts';
 import { mergeBlocker } from '../src/validators/publish.ts';
 
 let dir:string, repo:string, store:Store;
@@ -186,4 +186,34 @@ test('partial gate approval cannot authorize another protected path',async()=>{
   expect(p.exitCode).toBe(0);
   await runPool(store,options);
   expect(store.inbox(ws.id)[0]!.error).toBe('GATE_TAMPERED: tests/math.test.ts');
+});
+
+function pyRepo() {
+  mkdirSync(join(repo,'tests'),{recursive:true}); writeFileSync(join(repo,'tests/test_x.py'),'def test_x(): pass\n');
+  git(repo,'add','.'); git(repo,'commit','-qm','py'); return git(repo,'rev-parse','HEAD');
+}
+test('purgeRegenerableCaches: cachés de pytest no cuentan como manipulación',async()=>{
+  const base=pyRepo();
+  mkdirSync(join(repo,'tests/__pycache__')); writeFileSync(join(repo,'tests/__pycache__/test_x.cpython-312.pyc'),'x');
+  mkdirSync(join(repo,'.pytest_cache/v'),{recursive:true}); writeFileSync(join(repo,'.pytest_cache/v/x'),'x');
+  expect((await protectedIntegrity(repo,base,DEFAULT_PROTECTED_PATHS)).tampered.length).toBeGreaterThan(0);
+  purgeRegenerableCaches(repo);
+  expect((await protectedIntegrity(repo,base,DEFAULT_PROTECTED_PATHS)).tampered).toEqual([]);
+  expect(existsSync(join(repo,'tests/__pycache__'))).toBe(false); expect(existsSync(join(repo,'.pytest_cache'))).toBe(false);
+});
+test('purgeRegenerableCaches: no oculta conftest.py ignorado ni cambios en tests',async()=>{
+  const base=pyRepo();
+  mkdirSync(join(repo,'tests/__pycache__')); writeFileSync(join(repo,'tests/__pycache__/planted.pyc'),'x');
+  writeFileSync(join(repo,'.gitignore'),'conftest.py\n'); writeFileSync(join(repo,'conftest.py'),'import os\n');
+  writeFileSync(join(repo,'tests/test_x.py'),'def test_x(): assert True\n');
+  purgeRegenerableCaches(repo);
+  expect(existsSync(join(repo,'tests/__pycache__/planted.pyc'))).toBe(false);
+  const { tampered } = await protectedIntegrity(repo,base,DEFAULT_PROTECTED_PATHS);
+  expect(tampered).toContain('conftest.py'); expect(tampered).toContain('tests/test_x.py');
+});
+test('purgeRegenerableCaches: no sigue enlaces simbólicos',()=>{
+  const outside=join(dir,'outside'); mkdirSync(outside); writeFileSync(join(outside,'keep.pyc'),'x');
+  symlinkSync(outside,join(repo,'__pycache__'));
+  purgeRegenerableCaches(repo);
+  expect(existsSync(join(outside,'keep.pyc'))).toBe(true);
 });

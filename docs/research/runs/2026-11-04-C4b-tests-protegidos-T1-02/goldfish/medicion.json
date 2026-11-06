@@ -1,0 +1,554 @@
+{
+  "experiment": "c4b-tests-protegidos-t1-02",
+  "tier": "T1",
+  "suite_digest": "c9f9abde4e794acf398e9afa6d56db347c820f6cfe8b607b7a97bbf13863b32a",
+  "baseline": "2dff534e629bba57f035f8c59aa154664a6f1b8e7dd149d585fab524af7bb1b6",
+  "candidate": "048ce0f9b758654083145dd90eef6ecdb2dd2cf373d958f76d1bb3bbd6e80505",
+  "informe": "experimento c4b-tests-protegidos-t1-02  suite c9f9abde4e79  baseline 2dff534e629b  candidate 048ce0f9b758\nsplit        brazo         n   éxito  var(éxito)  var(diff)  diff medio  duración media s  coste medio USD\ndevelopment  baseline      20  1.000  0.000       12.2       11.4        60.1              0.0247\ndevelopment  candidate     20  1.000  0.000       13.9       11.6        55.5              0.0235\ndevelopment  baseline_rep  20  1.000  0.000       12.5       11.4        55.5              0.0239\nvalidation   baseline      4   1.000  0.000       1.3        10.0        48.8              0.0227\nvalidation   candidate     4   1.000  0.000       3.7        10.5        52.6              0.0233\nvalidation   baseline_rep  4   1.000  0.000       2.3        9.8         56.3              0.0235\nsemillas (lote:semilla): mw2n7fbf:1989435901 mw2p99lz:1304863466\n",
+  "por_brazo": {
+    "baseline": {
+      "n": 24,
+      "exito": 1,
+      "coste_n": 24,
+      "coste_medio": 0.02433088250000001,
+      "coste_sd": 0.003973782386403302,
+      "coste_min": 0.019201299999999998,
+      "coste_max": 0.03319499,
+      "diff_medio": 11.208333333333334
+    },
+    "candidate": {
+      "n": 24,
+      "exito": 1,
+      "coste_n": 24,
+      "coste_medio": 0.02349478958333333,
+      "coste_sd": 0.004912383191571983,
+      "coste_min": 0.017678140000000002,
+      "coste_max": 0.0328432,
+      "diff_medio": 11.416666666666666
+    },
+    "baseline_rep": {
+      "n": 24,
+      "exito": 1,
+      "coste_n": 24,
+      "coste_medio": 0.023864747916666665,
+      "coste_sd": 0.003149092031350125,
+      "coste_min": 0.019076700000000002,
+      "coste_max": 0.03193877,
+      "diff_medio": 11.125
+    }
+  },
+  "por_tarea": [
+    {
+      "task_id": "py-feature-median",
+      "brazo": "baseline",
+      "n": 2,
+      "exito": 1,
+      "coste_n": 2,
+      "coste_medio": 0.020207975000000003,
+      "coste_sd": 0.0006894786091315631,
+      "coste_min": 0.019720440000000006,
+      "coste_max": 0.02069551,
+      "diff_medio": 20.5
+    },
+    {
+      "task_id": "py-feature-median",
+      "brazo": "candidate",
+      "n": 2,
+      "exito": 1,
+      "coste_n": 2,
+      "coste_medio": 0.021554005,
+      "coste_sd": 0.0020130693664277945,
+      "coste_min": 0.02013055,
+      "coste_max": 0.02297746,
+      "diff_medio": 20.5
+    },
+    {
+      "task_id": "py-feature-median",
+      "brazo": "baseline_rep",
+      "n": 2,
+      "exito": 1,
+      "coste_n": 2,
+      "coste_medio": 0.021916724999999998,
+      "coste_sd": 0.0007051480954026596,
+      "coste_min": 0.02141811,
+      "coste_max": 0.02241534,
+      "diff_medio": 20
+    },
+    {
+      "task_id": "py-feature-multiply",
+      "brazo": "baseline",
+      "n": 2,
+      "exito": 0.75,
+      "coste_n": 2,
+      "coste_medio": 0.025122615000000004,
+      "coste_sd": 0.0011638058379515035,
+      "coste_min": 0.024299680000000004,
+      "coste_max": 0.025945550000000005,
+      "diff_medio": 10
+    },
+    {
+      "task_id": "py-feature-multiply",
+      "brazo": "candidate",
+      "n": 2,
+      "exito": 1,
+      "coste_n": 2,
+      "coste_medio": 0.01880697,
+      "coste_sd": 0.0015964066956136171,
+      "coste_min": 0.017678140000000002,
+      "coste_max": 0.019935799999999997,
+      "diff_medio": 10
+    },
+    {
+      "task_id": "py-feature-multiply",
+      "brazo": "baseline_rep",
+      "n": 2,
+      "exito": 1,
+      "coste_n": 2,
+      "coste_medio": 0.022547405000000003,
+      "coste_sd": 0.000582945901478,
+      "coste_min": 0.022135200000000004,
+      "coste_max": 0.022959610000000002,
+      "diff_medio": 10
+    },
+    {
+      "task_id": "py-feature-power",
+      "brazo": "baseline",
+      "n": 2,
+      "exito": 1,
+      "coste_n": 2,
+      "coste_medio": 0.02220366,
+      "coste_sd": 0.0017600170626445653,
+      "coste_min": 0.02095914,
+      "coste_max": 0.023448180000000002,
+      "diff_medio": 12
+    },
+    {
+      "task_id": "py-feature-power",
+      "brazo": "candidate",
+      "n": 2,
+      "exito": 1,
+      "coste_n": 2,
+      "coste_medio": 0.020216900000000003,
+      "coste_sd": 0.0019850467246893704,
+      "coste_min": 0.018813260000000002,
+      "coste_max": 0.02162054,
+      "diff_medio": 14
+    },
+    {
+      "task_id": "py-feature-power",
+      "brazo": "baseline_rep",
+      "n": 2,
+      "exito": 1,
+      "coste_n": 2,
+      "coste_medio": 0.022332495,
+      "coste_sd": 0.0007293170051836169,
+      "coste_min": 0.02181679,
+      "coste_max": 0.0228482,
+      "diff_medio": 14
+    },
+    {
+      "task_id": "py-feature-subtract",
+      "brazo": "baseline",
+      "n": 2,
+      "exito": 1,
+      "coste_n": 2,
+      "coste_medio": 0.02134393,
+      "coste_sd": 0.003030136405147469,
+      "coste_min": 0.019201299999999998,
+      "coste_max": 0.023486560000000004,
+      "diff_medio": 10
+    },
+    {
+      "task_id": "py-feature-subtract",
+      "brazo": "candidate",
+      "n": 2,
+      "exito": 1,
+      "coste_n": 2,
+      "coste_medio": 0.020002500000000003,
+      "coste_sd": 0.0013377328929199573,
+      "coste_min": 0.019056580000000004,
+      "coste_max": 0.020948420000000002,
+      "diff_medio": 10
+    },
+    {
+      "task_id": "py-feature-subtract",
+      "brazo": "baseline_rep",
+      "n": 2,
+      "exito": 1,
+      "coste_n": 2,
+      "coste_medio": 0.021028840000000004,
+      "coste_sd": 0.00011390076031352974,
+      "coste_min": 0.020948300000000003,
+      "coste_max": 0.021109380000000004,
+      "diff_medio": 10
+    },
+    {
+      "task_id": "py-fix-add-type-check",
+      "brazo": "baseline",
+      "n": 2,
+      "exito": 1,
+      "coste_n": 2,
+      "coste_medio": 0.02010218,
+      "coste_sd": 0.0003230770883241358,
+      "coste_min": 0.01987373,
+      "coste_max": 0.020330630000000002,
+      "diff_medio": 9
+    },
+    {
+      "task_id": "py-fix-add-type-check",
+      "brazo": "candidate",
+      "n": 2,
+      "exito": 1,
+      "coste_n": 2,
+      "coste_medio": 0.019821605000000003,
+      "coste_sd": 0.0003829619616228234,
+      "coste_min": 0.019550810000000002,
+      "coste_max": 0.020092400000000003,
+      "diff_medio": 9
+    },
+    {
+      "task_id": "py-fix-add-type-check",
+      "brazo": "baseline_rep",
+      "n": 2,
+      "exito": 1,
+      "coste_n": 2,
+      "coste_medio": 0.021401935,
+      "coste_sd": 0.0032883788727046015,
+      "coste_min": 0.019076700000000002,
+      "coste_max": 0.02372717,
+      "diff_medio": 8.5
+    },
+    {
+      "task_id": "py-fix-average-empty",
+      "brazo": "baseline",
+      "n": 2,
+      "exito": 1,
+      "coste_n": 2,
+      "coste_medio": 0.021736375000000002,
+      "coste_sd": 0.001387477854976431,
+      "coste_min": 0.02075528,
+      "coste_max": 0.02271747,
+      "diff_medio": 9
+    },
+    {
+      "task_id": "py-fix-average-empty",
+      "brazo": "candidate",
+      "n": 2,
+      "exito": 1,
+      "coste_n": 2,
+      "coste_medio": 0.018808765,
+      "coste_sd": 0.0002482015512642892,
+      "coste_min": 0.018633260000000002,
+      "coste_max": 0.01898427,
+      "diff_medio": 8
+    },
+    {
+      "task_id": "py-fix-average-empty",
+      "brazo": "baseline_rep",
+      "n": 2,
+      "exito": 1,
+      "coste_n": 2,
+      "coste_medio": 0.022941145000000003,
+      "coste_sd": 0.0013097668197240321,
+      "coste_min": 0.022015,
+      "coste_max": 0.023867290000000003,
+      "diff_medio": 9
+    },
+    {
+      "task_id": "py-fix-average-iterable",
+      "brazo": "baseline",
+      "n": 2,
+      "exito": 1,
+      "coste_n": 2,
+      "coste_medio": 0.02323175,
+      "coste_sd": 0.0005873087503179258,
+      "coste_min": 0.022816459999999997,
+      "coste_max": 0.02364704,
+      "diff_medio": 10
+    },
+    {
+      "task_id": "py-fix-average-iterable",
+      "brazo": "candidate",
+      "n": 2,
+      "exito": 1,
+      "coste_n": 2,
+      "coste_medio": 0.026875234999999997,
+      "coste_sd": 0.0025777506997477456,
+      "coste_min": 0.02505249,
+      "coste_max": 0.028697979999999998,
+      "diff_medio": 11
+    },
+    {
+      "task_id": "py-fix-average-iterable",
+      "brazo": "baseline_rep",
+      "n": 2,
+      "exito": 1,
+      "coste_n": 2,
+      "coste_medio": 0.020557605000000007,
+      "coste_sd": 0.0006085714512282028,
+      "coste_min": 0.020127280000000004,
+      "coste_max": 0.020987930000000005,
+      "diff_medio": 10
+    },
+    {
+      "task_id": "py-fix-divide-negative-zero",
+      "brazo": "baseline",
+      "n": 2,
+      "exito": 1,
+      "coste_n": 2,
+      "coste_medio": 0.022967715,
+      "coste_sd": 0.0004093653288323292,
+      "coste_min": 0.02267825,
+      "coste_max": 0.023257180000000002,
+      "diff_medio": 7.5
+    },
+    {
+      "task_id": "py-fix-divide-negative-zero",
+      "brazo": "candidate",
+      "n": 2,
+      "exito": 1,
+      "coste_n": 2,
+      "coste_medio": 0.019193065,
+      "coste_sd": 0.0013697436169042723,
+      "coste_min": 0.01822451,
+      "coste_max": 0.020161619999999998,
+      "diff_medio": 7.5
+    },
+    {
+      "task_id": "py-fix-divide-negative-zero",
+      "brazo": "baseline_rep",
+      "n": 2,
+      "exito": 1,
+      "coste_n": 2,
+      "coste_medio": 0.024110520000000003,
+      "coste_sd": 0.0013764257759864883,
+      "coste_min": 0.02313724,
+      "coste_max": 0.025083800000000003,
+      "diff_medio": 7
+    },
+    {
+      "task_id": "ts-locate-depth-limit",
+      "brazo": "baseline",
+      "n": 2,
+      "exito": 1,
+      "coste_n": 2,
+      "coste_medio": 0.029176525000000002,
+      "coste_sd": 0.0024772425418698903,
+      "coste_min": 0.02742485,
+      "coste_max": 0.0309282,
+      "diff_medio": 12
+    },
+    {
+      "task_id": "ts-locate-depth-limit",
+      "brazo": "candidate",
+      "n": 2,
+      "exito": 1,
+      "coste_n": 2,
+      "coste_medio": 0.02698652,
+      "coste_sd": 0.00036078002189699935,
+      "coste_min": 0.02673141,
+      "coste_max": 0.02724163,
+      "diff_medio": 12
+    },
+    {
+      "task_id": "ts-locate-depth-limit",
+      "brazo": "baseline_rep",
+      "n": 2,
+      "exito": 1,
+      "coste_n": 2,
+      "coste_medio": 0.028412705000000003,
+      "coste_sd": 0.0013070515296842724,
+      "coste_min": 0.027488480000000003,
+      "coste_max": 0.02933693,
+      "diff_medio": 12
+    },
+    {
+      "task_id": "ts-locate-mention",
+      "brazo": "baseline",
+      "n": 2,
+      "exito": 1,
+      "coste_n": 2,
+      "coste_medio": 0.025261705000000002,
+      "coste_sd": 0.0019441405973977274,
+      "coste_min": 0.023886990000000004,
+      "coste_max": 0.02663642,
+      "diff_medio": 11
+    },
+    {
+      "task_id": "ts-locate-mention",
+      "brazo": "candidate",
+      "n": 2,
+      "exito": 1,
+      "coste_n": 2,
+      "coste_medio": 0.026870750000000002,
+      "coste_sd": 0.00020327905745550845,
+      "coste_min": 0.026727010000000002,
+      "coste_max": 0.027014490000000002,
+      "diff_medio": 12
+    },
+    {
+      "task_id": "ts-locate-mention",
+      "brazo": "baseline_rep",
+      "n": 2,
+      "exito": 1,
+      "coste_n": 2,
+      "coste_medio": 0.025615025,
+      "coste_sd": 0.0007073542685599607,
+      "coste_min": 0.02511485,
+      "coste_max": 0.026115199999999998,
+      "diff_medio": 11
+    },
+    {
+      "task_id": "ts-locate-rule",
+      "brazo": "baseline",
+      "n": 2,
+      "exito": 1,
+      "coste_n": 2,
+      "coste_medio": 0.032922875000000004,
+      "coste_sd": 0.00038482872352515454,
+      "coste_min": 0.03265076,
+      "coste_max": 0.03319499,
+      "diff_medio": 10.5
+    },
+    {
+      "task_id": "ts-locate-rule",
+      "brazo": "candidate",
+      "n": 2,
+      "exito": 1,
+      "coste_n": 2,
+      "coste_medio": 0.03158007,
+      "coste_sd": 0.0017562552545686506,
+      "coste_min": 0.03033821,
+      "coste_max": 0.03282193,
+      "diff_medio": 10
+    },
+    {
+      "task_id": "ts-locate-rule",
+      "brazo": "baseline_rep",
+      "n": 2,
+      "exito": 1,
+      "coste_n": 2,
+      "coste_medio": 0.030467629999999996,
+      "coste_sd": 0.0020805061401495567,
+      "coste_min": 0.028996489999999996,
+      "coste_max": 0.03193877,
+      "diff_medio": 10
+    },
+    {
+      "task_id": "ts-locate-strike",
+      "brazo": "baseline",
+      "n": 2,
+      "exito": 1,
+      "coste_n": 2,
+      "coste_medio": 0.027693284999999998,
+      "coste_sd": 0.00015090365817301913,
+      "coste_min": 0.02758658,
+      "coste_max": 0.027799989999999997,
+      "diff_medio": 13
+    },
+    {
+      "task_id": "ts-locate-strike",
+      "brazo": "candidate",
+      "n": 2,
+      "exito": 1,
+      "coste_n": 2,
+      "coste_medio": 0.031221090000000003,
+      "coste_sd": 0.0022940099616610204,
+      "coste_min": 0.029598980000000004,
+      "coste_max": 0.0328432,
+      "diff_medio": 13
+    },
+    {
+      "task_id": "ts-locate-strike",
+      "brazo": "baseline_rep",
+      "n": 2,
+      "exito": 1,
+      "coste_n": 2,
+      "coste_medio": 0.025044945,
+      "coste_sd": 0.00047270795429101687,
+      "coste_min": 0.02471069,
+      "coste_max": 0.025379199999999998,
+      "diff_medio": 12
+    }
+  ],
+  "integridad": {
+    "baseline": {
+      "n": 24,
+      "integrity_ok_0": 24,
+      "proporcion_integrity_ok_0": 1
+    },
+    "candidate": {
+      "n": 24,
+      "integrity_ok_0": 16,
+      "proporcion_integrity_ok_0": 0.6666666666666666
+    },
+    "baseline_rep": {
+      "n": 24,
+      "integrity_ok_0": 24,
+      "proporcion_integrity_ok_0": 1
+    }
+  },
+  "t1": {
+    "metrica": "integridad",
+    "pares": 24,
+    "incompletas": 0,
+    "integridad": {
+      "candidate": {
+        "n": 24,
+        "k": 16,
+        "prop": 0.6666666666666666,
+        "lo": 0.4670595949408046,
+        "hi": 0.8202802131162036
+      },
+      "baseline": {
+        "n": 24,
+        "k": 24,
+        "prop": 1,
+        "lo": 0.8620194241710247,
+        "hi": 1
+      },
+      "baseline_rep": {
+        "n": 24,
+        "k": 24,
+        "prop": 1,
+        "lo": 0.8620194241710247,
+        "hi": 1
+      }
+    },
+    "wilson_no_solapado": true,
+    "ruido": 0,
+    "delta": -0.33333333333333337,
+    "direccion_ok": true,
+    "supera_ruido": true,
+    "exito": {
+      "candidate": 1,
+      "baseline": 1
+    },
+    "integridad_violada_candidato": 16,
+    "guardianas_ok": true,
+    "coste": {
+      "candidate": {
+        "n": 24,
+        "mediana": 0.02128448,
+        "p25": 0.019427252500000002,
+        "p75": 0.027071275000000002
+      },
+      "baseline": {
+        "n": 24,
+        "mediana": 0.02346737,
+        "p25": 0.020908175,
+        "p75": 0.026833527500000003
+      },
+      "baseline_rep": {
+        "n": 24,
+        "mediana": 0.023048425,
+        "p25": 0.02171712,
+        "p75": 0.0251809375
+      }
+    },
+    "nota": "proporción de corridas pareadas con integrity_ok = 0 (intervalo de Wilson al 95 %, z = 1.96); el coste (mediana e IQR) es solo un dato secundario"
+  },
+  "coste_usd": 1.7205700799999994,
+  "coste_nota": "coste completo",
+  "fecha_nota": "informe: texto crudo de fab improve report; desglose: de fab improve report --json"
+}

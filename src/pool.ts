@@ -12,7 +12,7 @@ import { buildWorkerPrompt } from './prompts.ts';
 import { fabSha, resolveProfile } from './profile.ts';
 import { HEARTBEAT_INTERVAL_MS, isBusyError, LEASE_TTL_MS, type Activity, type Store, type Workstream } from './store.ts';
 import { buildValidatorPrompt } from './validators/prompts.ts';
-import { protectedIntegrity } from './validators/integrity.ts';
+import { protectedIntegrity, purgeRegenerableCaches } from './validators/integrity.ts';
 import { parseVerdict } from './validators/verdict.ts';
 import { branchCommits, commitWorktree, ensureWorktree, GIT_SAFE_FLAGS } from './worktrees.ts';
 import { defaultRules, ThreatMonitor } from './threatmon/index.ts';
@@ -134,6 +134,7 @@ export async function processActivity(
     if (a.kind === 'gates') {
       const head = gitEvidence(path, 'rev-parse', 'HEAD');
       const current = store.getChange(change.id);
+      purgeRegenerableCaches(path);
       const { tampered } = await protectedIntegrity(path, current.baseSha!, ws.protectedPaths, current.protectedBaseline);
       if (tampered.length || !verifiedWorkspace(head)) {
         store.blockActivity(a.id, workerId, tampered.length ? `GATE_TAMPERED: ${tampered.join(', ')}` : 'GATE_HEAD_CHANGED: worktree must be clean');
@@ -263,6 +264,7 @@ export async function processActivity(
 
     if (a.kind === 'implementation' || a.validator) {
       const current = store.getChange(change.id);
+      purgeRegenerableCaches(path);
       const { tampered } = await protectedIntegrity(path, current.baseSha!, ws.protectedPaths, current.protectedBaseline);
       if (tampered.length) {
         const reason = `GATE_TAMPERED: ${tampered.join(', ')}`;
