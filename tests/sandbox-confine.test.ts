@@ -1,8 +1,61 @@
 import { expect, test } from 'bun:test';
-import { mkdirSync, mkdtempSync, readFileSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { getAgent, runAgent } from '../src/agents.ts';
-import { assertConfinement } from '../src/sandbox/confine.ts';
+import { assertConfinement, confineAgent } from '../src/sandbox/confine.ts';
+
+let canConfine = false;
+try { assertConfinement('simulated'); canConfine = true; } catch {}
+const hostPytest = existsSync('/usr/bin/python3') && Bun.spawnSync(['/usr/bin/python3', '-m', 'pytest', '--version']).exitCode === 0;
+
+test.skipIf(!canConfine || !hostPytest)('confinement exposes pytest with read-only user packages and launcher', async () => {
+  const root = mkdtempSync('/tmp/fab-pytest-');
+  try {
+    expect(Bun.spawnSync(['git', 'init', '-q', root]).exitCode).toBe(0);
+    const launcher = !!process.env.HOME && existsSync(join(process.env.HOME, '.local/bin/pytest'));
+    const run = await runAgent({
+      name: 'simulated',
+      command: () => ['python3', '-c', `import errno,os,pathlib,site,subprocess,pytest
+subprocess.run(['python3','-m','pytest','--version'],check=True)
+if ${launcher ? 'True' : 'False'}:
+ subprocess.run(['pytest','--version'],check=True)
+paths=[(pytest.__file__,os.O_WRONLY)]
+user_site=pathlib.Path(site.getusersitepackages())
+if user_site.is_dir(): paths.append((str(user_site/${JSON.stringify(root.split('/').pop())}),os.O_WRONLY|os.O_CREAT|os.O_EXCL))
+for path,flags in paths:
+ try:
+  fd=os.open(path,flags)
+ except OSError as e:
+  assert e.errno==errno.EROFS, (path,e)
+ else:
+  os.close(fd)
+  if flags & os.O_CREAT: os.unlink(path)
+  raise AssertionError('writable user package: '+path)
+if ${launcher ? 'True' : 'False'}:
+ try: fd=os.open('/home/agent/.local/bin/pytest',os.O_WRONLY)
+ except OSError as e: assert e.errno==errno.EROFS
+ else:
+  os.close(fd)
+  raise AssertionError('writable pytest launcher')
+print('STATUS: done')`],
+    }, '', root, 10_000, { confine: true });
+    expect(run.ok).toBe(true);
+    expect(run.stdout).toContain('pytest');
+  } finally { rmSync(root, { recursive: true, force: true }); }
+});
+
+test.skipIf(!canConfine)('confinement works without a host user site or pytest launcher', () => {
+  const root = mkdtempSync('/tmp/fab-no-user-site-');
+  const original = process.env.HOME;
+  try {
+    expect(Bun.spawnSync(['git', 'init', '-q', root]).exitCode).toBe(0);
+    process.env.HOME = root;
+    const confined = confineAgent('simulated', ['sh', '-c', 'test ! -e /home/agent/.local'], root);
+    try {
+      expect(Bun.spawnSync(confined.argv, { env: confined.env }).exitCode).toBe(0);
+    } finally { confined.cleanup(); }
+  } finally { process.env.HOME = original; rmSync(root, { recursive: true, force: true }); }
+});
 
 test('allowlist confinement hides symlinks, parent proc and sibling worktrees; leaves Git usable', async () => {
   const root = mkdtempSync('/tmp/fab-boundary-');

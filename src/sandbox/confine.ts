@@ -43,6 +43,18 @@ export function confineAgent(name: string, argv: string[], cwd: string, extra: R
     const bun = Bun.which('bun');
     if (bun) args.push('--ro-bind', realpathSync(bun), '/opt/fab-runtime/bun');
     const hostHome = process.env.HOME ?? '';
+    // Expose only Python's user packages, never the rest of ~/.local. Detect the
+    // system version without executing user site-packages or startup hooks.
+    if (hostHome && existsSync('/usr/bin/python3')) {
+      const python = Bun.spawnSync(['/usr/bin/python3', '-I', '-S', '-c', 'import sys; print("python%d.%d" % sys.version_info[:2])']);
+      const version = python.stdout.toString().trim();
+      if (python.exitCode === 0 && /^python\d+\.\d+$/.test(version)) {
+        const site = join('.local', 'lib', version, 'site-packages');
+        if (existsSync(join(hostHome, site))) args.push('--ro-bind', join(hostHome, site), join('/home/agent', site));
+      }
+    }
+    const pytest = join(hostHome, '.local', 'bin', 'pytest');
+    if (hostHome && existsSync(pytest)) args.push('--ro-bind', pytest, '/home/agent/.local/bin/pytest');
     if (name === 'claude') {
       mkdirSync(join(home, '.claude'));
       writeFileSync(join(home, '.claude.json'), JSON.stringify({ hasCompletedOnboarding: true }));
@@ -55,7 +67,7 @@ export function confineAgent(name: string, argv: string[], cwd: string, extra: R
       const auth = join(hostHome, '.codex/auth.json');
       if (existsSync(auth)) args.push('--ro-bind', auth, '/home/agent/.codex/auth.json');
     }
-    const env: Record<string, string> = { PATH: '/opt/fab-runtime:/usr/local/bin:/usr/bin:/bin', HOME: '/home/agent', TMPDIR: '/tmp', LANG: 'C.UTF-8',
+    const env: Record<string, string> = { PATH: '/opt/fab-runtime:/usr/local/bin:/usr/bin:/bin:/home/agent/.local/bin', HOME: '/home/agent', TMPDIR: '/tmp', LANG: 'C.UTF-8',
       GIT_CONFIG_COUNT: '2', GIT_CONFIG_KEY_0: 'user.name', GIT_CONFIG_VALUE_0: 'fab', GIT_CONFIG_KEY_1: 'user.email', GIT_CONFIG_VALUE_1: 'fab@local' };
     const allowed = name === 'claude' ? ['ANTHROPIC_API_KEY', 'ANTHROPIC_AUTH_TOKEN', 'ANTHROPIC_MODEL', 'ANTHROPIC_BASE_URL']
       : name === 'codex' ? ['OPENAI_API_KEY'] : ['FABRICA_FAKE_SLEEP', 'FABRICA_FAKE_STATUS', 'FABRICA_FAKE_TOUCH'];
