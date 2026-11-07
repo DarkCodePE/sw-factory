@@ -1,0 +1,634 @@
+[
+  {
+    "repo": "boltons",
+    "id": "boltons-bucketize-transform",
+    "archivo": "boltons/iterutils.py",
+    "buscar": "ret.setdefault(key_of_val, []).append(value_transform(val))",
+    "reemplazar": "ret.setdefault(key_of_val, []).append(val)",
+    "motivo": "sobrante: el repo ya tiene 10 validas"
+  },
+  {
+    "repo": "boltons",
+    "id": "boltons-get-path-sep",
+    "archivo": "boltons/iterutils.py",
+    "buscar": "path = path.split('.')",
+    "reemplazar": "path = path.split('/')",
+    "motivo": "sobrante: el repo ya tiene 10 validas"
+  },
+  {
+    "repo": "boltons",
+    "id": "boltons-lri-capacity",
+    "archivo": "boltons/cacheutils.py",
+    "buscar": "if len(self) < self.max_size:",
+    "reemplazar": "if len(self) <= self.max_size:",
+    "motivo": "sobrante: el repo ya tiene 10 validas"
+  },
+  {
+    "repo": "boltons",
+    "id": "boltons-lri-pop-default",
+    "archivo": "boltons/cacheutils.py",
+    "buscar": "if default is _MISSING:",
+    "reemplazar": "if default is not _MISSING:",
+    "motivo": "sobrante: el repo ya tiene 10 validas"
+  },
+  {
+    "repo": "boltons",
+    "id": "boltons-partition-first-match",
+    "archivo": "boltons/iterutils.py",
+    "buscar": "                parts[idx].append(val)\n                break",
+    "reemplazar": "                parts[idx].append(val)",
+    "motivo": "sobrante: el repo ya tiene 10 validas"
+  },
+  {
+    "repo": "boltons",
+    "id": "boltons-same-compare",
+    "archivo": "boltons/iterutils.py",
+    "buscar": "return all(val == ref for val in iterator)",
+    "reemplazar": "return all(val != ref for val in iterator)",
+    "motivo": "indetectable: la suite completa pasa con la mutacion"
+  },
+  {
+    "repo": "cachetools",
+    "id": "cachetools-cache-exact-fit",
+    "archivo": "src/cachetools/__init__.py",
+    "buscar": "            if itemsize > maxsize:",
+    "reemplazar": "            if itemsize >= maxsize:",
+    "motivo": "la detectan 8 archivos de test (13 en total): quitarlos dejaria al agente sin suite"
+  },
+  {
+    "repo": "cachetools",
+    "id": "cachetools-cache-negative-maxsize",
+    "archivo": "src/cachetools/__init__.py",
+    "buscar": "        if maxsize < 0:",
+    "reemplazar": "        if maxsize < -1:",
+    "motivo": "la detectan 7 archivos de test (13 en total): quitarlos dejaria al agente sin suite"
+  },
+  {
+    "repo": "cachetools",
+    "id": "cachetools-cache-pop-default",
+    "archivo": "src/cachetools/__init__.py",
+    "buscar": "        elif default is self.__marker:",
+    "reemplazar": "        elif default is not self.__marker:",
+    "motivo": "la detectan 7 archivos de test (13 en total): quitarlos dejaria al agente sin suite"
+  },
+  {
+    "repo": "cachetools",
+    "id": "cachetools-func-typed-key",
+    "archivo": "src/cachetools/func.py",
+    "buscar": "        key = keys.typedkey if typed else keys.hashkey",
+    "reemplazar": "        key = keys.hashkey if typed else keys.typedkey",
+    "motivo": "sobrante: el repo ya tiene 10 validas"
+  },
+  {
+    "repo": "cachetools",
+    "id": "cachetools-hashkey-kwargs-order",
+    "archivo": "src/cachetools/keys.py",
+    "buscar": "        return _HashedTuple(args + _kwmark + tuple(sorted(kwargs.items())))",
+    "reemplazar": "        return _HashedTuple(args + _kwmark + tuple(kwargs.items()))",
+    "motivo": "indetectable: la suite completa pasa con la mutacion"
+  },
+  {
+    "repo": "cachetools",
+    "id": "cachetools-lfu-cache-maxsize",
+    "archivo": "src/cachetools/func.py",
+    "buscar": "    return _cache(LFUCache(maxsize), maxsize, typed)",
+    "reemplazar": "    return _cache(LFUCache(maxsize + 1), maxsize, typed)",
+    "motivo": "sobrante: el repo ya tiene 10 validas"
+  },
+  {
+    "repo": "idna",
+    "id": "idna-bidi-numeros",
+    "archivo": "idna/core.py",
+    "buscar": "elif number_type != direction:",
+    "reemplazar": "elif number_type == direction:",
+    "motivo": "sin los tests ocultos la suite visible falla (rc=1): otros tests dependen de ellos"
+  },
+  {
+    "repo": "idna",
+    "id": "idna-cli-entrada-vacia",
+    "archivo": "idna/cli.py",
+    "buscar": "    if first is None:\n        return 0",
+    "reemplazar": "    if first is None:\n        return 1",
+    "motivo": "sobrante: el repo ya tiene 10 validas"
+  },
+  {
+    "repo": "idna",
+    "id": "idna-cli-modo-estricto",
+    "archivo": "idna/cli.py",
+    "buscar": "uts46 = not args.strict",
+    "reemplazar": "uts46 = args.strict",
+    "motivo": "sobrante: el repo ya tiene 10 validas"
+  },
+  {
+    "repo": "idna",
+    "id": "idna-codec-codificador-tamano",
+    "archivo": "idna/codec.py",
+    "buscar": "                if size:\n                    size += 1\n                size += len(label)\n\n            result_bytes",
+    "reemplazar": "                size += 1\n                size += len(label)\n\n            result_bytes",
+    "motivo": "sobrante: el repo ya tiene 10 validas"
+  },
+  {
+    "repo": "idna",
+    "id": "idna-codec-decod-estado",
+    "archivo": "idna/codec.py",
+    "buscar": "        return (self.buffer, self._consumed)",
+    "reemplazar": "        return (self.buffer, 0)",
+    "motivo": "sobrante: el repo ya tiene 10 validas"
+  },
+  {
+    "repo": "idna",
+    "id": "idna-codec-decod-etiqueta-parcial",
+    "archivo": "idna/codec.py",
+    "buscar": "            elif not final:\n                # Keep potentially unfinished label until the next call\n                del labels[-1]\n                if labels:\n                    trailing_dot = \".\"",
+    "reemplazar": "            elif final:\n                # Keep potentially unfinished label until the next call\n                del labels[-1]\n                if labels:\n                    trailing_dot = \".\"",
+    "motivo": "sobrante: el repo ya tiene 10 validas"
+  },
+  {
+    "repo": "idna",
+    "id": "idna-codec-decode-tamano",
+    "archivo": "idna/codec.py",
+    "buscar": "        return decode(data), len(data)",
+    "reemplazar": "        return decode(data), len(data) - 1",
+    "motivo": "sobrante: el repo ya tiene 10 validas"
+  },
+  {
+    "repo": "idna",
+    "id": "idna-decode-display",
+    "archivo": "idna/core.py",
+    "buscar": "u = label.lower()",
+    "reemplazar": "u = label",
+    "motivo": "sin los tests ocultos la suite visible falla (rc=1): otros tests dependen de ellos"
+  },
+  {
+    "repo": "idna",
+    "id": "idna-encode-std3",
+    "archivo": "idna/core.py",
+    "buscar": "s = uts46_remap(s, std3_rules)",
+    "reemplazar": "s = uts46_remap(s)",
+    "motivo": "sin los tests ocultos la suite visible falla (rc=1): otros tests dependen de ellos"
+  },
+  {
+    "repo": "idna",
+    "id": "idna-intranges-largo-rango",
+    "archivo": "idna/intranges.py",
+    "buscar": "current_range[-1] + 1))",
+    "reemplazar": "current_range[-1]))",
+    "motivo": "sobrante: el repo ya tiene 10 validas"
+  },
+  {
+    "repo": "idna",
+    "id": "idna-intranges-limite",
+    "archivo": "idna/intranges.py",
+    "buscar": "if left <= int_ < right:",
+    "reemplazar": "if left <= int_ <= right:",
+    "motivo": "la detectan 4 archivos de test (10 en total): quitarlos dejaria al agente sin suite"
+  },
+  {
+    "repo": "idna",
+    "id": "idna-punto-medio-l",
+    "archivo": "idna/core.py",
+    "buscar": "return 0 < pos < len(label) - 1 and ord(label[pos - 1]) == 0x006C and ord(label[pos + 1]) == 0x006C",
+    "reemplazar": "return 0 < pos < len(label) - 1 and ord(label[pos - 1]) == 0x006C and ord(label[pos + 1]) != 0x006C",
+    "motivo": "sin los tests ocultos la suite visible falla (rc=1): otros tests dependen de ellos"
+  },
+  {
+    "repo": "idna",
+    "id": "idna-std3-posicion",
+    "archivo": "idna/core.py",
+    "buscar": "position = offset + match.start() + 1",
+    "reemplazar": "position = offset + match.start()",
+    "motivo": "sin los tests ocultos la suite visible falla (rc=1): otros tests dependen de ellos"
+  },
+  {
+    "repo": "idna",
+    "id": "idna-ulabel-mayusculas",
+    "archivo": "idna/core.py",
+    "buscar": "label_bytes = label_bytes.lower()\n",
+    "reemplazar": "label_bytes = label_bytes\n",
+    "motivo": "sin los tests ocultos la suite visible falla (rc=1): otros tests dependen de ellos"
+  },
+  {
+    "repo": "idna",
+    "id": "idna-uts46-minusculas",
+    "archivo": "idna/core.py",
+    "buscar": "result = domain.lower()",
+    "reemplazar": "result = domain",
+    "motivo": "sin los tests ocultos la suite visible falla (rc=1): otros tests dependen de ellos"
+  },
+  {
+    "repo": "idna",
+    "id": "idna-zwj-virama",
+    "archivo": "idna/core.py",
+    "buscar": "return pos > 0 and _combining_class(ord(label[pos - 1])) == _virama_combining_class",
+    "reemplazar": "return pos > 0 and _combining_class(ord(label[pos - 1])) != _virama_combining_class",
+    "motivo": "sin los tests ocultos la suite visible falla (rc=1): otros tests dependen de ellos"
+  },
+  {
+    "repo": "jmespath",
+    "id": "jmespath-and-resultado",
+    "archivo": "jmespath/visitor.py",
+    "buscar": "return self.visit(node['children'][1], value)\n\n    def visit_not",
+    "reemplazar": "return self.visit(node['children'][0], value)\n\n    def visit_not",
+    "motivo": "sobrante: el repo ya tiene 10 validas"
+  },
+  {
+    "repo": "jmespath",
+    "id": "jmespath-comparador-and",
+    "archivo": "jmespath/parser.py",
+    "buscar": "right = self._expression(self.BINDING_POWER[comparator])",
+    "reemplazar": "right = self._expression(self.BINDING_POWER['or'])",
+    "motivo": "sobrante: el repo ya tiene 10 validas"
+  },
+  {
+    "repo": "jmespath",
+    "id": "jmespath-comparar-tipos",
+    "archivo": "jmespath/visitor.py",
+    "buscar": "if not (_is_comparable(left) and",
+    "reemplazar": "if not (_is_comparable(left) or",
+    "motivo": "sobrante: el repo ya tiene 10 validas"
+  },
+  {
+    "repo": "jmespath",
+    "id": "jmespath-igual-bool",
+    "archivo": "jmespath/visitor.py",
+    "buscar": "if _is_actual_number(x) and x in (0, 1):",
+    "reemplazar": "if _is_actual_number(x) and x in (0,):",
+    "motivo": "sobrante: el repo ya tiene 10 validas"
+  },
+  {
+    "repo": "jmespath",
+    "id": "jmespath-menor-igual",
+    "archivo": "jmespath/lexer.py",
+    "buscar": "yield self._match_or_else('=', 'lte', 'lt')",
+    "reemplazar": "yield self._match_or_else('=', 'lt', 'lte')",
+    "motivo": "sobrante: el repo ya tiene 10 validas"
+  },
+  {
+    "repo": "jmespath",
+    "id": "jmespath-not-cero",
+    "archivo": "jmespath/visitor.py",
+    "buscar": "original_result == 0:",
+    "reemplazar": "original_result == 1:",
+    "motivo": "sobrante: el repo ya tiene 10 validas"
+  },
+  {
+    "repo": "pyflakes",
+    "id": "pyflakes-api-recursivo-suma",
+    "archivo": "pyflakes/api.py",
+    "buscar": "warnings += checkPath(sourcePath, reporter)",
+    "reemplazar": "warnings = checkPath(sourcePath, reporter)",
+    "motivo": "sobrante: el repo ya tiene 10 validas"
+  },
+  {
+    "repo": "pyflakes",
+    "id": "pyflakes-export-augassign-names",
+    "archivo": "pyflakes/checker.py",
+    "buscar": "if '__all__' in scope and isinstance(source, ast.AugAssign):",
+    "reemplazar": "if '__all__' in scope and isinstance(source, ast.Assign):",
+    "motivo": "sin los tests ocultos la suite visible falla (rc=2): otros tests dependen de ellos"
+  },
+  {
+    "repo": "pyflakes",
+    "id": "pyflakes-format-missing-arg-off-by-one",
+    "archivo": "pyflakes/checker.py",
+    "buscar": "substitution_positional = set(range(len(node.args)))",
+    "reemplazar": "substitution_positional = set(range(len(node.args) - 1))",
+    "motivo": "sin los tests ocultos la suite visible falla (rc=2): otros tests dependen de ellos"
+  },
+  {
+    "repo": "pyflakes",
+    "id": "pyflakes-fstring-placeholder-inverted",
+    "archivo": "pyflakes/checker.py",
+    "buscar": "not any(isinstance(x, ast.FormattedValue)",
+    "reemplazar": "any(isinstance(x, ast.FormattedValue)",
+    "motivo": "sin los tests ocultos la suite visible falla (rc=2): otros tests dependen de ellos"
+  },
+  {
+    "repo": "pyflakes",
+    "id": "pyflakes-if-tuple-warning",
+    "archivo": "pyflakes/checker.py",
+    "buscar": "    def IF(self, node):\n        if isinstance(node.test, ast.Tuple) and node.test.elts != []:",
+    "reemplazar": "    def IF(self, node):\n        if isinstance(node.test, ast.Tuple) and node.test.elts == []:",
+    "motivo": "sin los tests ocultos la suite visible falla (rc=2): otros tests dependen de ellos"
+  },
+  {
+    "repo": "pyflakes",
+    "id": "pyflakes-late-future-import",
+    "archivo": "pyflakes/checker.py",
+    "buscar": "if not self.futuresAllowed:",
+    "reemplazar": "if self.futuresAllowed:",
+    "motivo": "la detectan 4 archivos de test (13 en total): quitarlos dejaria al agente sin suite"
+  },
+  {
+    "repo": "pyflakes",
+    "id": "pyflakes-match-captura",
+    "archivo": "pyflakes/checker.py",
+    "buscar": "    def _match_target(self, node):\n        self.handleNodeStore(node)\n        self.handleChildren(node)",
+    "reemplazar": "    def _match_target(self, node):\n        self.handleChildren(node)",
+    "motivo": "sobrante: el repo ya tiene 10 validas"
+  },
+  {
+    "repo": "pyflakes",
+    "id": "pyflakes-overload-async",
+    "archivo": "pyflakes/checker.py",
+    "buscar": "isinstance(value.source, (ast.FunctionDef, ast.AsyncFunctionDef))",
+    "reemplazar": "isinstance(value.source, (ast.FunctionDef,))",
+    "motivo": "sobrante: el repo ya tiene 10 validas"
+  },
+  {
+    "repo": "pyflakes",
+    "id": "pyflakes-percent-count-mismatch",
+    "archivo": "pyflakes/checker.py",
+    "buscar": "positional_count != substitution_count",
+    "reemplazar": "positional_count > substitution_count",
+    "motivo": "sin los tests ocultos la suite visible falla (rc=2): otros tests dependen de ellos"
+  },
+  {
+    "repo": "pyflakes",
+    "id": "pyflakes-raise-notimplemented-missed",
+    "archivo": "pyflakes/checker.py",
+    "buscar": "getNodeName(node) == 'NotImplemented'",
+    "reemplazar": "getNodeName(node) == 'NotImplementedError'",
+    "motivo": "sin los tests ocultos la suite visible falla (rc=2): otros tests dependen de ellos"
+  },
+  {
+    "repo": "pyflakes",
+    "id": "pyflakes-reporter-caret",
+    "archivo": "pyflakes/reporter.py",
+    "buscar": "re.sub(r'\\S', ' ', line[:offset - 1])",
+    "reemplazar": "re.sub(r'\\S', ' ', line[:offset])",
+    "motivo": "sobrante: el repo ya tiene 10 validas"
+  },
+  {
+    "repo": "pyflakes",
+    "id": "pyflakes-typealias-valor",
+    "archivo": "pyflakes/checker.py",
+    "buscar": "_is_typing(node.annotation, 'TypeAlias', self.scopeStack)",
+    "reemplazar": "_is_typing(node.annotation, 'TypeVar', self.scopeStack)",
+    "motivo": "sobrante: el repo ya tiene 10 validas"
+  },
+  {
+    "repo": "pyflakes",
+    "id": "pyflakes-typing-modulo",
+    "archivo": "pyflakes/checker.py",
+    "buscar": "scope[name].module in TYPING_MODULES",
+    "reemplazar": "scope[name].module not in TYPING_MODULES",
+    "motivo": "sobrante: el repo ya tiene 10 validas"
+  },
+  {
+    "repo": "pyflakes",
+    "id": "pyflakes-undefined-local-used-first",
+    "archivo": "pyflakes/checker.py",
+    "buscar": "if used and used[0] is self.scope:",
+    "reemplazar": "if used and used[0] is not self.scope:",
+    "motivo": "la detectan 6 archivos de test (13 en total): quitarlos dejaria al agente sin suite"
+  },
+  {
+    "repo": "pyflakes",
+    "id": "pyflakes-unused-underscore-var",
+    "archivo": "pyflakes/checker.py",
+    "buscar": "name != '_' and",
+    "reemplazar": "name != '__' and",
+    "motivo": "sin los tests ocultos la suite visible falla (rc=2): otros tests dependen de ellos"
+  },
+  {
+    "repo": "semver",
+    "id": "semver-finalize-keeps-prerelease",
+    "archivo": "src/semver/version.py",
+    "buscar": "return cls(self.major, self.minor, self.patch)\n",
+    "reemplazar": "return cls(self.major, self.minor, self.patch, self.prerelease)\n",
+    "motivo": "sobrante: el repo ya tiene 10 validas"
+  },
+  {
+    "repo": "semver",
+    "id": "semver-hash-ignores-build",
+    "archivo": "src/semver/version.py",
+    "buscar": "hash(self.to_tuple()[:4])",
+    "reemplazar": "hash(self.to_tuple()[:5])",
+    "motivo": "sobrante: el repo ya tiene 10 validas"
+  },
+  {
+    "repo": "semver",
+    "id": "semver-is-compatible-same-minor",
+    "archivo": "src/semver/version.py",
+    "buscar": "(other.minor >= self.minor)",
+    "reemplazar": "(other.minor > self.minor)",
+    "motivo": "sobrante: el repo ya tiene 10 validas"
+  },
+  {
+    "repo": "semver",
+    "id": "semver-match-less-equal",
+    "archivo": "src/semver/version.py",
+    "buscar": "\"<=\": (-1, 0),",
+    "reemplazar": "\"<=\": (-1,),",
+    "motivo": "sobrante: el repo ya tiene 10 validas"
+  },
+  {
+    "repo": "semver",
+    "id": "semver-parse-optional-minor-default",
+    "archivo": "src/semver/version.py",
+    "buscar": "matched_version_parts[\"minor\"] = 0",
+    "reemplazar": "matched_version_parts[\"minor\"] = 1",
+    "motivo": "sobrante: el repo ya tiene 10 validas"
+  },
+  {
+    "repo": "semver",
+    "id": "semver-str-drops-build",
+    "archivo": "src/semver/version.py",
+    "buscar": "        if self.build:",
+    "reemplazar": "        if self.prerelease and self.build:",
+    "motivo": "la detectan 6 archivos de test (22 en total): quitarlos dejaria al agente sin suite"
+  },
+  {
+    "repo": "sortedcontainers",
+    "id": "sortedcontainers-bisect-right-dup",
+    "archivo": "src/sortedcontainers/sortedlist.py",
+    "buscar": "idx = bisect_right(self._lists[pos], value)",
+    "reemplazar": "idx = bisect_left(self._lists[pos], value)",
+    "motivo": "la detectan 4 archivos de test (9 en total): quitarlos dejaria al agente sin suite"
+  },
+  {
+    "repo": "sortedcontainers",
+    "id": "sortedcontainers-dict-union",
+    "archivo": "src/sortedcontainers/sorteddict.py",
+    "buscar": "chain(self.items(), other.items())",
+    "reemplazar": "chain(other.items(), self.items())",
+    "motivo": "indetectable: la suite completa pasa con la mutacion"
+  },
+  {
+    "repo": "sortedcontainers",
+    "id": "sortedcontainers-set-discard",
+    "archivo": "src/sortedcontainers/sortedset.py",
+    "buscar": "if value in _set:",
+    "reemplazar": "if value not in _set:",
+    "motivo": "sobrante: el repo ya tiene 10 validas"
+  },
+  {
+    "repo": "sortedcontainers",
+    "id": "sortedcontainers-set-interseccion",
+    "archivo": "src/sortedcontainers/sortedset.py",
+    "buscar": "intersect = self._set.intersection(*iterables)",
+    "reemplazar": "intersect = self._set.union(*iterables)",
+    "motivo": "sobrante: el repo ya tiene 10 validas"
+  },
+  {
+    "repo": "sortedcontainers",
+    "id": "sortedcontainers-set-pop",
+    "archivo": "src/sortedcontainers/sortedset.py",
+    "buscar": "value = self._list.pop(index)",
+    "reemplazar": "value = self._list.pop(0)",
+    "motivo": "sobrante: el repo ya tiene 10 validas"
+  },
+  {
+    "repo": "sortedcontainers",
+    "id": "sortedcontainers-set-sym-diff-update",
+    "archivo": "src/sortedcontainers/sortedset.py",
+    "buscar": "_set.symmetric_difference_update(other)",
+    "reemplazar": "_set.difference_update(other)",
+    "motivo": "sobrante: el repo ya tiene 10 validas"
+  },
+  {
+    "repo": "tabulate",
+    "id": "tabulate-align-vertical-bottom",
+    "archivo": "tabulate/__init__.py",
+    "buscar": "if row_alignment == \"bottom\":",
+    "reemplazar": "if row_alignment == \"botom\":",
+    "motivo": "sobrante: el repo ya tiene 10 validas"
+  },
+  {
+    "repo": "tabulate",
+    "id": "tabulate-disable-numparse-index",
+    "archivo": "tabulate/__init__.py",
+    "buscar": "numparses[index] = False",
+    "reemplazar": "numparses[index] = True",
+    "motivo": "sobrante: el repo ya tiene 10 validas"
+  },
+  {
+    "repo": "tabulate",
+    "id": "tabulate-firstrow-drops-row",
+    "archivo": "tabulate/__init__.py",
+    "buscar": "headers = list(map(str, headers))  # headers should be strings\n        rows = rows[1:]",
+    "reemplazar": "headers = list(map(str, headers))  # headers should be strings\n        rows = rows[2:]",
+    "motivo": "sobrante: el repo ya tiene 10 validas"
+  },
+  {
+    "repo": "tabulate",
+    "id": "tabulate-header-invisible-width",
+    "archivo": "tabulate/__init__.py",
+    "buscar": "ninvisible = len(header) - visible_width",
+    "reemplazar": "ninvisible = visible_width - len(header)",
+    "motivo": "sobrante: el repo ya tiene 10 validas"
+  },
+  {
+    "repo": "tabulate",
+    "id": "tabulate-index-length-check",
+    "archivo": "tabulate/__init__.py",
+    "buscar": "if isinstance(index, Sized) and len(index) != len(rows):",
+    "reemplazar": "if isinstance(index, Sized) and len(index) < len(rows):",
+    "motivo": "sobrante: el repo ya tiene 10 validas"
+  },
+  {
+    "repo": "tabulate",
+    "id": "tabulate-reinsert-separator-shift",
+    "archivo": "tabulate/__init__.py",
+    "buscar": "rows.insert(index, SEPARATING_LINE)",
+    "reemplazar": "rows.insert(index + 1, SEPARATING_LINE)",
+    "motivo": "sobrante: el repo ya tiene 10 validas"
+  },
+  {
+    "repo": "toolz",
+    "id": "toolz-diff-equal-rows",
+    "archivo": "toolz/itertoolz.py",
+    "buscar": "if items.count(items[0]) != N:\n                yield items\n    else:",
+    "reemplazar": "if items.count(items[0]) == N:\n                yield items\n    else:",
+    "motivo": "la descripcion nombra tests, archivos o lineas"
+  },
+  {
+    "repo": "toolz",
+    "id": "toolz-flip-argument-order",
+    "archivo": "toolz/functoolz.py",
+    "buscar": "    return func(b, a)",
+    "reemplazar": "    return func(a, b)",
+    "motivo": "sobrante: el repo ya tiene 10 validas"
+  },
+  {
+    "repo": "toolz",
+    "id": "toolz-get-in-no-default",
+    "archivo": "toolz/dicttoolz.py",
+    "buscar": "        if no_default:\n            raise",
+    "reemplazar": "        if not no_default:\n            raise",
+    "motivo": "sobrante: el repo ya tiene 10 validas"
+  },
+  {
+    "repo": "toolz",
+    "id": "toolz-keymap-values",
+    "archivo": "toolz/dicttoolz.py",
+    "buscar": "rv.update(zip(map(func, d.keys()), d.values()))",
+    "reemplazar": "rv.update(zip(map(func, d.keys()), d.keys()))",
+    "motivo": "sobrante: el repo ya tiene 10 validas"
+  },
+  {
+    "repo": "toolz",
+    "id": "toolz-thread-last-arg-position",
+    "archivo": "toolz/functoolz.py",
+    "buscar": "args = args + (val,)",
+    "reemplazar": "args = (val,) + args",
+    "motivo": "sobrante: el repo ya tiene 10 validas"
+  },
+  {
+    "repo": "toolz",
+    "id": "toolz-topk-smallest",
+    "archivo": "toolz/itertoolz.py",
+    "buscar": "heapq.nlargest(k, seq, key=key)",
+    "reemplazar": "heapq.nsmallest(k, seq, key=key)",
+    "motivo": "sobrante: el repo ya tiene 10 validas"
+  },
+  {
+    "repo": "xmltodict",
+    "id": "xmltodict-attrs-invertidos",
+    "archivo": "xmltodict.py",
+    "buscar": "zip(attrs[0::2], attrs[1::2])",
+    "reemplazar": "zip(attrs[1::2], attrs[0::2])",
+    "motivo": "la detectan 2 archivos de test (2 en total): quitarlos dejaria al agente sin suite"
+  },
+  {
+    "repo": "xmltodict",
+    "id": "xmltodict-comentario-guion-final",
+    "archivo": "xmltodict.py",
+    "buscar": "if value.endswith(\"-\"):",
+    "reemplazar": "if value.startswith(\"-\"):",
+    "motivo": "sobrante: el repo ya tiene 10 validas"
+  },
+  {
+    "repo": "xmltodict",
+    "id": "xmltodict-elementos-vacios",
+    "archivo": "xmltodict.py",
+    "buscar": "        content_handler = _XMLGenerator(output, encoding, True)",
+    "reemplazar": "        content_handler = _XMLGenerator(output, encoding, False)",
+    "motivo": "sobrante: el repo ya tiene 10 validas"
+  },
+  {
+    "repo": "xmltodict",
+    "id": "xmltodict-lista-vacia",
+    "archivo": "xmltodict.py",
+    "buscar": "if isinstance(iv, list) and not iv:",
+    "reemplazar": "if isinstance(iv, list) and iv:",
+    "motivo": "sobrante: el repo ya tiene 10 validas"
+  },
+  {
+    "repo": "xmltodict",
+    "id": "xmltodict-ns-prefijo-attr",
+    "archivo": "xmltodict.py",
+    "buscar": "attr_prefix if ns.startswith(attr_prefix) else ''",
+    "reemplazar": "attr_prefix if ns.endswith(attr_prefix) else ''",
+    "motivo": "sobrante: el repo ya tiene 10 validas"
+  },
+  {
+    "repo": "xmltodict",
+    "id": "xmltodict-repetidos-orden",
+    "archivo": "xmltodict.py",
+    "buscar": "item[key] = [value, data]",
+    "reemplazar": "item[key] = [data, value]",
+    "motivo": "la detectan 2 archivos de test (2 en total): quitarlos dejaria al agente sin suite"
+  }
+]

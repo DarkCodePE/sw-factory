@@ -1,0 +1,23 @@
+{
+  "nombre": "pyflakes",
+  "url": "https://github.com/PyCQA/pyflakes",
+  "commit": "5324946c5d8602697f5df6d98ad162920b3e5d61",
+  "license_spdx": "MIT",
+  "license_file": "LICENSE",
+  "license_sha256": "22c47569cc0aae531b372361366818af01c6fc2e314770584a7866c92b3a0463",
+  "env": {
+    "PYTEST_DISABLE_PLUGIN_AUTOLOAD": "1",
+    "PYTHONDONTWRITEBYTECODE": "1"
+  },
+  "test": [
+    "python3",
+    "-m",
+    "pytest",
+    "-q",
+    "-p",
+    "no:cacheprovider",
+    "-o",
+    "addopts=",
+    "pyflakes"
+  ]
+}

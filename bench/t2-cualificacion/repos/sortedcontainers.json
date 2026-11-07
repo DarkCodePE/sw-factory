@@ -1,0 +1,24 @@
+{
+  "nombre": "sortedcontainers",
+  "url": "https://github.com/grantjenks/python-sortedcontainers",
+  "commit": "3ac358631f58c1347f1d6d2d92784117db0f38ed",
+  "license_spdx": "Apache-2.0",
+  "license_file": "LICENSE",
+  "license_sha256": "b595a2443b01b896be150623b7397b23856a8aad201d178d17c4a654b4ede23b",
+  "env": {
+    "PYTEST_DISABLE_PLUGIN_AUTOLOAD": "1",
+    "PYTHONDONTWRITEBYTECODE": "1",
+    "PYTHONPATH": "src"
+  },
+  "test": [
+    "python3",
+    "-m",
+    "pytest",
+    "-q",
+    "-p",
+    "no:cacheprovider",
+    "-o",
+    "addopts=",
+    "tests"
+  ]
+}

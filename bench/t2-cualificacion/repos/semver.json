@@ -1,0 +1,24 @@
+{
+  "nombre": "semver",
+  "url": "https://github.com/python-semver/python-semver",
+  "commit": "f3c7138120d7f49e190bd7c555c6e7eb155b482d",
+  "license_spdx": "BSD-3-Clause",
+  "license_file": "LICENSE.txt",
+  "license_sha256": "cc10179de9ced8655d7765bd3a8ac46438a61e663de7cf1c48d502d2baf9f3d5",
+  "env": {
+    "PYTEST_DISABLE_PLUGIN_AUTOLOAD": "1",
+    "PYTHONDONTWRITEBYTECODE": "1",
+    "PYTHONPATH": "src"
+  },
+  "test": [
+    "python3",
+    "-m",
+    "pytest",
+    "-q",
+    "-p",
+    "no:cacheprovider",
+    "-o",
+    "addopts=",
+    "tests"
+  ]
+}

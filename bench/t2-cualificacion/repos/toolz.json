@@ -1,0 +1,24 @@
+{
+  "nombre": "toolz",
+  "url": "https://github.com/pytoolz/toolz",
+  "commit": "451af60dec590a6010e2babdbf391ea8f815122f",
+  "license_spdx": "BSD-3-Clause",
+  "license_file": "LICENSE.txt",
+  "license_sha256": "053664057b295b2f0c1332291a77102f01a099d87926e449e08a117eea9660bf",
+  "env": {
+    "PYTEST_DISABLE_PLUGIN_AUTOLOAD": "1",
+    "PYTHONDONTWRITEBYTECODE": "1"
+  },
+  "test": [
+    "python3",
+    "-m",
+    "pytest",
+    "-q",
+    "-p",
+    "no:cacheprovider",
+    "-o",
+    "addopts=",
+    "toolz",
+    "--deselect=toolz/tests/test_package.py"
+  ]
+}

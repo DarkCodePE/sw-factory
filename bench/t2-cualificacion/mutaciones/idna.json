@@ -1,0 +1,107 @@
+[
+  {
+    "id": "idna-label-63",
+    "archivo": "idna/core.py",
+    "buscar": "return len(label) <= 63",
+    "reemplazar": "return len(label) < 63",
+    "descripcion": "Al convertir con `idna.alabel('a' * 63)` se lanza «Label too long», aunque una etiqueta de exactamente 63 caracteres es válida y debería devolver `b'aaaa...'` sin error.",
+    "ocultos": [
+      "tests/test_idna.py",
+      "tests/test_idna_codec.py",
+      "tests/test_idna_uts46.py"
+    ]
+  },
+  {
+    "id": "idna-guiones-3-4",
+    "archivo": "idna/core.py",
+    "buscar": "if label[2:4] == \"--\":",
+    "reemplazar": "if label[3:5] == \"--\":",
+    "descripcion": "`idna.encode('ab--cd')` devuelve `b'ab--cd'` sin error, cuando una etiqueta con guiones en las posiciones tercera y cuarta debería rechazarse con IDNAError.",
+    "ocultos": [
+      "tests/test_idna_errors.py",
+      "tests/test_idna_uts46.py"
+    ]
+  },
+  {
+    "id": "idna-combinante-inicial",
+    "archivo": "idna/core.py",
+    "buscar": "if label and unicodedata.category(label[0])[0] == \"M\":",
+    "reemplazar": "if len(label) > 1 and unicodedata.category(label[0])[0] == \"M\":",
+    "descripcion": "`idna.encode('\\u0300')` (una etiqueta formada solo por un acento combinante) devuelve un resultado en lugar de lanzar IDNAError por empezar con un carácter combinante.",
+    "ocultos": [
+      "tests/test_idna_uts46.py"
+    ]
+  },
+  {
+    "id": "idna-contexto-rechazo",
+    "archivo": "idna/core.py",
+    "buscar": "if not valid_contexto(label, pos):",
+    "reemplazar": "if valid_contexto(label, pos):",
+    "descripcion": "`idna.encode('l\\u00b7l')` lanza un error de contexto aunque el punto medio entre dos «l» es válido, y `idna.encode('a\\u00b7b')` se codifica sin error cuando debería rechazarse.",
+    "ocultos": [
+      "tests/test_idna_errors.py",
+      "tests/test_idna_uts46.py"
+    ]
+  },
+  {
+    "id": "idna-incremental-decodificador",
+    "archivo": "idna/codec.py",
+    "buscar": "if self._consumed + len(data) > _max_domain_length + 1:",
+    "reemplazar": "if self._consumed + len(data) > _max_domain_length:",
+    "descripcion": "Al decodificar por trozos con `codecs.getincrementaldecoder('idna2008')().decode(('a'*63+'.')*3+'a'*61+'.', True)` (254 caracteres con punto final) se lanza «Domain too long», cuando el límite admite hasta 254 y debería devolver el texto.",
+    "ocultos": [
+      "tests/test_idna_codec.py",
+      "tests/test_idna_fuzz_targets.py"
+    ]
+  },
+  {
+    "id": "idna-incremental-codificador",
+    "archivo": "idna/codec.py",
+    "buscar": "if self._emitted > _max_domain_length + may_end_with_dot:",
+    "reemplazar": "if self._emitted >= _max_domain_length + may_end_with_dot:",
+    "descripcion": "Al codificar por trozos con `codecs.getincrementalencoder('idna2008')().encode('.'.join(['a'*63]*3+['a'*61]), True)` (un nombre de exactamente 253 caracteres) se lanza «Domain too long», cuando el límite permite 253 y debería devolver el nombre codificado.",
+    "ocultos": [
+      "tests/test_idna_codec.py"
+    ]
+  },
+  {
+    "id": "idna-intranges-agrupar",
+    "archivo": "idna/intranges.py",
+    "buscar": "sorted_list[i] == sorted_list[i + 1] - 1",
+    "reemplazar": "sorted_list[i] == sorted_list[i + 1] - 2",
+    "descripcion": "`idna.intranges.intranges_from_list([1, 2, 3])` devuelve varios rangos separados en vez de un único rango continuo que cubra 1, 2 y 3.",
+    "ocultos": [
+      "tests/test_intranges.py"
+    ]
+  },
+  {
+    "id": "idna-cli-xn-mayusculas",
+    "archivo": "idna/cli.py",
+    "buscar": "label.lower().startswith(prefix)",
+    "reemplazar": "label.startswith(prefix)",
+    "descripcion": "Al ejecutar `python -m idna XN--mnchen-3ya.de` sin indicar modo, imprime `xn--mnchen-3ya.de` (lo trata como nombre a codificar) en vez de decodificarlo a `münchen.de`; con `xn--mnchen-3ya.de` en minúsculas sí imprime `münchen.de`.",
+    "ocultos": [
+      "tests/test_idna_cli.py"
+    ]
+  },
+  {
+    "id": "idna-cli-stdin-vacias",
+    "archivo": "idna/cli.py",
+    "buscar": "        if stripped:\n            yield stripped",
+    "reemplazar": "        if line:\n            yield stripped",
+    "descripcion": "Si por stdin llegan los renglones `example.com`, uno vacío y `ñandú.cl`, `python -m idna` imprime un error \"Empty domain\" para el renglón vacío y termina con código 1, en vez de ignorarlo y convertir los otros dos.",
+    "ocultos": [
+      "tests/test_idna_cli.py"
+    ]
+  },
+  {
+    "id": "idna-cli-codigo-salida",
+    "archivo": "idna/cli.py",
+    "buscar": "return 0 if all(results) else 1",
+    "reemplazar": "return 0 if any(results) else 1",
+    "descripcion": "`python -m idna example.com \"a..b\"` imprime el error de la segunda entrada pero termina con código de salida 0; debería terminar con 1 porque una conversión falló.",
+    "ocultos": [
+      "tests/test_idna_cli.py"
+    ]
+  }
+]

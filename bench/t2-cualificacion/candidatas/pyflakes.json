@@ -1,0 +1,177 @@
+[
+  {
+    "id": "pyflakes-export-augassign-names",
+    "archivo": "pyflakes/checker.py",
+    "buscar": "if '__all__' in scope and isinstance(source, ast.AugAssign):",
+    "reemplazar": "if '__all__' in scope and isinstance(source, ast.Assign):",
+    "descripcion": "`check(\"from m import a, b\\n__all__ = ['a']\\n__all__ += ['b']\\n\", \"m\")` devuelve 1 aviso (`b` importado y sin usar) cuando debería devolver 0: `b` se exporta con `__all__ +=`."
+  },
+  {
+    "id": "pyflakes-undefined-local-used-first",
+    "archivo": "pyflakes/checker.py",
+    "buscar": "if used and used[0] is self.scope:",
+    "reemplazar": "if used and used[0] is not self.scope:",
+    "descripcion": "`check(\"x = 1\\ndef f():\\n    print(x)\\n    x = 2\\n\", \"m\")` devuelve 0 cuando debería devolver 1 (dentro de `f`, `x` se lee antes de asignarse y es local)."
+  },
+  {
+    "id": "pyflakes-return-outside-function",
+    "archivo": "pyflakes/checker.py",
+    "buscar": "if isinstance(self.scope, (ClassScope, ModuleScope)):\n            self.report(messages.ReturnOutsideFunction",
+    "reemplazar": "if isinstance(self.scope, (ClassScope,)):\n            self.report(messages.ReturnOutsideFunction",
+    "descripcion": "`check(\"return 1\\n\", \"m\")` devuelve 0 cuando debería devolver 1 (`return` fuera de una función)."
+  },
+  {
+    "id": "pyflakes-continue-in-loop-else",
+    "archivo": "pyflakes/checker.py",
+    "buscar": "if n_child not in n.orelse:",
+    "reemplazar": "if n_child in n.orelse:",
+    "descripcion": "`check(\"for i in range(3):\\n    continue\\n\", \"m\")` devuelve 1 aviso (`continue` fuera de un bucle) cuando debería devolver 0."
+  },
+  {
+    "id": "pyflakes-late-future-import",
+    "archivo": "pyflakes/checker.py",
+    "buscar": "if not self.futuresAllowed:",
+    "reemplazar": "if self.futuresAllowed:",
+    "descripcion": "`check(\"from __future__ import annotations\\n\", \"m\")` devuelve 1 aviso (import de `__future__` tardío) cuando debería devolver 0, y `check(\"import os\\nfrom __future__ import division\\n\", \"m\")` devuelve 0 cuando debería devolver 2 (el `import os` sin usar y el import tardío)."
+  },
+  {
+    "id": "pyflakes-is-literal-isnot",
+    "archivo": "pyflakes/checker.py",
+    "buscar": "(ast.Is, ast.IsNot)",
+    "reemplazar": "(ast.Is,)",
+    "descripcion": "`check(\"x = 1\\nif x is not 'a':\\n    pass\\n\", \"m\")` devuelve 0 cuando debería devolver 1 (`is not` contra un literal)."
+  },
+  {
+    "id": "pyflakes-unused-underscore-var",
+    "archivo": "pyflakes/checker.py",
+    "buscar": "name != '_' and",
+    "reemplazar": "name != '__' and",
+    "descripcion": "`check(\"def f():\\n    _ = 1\\n\", \"m\")` informa 1 aviso (variable local `_` sin usar) cuando debería informar 0: el nombre `_` es la convención para valores descartados."
+  },
+  {
+    "id": "pyflakes-if-tuple-warning",
+    "archivo": "pyflakes/checker.py",
+    "buscar": "    def IF(self, node):\n        if isinstance(node.test, ast.Tuple) and node.test.elts != []:",
+    "reemplazar": "    def IF(self, node):\n        if isinstance(node.test, ast.Tuple) and node.test.elts == []:",
+    "descripcion": "`check(\"if (1, 2):\\n    pass\\n\", \"m\")` devuelve 0 cuando debería devolver 1 (condición que es una tupla no vacía y siempre es verdadera)."
+  },
+  {
+    "id": "pyflakes-fstring-placeholder-inverted",
+    "archivo": "pyflakes/checker.py",
+    "buscar": "not any(isinstance(x, ast.FormattedValue)",
+    "reemplazar": "any(isinstance(x, ast.FormattedValue)",
+    "descripcion": "`check(\"x = 1\\ny = f'{x}'\\n\", \"m\")` devuelve 1 aviso (f-string sin marcadores) cuando debería devolver 0, y `check(\"y = f'hola'\\n\", \"m\")` devuelve 0 cuando debería devolver 1."
+  },
+  {
+    "id": "pyflakes-raise-notimplemented-missed",
+    "archivo": "pyflakes/checker.py",
+    "buscar": "getNodeName(node) == 'NotImplemented'",
+    "reemplazar": "getNodeName(node) == 'NotImplementedError'",
+    "descripcion": "`check(\"def f():\\n    raise NotImplemented\\n\", \"m\")` devuelve 0 cuando debería devolver 1 (se debía lanzar `NotImplementedError`)."
+  },
+  {
+    "id": "pyflakes-duplicate-dict-key-two",
+    "archivo": "pyflakes/checker.py",
+    "buscar": "if count > 1",
+    "reemplazar": "if count > 2",
+    "descripcion": "`check(\"d = {'a': 1, 'a': 2}\\n\", \"m\")` devuelve 0 cuando debería devolver 2 (clave repetida con valores distintos)."
+  },
+  {
+    "id": "pyflakes-percent-count-mismatch",
+    "archivo": "pyflakes/checker.py",
+    "buscar": "positional_count != substitution_count",
+    "reemplazar": "positional_count > substitution_count",
+    "descripcion": "`check(\"'%s' % (1, 2)\\n\", \"m\")` devuelve 0 cuando debería devolver 1 (sobran argumentos para el formato `%`)."
+  },
+  {
+    "id": "pyflakes-format-missing-arg-off-by-one",
+    "archivo": "pyflakes/checker.py",
+    "buscar": "substitution_positional = set(range(len(node.args)))",
+    "reemplazar": "substitution_positional = set(range(len(node.args) - 1))",
+    "descripcion": "`check(\"'{}'.format(1)\\n\", \"m\")` devuelve 1 aviso de argumento faltante cuando debería devolver 0."
+  },
+  {
+    "id": "pyflakes-del-inside-if-undefined",
+    "archivo": "pyflakes/checker.py",
+    "buscar": "(ast.If, ast.While, ast.IfExp)",
+    "reemplazar": "(ast.While, ast.IfExp)",
+    "descripcion": "`check(\"c = 1\\nx = 1\\nif c:\\n    del x\\nprint(x)\\n\", \"m\")` devuelve 1 aviso de nombre indefinido cuando debería devolver 0 (el `del` solo se ejecuta si se cumple `c`)."
+  },
+  {
+    "id": "pyflakes-recursive-count-last-only",
+    "archivo": "pyflakes/api.py",
+    "buscar": "warnings += checkPath(sourcePath, reporter)",
+    "reemplazar": "warnings = checkPath(sourcePath, reporter)",
+    "descripcion": "`checkRecursive([dir], reporter)` sobre un directorio con dos archivos que tienen 1 aviso cada uno devuelve 1 cuando debería devolver 2."
+  },
+  {
+    "id": "pyflakes-duplicate-argument-first",
+    "archivo": "pyflakes/checker.py",
+    "buscar": "if arg in args[:idx]:",
+    "reemplazar": "if arg in args[1:idx]:",
+    "descripcion": "`check(\"def f(a, a):\\n    pass\\n\", \"m\")` devuelve 0 cuando debería devolver 1 (argumento duplicado)."
+  },
+  {
+    "id": "pyflakes-dict-valores-iguales",
+    "archivo": "pyflakes/checker.py",
+    "buscar": "if any(count == 1 for value, count in values.items()):",
+    "reemplazar": "if any(count > 1 for value, count in values.items()):",
+    "descripcion": "Para `{\"a\": 1, \"a\": 2}` pyflakes no avisa de la clave repetida con valores distintos, y en cambio avisa de `{\"a\": 1, \"a\": 1}` (mismo valor), que debería ser inofensivo."
+  },
+  {
+    "id": "pyflakes-dict-clave-variable",
+    "archivo": "pyflakes/checker.py",
+    "buscar": "compare.name == self.name",
+    "reemplazar": "compare.name != self.name",
+    "descripcion": "Para `x = y = 1` seguido de `{x: 1, x: 2}`, pyflakes no avisa de `dictionary key 'x' repeated with different values`, aunque la clave `x` aparece dos veces con valores distintos."
+  },
+  {
+    "id": "pyflakes-annotated-argumentos",
+    "archivo": "pyflakes/checker.py",
+    "buscar": "len(slice_tuple.elts) < 2",
+    "reemplazar": "len(slice_tuple.elts) < 3",
+    "descripcion": "Con `from typing import Annotated` y `x: Annotated[int, \"no es un tipo\"]`, pyflakes interpreta la cadena \"no es un tipo\" como anotación y emite un aviso de sintaxis inválida en anotación adelantada."
+  },
+  {
+    "id": "pyflakes-typealias-valor",
+    "archivo": "pyflakes/checker.py",
+    "buscar": "_is_typing(node.annotation, 'TypeAlias', self.scopeStack)",
+    "reemplazar": "_is_typing(node.annotation, 'TypeVar', self.scopeStack)",
+    "descripcion": "Con `from typing import TypeAlias` y `X: TypeAlias = \"Undefined\"`, pyflakes no avisa de que `Undefined` no está definido; el nombre dentro de la cadena queda sin comprobar."
+  },
+  {
+    "id": "pyflakes-typing-modulo",
+    "archivo": "pyflakes/checker.py",
+    "buscar": "scope[name].module in TYPING_MODULES",
+    "reemplazar": "scope[name].module not in TYPING_MODULES",
+    "descripcion": "Con `from typing import Optional` y `x = Optional[\"Undefined\"]`, pyflakes no avisa de `undefined name 'Undefined'`, y con `from otro import Optional` avisa cuando no debería."
+  },
+  {
+    "id": "pyflakes-overload-async",
+    "archivo": "pyflakes/checker.py",
+    "buscar": "isinstance(value.source, (ast.FunctionDef, ast.AsyncFunctionDef))",
+    "reemplazar": "isinstance(value.source, (ast.FunctionDef,))",
+    "descripcion": "Con `from typing import overload`, dos `async def f` decoradas con `@overload` seguidas de la implementación `async def f` hacen que pyflakes emita dos avisos «redefinition of unused 'f'» que no aparecen con funciones `def` normales."
+  },
+  {
+    "id": "pyflakes-match-captura",
+    "archivo": "pyflakes/checker.py",
+    "buscar": "    def _match_target(self, node):\n        self.handleNodeStore(node)\n        self.handleChildren(node)",
+    "reemplazar": "    def _match_target(self, node):\n        self.handleChildren(node)",
+    "descripcion": "En `match x:\\n    case [a, *rest]: print(a, rest)` dentro de una función, pyflakes avisa de que `a` o `rest` no están definidos al usarlos."
+  },
+  {
+    "id": "pyflakes-api-recursivo-suma",
+    "archivo": "pyflakes/api.py",
+    "buscar": "warnings += checkPath(sourcePath, reporter)",
+    "reemplazar": "warnings = checkPath(sourcePath, reporter)",
+    "descripcion": "`checkRecursive` sobre un directorio con dos archivos que tienen 2 y 1 avisos devuelve solo la cuenta del último archivo en vez de 3."
+  },
+  {
+    "id": "pyflakes-reporter-caret",
+    "archivo": "pyflakes/reporter.py",
+    "buscar": "re.sub(r'\\S', ' ', line[:offset - 1])",
+    "reemplazar": "re.sub(r'\\S', ' ', line[:offset])",
+    "descripcion": "Con un error de sintaxis en `x = (1,` la salida muestra el símbolo `^` desplazado una columna a la derecha de donde está el error."
+  }
+]

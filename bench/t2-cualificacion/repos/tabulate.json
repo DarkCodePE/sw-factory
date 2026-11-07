@@ -1,0 +1,23 @@
+{
+  "nombre": "tabulate",
+  "url": "https://github.com/astanin/python-tabulate",
+  "commit": "268615a5c27dc40e5c22454c07b44d5c50410da0",
+  "license_spdx": "MIT",
+  "license_file": "LICENSE",
+  "license_sha256": "cdfab50d37d8ead06468fb76a3abafcd05c16749ec8a18eebfa50fd48c7cb2d2",
+  "env": {
+    "PYTEST_DISABLE_PLUGIN_AUTOLOAD": "1",
+    "PYTHONDONTWRITEBYTECODE": "1"
+  },
+  "test": [
+    "python3",
+    "-m",
+    "pytest",
+    "-q",
+    "-p",
+    "no:cacheprovider",
+    "-o",
+    "addopts=",
+    "test"
+  ]
+}

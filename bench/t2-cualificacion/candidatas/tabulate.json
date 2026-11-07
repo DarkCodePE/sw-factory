@@ -1,0 +1,114 @@
+[
+ {
+  "id": "tabulate-inf-negative-number",
+  "archivo": "tabulate/__init__.py",
+  "buscar": "or string.lower() in [\"inf\", \"-inf\", \"nan\"]",
+  "reemplazar": "or string.lower() in [\"inf\", \"nan\"]",
+  "descripcion": "`tabulate([[\"-inf\"], [\"1.5\"]], tablefmt=\"plain\")` devuelve `\"-inf\\n1.5\"` en lugar de `\"-inf\\n   1.5\"`: `-inf` deja de reconocerse como número y la columna se alinea como texto."
+ },
+ {
+  "id": "tabulate-separated-format-padding",
+  "archivo": "tabulate/__init__.py",
+  "buscar": "padding=0,\n        with_header_hide=None,\n    )\n\n\ndef _isnumber_with_thousands",
+  "reemplazar": "padding=1,\n        with_header_hide=None,\n    )\n\n\ndef _isnumber_with_thousands",
+  "descripcion": "`tabulate([[\"foo\", 1], [\"spam\", 23]], tablefmt=simple_separated_format(\"\\t\"))` devuelve filas con un espacio extra alrededor del tabulador en lugar de `\"foo \\t 1\\nspam\\t23\"`."
+ },
+ {
+  "id": "tabulate-missingval-list-default",
+  "archivo": "tabulate/__init__.py",
+  "buscar": "missing_vals.extend((len(cols) - len(missing_vals)) * [_DEFAULT_MISSINGVAL])",
+  "reemplazar": "missing_vals.extend((len(cols) - len(missing_vals)) * [\"?\"])",
+  "descripcion": "`tabulate([[None, None]], missingval=[\"-\"], tablefmt=\"plain\")` devuelve `\"-  ?\"` en lugar de `\"-\"`: la segunda columna, sin valor indicado, muestra un marcador en vez de quedar vacía."
+ },
+ {
+  "id": "tabulate-wrap-long-word-split",
+  "archivo": "tabulate/__init__.py",
+  "buscar": "space_left = width - cur_len",
+  "reemplazar": "space_left = width - cur_len - 1",
+  "descripcion": "`tabulate([[\"abcdefghij\"]], maxcolwidths=[4], tablefmt=\"plain\")` devuelve trozos de 3 caracteres (`abc`, `def`, `ghi`, `j`) en lugar de trozos de 4 (`abcd`, `efgh`, `ij`)."
+ },
+ {
+  "id": "tabulate-update-lines-reset",
+  "archivo": "tabulate/__init__.py",
+  "buscar": "if code != _ansi_color_reset_code:",
+  "reemplazar": "if code == _ansi_color_reset_code:",
+  "descripcion": "`tabulate([[\"\\x1b[31mrojo largo aqui\\x1b[0m\"]], maxcolwidths=[8], tablefmt=\"plain\")` reparte el texto coloreado en filas que no cierran ni reabren bien el color: el rojo se pierde o se arrastra a las filas siguientes."
+ },
+ {
+  "id": "tabulate-pad-center-strings",
+  "archivo": "tabulate/__init__.py",
+  "buscar": "fmt = f\"{{0:^{width}s}}\"",
+  "reemplazar": "fmt = f\"{{0:<{width}s}}\"",
+  "descripcion": "`tabulate([[\"a\"], [\"bbbbb\"]], stralign=\"center\", tablefmt=\"plain\")` devuelve `\"a\\nbbbbb\"` en lugar de `\"  a\\nbbbbb\"`: el texto corto no se centra."
+ },
+ {
+  "id": "tabulate-type-thousands-int",
+  "archivo": "tabulate/__init__.py",
+  "buscar": "and \".\" not in string",
+  "reemplazar": "and \".\" in string",
+  "descripcion": "`tabulate([[\"1,000\"], [\"2,000\"]], tablefmt=\"plain\")` devuelve `\"1000\\n2000\"` en lugar de `\"1,000\\n2,000\"`: las cifras con separador de miles pierden la coma."
+ },
+ {
+  "id": "tabulate-afterpoint-int-offset",
+  "archivo": "tabulate/__init__.py",
+  "buscar": "        if _isint(string):\n            return -1\n        else:\n            pos = string.rfind(\".\")",
+  "reemplazar": "        if _isint(string):\n            return 0\n        else:\n            pos = string.rfind(\".\")",
+  "descripcion": "`tabulate([[1], [22.25]], tablefmt=\"plain\")` devuelve `\"  1\\n22.25\"` en lugar de `\" 1\\n22.25\"`: el entero queda un espacio desplazado a la derecha respecto a las unidades de `22.25`."
+ },
+ {
+  "id": "tabulate-multiline-width-min",
+  "archivo": "tabulate/__init__.py",
+  "buscar": "return max(map(line_width_fn, re.split(\"[\\r\\n]\", multiline_s)))",
+  "reemplazar": "return min(map(line_width_fn, re.split(\"[\\r\\n]\", multiline_s)))",
+  "descripcion": "`tabulate([[\"x\"]], headers=[\"h\\nbbbbb\"], tablefmt=\"grid\")` dibuja el recuadro más estrecho que la segunda fila de la cabecera: `| bbbbb |` sobresale del borde."
+ },
+ {
+  "id": "tabulate-float-thousands-comma",
+  "archivo": "tabulate/__init__.py",
+  "buscar": "if isinstance(val, str) and \",\" in val:",
+  "reemplazar": "if isinstance(val, str) and \",\" not in val:",
+  "descripcion": "`tabulate([[\"1,000.5\"], [\"2.5\"]], tablefmt=\"plain\")` muestra `1,000.5` tal cual en lugar de formatearlo como número (`1000.5`)."
+ },
+ {
+  "id": "tabulate-header-invisible-width",
+  "archivo": "tabulate/__init__.py",
+  "buscar": "ninvisible = len(header) - visible_width",
+  "reemplazar": "ninvisible = visible_width - len(header)",
+  "descripcion": "`tabulate([[1]], headers=[\"\\x1b[31mab\\x1b[0m\"], tablefmt=\"grid\")` con una cabecera coloreada con códigos ANSI lanza `ValueError` en lugar de devolver la tabla."
+ },
+ {
+  "id": "tabulate-index-length-check",
+  "archivo": "tabulate/__init__.py",
+  "buscar": "if isinstance(index, Sized) and len(index) != len(rows):",
+  "reemplazar": "if isinstance(index, Sized) and len(index) < len(rows):",
+  "descripcion": "`tabulate([[1], [2]], showindex=[0, 1, 2])` no lanza `ValueError` pese a que el índice tiene más elementos que filas; ahora ignora el sobrante en silencio."
+ },
+ {
+  "id": "tabulate-firstrow-drops-row",
+  "archivo": "tabulate/__init__.py",
+  "buscar": "headers = list(map(str, headers))  # headers should be strings\n        rows = rows[1:]",
+  "reemplazar": "headers = list(map(str, headers))  # headers should be strings\n        rows = rows[2:]",
+  "descripcion": "`tabulate([[\"a\", \"b\"], [1, 2], [3, 4]], headers=\"firstrow\")` muestra solo la fila `3 4`: se pierde la fila `1 2`."
+ },
+ {
+  "id": "tabulate-reinsert-separator-shift",
+  "archivo": "tabulate/__init__.py",
+  "buscar": "rows.insert(index, SEPARATING_LINE)",
+  "reemplazar": "rows.insert(index + 1, SEPARATING_LINE)",
+  "descripcion": "`tabulate([[1], SEPARATING_LINE, [2], [3]])` coloca la fila separadora después de `2` en lugar de entre `1` y `2`."
+ },
+ {
+  "id": "tabulate-align-vertical-bottom",
+  "archivo": "tabulate/__init__.py",
+  "buscar": "if row_alignment == \"bottom\":",
+  "reemplazar": "if row_alignment == \"botom\":",
+  "descripcion": "`tabulate([[\"a\\nb\\nc\", \"x\"]], tablefmt=\"grid\", rowalign=\"bottom\")` coloca `x` en la primera fila de la celda en lugar de la última."
+ },
+ {
+  "id": "tabulate-disable-numparse-index",
+  "archivo": "tabulate/__init__.py",
+  "buscar": "numparses[index] = False",
+  "reemplazar": "numparses[index] = True",
+  "descripcion": "`tabulate([[\"1.50\"], [\"2.0\"]], disable_numparse=[0], tablefmt=\"plain\")` devuelve `\"1.5\\n  2\"` en lugar de conservar el texto original `\"1.50\\n2.0\"`."
+ }
+]

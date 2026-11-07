@@ -1,0 +1,114 @@
+[
+ {
+  "id": "toolz-drop-count",
+  "archivo": "toolz/itertoolz.py",
+  "buscar": "itertools.islice(seq, n, None)\n",
+  "reemplazar": "itertools.islice(seq, n + 1, None)\n",
+  "descripcion": "`list(drop(2, [10, 20, 30, 40]))` devuelve `[40]` cuando debería devolver `[30, 40]`."
+ },
+ {
+  "id": "toolz-unique-key-seen",
+  "archivo": "toolz/itertoolz.py",
+  "buscar": "                seen_add(val)\n",
+  "reemplazar": "                seen_add(item)\n",
+  "descripcion": "`list(unique(['cat', 'mouse', 'dog', 'hen'], key=len))` devuelve las cuatro palabras cuando debería devolver `['cat', 'mouse']`."
+ },
+ {
+  "id": "toolz-isdistinct-list",
+  "archivo": "toolz/itertoolz.py",
+  "buscar": "return len(seq) == len(set(seq))",
+  "reemplazar": "return len(seq) >= len(set(seq))",
+  "descripcion": "`isdistinct([1, 2, 1])` devuelve `True` cuando debería devolver `False`."
+ },
+ {
+  "id": "toolz-tail-sequence",
+  "archivo": "toolz/itertoolz.py",
+  "buscar": "return seq[-n:]",
+  "reemplazar": "return seq[-n - 1:]",
+  "descripcion": "`tail(2, [1, 2, 3, 4])` devuelve `[2, 3, 4]` cuando debería devolver `[3, 4]`."
+ },
+ {
+  "id": "toolz-take-nth-start",
+  "archivo": "toolz/itertoolz.py",
+  "buscar": "itertools.islice(seq, 0, None, n)",
+  "reemplazar": "itertools.islice(seq, 1, None, n)",
+  "descripcion": "`list(take_nth(2, [0, 1, 2, 3, 4]))` devuelve `[1, 3]` cuando debería devolver `[0, 2, 4]`."
+ },
+ {
+  "id": "toolz-nth-iterator",
+  "archivo": "toolz/itertoolz.py",
+  "buscar": "next(itertools.islice(seq, n, None))",
+  "reemplazar": "next(itertools.islice(seq, n + 1, None))",
+  "descripcion": "`nth(1, iter([10, 20, 30]))` devuelve `30` cuando debería devolver `20`."
+ },
+ {
+  "id": "toolz-get-single-index-list",
+  "archivo": "toolz/itertoolz.py",
+  "buscar": "                if len(ind) > 1:",
+  "reemplazar": "                if len(ind) >= 1:",
+  "descripcion": "`get([1], [10, 20, 30])` devuelve `20` cuando debería devolver la tupla `(20,)`."
+ },
+ {
+  "id": "toolz-reduceby-constant-init",
+  "archivo": "toolz/itertoolz.py",
+  "buscar": "if not is_no_default and not callable(init):",
+  "reemplazar": "if not is_no_default and callable(init):",
+  "descripcion": "`reduceby(lambda x: x % 2, operator.add, [1, 2, 3, 4], 0)` lanza `TypeError: 'int' object is not callable` cuando debería devolver `{1: 4, 0: 6}`."
+ },
+ {
+  "id": "toolz-getter-single-list",
+  "archivo": "toolz/itertoolz.py",
+  "buscar": "return lambda x: (x[index],)",
+  "reemplazar": "return lambda x: x[index]",
+  "descripcion": "`list(pluck([0], [(1, 2), (3, 4)]))` devuelve `[1, 3]` cuando debería devolver `[(1,), (3,)]`."
+ },
+ {
+  "id": "toolz-join-right-default-order",
+  "archivo": "toolz/itertoolz.py",
+  "buscar": "yield (match, right_default)",
+  "reemplazar": "yield (right_default, match)",
+  "descripcion": "`list(join(0, [(1, 'a'), (2, 'b')], 0, [(1, 'x')], right_default=None))` devuelve el par sin pareja como `(None, (2, 'b'))` cuando debería devolver `((2, 'b'), None)`."
+ },
+ {
+  "id": "toolz-diff-equal-rows",
+  "archivo": "toolz/itertoolz.py",
+  "buscar": "if items.count(items[0]) != N:\n                yield items\n    else:",
+  "reemplazar": "if items.count(items[0]) == N:\n                yield items\n    else:",
+  "descripcion": "`list(diff([1, 2, 3], [1, 2, 10]))` devuelve `[(1, 1), (2, 2)]` cuando debería devolver `[(3, 10)]`."
+ },
+ {
+  "id": "toolz-topk-smallest",
+  "archivo": "toolz/itertoolz.py",
+  "buscar": "heapq.nlargest(k, seq, key=key)",
+  "reemplazar": "heapq.nsmallest(k, seq, key=key)",
+  "descripcion": "`topk(2, [1, 5, 3, 9])` devuelve `(1, 3)` cuando debería devolver `(9, 5)`."
+ },
+ {
+  "id": "toolz-keymap-values",
+  "archivo": "toolz/dicttoolz.py",
+  "buscar": "rv.update(zip(map(func, d.keys()), d.values()))",
+  "reemplazar": "rv.update(zip(map(func, d.keys()), d.keys()))",
+  "descripcion": "`keymap(str.upper, {'a': 1, 'b': 2})` devuelve `{'A': 'a', 'B': 'b'}` cuando debería devolver `{'A': 1, 'B': 2}`."
+ },
+ {
+  "id": "toolz-get-in-no-default",
+  "archivo": "toolz/dicttoolz.py",
+  "buscar": "        if no_default:\n            raise",
+  "reemplazar": "        if not no_default:\n            raise",
+  "descripcion": "`get_in(['a', 'b'], {})` lanza `KeyError` cuando debería devolver `None`, y con `no_default=True` devuelve `None` en vez de lanzar."
+ },
+ {
+  "id": "toolz-thread-last-arg-position",
+  "archivo": "toolz/functoolz.py",
+  "buscar": "args = args + (val,)",
+  "reemplazar": "args = (val,) + args",
+  "descripcion": "`thread_last([1, 2, 3], (map, lambda x: x * 2))` falla porque el valor se pasa como primer argumento; debería devolver un iterador sobre `[2, 4, 6]`."
+ },
+ {
+  "id": "toolz-flip-argument-order",
+  "archivo": "toolz/functoolz.py",
+  "buscar": "    return func(b, a)",
+  "reemplazar": "    return func(a, b)",
+  "descripcion": "`flip(lambda a, b: a - b, 1, 10)` devuelve `-9` cuando debería devolver `9`."
+ }
+]

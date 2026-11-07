@@ -1,0 +1,106 @@
+[
+  {
+    "id": "pyflakes-return-outside-function",
+    "archivo": "pyflakes/checker.py",
+    "buscar": "if isinstance(self.scope, (ClassScope, ModuleScope)):\n            self.report(messages.ReturnOutsideFunction",
+    "reemplazar": "if isinstance(self.scope, (ClassScope,)):\n            self.report(messages.ReturnOutsideFunction",
+    "descripcion": "`check(\"return 1\\n\", \"m\")` devuelve 0 cuando debería devolver 1 (`return` fuera de una función).",
+    "ocultos": [
+      "pyflakes/test/test_doctests.py",
+      "pyflakes/test/test_other.py"
+    ]
+  },
+  {
+    "id": "pyflakes-continue-in-loop-else",
+    "archivo": "pyflakes/checker.py",
+    "buscar": "if n_child not in n.orelse:",
+    "reemplazar": "if n_child in n.orelse:",
+    "descripcion": "`check(\"for i in range(3):\\n    continue\\n\", \"m\")` devuelve 1 aviso (`continue` fuera de un bucle) cuando debería devolver 0.",
+    "ocultos": [
+      "pyflakes/test/test_doctests.py",
+      "pyflakes/test/test_other.py"
+    ]
+  },
+  {
+    "id": "pyflakes-is-literal-isnot",
+    "archivo": "pyflakes/checker.py",
+    "buscar": "(ast.Is, ast.IsNot)",
+    "reemplazar": "(ast.Is,)",
+    "descripcion": "`check(\"x = 1\\nif x is not 'a':\\n    pass\\n\", \"m\")` devuelve 0 cuando debería devolver 1 (`is not` contra un literal).",
+    "ocultos": [
+      "pyflakes/test/test_is_literal.py"
+    ]
+  },
+  {
+    "id": "pyflakes-duplicate-dict-key-two",
+    "archivo": "pyflakes/checker.py",
+    "buscar": "if count > 1",
+    "reemplazar": "if count > 2",
+    "descripcion": "`check(\"d = {'a': 1, 'a': 2}\\n\", \"m\")` devuelve 0 cuando debería devolver 2 (clave repetida con valores distintos).",
+    "ocultos": [
+      "pyflakes/test/test_dict.py"
+    ]
+  },
+  {
+    "id": "pyflakes-del-inside-if-undefined",
+    "archivo": "pyflakes/checker.py",
+    "buscar": "(ast.If, ast.While, ast.IfExp)",
+    "reemplazar": "(ast.While, ast.IfExp)",
+    "descripcion": "`check(\"c = 1\\nx = 1\\nif c:\\n    del x\\nprint(x)\\n\", \"m\")` devuelve 1 aviso de nombre indefinido cuando debería devolver 0 (el `del` solo se ejecuta si se cumple `c`).",
+    "ocultos": [
+      "pyflakes/test/test_doctests.py",
+      "pyflakes/test/test_undefined_names.py"
+    ]
+  },
+  {
+    "id": "pyflakes-recursive-count-last-only",
+    "archivo": "pyflakes/api.py",
+    "buscar": "warnings += checkPath(sourcePath, reporter)",
+    "reemplazar": "warnings = checkPath(sourcePath, reporter)",
+    "descripcion": "`checkRecursive([dir], reporter)` sobre un directorio con dos archivos que tienen 1 aviso cada uno devuelve 1 cuando debería devolver 2.",
+    "ocultos": [
+      "pyflakes/test/test_api.py"
+    ]
+  },
+  {
+    "id": "pyflakes-duplicate-argument-first",
+    "archivo": "pyflakes/checker.py",
+    "buscar": "if arg in args[:idx]:",
+    "reemplazar": "if arg in args[1:idx]:",
+    "descripcion": "`check(\"def f(a, a):\\n    pass\\n\", \"m\")` devuelve 0 cuando debería devolver 1 (argumento duplicado).",
+    "ocultos": [
+      "pyflakes/test/test_doctests.py",
+      "pyflakes/test/test_other.py"
+    ]
+  },
+  {
+    "id": "pyflakes-dict-valores-iguales",
+    "archivo": "pyflakes/checker.py",
+    "buscar": "if any(count == 1 for value, count in values.items()):",
+    "reemplazar": "if any(count > 1 for value, count in values.items()):",
+    "descripcion": "Para `{\"a\": 1, \"a\": 2}` pyflakes no avisa de la clave repetida con valores distintos, y en cambio avisa de `{\"a\": 1, \"a\": 1}` (mismo valor), que debería ser inofensivo.",
+    "ocultos": [
+      "pyflakes/test/test_dict.py"
+    ]
+  },
+  {
+    "id": "pyflakes-dict-clave-variable",
+    "archivo": "pyflakes/checker.py",
+    "buscar": "compare.name == self.name",
+    "reemplazar": "compare.name != self.name",
+    "descripcion": "Para `x = y = 1` seguido de `{x: 1, x: 2}`, pyflakes no avisa de `dictionary key 'x' repeated with different values`, aunque la clave `x` aparece dos veces con valores distintos.",
+    "ocultos": [
+      "pyflakes/test/test_dict.py"
+    ]
+  },
+  {
+    "id": "pyflakes-annotated-argumentos",
+    "archivo": "pyflakes/checker.py",
+    "buscar": "len(slice_tuple.elts) < 2",
+    "reemplazar": "len(slice_tuple.elts) < 3",
+    "descripcion": "Con `from typing import Annotated` y `x: Annotated[int, \"no es un tipo\"]`, pyflakes interpreta la cadena \"no es un tipo\" como anotación y emite un aviso de sintaxis inválida en anotación adelantada.",
+    "ocultos": [
+      "pyflakes/test/test_type_annotations.py"
+    ]
+  }
+]

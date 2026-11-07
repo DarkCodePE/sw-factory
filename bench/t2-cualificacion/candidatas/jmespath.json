@@ -1,0 +1,114 @@
+[
+ {
+  "id": "jmespath-avg-entero",
+  "archivo": "jmespath/functions.py",
+  "buscar": "return sum(arg) / len(arg)",
+  "reemplazar": "return sum(arg) // len(arg)",
+  "descripcion": "`jmespath.search('avg(@)', [1, 2])` devuelve 1 cuando debería devolver 1.5."
+ },
+ {
+  "id": "jmespath-to-number-bool",
+  "archivo": "jmespath/functions.py",
+  "buscar": "if isinstance(arg, (list, dict, bool)):",
+  "reemplazar": "if isinstance(arg, (list, dict)):",
+  "descripcion": "`jmespath.search('to_number(@)', True)` devuelve true cuando debería devolver null, porque un booleano no es convertible a número."
+ },
+ {
+  "id": "jmespath-reverse-cadena",
+  "archivo": "jmespath/functions.py",
+  "buscar": "return arg[::-1]",
+  "reemplazar": "return arg[::1]",
+  "descripcion": "`jmespath.search('reverse(@)', 'abc')` devuelve 'abc' cuando debería devolver 'cba'."
+ },
+ {
+  "id": "jmespath-sort-by-orden",
+  "archivo": "jmespath/functions.py",
+  "buscar": "sorted(array, key=keyfunc)",
+  "reemplazar": "sorted(array, key=keyfunc, reverse=True)",
+  "descripcion": "`jmespath.search('sort_by(@, &n)', [{'n': 2}, {'n': 1}, {'n': 3}])` devuelve los elementos de mayor a menor (3, 2, 1) cuando debería devolverlos de menor a mayor."
+ },
+ {
+  "id": "jmespath-max-by-minimo",
+  "archivo": "jmespath/functions.py",
+  "buscar": "return max(array, key=keyfunc)",
+  "reemplazar": "return min(array, key=keyfunc)",
+  "descripcion": "`jmespath.search('max_by(@, &n)', [{'n': 2}, {'n': 5}, {'n': 1}])` devuelve `{'n': 1}` cuando debería devolver `{'n': 5}`."
+ },
+ {
+  "id": "jmespath-not-null-falsos",
+  "archivo": "jmespath/functions.py",
+  "buscar": "if argument is not None:",
+  "reemplazar": "if argument:",
+  "descripcion": "`jmespath.search('not_null(a, b)', {'a': 0, 'b': 5})` devuelve 5 cuando debería devolver 0, el primer valor que no es null; con `{'a': False, 'b': 5}` pasa lo mismo."
+ },
+ {
+  "id": "jmespath-merge-orden",
+  "archivo": "jmespath/functions.py",
+  "buscar": "for arg in arguments:",
+  "reemplazar": "for arg in reversed(arguments):",
+  "descripcion": "`jmespath.search('merge(a, b)', {'a': {'x': 1}, 'b': {'x': 2}})` devuelve `{'x': 1}` cuando debería devolver `{'x': 2}`, porque el último objeto debe imponerse."
+ },
+ {
+  "id": "jmespath-ceil-suelo",
+  "archivo": "jmespath/functions.py",
+  "buscar": "return math.ceil(arg)",
+  "reemplazar": "return math.floor(arg)",
+  "descripcion": "`jmespath.search('ceil(@)', 1.2)` devuelve 1 cuando debería devolver 2."
+ },
+ {
+  "id": "jmespath-ends-with-inicio",
+  "archivo": "jmespath/functions.py",
+  "buscar": "return search.endswith(suffix)",
+  "reemplazar": "return search.startswith(suffix)",
+  "descripcion": "`jmespath.search('ends_with(@, `\"lo\"`)', 'hello')` devuelve false cuando debería devolver true."
+ },
+ {
+  "id": "jmespath-flatten-un-nivel",
+  "archivo": "jmespath/visitor.py",
+  "buscar": "merged_list.extend(element)",
+  "reemplazar": "merged_list.append(element)",
+  "descripcion": "`jmespath.search('[]', [[1, 2], [3]])` devuelve `[[1, 2], [3]]` sin aplanar, cuando debería devolver `[1, 2, 3]`."
+ },
+ {
+  "id": "jmespath-and-resultado",
+  "archivo": "jmespath/visitor.py",
+  "buscar": "return self.visit(node['children'][1], value)\n\n    def visit_not",
+  "reemplazar": "return self.visit(node['children'][0], value)\n\n    def visit_not",
+  "descripcion": "`jmespath.search('a && b', {'a': 1, 'b': 2})` devuelve 1 cuando debería devolver 2, el valor de la derecha, porque la izquierda es verdadera."
+ },
+ {
+  "id": "jmespath-not-cero",
+  "archivo": "jmespath/visitor.py",
+  "buscar": "original_result == 0:",
+  "reemplazar": "original_result == 1:",
+  "descripcion": "`jmespath.search('!`0`', {})` devuelve true cuando debería devolver false, porque en JMESPath el número 0 no es falso."
+ },
+ {
+  "id": "jmespath-comparar-tipos",
+  "archivo": "jmespath/visitor.py",
+  "buscar": "if not (_is_comparable(left) and",
+  "reemplazar": "if not (_is_comparable(left) or",
+  "descripcion": "`jmespath.search('a < b', {'a': 1, 'b': [1]})` lanza TypeError cuando debería devolver null al comparar un número con una lista."
+ },
+ {
+  "id": "jmespath-igual-bool",
+  "archivo": "jmespath/visitor.py",
+  "buscar": "if _is_actual_number(x) and x in (0, 1):",
+  "reemplazar": "if _is_actual_number(x) and x in (0,):",
+  "descripcion": "`jmespath.search('a == `true`', {'a': 1})` devuelve true cuando debería devolver false, porque el número 1 no es igual al booleano true."
+ },
+ {
+  "id": "jmespath-menor-igual",
+  "archivo": "jmespath/lexer.py",
+  "buscar": "yield self._match_or_else('=', 'lte', 'lt')",
+  "reemplazar": "yield self._match_or_else('=', 'lt', 'lte')",
+  "descripcion": "`jmespath.search('a <= b', {'a': 2, 'b': 2})` devuelve false cuando debería devolver true, y `jmespath.search('a < b', {'a': 1, 'b': 2})` devuelve false."
+ },
+ {
+  "id": "jmespath-comparador-and",
+  "archivo": "jmespath/parser.py",
+  "buscar": "right = self._expression(self.BINDING_POWER[comparator])",
+  "reemplazar": "right = self._expression(self.BINDING_POWER['or'])",
+  "descripcion": "`jmespath.search('a == `1` && b', {'a': 1, 'b': 'x'})` devuelve false cuando debería devolver 'x': la comparación parece absorber el `&&` y el resultado es erróneo."
+ }
+]
