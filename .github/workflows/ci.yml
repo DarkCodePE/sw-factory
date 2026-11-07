@@ -25,4 +25,5 @@ jobs:
           fi
       - run: bun install --frozen-lockfile
       - run: bunx --no-install tsc --noEmit -p .
+      - run: python3 -m pip install --user --break-system-packages pytest==9.0.2
       - run: bun test

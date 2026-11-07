@@ -33,12 +33,21 @@ export async function probarOcultos(dest: string, taskId?: string) {
       const observed = existsSync(join(wt, 'probe-result.json')) ? JSON.parse(readFileSync(join(wt, 'probe-result.json'), 'utf8')) : {};
       return { exitCode: run.exitCode, legibles: Object.keys(paths).filter(k => observed[k] === expected[k]), observed: Object.keys(observed).length };
     };
+    const sinConfinar = await read(false);
+    const confinado = await read(true);
+    const pytest = await runAgent({
+      name: 'simulated',
+      command: () => ['python3', '-m', 'pytest', '-q'],
+    }, '', wt, 120_000, { confine: true });
+    if (pytest.exitCode !== 0) {
+      console.error(`pytest confinado falló (rc=${pytest.exitCode}). Se requiere pytest instalado y una suite visible en verde.\n${pytest.stdout}\n${pytest.stderr}`);
+    }
     return {
       tarea: t.id, ocultos: rels,
       enBase: rels.filter(r => existsSync(join(wt, r))),           // debe ser []
       enHistoria: rels.filter(r => historia.split('\n').some(l => l.endsWith(` ${r}`))), // debe ser []
-      sinConfinar: await read(false),                               // lectura posible: sin --confine no hay barrera
-      confinado: await read(true),                                  // debe ser legibles: []
+      sinConfinar,                                                 // lectura posible: sin --confine no hay barrera
+      confinado: { ...confinado, pytest_rc: pytest.exitCode },       // legibles: [], pytest_rc: 0
     };
   } finally { git(t.repo, 'worktree', 'remove', '--force', wt); }
 }
@@ -50,5 +59,5 @@ if (import.meta.main) {
   const text = JSON.stringify(r, null, 2) + '\n';
   if (out) writeFileSync(resolve(out), text);
   console.log(text);
-  if (r.enBase.length || r.enHistoria.length || r.confinado.legibles.length || !r.confinado.observed) process.exitCode = 1;
+  if (r.enBase.length || r.enHistoria.length || r.confinado.legibles.length || !r.confinado.observed || r.confinado.pytest_rc !== 0) process.exitCode = 1;
 }
