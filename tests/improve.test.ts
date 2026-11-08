@@ -3,7 +3,9 @@ import { existsSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
-import { armCost, createExperiment, deleteExperiment, experimentRunsJson, parseSuite, reportExperiment, restoreProtected, rng, runExperiment, variance } from '../src/improve.ts';
+import { armCost, armWorkerReport, createExperiment, deleteExperiment, describesTests, experimentRunsJson, parseSuite, reportExperiment, restoreProtected, rng, runExperiment, variance } from '../src/improve.ts';
+import { getAgent } from '../src/agents.ts';
+import { processActivity } from '../src/pool.ts';
 import { runDirectory } from '../src/manifest.ts';
 import { defaultProfile, DEFAULT_DIGEST, saveProfile } from '../src/profile.ts';
 import { Store } from '../src/store.ts';
@@ -72,7 +74,8 @@ test('improve run con agente fake produce corridas pareadas con la semilla regis
   expect(j.suite_digest).toBe((store.db.query('SELECT suite_digest d FROM experiments WHERE id = ?').get('e1') as { d: string }).d);
   expect([j.baseline, j.candidate]).toEqual([DEFAULT_DIGEST, cand]);
   expect(j.runs).toHaveLength(8);
-  expect(j.runs[0]).toEqual({ batch: expect.any(String), seed: 7, split: 'development', task_id: 't1', repeat: 1, arm: expect.any(String), position: 0, success: 1, diff_lines: expect.any(Number), duration_ms: expect.any(Number), cost_usd: null, integrity_ok: 1, task_group: null, confined: false });
+  expect(j.runs[0]).toEqual({ batch: expect.any(String), seed: 7, split: 'development', task_id: 't1', repeat: 1, arm: expect.any(String), position: 0, success: 1, diff_lines: expect.any(Number), duration_ms: expect.any(Number), cost_usd: null, integrity_ok: 1, task_group: null, confined: false, worker_report: { present: true, describes_tests: false } });
+  expect(j.worker_report_rate).toBe(0);
   expect(j.repeated_baseline).toBe(false);
   expect(new Set(j.runs.map(r => r.task_id))).toEqual(new Set(['t1', 't2']));
 }, 60_000);
@@ -204,7 +207,7 @@ test('ensureSchema migra una base sin integrity_ok, task_group ni repeated_basel
     agent TEXT NOT NULL, success INTEGER NOT NULL, diff_lines INTEGER NOT NULL, duration_ms INTEGER NOT NULL, change_id TEXT, error TEXT, created_at TEXT NOT NULL)`);
   create('m2');
   const names = (t: string) => (store.db.query(`PRAGMA table_info(${t})`).all() as { name: string }[]).map(c => c.name);
-  expect(names('experiment_runs')).toEqual(expect.arrayContaining(['cost_usd', 'integrity_ok', 'task_group']));
+  expect(names('experiment_runs')).toEqual(expect.arrayContaining(['cost_usd', 'integrity_ok', 'task_group', 'worker_report']));
   expect(names('experiments')).toEqual(expect.arrayContaining(['repeated_baseline', 'control']));
 });
 
@@ -263,3 +266,220 @@ test('confined se persiste por corrida y el agregado exige todas, con migración
   expect(report.runs.map(r => r.confined)).toEqual([false, false, false, false]);
   expect(store.db.query('SELECT COUNT(*) n FROM experiment_runs WHERE confined = 0').get()).toEqual({ n: 6 });
 }, 60_000);
+
+test('describesTests regla determinista: detecta mención de tests propuestos', () => {
+  // Positivos: test/tests/pytest/unittest/prueba/pruebas con verbos/requisitos de acción
+  expect(describesTests('Tests to add:\n- test_calc: should verify boundary')).toBe(true);
+  expect(describesTests('Tests needed:\n- test_empty: should return empty list')).toBe(true);
+  expect(describesTests('Tests necesarios: caso de prueba para valor vacío')).toBe(true);
+  expect(describesTests('Se deberían escribir pruebas unitarias para el nuevo método')).toBe(true);
+  expect(describesTests('Tests that would be needed:\n1. test_zero_division')).toBe(true);
+  expect(describesTests('Tests que harían falta:\n- test_input')).toBe(true);
+  expect(describesTests('Describo los tests a añadir a continuación')).toBe(true);
+  expect(describesTests('I propose new tests for the edge cases')).toBe(true);
+
+  // Negativos: tests ejecutados o código sin proponer tests
+  expect(describesTests('STATUS: done\n\nfake agent handled: tarea uno')).toBe(false);
+  expect(describesTests('Run the test suite: pytest passed (10 passed)')).toBe(false);
+  expect(describesTests('All tests pass without issues')).toBe(false);
+  expect(describesTests('Fixed bug in foo.py and updated documentation')).toBe(false);
+  expect(describesTests('')).toBe(false);
+  expect(describesTests(null as any)).toBe(false);
+});
+
+test('worker_report por corrida: describe tests -> true, no describe -> false, sin informe -> present false', async () => {
+  create('wr1');
+  // 1. Corrida con informe que describe tests
+  process.env.FABRICA_FAKE_STATUS = 'done\n\nTests to add:\n- test_bound: should verify limit';
+  try {
+    await runExperiment(store.db, dir, 'wr1', { split: 'development', repeats: 1, agent: 'fake', seed: 10 });
+  } finally {
+    delete process.env.FABRICA_FAKE_STATUS;
+  }
+  let rep = experimentRunsJson(store.db, 'wr1');
+  expect(rep.runs).toHaveLength(2);
+  for (const r of rep.runs) {
+    expect(r.worker_report).toEqual({ present: true, describes_tests: true });
+  }
+  expect(rep.worker_report_rate).toBe(1);
+  expect(rep.worker_report_rate_by_arm.baseline).toBe(1);
+  expect(rep.worker_report_rate_by_arm.candidate).toBe(1);
+
+  // 2. Corrida con informe que NO describe tests
+  create('wr2');
+  await runExperiment(store.db, dir, 'wr2', { split: 'development', repeats: 1, agent: 'fake', seed: 20 });
+  rep = experimentRunsJson(store.db, 'wr2');
+  expect(rep.runs).toHaveLength(2);
+  for (const r of rep.runs) {
+    expect(r.worker_report).toEqual({ present: true, describes_tests: false });
+  }
+  expect(rep.worker_report_rate).toBe(0);
+  expect(rep.worker_report_rate_by_arm.baseline).toBe(0);
+  expect(rep.worker_report_rate_by_arm.candidate).toBe(0);
+
+  // 3. Corrida sin informe (worker_report NULL en la BD)
+  store.db.query('UPDATE experiment_runs SET worker_report = NULL WHERE experiment_id = ?').run('wr2');
+  rep = experimentRunsJson(store.db, 'wr2');
+  for (const r of rep.runs) {
+    expect(r.worker_report).toEqual({ present: false, describes_tests: false });
+  }
+  expect(rep.worker_report_rate).toBeNull();
+  expect(rep.worker_report_rate_by_arm.baseline).toBeNull();
+  expect(rep.worker_report_rate_by_arm.candidate).toBeNull();
+}, 60_000);
+
+test('worker_report_rate agregado: calcula correctamente la proporción describes / present y por brazo', () => {
+  create('rate1');
+  const now = new Date().toISOString();
+  // Insertamos corridas sintéticas en rate1:
+  // baseline: 1 describes, 1 no describes -> rate = 1/2 = 0.5
+  // candidate: 1 describes, 0 no describes, 1 sin informe -> present = 1, describes = 1 -> rate = 1/1 = 1.0
+  // Total: present = 3, describes = 2 -> total rate = 2/3 ≈ 0.6667
+  const ins = (arm: string, report: string | null) => {
+    store.db.query(`INSERT INTO experiment_runs (experiment_id, batch, seed, split, task_id, repeat, arm, position,
+      profile_digest, agent, success, diff_lines, duration_ms, created_at, worker_report)
+      VALUES ('rate1', 'b1', 1, 'development', 't1', 1, ?, 0, 'prof', 'fake', 1, 0, 100, ?, ?)`).run(arm, now, report);
+  };
+  ins('baseline', 'STATUS: done\n\nTests to add:\n- test_one: should check');
+  ins('baseline', 'STATUS: done\n\nImplemented without tests');
+  ins('candidate', 'STATUS: done\n\nTests needed:\n- test_two: should verify');
+  ins('candidate', null); // sin informe
+
+  const rep = experimentRunsJson(store.db, 'rate1');
+  expect(rep.runs).toHaveLength(4);
+  expect(rep.runs.map(r => r.worker_report)).toEqual([
+    { present: true, describes_tests: true },
+    { present: true, describes_tests: false },
+    { present: true, describes_tests: true },
+    { present: false, describes_tests: false },
+  ]);
+  expect(rep.worker_report_rate).toBeCloseTo(2 / 3);
+  expect(rep.worker_report_rate_by_arm.baseline).toBe(0.5);
+  expect(rep.worker_report_rate_by_arm.candidate).toBe(1.0);
+  expect(rep.by_arm.baseline!.worker_report_rate).toBe(0.5);
+  expect(rep.by_arm.candidate!.worker_report_rate).toBe(1.0);
+});
+
+test('base antigua sin columna worker_report sigue funcionando y migra con ensureSchema', () => {
+  create('legacy1');
+  const now = new Date().toISOString();
+  store.db.query(`INSERT INTO experiment_runs (experiment_id, batch, seed, split, task_id, repeat, arm, position,
+    profile_digest, agent, success, diff_lines, duration_ms, created_at, worker_report)
+    VALUES ('legacy1', 'b1', 1, 'development', 't1', 1, 'baseline', 0, 'prof', 'fake', 1, 0, 100, ?, 'STATUS: done\n\nTests to add: test_x')`).run(now);
+
+  // Simular BD antigua eliminando la columna worker_report
+  store.db.exec('ALTER TABLE experiment_runs DROP COLUMN worker_report');
+
+  // experimentRunsJson debe migrar idempotentemente vía ensureSchema y responder sin error
+  const rep = experimentRunsJson(store.db, 'legacy1');
+  expect(rep.runs).toHaveLength(1);
+  expect(rep.runs[0]!.worker_report).toEqual({ present: false, describes_tests: false });
+  expect(rep.worker_report_rate).toBeNull();
+  expect(rep.worker_report_rate_by_arm.baseline).toBeNull();
+
+  // Comprobar que la columna fue añadida por ensureSchema
+  const cols = (store.db.query('PRAGMA table_info(experiment_runs)').all() as { name: string }[]).map(c => c.name);
+  expect(cols).toContain('worker_report');
+});
+
+
+const reportExamples: [string, boolean][] = [
+  ["Tests should be added for width=0.", true],
+  ["Tests that should be added:", true],
+  ["Tests would be written", true],
+  ["Tests should pass", false],
+  ["Ran the existing tests; they should pass", false],
+  ["All 15 tests passed", false],
+  ["Tests needed: a case for width=0", true],
+  ["No añadí tests; haría falta uno que cubra X", true],
+  ["STATUS: done\n## Tests to add\n- width=0 should return zero.", true],
+  ["No new tests are needed.", false],
+  ["No tests were added.", false],
+  ["Tests:\n- Add a case for width=0.", true],
+  ["Se requieren pruebas para width=0.", true],
+  ["Added tests for width=0.", true],
+  ["Se requiere una prueba para width=0.", true],
+  ["## Tests\n- Add a case for width=0.\n## Changes\nFixed code.", true],
+  ["## Tests\nAll 15 passed.\n## Changes\n- Add a case to the switch.", false],
+  ["No tests were added; Tests needed: width=0 returns zero.", true],
+  ["## Tests\n- No tests are needed.", false],
+  ["Tests should pass after the fix.", false],
+  ["Tests are not needed.", false],
+];
+
+test.each(reportExamples)('describesTests regresión: %s', (text, expected) => {
+  expect(describesTests(text)).toBe(expected);
+});
+
+test('informe final bloqueado se conserva por corrida incluso con concurrencia', async () => {
+  create('blocked-report');
+  process.env.FABRICA_FAKE_STATUS = 'blocked: need input\n\nTests needed: width=0 returns zero';
+  try {
+    await runExperiment(store.db, dir, 'blocked-report', { split: 'development', repeats: 2, agent: 'fake', seed: 7, concurrency: 4 });
+  } finally { delete process.env.FABRICA_FAKE_STATUS; }
+  const rep = experimentRunsJson(store.db, 'blocked-report');
+  expect(rep.runs).toHaveLength(4);
+  expect(rep.runs.every(r => r.worker_report.present && r.worker_report.describes_tests)).toBe(true);
+  expect(rep.worker_report_rate).toBe(1);
+  const rows = store.db.query('SELECT * FROM experiment_runs WHERE experiment_id = ?').all('blocked-report') as any[];
+  for (const r of rows) {
+    const state = join(dir, 'improve', 'blocked-report', `${r.batch}-${r.task_id}-r${r.repeat}-${r.arm}`, 'state');
+    const child = new Store(join(state, 'fabrica.db'));
+    try {
+      const [a] = child.listActivities({ changeId: r.change_id });
+      expect(a!.status).toBe('blocked');
+      expect(a!.result).toBeNull();
+      expect(r.worker_report).toBe(armWorkerReport(child, state, r.change_id));
+      expect(r.worker_report).toContain('Tests needed: width=0 returns zero');
+    } finally { child.close(); }
+  }
+}, 60_000);
+
+test('informe final fallido pertenece a la implementación y excluye stderr de diagnóstico', async () => {
+  create('failed-report');
+  const agent = getAgent('fake'), command = agent.command;
+  agent.command = (_prompt, options) => ['sh', '-c', options?.readOnly
+    ? 'printf "STATUS: done\n\nTests needed: investigation only\n"'
+    : 'printf "STATUS: done\n\nImplementation report without proposals.\n"; printf "diagnostic: Tests needed: stderr only\n" >&2; exit 1'];
+  try {
+    await runExperiment(store.db, dir, 'failed-report', { split: 'development', repeats: 1, agent: 'fake', seed: 7 });
+  } finally { agent.command = command; }
+  const rep = experimentRunsJson(store.db, 'failed-report');
+  expect(rep.runs.map(r => r.worker_report)).toEqual([
+    { present: true, describes_tests: false }, { present: true, describes_tests: false },
+  ]);
+  const rows = store.db.query('SELECT worker_report FROM experiment_runs WHERE experiment_id = ?').all('failed-report') as { worker_report: string }[];
+  for (const r of rows) expect(r.worker_report).toBe('STATUS: done\n\nImplementation report without proposals.');
+}, 60_000);
+
+test('un reintento sin informe final no reutiliza el informe anterior ni la investigación', async () => {
+  create('retry-report');
+  const agent = getAgent('fake'), command = agent.command;
+  agent.command = (_prompt, options) => ['sh', '-c', options?.readOnly
+    ? 'printf "STATUS: done\n\nTests needed: investigation only\n"'
+    : 'if [ ! -f .attempt ]; then touch .attempt; printf "STATUS: done\n\nTests needed: first attempt only\n"; else printf "diagnostic only\n" >&2; fi; exit 1'];
+  try {
+    await runExperiment(store.db, dir, 'retry-report', { split: 'development', repeats: 1, agent: 'fake', seed: 7 });
+  } finally { agent.command = command; }
+  const rep = experimentRunsJson(store.db, 'retry-report');
+  expect(rep.runs.map(r => r.worker_report)).toEqual([
+    { present: false, describes_tests: false }, { present: false, describes_tests: false },
+  ]);
+  expect(rep.worker_report_rate).toBeNull();
+}, 60_000);
+
+
+test('un intento que falla antes de lanzar el agente descarta la evidencia anterior', async () => {
+  const ws = store.createWorkstream({ slug: 'launch-failure', goal: 'g', repo, agent: 'fake', requireChangeApproval: false });
+  store.setWorkstreamState(ws.id, 'active');
+  const change = store.createChange(ws.id, 'task', 'description');
+  const activity = store.claimActivity(ws.id, 'worker')!;
+  const run = runDirectory(dir, change.id);
+  mkdirSync(run, { recursive: true });
+  writeFileSync(join(run, `${activity.id}.json`), JSON.stringify({ workerReport: 'STATUS: done\nTests needed: previous attempt' }));
+  // Only this test's disposable repo is removed; setup fails before an agent can emit a new report.
+  rmSync(repo, { recursive: true, force: true });
+  await processActivity(store, activity, 'worker', { workstream: ws.id, stateDir: dir, log: () => {} });
+  expect(store.getActivity(activity.id).retryCount).toBe(1);
+  expect(armWorkerReport(store, dir, change.id)).toBeNull();
+});
