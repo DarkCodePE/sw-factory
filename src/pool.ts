@@ -125,6 +125,8 @@ export async function processActivity(
       return;
     }
 
+    // Reset attempt evidence before setup too: a launch/setup failure must not reuse an earlier report.
+    atomicEvidence(`${runDirectory(opts.stateDir, change.id)}/${a.id}.json`, JSON.stringify({ isolation: opts.confine ? 'bwrap-allowlist' : isolationFor(agent.name), workerReport: null }));
     const { path, branch, baseSha } = await ensureWorktree(ws.repo, opts.stateDir, change.id);
     store.setChangeBranch(change.id, branch);
     store.setChangeBase(change.id, baseSha);
@@ -213,7 +215,6 @@ export async function processActivity(
       ...selfCommand('__capture', new URL('./manifest-capture.ts', import.meta.url)),
       activityLog(opts.stateDir, change.id, a.id), ...agent.command(text, options),
     ] };
-    atomicEvidence(`${runDirectory(opts.stateDir, change.id)}/${a.id}.json`, JSON.stringify({ isolation: opts.confine ? 'bwrap-allowlist' : isolationFor(agent.name) }));
     const run = await runAgent(opts.confine ? agent : captureAgent, prompt, path, undefined, {
       confine: opts.confine,
       capturePath: opts.confine ? activityLog(opts.stateDir, change.id, a.id) : undefined,
@@ -227,6 +228,8 @@ export async function processActivity(
     atomicEvidence(`${runDirectory(opts.stateDir, change.id)}/${a.id}.json`, JSON.stringify({
       isolation: opts.confine ? 'bwrap-allowlist' : isolationFor(agent.name), durationMs: run.durationMs, exitCode: run.exitCode, usage: run.usage ?? null,
       egressProbe: agent.name === 'native' ? readEgressProbe(probeFile) : null,
+      // Keep only a declared final worker report, independently of later block/failure decisions; never diagnostics or an earlier attempt.
+      workerReport: !a.validator && !abortController.signal.aborted && run.status.kind !== 'missing' ? run.output : null,
     }));
 
     // Barrier check after agent run

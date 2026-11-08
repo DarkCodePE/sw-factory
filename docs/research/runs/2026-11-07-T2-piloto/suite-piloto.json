@@ -1,0 +1,31 @@
+{
+  "tasks": [
+    {
+      "id": "xmltodict-ns-nombre",
+      "group": "xmltodict",
+      "repo": "/tmp/t2-piloto/tareas/xmltodict-ns-nombre",
+      "base": "a82b2f8d6a531f7be8738e66fb7e60817f707eb5",
+      "description": "xmltodict.parse('<a xmlns:x=\"u\"><x:item>1</x:item></a>', process_namespaces=True, namespaces={'u': None}) devuelve {'a': {'@xmlns': {'x': 'u'}, 'tem': '1'}} cuando deberia devolver {'a': {'@xmlns': {'x': 'u'}, 'item': '1'}}; se pierde la primera letra del nombre.",
+      "verify": "bash -c 'cp -R /tmp/t2-piloto/ocultos/xmltodict-ns-nombre/. . && env PYTEST_DISABLE_PLUGIN_AUTOLOAD=1 PYTHONDONTWRITEBYTECODE=1 python3 -m pytest -q -p no:cacheprovider -o addopts= tests'",
+      "split": "development"
+    },
+    {
+      "id": "sortedcontainers-count-ultimo",
+      "group": "sortedcontainers",
+      "repo": "/tmp/t2-piloto/tareas/sortedcontainers-count-ultimo",
+      "base": "34dd6091b64e82f6ec1971fa56d2fd05fb0969c5",
+      "description": "SortedList([1, 2, 2]).count(2) devuelve 1 cuando deberia devolver 2: contar el valor maximo de la lista da uno menos.",
+      "verify": "bash -c 'cp -R /tmp/t2-piloto/ocultos/sortedcontainers-count-ultimo/. . && env PYTEST_DISABLE_PLUGIN_AUTOLOAD=1 PYTHONDONTWRITEBYTECODE=1 PYTHONPATH=src python3 -m pytest -q -p no:cacheprovider -o addopts= tests'",
+      "split": "development"
+    },
+    {
+      "id": "tabulate-update-lines-reset",
+      "group": "tabulate",
+      "repo": "/tmp/t2-piloto/tareas/tabulate-update-lines-reset",
+      "base": "78290cbb312ebeb874dbe9bfa08715dc2b50c3fe",
+      "description": "`tabulate([[\"\\x1b[31mrojo largo aqui\\x1b[0m\"]], maxcolwidths=[8], tablefmt=\"plain\")` reparte el texto coloreado en filas que no cierran ni reabren bien el color: el rojo se pierde o se arrastra a las filas siguientes.",
+      "verify": "bash -c 'cp -R /tmp/t2-piloto/ocultos/tabulate-update-lines-reset/. . && env PYTEST_DISABLE_PLUGIN_AUTOLOAD=1 PYTHONDONTWRITEBYTECODE=1 python3 -m pytest -q -p no:cacheprovider -o addopts= test'",
+      "split": "development"
+    }
+  ]
+}

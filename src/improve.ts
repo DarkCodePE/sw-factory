@@ -32,7 +32,13 @@ CREATE TABLE IF NOT EXISTS experiment_runs (
   profile_digest TEXT NOT NULL, agent TEXT NOT NULL, success INTEGER NOT NULL, diff_lines INTEGER NOT NULL,
   duration_ms INTEGER NOT NULL, change_id TEXT, error TEXT, created_at TEXT NOT NULL);`);
   const cols = db.query('PRAGMA table_info(experiment_runs)').all() as { name: string }[];
-  for (const [col, type] of [['cost_usd', 'REAL'], ['integrity_ok', 'INTEGER'], ['task_group', 'TEXT'], ['confined', 'INTEGER NOT NULL DEFAULT 0 CHECK (confined IN (0,1))']] as const)
+  for (const [col, type] of [
+    ['cost_usd', 'REAL'],
+    ['integrity_ok', 'INTEGER'],
+    ['task_group', 'TEXT'],
+    ['confined', 'INTEGER NOT NULL DEFAULT 0 CHECK (confined IN (0,1))'],
+    ['worker_report', 'TEXT'],
+  ] as const)
     if (!cols.some(c => c.name === col)) db.exec(`ALTER TABLE experiment_runs ADD COLUMN ${col} ${type}`);
   const expCols = db.query('PRAGMA table_info(experiments)').all() as { name: string }[];
   if (!expCols.some(c => c.name === 'repeated_baseline')) db.exec('ALTER TABLE experiments ADD COLUMN repeated_baseline INTEGER NOT NULL DEFAULT 0');
@@ -117,7 +123,41 @@ async function sh(cwd: string, argv: string[], timeoutMs = 60_000): Promise<{ co
   return { code, out: o + e };
 }
 
-export interface ArmResult { integrityOk: boolean | null; success: boolean; diffLines: number; durationMs: number; costUsd: number | null; changeId: string | null; error: string | null }
+export interface ArmResult { integrityOk: boolean | null; success: boolean; diffLines: number; durationMs: number; costUsd: number | null; changeId: string | null; error: string | null; workerReport: string | null }
+
+// Regla: propuestas/necesidad explícitas de tests por cláusula sin negación; bajo encabezados de tests también cuentan casos en viñetas.
+export function describesTests(report: string): boolean {
+  if (!report || typeof report !== 'string') return false;
+  const noun = String.raw`\b(?:tests?|pytest|unittest|pruebas?|casos?\s+de\s+prueba)\b`;
+  const testNoun = new RegExp(noun, 'i');
+  const action = String.raw`(?:add(?:ed|ing)?|writ(?:e|ing|ten)|creat(?:e|ed|ing)|implement(?:ed|ing)?|propos(?:e|ed|ing)|anad\w*|agreg\w*|escrib\w*|crear|needs?|requires?|requieren?|necesitan?|(?:harian?\s+)?falta)`;
+  const target = String.raw`(?:${noun}|\b(?:cases?|casos?|uno|una)\b)`;
+  const proposal = new RegExp(String.raw`\b${action}\s+(?:(?:new|unit|integration|additional|a|an|some|the|nuev[oa]s?|un[oa]?s?|los|las)\s+){0,3}${target}|${noun}\s+(?:(?:that|que)\s+)?(?:to\s+(?:add|write|create|implement)|a\s+(?:anadir|agregar|escribir|crear)|(?:(?:would|should)\s+be\s+(?:needed|required|added|written|created)|(?:are\s+)?(?:needed|required))|necesari[oa]s?|harian?\s+falta)\b`, 'i');
+  const negation = /\b(?:no|not|never|without|sin|ningun[oa]?|don't|doesn't|didn't|shouldn't|wouldn't)\b/i;
+  let testsSection = false;
+  for (const raw of report.normalize('NFD').replace(/\p{Diacritic}/gu, '').split('\n')) {
+    const line = raw.trim().replace(/\*\*/g, '');
+    const heading = /^#{1,6}\s+(.+)$/.exec(line)?.[1] ?? (/^[^\n:]+:$/.test(line) && !/^[-*]\s/.test(line) ? line : null);
+    if (heading !== null) testsSection = testNoun.test(heading) && !negation.test(heading);
+    const testContext = testNoun.test(line) || (testsSection && /^(?:[-*]|\d+[.)])\s/.test(line));
+    if (testContext && line.split(/;|[.!?]|\b(?:but|pero)\b/i).some(clause => !negation.test(clause) && proposal.test(clause))) return true;
+  }
+  return false;
+}
+
+/** Informe final de la última actividad worker; la evidencia se reinicia por intento antes de ejecutar el agente. */
+export function armWorkerReport(store: Store, stateDir: string, changeId: string): string | null {
+  const acts = store.listActivities({ changeId });
+  const workerActs = acts.filter(a => a.kind === 'implementation' || a.kind === 'investigation');
+  const act = workerActs.at(-1);
+  if (!act) return null;
+  const meta = join(runDirectory(stateDir, changeId), `${act.id}.json`);
+  if (existsSync(meta)) {
+    const evidence = JSON.parse(readFileSync(meta, 'utf8'));
+    if ('workerReport' in evidence) return typeof evidence.workerReport === 'string' ? evidence.workerReport : null;
+  }
+  return act.result || null;
+}
 
 /**
  * Coste del brazo: suma de `usage.costUsd` que el pool registra por activity. null si alguna activity no lo reporta
@@ -153,7 +193,7 @@ export async function restoreProtected(worktree: string, base: string, paths: st
 /** Un brazo: clon desechable en el commit base, store y workstream propios, agente, y comando de verificación. */
 async function runArm(stateDir: string, root: string, task: SuiteTask, digest: string, agent: string, acceptBinaries: boolean, confine: boolean): Promise<ArmResult> {
   const started = Date.now();
-  const fail = (error: string): ArmResult => ({ integrityOk: null, success: false, diffLines: 0, durationMs: Date.now() - started, costUsd: null, changeId: null, error });
+  const fail = (error: string): ArmResult => ({ integrityOk: null, success: false, diffLines: 0, durationMs: Date.now() - started, costUsd: null, changeId: null, error, workerReport: null });
   mkdirSync(root, { recursive: true });
   const clone = join(root, 'repo');
   const git = ['git', '-c', 'core.hooksPath=/dev/null'];
@@ -176,24 +216,25 @@ async function runArm(stateDir: string, root: string, task: SuiteTask, digest: s
     catch (e) { error = (e as Error).message; }
     const status = store.getChange(changeId).status;
     const costUsd = armCost(store, state, changeId);
+    const workerReport = armWorkerReport(store, state, changeId);
     const confinementError = confine ? store.listActivities({ changeId }).find(a => a.error?.includes('--confine:'))?.error : null;
-    if (confinementError) return { ...fail(confinementError), costUsd, changeId };
+    if (confinementError) return { ...fail(confinementError), costUsd, changeId, workerReport };
     const worktree = join(state, 'worktrees', changeId.slice(0, 8));
-    if (!existsSync(worktree)) return { ...fail(error ?? `sin worktree (change ${status})`), costUsd, changeId };
+    if (!existsSync(worktree)) return { ...fail(error ?? `sin worktree (change ${status})`), costUsd, changeId, workerReport };
     // Duración = agente completo (investigación + implementación); la integridad y la verificación no cuentan.
     const durationMs = Date.now() - started;
     // Integridad: dato informativo. Las rutas protegidas tocadas se restauran al commit base antes de verificar, para que el agente no influya en el verificador.
     let tampered: string[];
     try { purgeRegenerableCaches(worktree); tampered = (await protectedIntegrity(worktree, base, DEFAULT_PROTECTED_PATHS)).tampered; }
-    catch (e) { return { ...fail(`integridad: no verificable (${(e as Error).message})`), costUsd, changeId }; }
+    catch (e) { return { ...fail(`integridad: no verificable (${(e as Error).message})`), costUsd, changeId, workerReport }; }
     const restoreError = tampered.length ? await restoreProtected(worktree, base, tampered) : null;
-    if (restoreError) return { ...fail(`restauración de rutas protegidas falló: ${restoreError}`), integrityOk: false, costUsd, changeId };
+    if (restoreError) return { ...fail(`restauración de rutas protegidas falló: ${restoreError}`), integrityOk: false, costUsd, changeId, workerReport };
     await sh(worktree, [...git, 'add', '-A']);
     const numstat = (await sh(worktree, [...git, 'diff', '--cached', '--numstat', base])).out.trim();
     const diffLines = numstat ? numstat.split('\n').reduce((n, l) => { const [a, d] = l.split('\t'); return n + (Number(a) || 0) + (Number(d) || 0); }, 0) : 0;
     const v = await sh(worktree, verifierArgv(task.verify), VERIFY_TIMEOUT_MS).catch(e => ({ code: 127, out: String(e) }));
     if (v.code !== 0 && !error) error = `verify exit ${v.code} (change ${status})`;
-    return { integrityOk: !tampered.length, success: v.code === 0, diffLines, durationMs, costUsd, changeId, error: v.code === 0 ? null : error };
+    return { integrityOk: !tampered.length, success: v.code === 0, diffLines, durationMs, costUsd, changeId, error: v.code === 0 ? null : error, workerReport };
   } finally { store.close(); }
 }
 
@@ -238,9 +279,9 @@ export async function runExperiment(db: Database, stateDir: string, id: string, 
       const { task, repeat, position, arm } = jobs[persisted]!;
       const r = results[persisted++]!;
       db.query(`INSERT INTO experiment_runs (experiment_id, batch, seed, split, task_id, repeat, arm, position, profile_digest, agent,
-        success, diff_lines, duration_ms, cost_usd, change_id, error, created_at, integrity_ok, task_group, confined) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`)
+        success, diff_lines, duration_ms, cost_usd, change_id, error, created_at, integrity_ok, task_group, confined, worker_report) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`)
         .run(id, batch, seed, o.split, task.id, repeat, arm, position, arms[arm], o.agent, r.success ? 1 : 0, r.diffLines, r.durationMs, r.costUsd, r.changeId, r.error, new Date().toISOString(),
-          r.integrityOk === null ? null : r.integrityOk ? 1 : 0, task.group ?? null, o.confine ? 1 : 0);
+          r.integrityOk === null ? null : r.integrityOk ? 1 : 0, task.group ?? null, o.confine ? 1 : 0, r.workerReport ?? null);
     }
   };
   let stopped = false;
@@ -295,10 +336,33 @@ export function reportExperiment(db: Database, id: string): string {
 export function experimentRunsJson(db: Database, id: string) {
   const exp = getExperiment(db, id);
   const rows = db.query('SELECT * FROM experiment_runs WHERE experiment_id = ? ORDER BY rowid').all(id) as Record<string, any>[];
+  const runs = rows.map(x => {
+    const present = typeof x.worker_report === 'string' && x.worker_report.trim().length > 0;
+    const describes_tests = present && describesTests(x.worker_report);
+    return {
+      batch: x.batch, seed: x.seed, split: x.split, task_id: x.task_id, repeat: x.repeat, arm: x.arm, position: x.position,
+      success: x.success, diff_lines: x.diff_lines, duration_ms: x.duration_ms, cost_usd: x.cost_usd ?? null,
+      integrity_ok: x.integrity_ok ?? null, task_group: x.task_group ?? null, confined: x.confined === 1,
+      worker_report: { present, describes_tests },
+    };
+  });
+  const presentRuns = runs.filter(r => r.worker_report.present);
+  const describesRuns = presentRuns.filter(r => r.worker_report.describes_tests);
+  const worker_report_rate = presentRuns.length > 0 ? describesRuns.length / presentRuns.length : null;
+  const worker_report_rate_by_arm: Record<string, number | null> = {};
+  for (const arm of ARM_ORDER) {
+    if (rows.some(r => r.arm === arm)) {
+      const armRuns = runs.filter(r => r.arm === arm && r.worker_report.present);
+      const armDescribes = armRuns.filter(r => r.worker_report.describes_tests);
+      worker_report_rate_by_arm[arm] = armRuns.length > 0 ? armDescribes.length / armRuns.length : null;
+    }
+  }
   return {
     experiment: id, suite_digest: exp.suiteDigest, baseline: exp.baseline, candidate: exp.candidate, repeated_baseline: exp.repeatedBaseline, control: exp.control,
     confined: rows.length > 0 && rows.every(x => x.confined === 1),
-    runs: rows.map(x => ({ batch: x.batch, seed: x.seed, split: x.split, task_id: x.task_id, repeat: x.repeat, arm: x.arm, position: x.position,
-      success: x.success, diff_lines: x.diff_lines, duration_ms: x.duration_ms, cost_usd: x.cost_usd ?? null, integrity_ok: x.integrity_ok ?? null, task_group: x.task_group ?? null, confined: x.confined === 1 })),
+    worker_report_rate,
+    worker_report_rate_by_arm,
+    by_arm: Object.fromEntries(Object.entries(worker_report_rate_by_arm).map(([arm, rate]) => [arm, { worker_report_rate: rate }])),
+    runs,
   };
 }

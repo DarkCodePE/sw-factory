@@ -349,7 +349,7 @@ ${rd(r.dir, "spec.md")}`;
 }
 
 // ---------- medir ----------
-export type Corrida = { batch: string; seed: number; split: string; task_id: string; repeat: number; arm: "baseline" | "candidate" | "baseline_rep" | "control"; position: number; success: number; diff_lines: number; duration_ms: number; cost_usd: number | null; integrity_ok?: 0 | 1 | null; task_group?: string | null; worker_report?: string | null };
+export type Corrida = { batch: string; seed: number; split: string; task_id: string; repeat: number; arm: "baseline" | "candidate" | "baseline_rep" | "control"; position: number; success: number; diff_lines: number; duration_ms: number; cost_usd: number | null; integrity_ok?: 0 | 1 | null; task_group?: string | null; worker_report?: string | { present: boolean; describes_tests: boolean } | null };
 export type Reporte = { experiment: string; suite_digest: string; baseline: string; candidate: string; repeated_baseline?: boolean; control?: string | null; confined?: boolean; runs: Corrida[] };
 const NUCLEO = ["baseline", "candidate", "baseline_rep"] as const; // brazos que deciden T1; control es solo un dato
 const ARMS = [...NUCLEO, "control"] as const;
@@ -501,11 +501,15 @@ export function bootstrapCluster(corridas: Corrida[], brazoA: Brazo, brazoB: Bra
   return { diff, lo95: cuantil(muestras, 0.025), hi95: cuantil(muestras, 0.975), B, semilla };
 }
 
-/** Disponible cuando improve exponga runs[].worker_report como texto final del worker. No adivina desde logs o rutas. */
+/** Disponible cuando improve exponga runs[].worker_report como texto o resumen ({ present, describes_tests }) del worker. No adivina desde logs o rutas. */
 export function secundariaTests(corridas: Corrida[]) {
   return Object.fromEntries(ARMS.map(arm => {
-    const rs = corridas.filter(r => r.arm === arm), informes = rs.filter(r => typeof r.worker_report === "string");
-    const describen = informes.filter(r => /\b(tests?|pruebas?)\b/i.test(r.worker_report!)).length;
+    const rs = corridas.filter(r => r.arm === arm);
+    const informes = rs.filter(r => typeof r.worker_report === "string" || (r.worker_report && typeof r.worker_report === "object" && r.worker_report.present));
+    const describen = informes.filter(r => {
+      if (typeof r.worker_report === "string") return /\b(tests?|pruebas?)\b/i.test(r.worker_report);
+      return Boolean(r.worker_report?.describes_tests);
+    }).length;
     return [arm, { n: rs.length, informes: informes.length, describen_tests: describen,
       proporcion: informes.length === rs.length && rs.length ? describen / rs.length : null }];
   }));
