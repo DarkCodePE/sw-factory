@@ -1,0 +1,114 @@
+[
+ {
+  "id": "boltons-chunk-ranges-width",
+  "archivo": "boltons/iterutils.py",
+  "buscar": "        yield (i, min(i + chunk_size, input_stop))",
+  "reemplazar": "        yield (i, min(i + chunk_size - 1, input_stop))",
+  "descripcion": "`list(chunk_ranges(10, 4))` devuelve `[(0, 3), (4, 7), (8, 10)]`; debería devolver `[(0, 4), (4, 8), (8, 10)]`."
+ },
+ {
+  "id": "boltons-windowed-fill-dropped",
+  "archivo": "boltons/iterutils.py",
+  "buscar": "return zip_longest(*tees, fillvalue=fill)",
+  "reemplazar": "return zip(*tees)",
+  "descripcion": "`windowed([1, 2, 3], 2, fill=None)` devuelve `[(1, 2), (2, 3)]`; debería devolver `[(1, 2), (2, 3), (3, None)]`."
+ },
+ {
+  "id": "boltons-lstrip-first-item",
+  "archivo": "boltons/iterutils.py",
+  "buscar": "        if i != strip_value:\n            yield i\n            break",
+  "reemplazar": "        if i == strip_value:\n            yield i\n            break",
+  "descripcion": "`lstrip([0, 0, 1, 2, 0], 0)` devuelve `[0, 0, 1, 2, 0]`; debería devolver `[1, 2, 0]`, quitando los ceros iniciales."
+ },
+ {
+  "id": "boltons-frange-last-step",
+  "archivo": "boltons/iterutils.py",
+  "buscar": "    count = int(math.ceil((stop - start) / step))\n    ret = [None] * count",
+  "reemplazar": "    count = int(math.floor((stop - start) / step))\n    ret = [None] * count",
+  "descripcion": "`list(frange(2.5))` devuelve `[0.0, 1.0]`; debería devolver `[0.0, 1.0, 2.0]`: falta el último valor menor que el límite."
+ },
+ {
+  "id": "boltons-backoff-count",
+  "archivo": "boltons/iterutils.py",
+  "buscar": "count = 1 + math.ceil(math.log(stop/denom, factor))",
+  "reemplazar": "count = math.ceil(math.log(stop/denom, factor))",
+  "descripcion": "`backoff(1, 10)` devuelve `[1.0, 2.0, 4.0, 8.0]`; debería devolver `[1.0, 2.0, 4.0, 8.0, 10.0]`: falta el valor final igual al tope."
+ },
+ {
+  "id": "boltons-ceil-options-exact",
+  "archivo": "boltons/mathutils.py",
+  "buscar": "i = bisect.bisect_left(options, x)",
+  "reemplazar": "i = bisect.bisect_right(options, x)",
+  "descripcion": "`ceil(4, options=[1.5, 2.5, 4, 6, 10])` devuelve `6`; debería devolver `4`, porque 4 ya es una de las opciones."
+ },
+ {
+  "id": "boltons-floor-options-exact",
+  "archivo": "boltons/mathutils.py",
+  "buscar": "i = bisect.bisect_right(options, x)",
+  "reemplazar": "i = bisect.bisect_left(options, x)",
+  "descripcion": "`floor(2.5, options=[1.5, 2.5, 4, 6, 10])` devuelve `1.5`; debería devolver `2.5`, porque 2.5 ya es una de las opciones."
+ },
+ {
+  "id": "boltons-bytes2human-unit-edge",
+  "archivo": "boltons/strutils.py",
+  "buscar": "if round(abs_bytes / size, ndigits) < 1024:",
+  "reemplazar": "if round(abs_bytes / size, ndigits) <= 1024:",
+  "descripcion": "`bytes2human(1024)` devuelve `'1024B'`; debería devolver `'1K'`."
+ },
+ {
+  "id": "boltons-parse-int-list-range",
+  "archivo": "boltons/strutils.py",
+  "buscar": "list(range(min(range_limits), max(range_limits)+1))",
+  "reemplazar": "list(range(min(range_limits), max(range_limits)))",
+  "descripcion": "`parse_int_list('1-3,7')` devuelve `[1, 2, 7]`; debería devolver `[1, 2, 3, 7]`."
+ },
+ {
+  "id": "boltons-format-int-list-space",
+  "archivo": "boltons/strutils.py",
+  "buscar": "output_str = (delim+' ').join(output)",
+  "reemplazar": "output_str = delim.join(output)",
+  "descripcion": "`format_int_list([1, 3, 5], delim_space=True)` devuelve `'1,3,5'`; debería devolver `'1, 3, 5'`."
+ },
+ {
+  "id": "boltons-bucketize-transform",
+  "archivo": "boltons/iterutils.py",
+  "buscar": "ret.setdefault(key_of_val, []).append(value_transform(val))",
+  "reemplazar": "ret.setdefault(key_of_val, []).append(val)",
+  "descripcion": "`bucketize(range(5), key=lambda x: x % 2, value_transform=lambda x: x * 10)` devuelve `{0: [0, 2, 4], 1: [1, 3]}`; debería devolver `{0: [0, 20, 40], 1: [10, 30]}`."
+ },
+ {
+  "id": "boltons-partition-first-match",
+  "archivo": "boltons/iterutils.py",
+  "buscar": "                parts[idx].append(val)\n                break",
+  "reemplazar": "                parts[idx].append(val)",
+  "descripcion": "`partition([1, 2, 3], lambda x: x > 1)` devuelve `([2, 3], [1, 2, 3])`; debería devolver `([2, 3], [1])`."
+ },
+ {
+  "id": "boltons-lri-capacity",
+  "archivo": "boltons/cacheutils.py",
+  "buscar": "if len(self) < self.max_size:",
+  "reemplazar": "if len(self) <= self.max_size:",
+  "descripcion": "Con `c = LRI(max_size=2)` y `c[1]=1; c[2]=2; c[3]=3`, `len(c)` es 3 y la clave 1 sigue presente; debería ser 2 y la clave 1 haberse expulsado."
+ },
+ {
+  "id": "boltons-lri-pop-default",
+  "archivo": "boltons/cacheutils.py",
+  "buscar": "if default is _MISSING:",
+  "reemplazar": "if default is not _MISSING:",
+  "descripcion": "`LRI(max_size=2).pop('x', 5)` lanza KeyError; debería devolver `5`."
+ },
+ {
+  "id": "boltons-get-path-sep",
+  "archivo": "boltons/iterutils.py",
+  "buscar": "path = path.split('.')",
+  "reemplazar": "path = path.split('/')",
+  "descripcion": "`get_path({'a': {'b': 1}}, 'a.b')` lanza PathAccessError; debería devolver `1`."
+ },
+ {
+  "id": "boltons-same-compare",
+  "archivo": "boltons/iterutils.py",
+  "buscar": "return all(val == ref for val in iterator)",
+  "reemplazar": "return all(val != ref for val in iterator)",
+  "descripcion": "`same([1, 1, 1])` devuelve `False`; debería devolver `True`, y `same([1, 2])` debería ser `False`."
+ }
+]

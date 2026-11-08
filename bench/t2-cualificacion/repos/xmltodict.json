@@ -1,0 +1,23 @@
+{
+  "nombre": "xmltodict",
+  "url": "https://github.com/martinblech/xmltodict",
+  "commit": "6e29fba282e68631034dd2722a413b4e35276584",
+  "license_spdx": "MIT",
+  "license_file": "LICENSE",
+  "license_sha256": "d66d5eb8f83a0ba21d3dd04318b8817588e8764daabea852d1035e3f07ffda55",
+  "env": {
+    "PYTEST_DISABLE_PLUGIN_AUTOLOAD": "1",
+    "PYTHONDONTWRITEBYTECODE": "1"
+  },
+  "test": [
+    "python3",
+    "-m",
+    "pytest",
+    "-q",
+    "-p",
+    "no:cacheprovider",
+    "-o",
+    "addopts=",
+    "tests"
+  ]
+}

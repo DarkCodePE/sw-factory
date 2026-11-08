@@ -72,7 +72,7 @@ test('improve run con agente fake produce corridas pareadas con la semilla regis
   expect(j.suite_digest).toBe((store.db.query('SELECT suite_digest d FROM experiments WHERE id = ?').get('e1') as { d: string }).d);
   expect([j.baseline, j.candidate]).toEqual([DEFAULT_DIGEST, cand]);
   expect(j.runs).toHaveLength(8);
-  expect(j.runs[0]).toEqual({ batch: expect.any(String), seed: 7, split: 'development', task_id: 't1', repeat: 1, arm: expect.any(String), position: 0, success: 1, diff_lines: expect.any(Number), duration_ms: expect.any(Number), cost_usd: null, integrity_ok: 1, task_group: null });
+  expect(j.runs[0]).toEqual({ batch: expect.any(String), seed: 7, split: 'development', task_id: 't1', repeat: 1, arm: expect.any(String), position: 0, success: 1, diff_lines: expect.any(Number), duration_ms: expect.any(Number), cost_usd: null, integrity_ok: 1, task_group: null, confined: false });
   expect(j.repeated_baseline).toBe(false);
   expect(new Set(j.runs.map(r => r.task_id))).toEqual(new Set(['t1', 't2']));
 }, 60_000);
@@ -177,6 +177,25 @@ test('--repeated-baseline añade el brazo baseline_rep intercalado, en informe y
   expect(j.runs.filter(r => r.arm === 'baseline_rep')).toHaveLength(2);
 }, 60_000);
 
+test('--control añade un cuarto brazo intercalado con --repeated-baseline, en informe y --json', async () => {
+  createExperiment(store.db, dir, { id: 'c1', baseline: DEFAULT_DIGEST, candidate: cand, suitePath: suite, repeatedBaseline: true, control: cand });
+  await runExperiment(store.db, dir, 'c1', { split: 'development', repeats: 2, agent: 'fake', seed: 3 });
+  const rows = store.db.query('SELECT * FROM experiment_runs ORDER BY rowid').all() as any[];
+  expect(rows).toHaveLength(8);
+  for (let i = 0; i < 8; i += 4) expect(rows.slice(i, i + 4).map(x => x.arm).sort()).toEqual(['baseline', 'baseline_rep', 'candidate', 'control']);
+  expect(rows.filter(x => x.arm === 'control').every(x => x.profile_digest === cand)).toBe(true);
+  expect(reportExperiment(store.db, 'c1').split('\n').filter(l => /^development\s/.test(l)).at(-1)).toMatch(/control\s+2\s/);
+  const j = experimentRunsJson(store.db, 'c1');
+  expect(j.control).toBe(cand);
+  expect(j.runs.filter(r => r.arm === 'control')).toHaveLength(2);
+}, 60_000);
+
+test('--control con un digest inexistente falla; un experimento sin control sigue igual', () => {
+  expect(() => createExperiment(store.db, dir, { id: 'c2', baseline: DEFAULT_DIGEST, candidate: cand, suitePath: suite, control: 'f'.repeat(64) })).toThrow();
+  createExperiment(store.db, dir, { id: 'c3', baseline: DEFAULT_DIGEST, candidate: cand, suitePath: suite });
+  expect(experimentRunsJson(store.db, 'c3').control).toBeNull();
+});
+
 test('ensureSchema migra una base sin integrity_ok, task_group ni repeated_baseline', () => {
   store.db.exec('DROP TABLE IF EXISTS experiment_runs; DROP TABLE IF EXISTS experiments');
   store.db.exec(`CREATE TABLE experiments (id TEXT PRIMARY KEY, baseline TEXT NOT NULL, candidate TEXT NOT NULL, suite TEXT NOT NULL, suite_digest TEXT NOT NULL, created_at TEXT NOT NULL)`);
@@ -186,5 +205,61 @@ test('ensureSchema migra una base sin integrity_ok, task_group ni repeated_basel
   create('m2');
   const names = (t: string) => (store.db.query(`PRAGMA table_info(${t})`).all() as { name: string }[]).map(c => c.name);
   expect(names('experiment_runs')).toEqual(expect.arrayContaining(['cost_usd', 'integrity_ok', 'task_group']));
-  expect(names('experiments')).toContain('repeated_baseline');
+  expect(names('experiments')).toEqual(expect.arrayContaining(['repeated_baseline', 'control']));
 });
+
+test('P3: concurrency 4 preserves seeded rows and confines each fake worker', async () => {
+  createExperiment(store.db, dir, { id: 'parallel', baseline: DEFAULT_DIGEST, candidate: cand, suitePath: suite, repeatedBaseline: true, control: cand });
+  process.env.FABRICA_FAKE_SLEEP = '0.05';
+  try {
+    await runExperiment(store.db, dir, 'parallel', { split: 'development', repeats: 2, agent: 'fake', seed: 91, concurrency: 1, confine: true });
+    const first = experimentRunsJson(store.db, 'parallel').runs;
+    await runExperiment(store.db, dir, 'parallel', { split: 'development', repeats: 2, agent: 'fake', seed: 91, concurrency: 4, confine: true });
+    const second = experimentRunsJson(store.db, 'parallel').runs.slice(first.length);
+    const stable = (rows: typeof first) => rows.map(({ batch, duration_ms, ...r }) => r);
+    expect(stable(second)).toEqual(stable(first));
+    expect(second.every(r => r.success === 1)).toBe(true);
+    const all = store.db.query('SELECT change_id FROM experiment_runs').all() as { change_id: string }[];
+    expect(new Set(all.map(r => r.change_id)).size).toBe(16);
+  } finally { delete process.env.FABRICA_FAKE_SLEEP; }
+}, 60_000);
+
+test('P3/P6b: invalid concurrency and unsupported confinement reject before creating runs', async () => {
+  create('invalid');
+  for (const concurrency of [0, -1, 1.5, NaN, Infinity])
+    await expect(runExperiment(store.db, dir, 'invalid', { split: 'development', repeats: 1, agent: 'fake', concurrency })).rejects.toThrow(/concurrency/);
+  await expect(runExperiment(store.db, dir, 'invalid', { split: 'development', repeats: 1, agent: 'native', confine: true })).rejects.toThrow(/no soportado/);
+  expect(experimentRunsJson(store.db, 'invalid').runs).toHaveLength(0);
+});
+
+
+test('confined se persiste por corrida y el agregado exige todas, con migración conservadora', async () => {
+  create('confined');
+  expect(experimentRunsJson(store.db, 'confined').confined).toBe(false);
+  const options = { split: 'development' as const, repeats: 1, agent: 'fake', seed: 7 };
+  await runExperiment(store.db, dir, 'confined', { ...options, confine: true });
+  let report = experimentRunsJson(store.db, 'confined');
+  expect(report.confined).toBe(true);
+  expect(report.runs.map(r => r.confined)).toEqual([true, true]);
+  expect(store.db.query('SELECT confined FROM experiment_runs ORDER BY rowid').all()).toEqual([{ confined: 1 }, { confined: 1 }]);
+
+  create('plain');
+  await runExperiment(store.db, dir, 'plain', options);
+  report = experimentRunsJson(store.db, 'plain');
+  expect(report.confined).toBe(false);
+  expect(report.runs.map(r => r.confined)).toEqual([false, false]);
+
+  await runExperiment(store.db, dir, 'confined', options);
+  report = experimentRunsJson(store.db, 'confined');
+  expect(report.confined).toBe(false);
+  expect(report.runs.map(r => r.confined)).toEqual([true, true, false, false]);
+  expect(store.db.query('SELECT confined FROM experiment_runs WHERE experiment_id = ? ORDER BY rowid').all('confined'))
+    .toEqual([{ confined: 1 }, { confined: 1 }, { confined: 0 }, { confined: 0 }]);
+
+  // Legacy rows have no proof of confinement: migration must default to false.
+  store.db.exec('ALTER TABLE experiment_runs DROP COLUMN confined');
+  report = experimentRunsJson(store.db, 'confined');
+  expect(report.confined).toBe(false);
+  expect(report.runs.map(r => r.confined)).toEqual([false, false, false, false]);
+  expect(store.db.query('SELECT COUNT(*) n FROM experiment_runs WHERE confined = 0').get()).toEqual({ n: 6 });
+}, 60_000);

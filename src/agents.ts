@@ -1,5 +1,8 @@
 // Headless coding-agent adapters. Each turns (prompt, cwd) into one non-interactive run.
 // The factory never edits code itself; it hands one activity to one agent run.
+import { confineAgent } from './sandbox/confine.ts';
+import { atomicEvidence } from './manifest.ts';
+import { existsSync, readFileSync } from 'node:fs';
 import { selfCommand } from './self.ts';
 import { parseReportStatus, reportStatusLine } from './prompts.ts';
 
@@ -164,17 +167,22 @@ export async function runAgent(
   prompt: string,
   cwd: string,
   timeoutMs = 20 * 60_000,
-  options: { readOnly?: boolean; signal?: AbortSignal; onSpawn?: (pgid: number) => void } = {}
+  options: { readOnly?: boolean; confine?: boolean; capturePath?: string; signal?: AbortSignal; onSpawn?: (pgid: number) => void } = {}
 ): Promise<AgentRun> {
   const start = Date.now();
-  const proc = Bun.spawn(agent.command(prompt, options), {
-    cwd,
-    env: { ...process.env, ...(agent.env?.() ?? {}) },
-    stdin: 'ignore',
-    stdout: 'pipe',
-    stderr: 'pipe',
-    detached: true,
-  });
+  const confined = options.confine ? confineAgent(agent.name, agent.command(prompt, options), cwd, agent.env?.()) : undefined;
+  let proc;
+  try {
+    proc = Bun.spawn(confined?.argv ?? agent.command(prompt, options), {
+      cwd,
+      env: confined?.env ?? { ...process.env, ...(agent.env?.() ?? {}) },
+      stdin: 'ignore', stdout: 'pipe', stderr: 'pipe', detached: true,
+    });
+  } catch (e) {
+    confined?.cleanup();
+    if (options.confine) throw new Error(`--confine: lanzamiento falló: ${(e as Error).message}`, { cause: e });
+    throw e;
+  }
 
   if (options.onSpawn) {
     try {
@@ -225,6 +233,7 @@ export async function runAgent(
     proc.exited,
   ]);
 
+  confined?.cleanup();
   clearTimeout(timeoutTimer);
   if (killTimer) {
     clearTimeout(killTimer);
@@ -233,6 +242,8 @@ export async function runAgent(
     options.signal.removeEventListener('abort', onAbort);
   }
 
+  if (options.capturePath) atomicEvidence(options.capturePath, (existsSync(options.capturePath) ? readFileSync(options.capturePath, 'utf8') : '') + stdout + (stderr ? '\n[stderr]\n' + stderr : ''));
+  if (options.confine && exitCode !== 0) throw new Error(`--confine: agente o montaje falló (exit ${exitCode}): ${stderr.trim()}`);
   const parsed = agent.parse?.(stdout) ?? null;
   const rawOutput = (parsed ? parsed.text : stdout).trim() || stderr.trim();
   const status = parseReportStatus(rawOutput);

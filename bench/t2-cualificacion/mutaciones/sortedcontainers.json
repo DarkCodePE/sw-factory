@@ -1,0 +1,112 @@
+[
+  {
+    "id": "sortedcontainers-contains-igualdad",
+    "archivo": "src/sortedcontainers/sortedlist.py",
+    "buscar": "return _lists[pos][idx] == value",
+    "reemplazar": "return _lists[pos][idx] != value",
+    "descripcion": "2 in SortedList([1, 2, 3]) devuelve False cuando deberia devolver True, y 1.5 in SortedList([1, 2, 3]) devuelve True cuando deberia devolver False.",
+    "ocultos": [
+      "tests/test_coverage_sortedlist.py",
+      "tests/test_stress_sortedlist.py"
+    ]
+  },
+  {
+    "id": "sortedcontainers-index-stop",
+    "archivo": "src/sortedcontainers/sortedlist.py",
+    "buscar": "if left <= stop:",
+    "reemplazar": "if left < stop:",
+    "descripcion": "SortedList([1, 2, 3]).index(3, 0, 3) lanza ValueError cuando deberia devolver 2; tambien SortedList([1, 2, 3]).index(1, 0, 1) lanza ValueError en vez de devolver 0.",
+    "ocultos": [
+      "tests/test_coverage_sortedlist.py",
+      "tests/test_coverage_sortedset.py",
+      "tests/test_stress_sortedset.py"
+    ]
+  },
+  {
+    "id": "sortedcontainers-count-ultimo",
+    "archivo": "src/sortedcontainers/sortedlist.py",
+    "buscar": "return self._len - self._loc(pos_left, idx_left)",
+    "reemplazar": "return self._len - self._loc(pos_left, idx_left) - 1",
+    "descripcion": "SortedList([1, 2, 2]).count(2) devuelve 1 cuando deberia devolver 2: contar el valor maximo de la lista da uno menos.",
+    "ocultos": [
+      "tests/test_coverage_sortedlist.py"
+    ]
+  },
+  {
+    "id": "sortedcontainers-irange-exclusivo",
+    "archivo": "src/sortedcontainers/sortedlist.py",
+    "buscar": "min_idx = bisect_right(_lists[min_pos], minimum)",
+    "reemplazar": "min_idx = bisect_left(_lists[min_pos], minimum)",
+    "descripcion": "list(SortedList([1, 2, 3, 4]).irange(2, 4, inclusive=(False, True))) devuelve [2, 3, 4] cuando deberia devolver [3, 4]: el limite inferior excluido sigue apareciendo.",
+    "ocultos": [
+      "tests/test_coverage_sortedlist.py",
+      "tests/test_coverage_sortedset.py"
+    ]
+  },
+  {
+    "id": "sortedcontainers-keylist-count",
+    "archivo": "src/sortedcontainers/sortedlist.py",
+    "buscar": "total += 1",
+    "reemplazar": "total = 1",
+    "descripcion": "SortedKeyList([1, 2, 2, 2, 3], key=lambda x: -x).count(2) devuelve 1 cuando deberia devolver 3.",
+    "ocultos": [
+      "tests/test_coverage_sortedkeylist_modulo.py",
+      "tests/test_coverage_sortedkeylist_negate.py",
+      "tests/test_stress_sortedkeylist.py"
+    ]
+  },
+  {
+    "id": "sortedcontainers-keylist-add-clave",
+    "archivo": "src/sortedcontainers/sortedlist.py",
+    "buscar": "values.extend(other)\n        return self.__class__(values, key=self._key)",
+    "reemplazar": "values.extend(other)\n        return self.__class__(values)",
+    "descripcion": "SortedKeyList([3, 1], key=lambda x: -x) + [2] devuelve una lista ordenada ascendentemente [1, 2, 3] cuando deberia conservar la clave y devolver [3, 2, 1]; el resultado ya no usa la funcion de clave original.",
+    "ocultos": [
+      "tests/test_coverage_sortedkeylist_negate.py"
+    ]
+  },
+  {
+    "id": "sortedcontainers-keylist-irange-key",
+    "archivo": "src/sortedcontainers/sortedlist.py",
+    "buscar": "max_idx = bisect_left(_keys[max_pos], max_key)",
+    "reemplazar": "max_idx = bisect_right(_keys[max_pos], max_key)",
+    "descripcion": "list(SortedKeyList([1, 2, 3, 4], key=lambda x: x * 10).irange_key(10, 30, inclusive=(True, False))) devuelve [1, 2, 3] cuando deberia devolver [1, 2]: el limite superior excluido sigue apareciendo.",
+    "ocultos": [
+      "tests/test_coverage_sortedkeylist_modulo.py",
+      "tests/test_coverage_sortedkeylist_negate.py",
+      "tests/test_coverage_sortedset.py"
+    ]
+  },
+  {
+    "id": "sortedcontainers-dict-setdefault",
+    "archivo": "src/sortedcontainers/sorteddict.py",
+    "buscar": "return self[key]",
+    "reemplazar": "return default",
+    "descripcion": "d = SortedDict({'a': 1}); d.setdefault('a', 99) devuelve 99 cuando deberia devolver 1, el valor ya existente de 'a'.",
+    "ocultos": [
+      "tests/test_coverage_sorteddict.py",
+      "tests/test_stress_sorteddict.py"
+    ]
+  },
+  {
+    "id": "sortedcontainers-dict-popitem",
+    "archivo": "src/sortedcontainers/sorteddict.py",
+    "buscar": "key = self._list_pop(index)",
+    "reemplazar": "key = self._list_pop(0)",
+    "descripcion": "SortedDict({'a': 1, 'b': 2, 'c': 3}).popitem() devuelve ('a', 1) cuando deberia devolver ('c', 3), la ultima entrada por orden de clave; popitem(1) tambien devuelve ('a', 1) en vez de ('b', 2).",
+    "ocultos": [
+      "tests/test_coverage_sorteddict.py",
+      "tests/test_stress_sorteddict.py"
+    ]
+  },
+  {
+    "id": "sortedcontainers-dict-fromkeys",
+    "archivo": "src/sortedcontainers/sorteddict.py",
+    "buscar": "cls((key, value) for key in iterable)",
+    "reemplazar": "cls((key, None) for key in iterable)",
+    "descripcion": "SortedDict.fromkeys('ab', 0) devuelve SortedDict({'a': None, 'b': None}) cuando deberia devolver SortedDict({'a': 0, 'b': 0}); el valor indicado se ignora.",
+    "ocultos": [
+      "tests/test_coverage_sorteddict.py"
+    ]
+  }
+]

@@ -1,0 +1,102 @@
+[
+  {
+    "id": "xmltodict-ns-nombre",
+    "archivo": "xmltodict.py",
+    "buscar": "full_name[:i], full_name[i+1:]",
+    "reemplazar": "full_name[:i], full_name[i+2:]",
+    "descripcion": "xmltodict.parse('<a xmlns:x=\"u\"><x:item>1</x:item></a>', process_namespaces=True, namespaces={'u': None}) devuelve {'a': {'@xmlns': {'x': 'u'}, 'tem': '1'}} cuando deberia devolver {'a': {'@xmlns': {'x': 'u'}, 'item': '1'}}; se pierde la primera letra del nombre.",
+    "ocultos": [
+      "tests/test_xmltodict.py"
+    ]
+  },
+  {
+    "id": "xmltodict-ns-decl-defecto",
+    "archivo": "xmltodict.py",
+    "buscar": "self.namespace_declarations[prefix or ''] = uri",
+    "reemplazar": "self.namespace_declarations[prefix or 'x'] = uri",
+    "descripcion": "xmltodict.parse('<a xmlns=\"http://e\"><b/></a>', process_namespaces=True) devuelve {'http://e:a': {'@xmlns': {'x': 'http://e'}, ...}} cuando deberia declarar el espacio de nombres por defecto con clave vacia: {'@xmlns': {'': 'http://e'}}.",
+    "ocultos": [
+      "tests/test_xmltodict.py"
+    ]
+  },
+  {
+    "id": "xmltodict-item-depth-borde",
+    "archivo": "xmltodict.py",
+    "buscar": "if len(self.path) >= self.item_depth:",
+    "reemplazar": "if len(self.path) > self.item_depth:",
+    "descripcion": "xmltodict.parse(\"<a><b k='v'>1</b><b>2</b></a>\", item_depth=2, item_callback=f) llama a f con '1' y '2' cuando deberia llamarla con {'@k': 'v', '#text': '1'} y '2': el primer elemento pierde sus atributos.",
+    "ocultos": [
+      "tests/test_xmltodict.py"
+    ]
+  },
+  {
+    "id": "xmltodict-sin-strip-cdata",
+    "archivo": "xmltodict.py",
+    "buscar": "self.item, self.data = self.stack.pop()\n            if self.strip_whitespace and data:",
+    "reemplazar": "self.item, self.data = self.stack.pop()\n            if not self.strip_whitespace and data:",
+    "descripcion": "xmltodict.parse('<a><b> hola </b></a>') devuelve {'a': {'b': ' hola '}} cuando deberia devolver {'a': {'b': 'hola'}}; los espacios del texto no se recortan.",
+    "ocultos": [
+      "tests/test_xmltodict.py"
+    ]
+  },
+  {
+    "id": "xmltodict-comentario-strip",
+    "archivo": "xmltodict.py",
+    "buscar": "        if self.strip_whitespace:\n            data = data.strip()",
+    "reemplazar": "        if self.strip_whitespace:\n            data = data.lstrip()",
+    "descripcion": "xmltodict.parse('<a><!--  nota  --></a>', process_comments=True) devuelve el comentario 'nota  ' (con espacios al final) cuando deberia devolver 'nota'.",
+    "ocultos": [
+      "tests/test_xmltodict.py"
+    ]
+  },
+  {
+    "id": "xmltodict-force-list-clave",
+    "archivo": "xmltodict.py",
+    "buscar": "            return key in self.force_list",
+    "reemplazar": "            return key not in self.force_list",
+    "descripcion": "xmltodict.parse('<a><b>1</b><c>2</c></a>', force_list=('b',)) devuelve {'a': {'b': '1', 'c': ['2']}} cuando deberia devolver {'a': {'b': ['1'], 'c': '2'}}.",
+    "ocultos": [
+      "tests/test_xmltodict.py"
+    ]
+  },
+  {
+    "id": "xmltodict-force-cdata-clave",
+    "archivo": "xmltodict.py",
+    "buscar": "            return key in self.force_cdata",
+    "reemplazar": "            return key not in self.force_cdata",
+    "descripcion": "xmltodict.parse('<a><b>1</b><c>2</c></a>', force_cdata=('b',)) devuelve {'a': {'b': '1', 'c': {'#text': '2'}}} cuando deberia devolver {'a': {'b': {'#text': '1'}, 'c': '2'}}.",
+    "ocultos": [
+      "tests/test_xmltodict.py"
+    ]
+  },
+  {
+    "id": "xmltodict-entidades-permitidas",
+    "archivo": "xmltodict.py",
+    "buscar": "    if disable_entities:",
+    "reemplazar": "    if not disable_entities:",
+    "descripcion": "xmltodict.parse('<!DOCTYPE a [<!ENTITY e \"x\">]><a>&e;</a>') devuelve un resultado cuando deberia lanzar ValueError('entities are disabled') porque las entidades estan desactivadas por defecto.",
+    "ocultos": [
+      "tests/test_xmltodict.py"
+    ]
+  },
+  {
+    "id": "xmltodict-bool-texto",
+    "archivo": "xmltodict.py",
+    "buscar": "return \"true\" if value else \"false\"",
+    "reemplazar": "return \"false\" if value else \"true\"",
+    "descripcion": "xmltodict.unparse({'a': True}, full_document=False) devuelve '<a>false</a>' cuando deberia devolver '<a>true</a>' (y False sale como 'true').",
+    "ocultos": [
+      "tests/test_dicttoxml.py"
+    ]
+  },
+  {
+    "id": "xmltodict-nombre-comillas",
+    "archivo": "xmltodict.py",
+    "buscar": "if '\"' in value or \"'\" in value:",
+    "reemplazar": "if '\"' in value and \"'\" in value:",
+    "descripcion": "xmltodict.unparse({'a\"b': 'x'}) genera un XML con el nombre de elemento a\"b en lugar de lanzar ValueError por nombre invalido; lo mismo con una sola comilla simple.",
+    "ocultos": [
+      "tests/test_dicttoxml.py"
+    ]
+  }
+]

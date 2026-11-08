@@ -1,0 +1,184 @@
+[
+  {
+    "id": "idna-label-63",
+    "archivo": "idna/core.py",
+    "buscar": "return len(label) <= 63",
+    "reemplazar": "return len(label) < 63",
+    "descripcion": "Al convertir con `idna.alabel('a' * 63)` se lanza «Label too long», aunque una etiqueta de exactamente 63 caracteres es válida y debería devolver `b'aaaa...'` sin error."
+  },
+  {
+    "id": "idna-guiones-3-4",
+    "archivo": "idna/core.py",
+    "buscar": "if label[2:4] == \"--\":",
+    "reemplazar": "if label[3:5] == \"--\":",
+    "descripcion": "`idna.encode('ab--cd')` devuelve `b'ab--cd'` sin error, cuando una etiqueta con guiones en las posiciones tercera y cuarta debería rechazarse con IDNAError."
+  },
+  {
+    "id": "idna-combinante-inicial",
+    "archivo": "idna/core.py",
+    "buscar": "if label and unicodedata.category(label[0])[0] == \"M\":",
+    "reemplazar": "if len(label) > 1 and unicodedata.category(label[0])[0] == \"M\":",
+    "descripcion": "`idna.encode('\\u0300')` (una etiqueta formada solo por un acento combinante) devuelve un resultado en lugar de lanzar IDNAError por empezar con un carácter combinante."
+  },
+  {
+    "id": "idna-zwj-virama",
+    "archivo": "idna/core.py",
+    "buscar": "return pos > 0 and _combining_class(ord(label[pos - 1])) == _virama_combining_class",
+    "reemplazar": "return pos > 0 and _combining_class(ord(label[pos - 1])) != _virama_combining_class",
+    "descripcion": "`idna.valid_contextj('\\u0915\\u094d\\u200d', 2)` devuelve False cuando el unir de ancho cero va justo tras un virama y debería devolver True; en cambio con una letra normal delante devuelve True."
+  },
+  {
+    "id": "idna-punto-medio-l",
+    "archivo": "idna/core.py",
+    "buscar": "return 0 < pos < len(label) - 1 and ord(label[pos - 1]) == 0x006C and ord(label[pos + 1]) == 0x006C",
+    "reemplazar": "return 0 < pos < len(label) - 1 and ord(label[pos - 1]) == 0x006C and ord(label[pos + 1]) != 0x006C",
+    "descripcion": "`idna.valid_contexto('l\\u00b7l', 1)` devuelve False aunque el punto medio está entre dos «l» y debería ser válido; `idna.valid_contexto('l\\u00b7a', 1)` devuelve True cuando debería ser False."
+  },
+  {
+    "id": "idna-bidi-numeros",
+    "archivo": "idna/core.py",
+    "buscar": "elif number_type != direction:",
+    "reemplazar": "elif number_type == direction:",
+    "descripcion": "`idna.check_bidi('\\u05d0\\u0661\\u0662')` (letra hebrea seguida de dos dígitos arabo-índicos) lanza un error por «mezclar tipos de números», cuando ambos dígitos son del mismo tipo y debería devolver True."
+  },
+  {
+    "id": "idna-contexto-rechazo",
+    "archivo": "idna/core.py",
+    "buscar": "if not valid_contexto(label, pos):",
+    "reemplazar": "if valid_contexto(label, pos):",
+    "descripcion": "`idna.encode('l\\u00b7l')` lanza un error de contexto aunque el punto medio entre dos «l» es válido, y `idna.encode('a\\u00b7b')` se codifica sin error cuando debería rechazarse."
+  },
+  {
+    "id": "idna-ulabel-mayusculas",
+    "archivo": "idna/core.py",
+    "buscar": "label_bytes = label_bytes.lower()\n",
+    "reemplazar": "label_bytes = label_bytes\n",
+    "descripcion": "`idna.ulabel('XN--BCHER-KVA')` lanza un error por caracteres no permitidos, cuando una etiqueta A en mayúsculas debería decodificarse igual que en minúsculas y devolver `'bücher'`."
+  },
+  {
+    "id": "idna-std3-posicion",
+    "archivo": "idna/core.py",
+    "buscar": "position = offset + match.start() + 1",
+    "reemplazar": "position = offset + match.start()",
+    "descripcion": "`idna.uts46_remap('ab_c')` lanza InvalidCodepoint indicando la posición 2 del carácter «_», cuando está en la posición 3 de la cadena."
+  },
+  {
+    "id": "idna-uts46-minusculas",
+    "archivo": "idna/core.py",
+    "buscar": "result = domain.lower()",
+    "reemplazar": "result = domain",
+    "descripcion": "`idna.uts46_remap('EXAMPLE.com', std3_rules=False)` devuelve `'EXAMPLE.com'` con las mayúsculas intactas, cuando debería devolver `'example.com'`."
+  },
+  {
+    "id": "idna-encode-std3",
+    "archivo": "idna/core.py",
+    "buscar": "s = uts46_remap(s, std3_rules)",
+    "reemplazar": "s = uts46_remap(s)",
+    "descripcion": "`idna.encode('a_b.com', uts46=True, std3_rules=False)` lanza un error por el guion bajo, cuando con las reglas STD3 desactivadas debería devolver `b'a_b.com'`."
+  },
+  {
+    "id": "idna-decode-display",
+    "archivo": "idna/core.py",
+    "buscar": "u = label.lower()",
+    "reemplazar": "u = label",
+    "descripcion": "`idna.decode('XN--ABC.com', display=True)` devuelve `'XN--ABC.com'` conservando las mayúsculas de la etiqueta inválida, cuando debería devolverla en minúsculas: `'xn--abc.com'`."
+  },
+  {
+    "id": "idna-incremental-decodificador",
+    "archivo": "idna/codec.py",
+    "buscar": "if self._consumed + len(data) > _max_domain_length + 1:",
+    "reemplazar": "if self._consumed + len(data) > _max_domain_length:",
+    "descripcion": "Al decodificar por trozos con `codecs.getincrementaldecoder('idna2008')().decode(('a'*63+'.')*3+'a'*61+'.', True)` (254 caracteres con punto final) se lanza «Domain too long», cuando el límite admite hasta 254 y debería devolver el texto."
+  },
+  {
+    "id": "idna-incremental-codificador",
+    "archivo": "idna/codec.py",
+    "buscar": "if self._emitted > _max_domain_length + may_end_with_dot:",
+    "reemplazar": "if self._emitted >= _max_domain_length + may_end_with_dot:",
+    "descripcion": "Al codificar por trozos con `codecs.getincrementalencoder('idna2008')().encode('.'.join(['a'*63]*3+['a'*61]), True)` (un nombre de exactamente 253 caracteres) se lanza «Domain too long», cuando el límite permite 253 y debería devolver el nombre codificado."
+  },
+  {
+    "id": "idna-intranges-limite",
+    "archivo": "idna/intranges.py",
+    "buscar": "if left <= int_ < right:",
+    "reemplazar": "if left <= int_ <= right:",
+    "descripcion": "`idna.intranges.intranges_contain(5, (idna.intranges._encode_range(1, 5),))` devuelve True aunque el rango cubre de 1 a 4 (el final es exclusivo) y el 5 no pertenece a él."
+  },
+  {
+    "id": "idna-intranges-agrupar",
+    "archivo": "idna/intranges.py",
+    "buscar": "sorted_list[i] == sorted_list[i + 1] - 1",
+    "reemplazar": "sorted_list[i] == sorted_list[i + 1] - 2",
+    "descripcion": "`idna.intranges.intranges_from_list([1, 2, 3])` devuelve varios rangos separados en vez de un único rango continuo que cubra 1, 2 y 3."
+  },
+  {
+    "id": "idna-cli-xn-mayusculas",
+    "archivo": "idna/cli.py",
+    "buscar": "label.lower().startswith(prefix)",
+    "reemplazar": "label.startswith(prefix)",
+    "descripcion": "Al ejecutar `python -m idna XN--mnchen-3ya.de` sin indicar modo, imprime `xn--mnchen-3ya.de` (lo trata como nombre a codificar) en vez de decodificarlo a `münchen.de`; con `xn--mnchen-3ya.de` en minúsculas sí imprime `münchen.de`."
+  },
+  {
+    "id": "idna-cli-stdin-vacias",
+    "archivo": "idna/cli.py",
+    "buscar": "        if stripped:\n            yield stripped",
+    "reemplazar": "        if line:\n            yield stripped",
+    "descripcion": "Si por stdin llegan los renglones `example.com`, uno vacío y `ñandú.cl`, `python -m idna` imprime un error \"Empty domain\" para el renglón vacío y termina con código 1, en vez de ignorarlo y convertir los otros dos."
+  },
+  {
+    "id": "idna-cli-codigo-salida",
+    "archivo": "idna/cli.py",
+    "buscar": "return 0 if all(results) else 1",
+    "reemplazar": "return 0 if any(results) else 1",
+    "descripcion": "`python -m idna example.com \"a..b\"` imprime el error de la segunda entrada pero termina con código de salida 0; debería terminar con 1 porque una conversión falló."
+  },
+  {
+    "id": "idna-cli-modo-estricto",
+    "archivo": "idna/cli.py",
+    "buscar": "uts46 = not args.strict",
+    "reemplazar": "uts46 = args.strict",
+    "descripcion": "`python -m idna Example.COM` imprime `Example.COM` sin normalizar a minúsculas, y `python -m idna --strict Example.COM` imprime `example.com` en vez de rechazar la entrada por las mayúsculas."
+  },
+  {
+    "id": "idna-codec-decode-tamano",
+    "archivo": "idna/codec.py",
+    "buscar": "        return decode(data), len(data)",
+    "reemplazar": "        return decode(data), len(data) - 1",
+    "descripcion": "Con el códec registrado, `codecs.getdecoder(\"idna2008\")(b\"xn--mnchen-3ya.de\")` devuelve `(\"münchen.de\", 16)` cuando debería informar de 17, la longitud de los bytes consumidos."
+  },
+  {
+    "id": "idna-codec-decod-etiqueta-parcial",
+    "archivo": "idna/codec.py",
+    "buscar": "            elif not final:\n                # Keep potentially unfinished label until the next call\n                del labels[-1]\n                if labels:\n                    trailing_dot = \".\"",
+    "reemplazar": "            elif final:\n                # Keep potentially unfinished label until the next call\n                del labels[-1]\n                if labels:\n                    trailing_dot = \".\"",
+    "descripcion": "Con un decodificador incremental idna2008, `d.decode(b\"xn--mnchen-3ya.d\")` devuelve `münchen.d` en vez de `münchen.` (convierte antes de tiempo la última etiqueta incompleta) y después `d.decode(b\"e\", True)` devuelve `\"\"` en vez de `de`."
+  },
+  {
+    "id": "idna-intranges-largo-rango",
+    "archivo": "idna/intranges.py",
+    "buscar": "current_range[-1] + 1))",
+    "reemplazar": "current_range[-1]))",
+    "descripcion": "`intranges_from_list([5, 6, 7])` no cubre el valor 7: `intranges_contain(7, ...)` devuelve False aunque 7 está en la lista."
+  },
+  {
+    "id": "idna-cli-entrada-vacia",
+    "archivo": "idna/cli.py",
+    "buscar": "    if first is None:\n        return 0",
+    "reemplazar": "    if first is None:\n        return 1",
+    "descripcion": "Si `python -m idna` recibe por stdin una entrada sin ningún dominio (solo renglones en blanco), termina con código 1 en vez de 0."
+  },
+  {
+    "id": "idna-codec-codificador-tamano",
+    "archivo": "idna/codec.py",
+    "buscar": "                if size:\n                    size += 1\n                size += len(label)\n\n            result_bytes",
+    "reemplazar": "                size += 1\n                size += len(label)\n\n            result_bytes",
+    "descripcion": "Con un codificador incremental idna2008, `e.encode(\"a.b.c\", True)` devuelve `(b\"a.b.c\", 6)`; el segundo valor debería ser 5, los caracteres consumidos."
+  },
+  {
+    "id": "idna-codec-decod-estado",
+    "archivo": "idna/codec.py",
+    "buscar": "        return (self.buffer, self._consumed)",
+    "reemplazar": "        return (self.buffer, 0)",
+    "descripcion": "En un decodificador incremental idna2008, tras `d.decode(b\"xn--mnchen-3ya.d\")`, `d.getstate()` devuelve `(b\"d\", 0)` en vez de `(b\"d\", 16)`; al restaurar el estado con `setstate` en otro decodificador y seguir alimentando, el límite de longitud del dominio deja de aplicarse bien."
+  }
+]

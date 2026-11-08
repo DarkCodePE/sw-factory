@@ -1,0 +1,110 @@
+[
+  {
+    "id": "tabulate-inf-negative-number",
+    "archivo": "tabulate/__init__.py",
+    "buscar": "or string.lower() in [\"inf\", \"-inf\", \"nan\"]",
+    "reemplazar": "or string.lower() in [\"inf\", \"nan\"]",
+    "descripcion": "`tabulate([[\"-inf\"], [\"1.5\"]], tablefmt=\"plain\")` devuelve `\"-inf\\n1.5\"` en lugar de `\"-inf\\n   1.5\"`: `-inf` deja de reconocerse como número y la columna se alinea como texto.",
+    "ocultos": [
+      "test/test_output.py"
+    ]
+  },
+  {
+    "id": "tabulate-separated-format-padding",
+    "archivo": "tabulate/__init__.py",
+    "buscar": "padding=0,\n        with_header_hide=None,\n    )\n\n\ndef _isnumber_with_thousands",
+    "reemplazar": "padding=1,\n        with_header_hide=None,\n    )\n\n\ndef _isnumber_with_thousands",
+    "descripcion": "`tabulate([[\"foo\", 1], [\"spam\", 23]], tablefmt=simple_separated_format(\"\\t\"))` devuelve filas con un espacio extra alrededor del tabulador en lugar de `\"foo \\t 1\\nspam\\t23\"`.",
+    "ocultos": [
+      "test/test_output.py",
+      "test/test_regression.py"
+    ]
+  },
+  {
+    "id": "tabulate-missingval-list-default",
+    "archivo": "tabulate/__init__.py",
+    "buscar": "missing_vals.extend((len(cols) - len(missing_vals)) * [_DEFAULT_MISSINGVAL])",
+    "reemplazar": "missing_vals.extend((len(cols) - len(missing_vals)) * [\"?\"])",
+    "descripcion": "`tabulate([[None, None]], missingval=[\"-\"], tablefmt=\"plain\")` devuelve `\"-  ?\"` en lugar de `\"-\"`: la segunda columna, sin valor indicado, muestra un marcador en vez de quedar vacía.",
+    "ocultos": [
+      "test/test_output.py"
+    ]
+  },
+  {
+    "id": "tabulate-wrap-long-word-split",
+    "archivo": "tabulate/__init__.py",
+    "buscar": "space_left = width - cur_len",
+    "reemplazar": "space_left = width - cur_len - 1",
+    "descripcion": "`tabulate([[\"abcdefghij\"]], maxcolwidths=[4], tablefmt=\"plain\")` devuelve trozos de 3 caracteres (`abc`, `def`, `ghi`, `j`) en lugar de trozos de 4 (`abcd`, `efgh`, `ij`).",
+    "ocultos": [
+      "test/test_internal.py",
+      "test/test_output.py",
+      "test/test_textwrapper.py"
+    ]
+  },
+  {
+    "id": "tabulate-update-lines-reset",
+    "archivo": "tabulate/__init__.py",
+    "buscar": "if code != _ansi_color_reset_code:",
+    "reemplazar": "if code == _ansi_color_reset_code:",
+    "descripcion": "`tabulate([[\"\\x1b[31mrojo largo aqui\\x1b[0m\"]], maxcolwidths=[8], tablefmt=\"plain\")` reparte el texto coloreado en filas que no cierran ni reabren bien el color: el rojo se pierde o se arrastra a las filas siguientes.",
+    "ocultos": [
+      "test/test_internal.py",
+      "test/test_textwrapper.py"
+    ]
+  },
+  {
+    "id": "tabulate-pad-center-strings",
+    "archivo": "tabulate/__init__.py",
+    "buscar": "fmt = f\"{{0:^{width}s}}\"",
+    "reemplazar": "fmt = f\"{{0:<{width}s}}\"",
+    "descripcion": "`tabulate([[\"a\"], [\"bbbbb\"]], stralign=\"center\", tablefmt=\"plain\")` devuelve `\"a\\nbbbbb\"` en lugar de `\"  a\\nbbbbb\"`: el texto corto no se centra.",
+    "ocultos": [
+      "test/test_internal.py",
+      "test/test_output.py"
+    ]
+  },
+  {
+    "id": "tabulate-type-thousands-int",
+    "archivo": "tabulate/__init__.py",
+    "buscar": "and \".\" not in string",
+    "reemplazar": "and \".\" in string",
+    "descripcion": "`tabulate([[\"1,000\"], [\"2,000\"]], tablefmt=\"plain\")` devuelve `\"1000\\n2000\"` en lugar de `\"1,000\\n2,000\"`: las cifras con separador de miles pierden la coma.",
+    "ocultos": [
+      "test/test_regression.py"
+    ]
+  },
+  {
+    "id": "tabulate-afterpoint-int-offset",
+    "archivo": "tabulate/__init__.py",
+    "buscar": "        if _isint(string):\n            return -1\n        else:\n            pos = string.rfind(\".\")",
+    "reemplazar": "        if _isint(string):\n            return 0\n        else:\n            pos = string.rfind(\".\")",
+    "descripcion": "`tabulate([[1], [22.25]], tablefmt=\"plain\")` devuelve `\"  1\\n22.25\"` en lugar de `\" 1\\n22.25\"`: el entero queda un espacio desplazado a la derecha respecto a las unidades de `22.25`.",
+    "ocultos": [
+      "test/test_input.py",
+      "test/test_output.py",
+      "test/test_regression.py"
+    ]
+  },
+  {
+    "id": "tabulate-multiline-width-min",
+    "archivo": "tabulate/__init__.py",
+    "buscar": "return max(map(line_width_fn, re.split(\"[\\r\\n]\", multiline_s)))",
+    "reemplazar": "return min(map(line_width_fn, re.split(\"[\\r\\n]\", multiline_s)))",
+    "descripcion": "`tabulate([[\"x\"]], headers=[\"h\\nbbbbb\"], tablefmt=\"grid\")` dibuja el recuadro más estrecho que la segunda fila de la cabecera: `| bbbbb |` sobresale del borde.",
+    "ocultos": [
+      "test/test_internal.py",
+      "test/test_output.py"
+    ]
+  },
+  {
+    "id": "tabulate-float-thousands-comma",
+    "archivo": "tabulate/__init__.py",
+    "buscar": "if isinstance(val, str) and \",\" in val:",
+    "reemplazar": "if isinstance(val, str) and \",\" not in val:",
+    "descripcion": "`tabulate([[\"1,000.5\"], [\"2.5\"]], tablefmt=\"plain\")` muestra `1,000.5` tal cual en lugar de formatearlo como número (`1000.5`).",
+    "ocultos": [
+      "test/test_output.py"
+    ]
+  }
+]

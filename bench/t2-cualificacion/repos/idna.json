@@ -1,0 +1,24 @@
+{
+  "nombre": "idna",
+  "url": "https://github.com/kjd/idna",
+  "commit": "d357725082245ff90f5cf8800a3fc297b1f2319a",
+  "license_spdx": "BSD-3-Clause",
+  "license_file": "LICENSE.md",
+  "license_sha256": "1a9a4f0e3d479a27240ddd59a9137a66ab4a0f9dfdc8ca6188cc0bfd85187f04",
+  "env": {
+    "PYTEST_DISABLE_PLUGIN_AUTOLOAD": "1",
+    "PYTHONDONTWRITEBYTECODE": "1"
+  },
+  "test": [
+    "python3",
+    "-m",
+    "pytest",
+    "-q",
+    "-p",
+    "no:cacheprovider",
+    "-o",
+    "addopts=",
+    "tests",
+    "--ignore=tests/test_idna_properties.py"
+  ]
+}

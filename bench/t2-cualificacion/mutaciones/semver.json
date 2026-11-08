@@ -1,0 +1,113 @@
+[
+  {
+    "id": "semver-bump-major-keeps-minor",
+    "archivo": "src/semver/version.py",
+    "buscar": "        return cls(self._major + 1)\n",
+    "reemplazar": "        return cls(self._major + 1, self._minor)\n",
+    "descripcion": "`Version(1, 2, 3).bump_major()` devuelve `2.2.0` cuando debería devolver `2.0.0`.",
+    "ocultos": [
+      "tests/test_bump.py",
+      "tests/test_parsing.py",
+      "tests/test_pysemver-cli.py"
+    ]
+  },
+  {
+    "id": "semver-bump-minor-keeps-patch",
+    "archivo": "src/semver/version.py",
+    "buscar": "cls(self._major, self._minor + 1)\n",
+    "reemplazar": "cls(self._major, self._minor + 1, self._patch)\n",
+    "descripcion": "`Version.parse(\"1.2.3\").bump_minor()` devuelve `1.3.3` cuando debería devolver `1.3.0`.",
+    "ocultos": [
+      "tests/test_bump.py",
+      "tests/test_parsing.py",
+      "tests/test_pysemver-cli.py"
+    ]
+  },
+  {
+    "id": "semver-bump-patch-keeps-prerelease",
+    "archivo": "src/semver/version.py",
+    "buscar": "cls(self._major, self._minor, self._patch + 1)\n",
+    "reemplazar": "cls(self._major, self._minor, self._patch + 1, self._prerelease)\n",
+    "descripcion": "`Version.parse(\"1.2.3-rc.1\").bump_patch()` devuelve `1.2.4-rc.1` cuando debería devolver `1.2.4`.",
+    "ocultos": [
+      "tests/test_bump.py",
+      "tests/test_issue484.py"
+    ]
+  },
+  {
+    "id": "semver-compare-release-vs-prerelease",
+    "archivo": "src/semver/version.py",
+    "buscar": "        if not rc1:\n            return 1",
+    "reemplazar": "        if not rc1:\n            return -1",
+    "descripcion": "`Version.parse(\"1.0.0\").compare(\"1.0.0-rc.1\")` devuelve `-1` cuando debería devolver `1`: la versión final se considera anterior a su prerelease.",
+    "ocultos": [
+      "tests/test_bump.py",
+      "tests/test_compare.py"
+    ]
+  },
+  {
+    "id": "semver-bump-prerelease-empty-token",
+    "archivo": "src/semver/version.py",
+    "buscar": "                prerelease = \"1\"",
+    "reemplazar": "                prerelease = \"0\"",
+    "descripcion": "`Version.parse(\"1.0.0\").bump_prerelease(token=\"\")` devuelve `1.0.0-0` cuando debería devolver `1.0.0-1`.",
+    "ocultos": [
+      "tests/test_bump.py",
+      "tests/test_bump_token_validation.py"
+    ]
+  },
+  {
+    "id": "semver-increment-prerelease-nonnumeric",
+    "archivo": "src/semver/version.py",
+    "buscar": "string += \".0\"",
+    "reemplazar": "string += \".1\"",
+    "descripcion": "`Version.parse(\"1.0.0-alpha\").bump_prerelease()` devuelve `1.0.0-alpha.1` cuando debería devolver `1.0.0-alpha.0`.",
+    "ocultos": [
+      "tests/test_bump.py",
+      "tests/test_pysemver-cli.py"
+    ]
+  },
+  {
+    "id": "semver-increment-string-digit-carry",
+    "archivo": "src/semver/version.py",
+    "buscar": "max(end - len(next_), start)",
+    "reemplazar": "min(end - len(next_), start)",
+    "descripcion": "`Version.parse(\"1.0.0+build.9\").bump_build()` devuelve `1.0.0+build10` cuando debería devolver `1.0.0+build.10`.",
+    "ocultos": [
+      "tests/test_bump.py",
+      "tests/test_bump_build_digitless.py"
+    ]
+  },
+  {
+    "id": "semver-bump-build-default-suffix",
+    "archivo": "src/semver/version.py",
+    "buscar": "build = token + \".0\"",
+    "reemplazar": "build = token + \".1\"",
+    "descripcion": "`Version.parse(\"1.0.0\").bump_build()` devuelve `1.0.0+build.2` cuando debería devolver `1.0.0+build.1`.",
+    "ocultos": [
+      "tests/test_bump.py",
+      "tests/test_bump_build_digitless.py",
+      "tests/test_bump_token_validation.py"
+    ]
+  },
+  {
+    "id": "semver-next-version-minor-prerelease",
+    "archivo": "src/semver/version.py",
+    "buscar": "(part == \"minor\" and version.patch == 0)",
+    "reemplazar": "(part == \"minor\")",
+    "descripcion": "`Version.parse(\"1.2.3-rc.1\").next_version(\"minor\")` devuelve `1.2.3` cuando debería devolver `1.3.0`.",
+    "ocultos": [
+      "tests/test_parsing.py"
+    ]
+  },
+  {
+    "id": "semver-getitem-single-index",
+    "archivo": "src/semver/version.py",
+    "buscar": "index = slice(index, index + 1)",
+    "reemplazar": "index = slice(index, index + 2)",
+    "descripcion": "Con `v = Version.parse(\"1.2.3\")`, `v[0]` devuelve `(1, 2)` cuando debería devolver `1`.",
+    "ocultos": [
+      "tests/test_index.py"
+    ]
+  }
+]

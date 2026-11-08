@@ -1,0 +1,114 @@
+[
+ {
+  "id": "xmltodict-ns-nombre",
+  "archivo": "xmltodict.py",
+  "buscar": "full_name[:i], full_name[i+1:]",
+  "reemplazar": "full_name[:i], full_name[i+2:]",
+  "descripcion": "xmltodict.parse('<a xmlns:x=\"u\"><x:item>1</x:item></a>', process_namespaces=True, namespaces={'u': None}) devuelve {'a': {'@xmlns': {'x': 'u'}, 'tem': '1'}} cuando deberia devolver {'a': {'@xmlns': {'x': 'u'}, 'item': '1'}}; se pierde la primera letra del nombre."
+ },
+ {
+  "id": "xmltodict-attrs-invertidos",
+  "archivo": "xmltodict.py",
+  "buscar": "zip(attrs[0::2], attrs[1::2])",
+  "reemplazar": "zip(attrs[1::2], attrs[0::2])",
+  "descripcion": "xmltodict.parse('<a id=\"7\"/>') devuelve {'a': {'7': 'id'}} cuando deberia devolver {'a': {'@id': '7'}}: nombre y valor del atributo salen intercambiados."
+ },
+ {
+  "id": "xmltodict-ns-decl-defecto",
+  "archivo": "xmltodict.py",
+  "buscar": "self.namespace_declarations[prefix or ''] = uri",
+  "reemplazar": "self.namespace_declarations[prefix or 'x'] = uri",
+  "descripcion": "xmltodict.parse('<a xmlns=\"http://e\"><b/></a>', process_namespaces=True) devuelve {'http://e:a': {'@xmlns': {'x': 'http://e'}, ...}} cuando deberia declarar el espacio de nombres por defecto con clave vacia: {'@xmlns': {'': 'http://e'}}."
+ },
+ {
+  "id": "xmltodict-item-depth-borde",
+  "archivo": "xmltodict.py",
+  "buscar": "if len(self.path) >= self.item_depth:",
+  "reemplazar": "if len(self.path) > self.item_depth:",
+  "descripcion": "xmltodict.parse(\"<a><b k='v'>1</b><b>2</b></a>\", item_depth=2, item_callback=f) llama a f con '1' y '2' cuando deberia llamarla con {'@k': 'v', '#text': '1'} y '2': el primer elemento pierde sus atributos."
+ },
+ {
+  "id": "xmltodict-sin-strip-cdata",
+  "archivo": "xmltodict.py",
+  "buscar": "self.item, self.data = self.stack.pop()\n            if self.strip_whitespace and data:",
+  "reemplazar": "self.item, self.data = self.stack.pop()\n            if not self.strip_whitespace and data:",
+  "descripcion": "xmltodict.parse('<a><b> hola </b></a>') devuelve {'a': {'b': ' hola '}} cuando deberia devolver {'a': {'b': 'hola'}}; los espacios del texto no se recortan."
+ },
+ {
+  "id": "xmltodict-comentario-strip",
+  "archivo": "xmltodict.py",
+  "buscar": "        if self.strip_whitespace:\n            data = data.strip()",
+  "reemplazar": "        if self.strip_whitespace:\n            data = data.lstrip()",
+  "descripcion": "xmltodict.parse('<a><!--  nota  --></a>', process_comments=True) devuelve el comentario 'nota  ' (con espacios al final) cuando deberia devolver 'nota'."
+ },
+ {
+  "id": "xmltodict-repetidos-orden",
+  "archivo": "xmltodict.py",
+  "buscar": "item[key] = [value, data]",
+  "reemplazar": "item[key] = [data, value]",
+  "descripcion": "xmltodict.parse('<a><b>1</b><b>2</b></a>') devuelve {'a': {'b': ['2', '1']}} cuando deberia devolver {'a': {'b': ['1', '2']}}: con dos elementos repetidos salen en orden inverso."
+ },
+ {
+  "id": "xmltodict-force-list-clave",
+  "archivo": "xmltodict.py",
+  "buscar": "            return key in self.force_list",
+  "reemplazar": "            return key not in self.force_list",
+  "descripcion": "xmltodict.parse('<a><b>1</b><c>2</c></a>', force_list=('b',)) devuelve {'a': {'b': '1', 'c': ['2']}} cuando deberia devolver {'a': {'b': ['1'], 'c': '2'}}."
+ },
+ {
+  "id": "xmltodict-force-cdata-clave",
+  "archivo": "xmltodict.py",
+  "buscar": "            return key in self.force_cdata",
+  "reemplazar": "            return key not in self.force_cdata",
+  "descripcion": "xmltodict.parse('<a><b>1</b><c>2</c></a>', force_cdata=('b',)) devuelve {'a': {'b': '1', 'c': {'#text': '2'}}} cuando deberia devolver {'a': {'b': {'#text': '1'}, 'c': '2'}}."
+ },
+ {
+  "id": "xmltodict-entidades-permitidas",
+  "archivo": "xmltodict.py",
+  "buscar": "    if disable_entities:",
+  "reemplazar": "    if not disable_entities:",
+  "descripcion": "xmltodict.parse('<!DOCTYPE a [<!ENTITY e \"x\">]><a>&e;</a>') devuelve un resultado cuando deberia lanzar ValueError('entities are disabled') porque las entidades estan desactivadas por defecto."
+ },
+ {
+  "id": "xmltodict-bool-texto",
+  "archivo": "xmltodict.py",
+  "buscar": "return \"true\" if value else \"false\"",
+  "reemplazar": "return \"false\" if value else \"true\"",
+  "descripcion": "xmltodict.unparse({'a': True}, full_document=False) devuelve '<a>false</a>' cuando deberia devolver '<a>true</a>' (y False sale como 'true')."
+ },
+ {
+  "id": "xmltodict-nombre-comillas",
+  "archivo": "xmltodict.py",
+  "buscar": "if '\"' in value or \"'\" in value:",
+  "reemplazar": "if '\"' in value and \"'\" in value:",
+  "descripcion": "xmltodict.unparse({'a\"b': 'x'}) genera un XML con el nombre de elemento a\"b en lugar de lanzar ValueError por nombre invalido; lo mismo con una sola comilla simple."
+ },
+ {
+  "id": "xmltodict-comentario-guion-final",
+  "archivo": "xmltodict.py",
+  "buscar": "if value.endswith(\"-\"):",
+  "reemplazar": "if value.startswith(\"-\"):",
+  "descripcion": "xmltodict.unparse({'a': {'#comment': 'fin-', 'b': '1'}}) genera '<!--fin--->' (XML mal formado) cuando deberia lanzar ValueError; en cambio un comentario que empieza por '-' se rechaza sin motivo."
+ },
+ {
+  "id": "xmltodict-ns-prefijo-attr",
+  "archivo": "xmltodict.py",
+  "buscar": "attr_prefix if ns.startswith(attr_prefix) else ''",
+  "reemplazar": "attr_prefix if ns.endswith(attr_prefix) else ''",
+  "descripcion": "xmltodict.unparse({'a': {'@http://e:id': '1'}}, namespaces={'http://e': 'x'}, full_document=False) devuelve '<a :id=\"1\"></a>' cuando deberia devolver '<a x:id=\"1\"></a>': el atributo con espacio de nombres pierde su prefijo."
+ },
+ {
+  "id": "xmltodict-lista-vacia",
+  "archivo": "xmltodict.py",
+  "buscar": "if isinstance(iv, list) and not iv:",
+  "reemplazar": "if isinstance(iv, list) and iv:",
+  "descripcion": "xmltodict.unparse({'a': {'b': [], 'c': ['1', '2']}}, full_document=False) devuelve '<a></a>' cuando deberia devolver '<a><c>1</c><c>2</c></a>': las listas con elementos no se emiten."
+ },
+ {
+  "id": "xmltodict-elementos-vacios",
+  "archivo": "xmltodict.py",
+  "buscar": "        content_handler = _XMLGenerator(output, encoding, True)",
+  "reemplazar": "        content_handler = _XMLGenerator(output, encoding, False)",
+  "descripcion": "xmltodict.unparse({'a': {'b': None}}, short_empty_elements=True, full_document=False) devuelve '<a><b></b></a>' cuando deberia devolver '<a><b/></a>'."
+ }
+]

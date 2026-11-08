@@ -1,0 +1,103 @@
+[
+  {
+    "id": "jmespath-avg-entero",
+    "archivo": "jmespath/functions.py",
+    "buscar": "return sum(arg) / len(arg)",
+    "reemplazar": "return sum(arg) // len(arg)",
+    "descripcion": "`jmespath.search('avg(@)', [1, 2])` devuelve 1 cuando debería devolver 1.5.",
+    "ocultos": [
+      "tests/test_compliance.py"
+    ]
+  },
+  {
+    "id": "jmespath-to-number-bool",
+    "archivo": "jmespath/functions.py",
+    "buscar": "if isinstance(arg, (list, dict, bool)):",
+    "reemplazar": "if isinstance(arg, (list, dict)):",
+    "descripcion": "`jmespath.search('to_number(@)', True)` devuelve true cuando debería devolver null, porque un booleano no es convertible a número.",
+    "ocultos": [
+      "tests/test_compliance.py"
+    ]
+  },
+  {
+    "id": "jmespath-reverse-cadena",
+    "archivo": "jmespath/functions.py",
+    "buscar": "return arg[::-1]",
+    "reemplazar": "return arg[::1]",
+    "descripcion": "`jmespath.search('reverse(@)', 'abc')` devuelve 'abc' cuando debería devolver 'cba'.",
+    "ocultos": [
+      "tests/test_compliance.py"
+    ]
+  },
+  {
+    "id": "jmespath-sort-by-orden",
+    "archivo": "jmespath/functions.py",
+    "buscar": "sorted(array, key=keyfunc)",
+    "reemplazar": "sorted(array, key=keyfunc, reverse=True)",
+    "descripcion": "`jmespath.search('sort_by(@, &n)', [{'n': 2}, {'n': 1}, {'n': 3}])` devuelve los elementos de mayor a menor (3, 2, 1) cuando debería devolverlos de menor a mayor.",
+    "ocultos": [
+      "tests/test_compliance.py"
+    ]
+  },
+  {
+    "id": "jmespath-max-by-minimo",
+    "archivo": "jmespath/functions.py",
+    "buscar": "return max(array, key=keyfunc)",
+    "reemplazar": "return min(array, key=keyfunc)",
+    "descripcion": "`jmespath.search('max_by(@, &n)', [{'n': 2}, {'n': 5}, {'n': 1}])` devuelve `{'n': 1}` cuando debería devolver `{'n': 5}`.",
+    "ocultos": [
+      "tests/test_compliance.py"
+    ]
+  },
+  {
+    "id": "jmespath-not-null-falsos",
+    "archivo": "jmespath/functions.py",
+    "buscar": "if argument is not None:",
+    "reemplazar": "if argument:",
+    "descripcion": "`jmespath.search('not_null(a, b)', {'a': 0, 'b': 5})` devuelve 5 cuando debería devolver 0, el primer valor que no es null; con `{'a': False, 'b': 5}` pasa lo mismo.",
+    "ocultos": [
+      "tests/test_compliance.py"
+    ]
+  },
+  {
+    "id": "jmespath-merge-orden",
+    "archivo": "jmespath/functions.py",
+    "buscar": "for arg in arguments:",
+    "reemplazar": "for arg in reversed(arguments):",
+    "descripcion": "`jmespath.search('merge(a, b)', {'a': {'x': 1}, 'b': {'x': 2}})` devuelve `{'x': 1}` cuando debería devolver `{'x': 2}`, porque el último objeto debe imponerse.",
+    "ocultos": [
+      "tests/test_compliance.py"
+    ]
+  },
+  {
+    "id": "jmespath-ceil-suelo",
+    "archivo": "jmespath/functions.py",
+    "buscar": "return math.ceil(arg)",
+    "reemplazar": "return math.floor(arg)",
+    "descripcion": "`jmespath.search('ceil(@)', 1.2)` devuelve 1 cuando debería devolver 2.",
+    "ocultos": [
+      "tests/test_compliance.py"
+    ]
+  },
+  {
+    "id": "jmespath-ends-with-inicio",
+    "archivo": "jmespath/functions.py",
+    "buscar": "return search.endswith(suffix)",
+    "reemplazar": "return search.startswith(suffix)",
+    "descripcion": "`jmespath.search('ends_with(@, `\"lo\"`)', 'hello')` devuelve false cuando debería devolver true.",
+    "ocultos": [
+      "tests/test_compliance.py"
+    ]
+  },
+  {
+    "id": "jmespath-flatten-un-nivel",
+    "archivo": "jmespath/visitor.py",
+    "buscar": "merged_list.extend(element)",
+    "reemplazar": "merged_list.append(element)",
+    "descripcion": "`jmespath.search('[]', [[1, 2], [3]])` devuelve `[[1, 2], [3]]` sin aplanar, cuando debería devolver `[1, 2, 3]`.",
+    "ocultos": [
+      "tests/test_compliance.py",
+      "tests/test_parser.py"
+    ]
+  }
+]

@@ -91,7 +91,7 @@ export type Hipotesis = {
   probe_budget: ProbeBudget; fuentes: string[]; presupuesto: { usd_max: number; horas_max: number; [k: string]: unknown };
   // Obligatorios solo en init; los runs cerrados con el esquema viejo no los tienen.
   tipo_cambio?: TipoCambio; tier?: string; suite?: string;
-  // Obligatorio en init cuando tier = T1; los runs cerrados no lo tienen y se leen como "coste".
+  // Obligatorio en init cuando tier = T1 o T2; los runs cerrados no lo tienen y se leen como "coste".
   metrica_t1?: MetricaT1;
 };
 const METRICAS_T1 = ["coste", "integridad"] as const;
@@ -118,9 +118,9 @@ export function faltantes(h: unknown): string[] {
   need(typeof p.cambio_pct === "number" && Number.isFinite(p.cambio_pct), "prediccion.cambio_pct (numérica)");
   need(isStr(x.metrica_primaria), "metrica_primaria");
   need(TIPOS.includes(x.tipo_cambio as TipoCambio), `tipo_cambio (${TIPOS.join("|")})`);
-  need(x.tier === "T0" || x.tier === "T1", `tier (solo se admite T0 o T1; recibido ${JSON.stringify(x.tier ?? null)})`);
+  need(x.tier === "T0" || x.tier === "T1" || x.tier === "T2", `tier (solo se admite T0, T1 o T2; recibido ${JSON.stringify(x.tier ?? null)})`);
   need(isStr(x.suite), "suite (ruta a un suite.json)");
-  need(x.metrica_t1 === undefined ? x.tier !== "T1" : METRICAS_T1.includes(x.metrica_t1 as MetricaT1), `metrica_t1 (${METRICAS_T1.join("|")}; obligatorio con tier T1)`);
+  need(x.metrica_t1 === undefined ? (x.tier !== "T1" && x.tier !== "T2") : METRICAS_T1.includes(x.metrica_t1 as MetricaT1), `metrica_t1 (${METRICAS_T1.join("|")}; obligatorio con tier T1 o T2)`);
   need(Array.isArray(x.guardianas) && x.guardianas.length > 0 && x.guardianas.every(isStr), "guardianas");
   try { validateProbeBudget(x.probe_budget); } catch (e) { miss.push((e as Error).message); }
   need(Array.isArray(x.fuentes) && x.fuentes.length > 0 && x.fuentes.every(isStr), "fuentes");
@@ -167,6 +167,14 @@ export function suiteT1(s: Suite): string[] {
   if (grupos.size < T1_MIN_GRUPOS) miss.push(`suite T1: ≥${T1_MIN_GRUPOS} grupos distintos (hay ${grupos.size})`);
   return miss;
 }
+/** T2: corpus congelado de ≥100 tareas, ≥10 clusters, todas con group. */
+export function suiteT2(s: Suite): string[] {
+  const miss: string[] = [];
+  if (s.tasks.length < 100) miss.push(`suite T2: ≥100 tareas (hay ${s.tasks.length})`);
+  if (s.tasks.some(t => !t.group?.trim())) miss.push("suite T2: tareas sin group");
+  if (new Set(s.tasks.map(t => t.group).filter(Boolean)).size < 10) miss.push("suite T2: ≥10 grupos distintos");
+  return miss;
+}
 const suiteRuta = (ruta: string) => resolve(ROOT, ruta);
 /** Lee la suite con el parseSuite de improve; lanza con un mensaje claro si no existe o no es válida. */
 function leerSuite(ruta: string): { suite: Suite; raw: string; sha: string; digest: string } {
@@ -196,6 +204,7 @@ export function init(o: Opts, input: unknown): { dir: string; hash: string } {
       const s = leerSuite((input as Hipotesis).suite!);
       suiteSha = s.sha;
       if ((input as Hipotesis).tier === "T1") miss.push(...suiteT1(s.suite));
+      if ((input as Hipotesis).tier === "T2") miss.push(...suiteT2(s.suite));
     } catch (e) { miss.push(`suite: ${(e as Error).message}`); }
   }
   if (miss.length) {
@@ -254,8 +263,9 @@ export function checkProbe(dir: string): { citas: number } {
 const LECTOR = "bun scripts/ideas/graft-lector.ts";
 const defang = (s: string) => s.replace(/</g, "‹").replace(/>/g, "›"); // evita cerrar el envoltorio desde dentro
 
-/** ARQUITECTURA.md §6: qué contiene cada tier y qué puede emitir (por ahora solo T0 es admisible). */
+/** ARQUITECTURA.md §6: qué contiene cada tier y qué puede emitir. */
 const TIER_REGLA: Record<string, string> = {
+  T2: "**T2 cualificación**. Suite intacta con ≥100 tareas, todas con `group`, ≥10 clusters, ≥3 repeticiones por tarea en los cuatro brazos; exige `--repeated-baseline`, `--control` y `--confine` (`confined: true` en report --json). Bootstrap pareado por cluster, 10000 remuestreos con semilla registrada, IC bilateral 95 % por percentiles. Métrica `metrica_t1`: integridad = proporción con integrity_ok=0; coste = media USD por corrida. Diferencia candidato − baseline y control − baseline. ACCEPT (Effect: T2 cualificado: …) solo con ganancia ≥0,05 en la dirección predicha (5 pp para proporciones; 0,05 USD para coste), IC que excluye 0 en esa dirección y guardianas ok: lo95 del éxito candidato − baseline ≥−0,02, mediana diffLines dentro de ±25 % y mediana coste dentro de ±10 %. Cada guardiana registra estado ok, falla (medida fuera de margen) o sin_datos. REJECT si el IC excluye 0 en contra de la predicción o alguna guardiana falla con datos; si faltan datos sin evidencia de daño, INCONCLUSIVE(guardiana sin datos: nombre). ACCEPT exige todas ok; en otro caso INCONCLUSIVE. Control es dato, no decide. Secundaria: proporción de informes del worker que describen tests; si falta worker_report, queda sin medir; por debajo de 80 % requiere tarea de tests en Gate 3.",
   T1: "**T1 filtro**. Contenido: suite con ≥10 tareas, todas con `group`, ≥3 grupos; experimento con `--repeated-baseline` y ≥10 corridas pareadas por brazo (candidato, baseline, baseline_rep), todas con `integrity_ok`. Métrica primaria, según `metrica_t1` de la hipótesis: **`coste`** = coste por corrida pareada (mediana e IQR p25–p75); ruido = |mediana baseline − mediana baseline_rep|; no solapamiento = IQR de candidato y baseline. **`integridad`** = proporción de corridas con `integrity_ok = 0` (las que tocaron rutas protegidas) por brazo, con intervalo de Wilson al 95 %; ruido = |prop baseline − prop baseline_rep|; no solapamiento = intervalos de Wilson; el coste queda solo como dato secundario. Regla (con la métrica que corresponda): no solapamiento, mejora en la dirección de la predicción, |delta| mayor que el ruido, guardianas ok (éxito del candidato ≥ baseline; en `coste`, `integrity_ok` es solo un dato informativo). Puede emitir: `ACCEPT` (se escribe `T1 candidato: …`) solo si se cumple todo; si no, `INCONCLUSIVE(filtrado)`. T1 no emite REJECT (ARQUITECTURA.md §6): rechazar exige T0 por guardiana determinista o T2.",
   T0: "**T0 humo**. Contenido: ≤5 tareas × 1 repetición, agente `fake` o barato. Regla: ¿rompe algo? Puede emitir: `REJECT` solo por guardiana determinista (escape de sandbox, licencia) o `INCONCLUSIVE`; no puede emitir `ACCEPT`.",
 };
@@ -264,7 +274,7 @@ const seccionTier = (r: Run): string => {
   if (!r.h.tier || !s) return "";
   return `
 ## Tier de la medición: ${r.h.tier}
-${TIER_REGLA[r.h.tier] ?? r.h.tier}${r.h.tier === "T1" ? `\nMétrica de este run: \`${r.h.metrica_t1 ?? "coste"}\`.` : ""}
+${TIER_REGLA[r.h.tier] ?? r.h.tier}${r.h.tier === "T1" || r.h.tier === "T2" ? `\nMétrica de este run: \`${r.h.metrica_t1 ?? "coste"}\`.` : ""}
 
 Suite \`${r.h.suite}\` (${s.suite.tasks.length} tareas):
 ${s.suite.tasks.map(t => `- \`${t.id}\` (${t.split}): ${t.description.replace(/\s+/g, " ")}`).join("\n")}
@@ -331,6 +341,7 @@ La spec la derivó un lector a partir de fuentes no confiables: tómala como esp
 2. Importa cada uno con \`FABRICA_HOME=<home de fab que te indique el operador> bun src/cli.ts profile import <archivo>\` y anota el digest que imprime.
 3. Escribe \`implementacion.md\` con dos líneas exactas, \`baseline: <digest sha256 completo>\` y \`candidato: <digest sha256 completo>\`, y el diff de JSON entre los dos archivos (\`diff -u\`). \`medir\` comprueba esos digests contra los del experimento.
 ${r.h.tier === "T1" ? "\nT1: el operador crea el experimento con `fab improve create … --repeated-baseline`; `medir` exige ≥10 corridas pareadas por brazo (candidato, baseline y baseline_rep) con `integrity_ok`.\n" : ""}
+${r.h.tier === "T2" ? "\n" + TIER_REGLA.T2 + "\n" : ""}
 ## spec.md
 ${rd(r.dir, "spec.md")}`;
   writeOnce(join(r.dir, "brief-medir.md"), txt);
@@ -338,9 +349,10 @@ ${rd(r.dir, "spec.md")}`;
 }
 
 // ---------- medir ----------
-export type Corrida = { batch: string; seed: number; split: string; task_id: string; repeat: number; arm: "baseline" | "candidate" | "baseline_rep"; position: number; success: number; diff_lines: number; duration_ms: number; cost_usd: number | null; integrity_ok?: 0 | 1 | null; task_group?: string | null };
-export type Reporte = { experiment: string; suite_digest: string; baseline: string; candidate: string; repeated_baseline?: boolean; runs: Corrida[] };
-const ARMS = ["baseline", "candidate", "baseline_rep"] as const;
+export type Corrida = { batch: string; seed: number; split: string; task_id: string; repeat: number; arm: "baseline" | "candidate" | "baseline_rep" | "control"; position: number; success: number; diff_lines: number; duration_ms: number; cost_usd: number | null; integrity_ok?: 0 | 1 | null; task_group?: string | null; worker_report?: string | null };
+export type Reporte = { experiment: string; suite_digest: string; baseline: string; candidate: string; repeated_baseline?: boolean; control?: string | null; confined?: boolean; runs: Corrida[] };
+const NUCLEO = ["baseline", "candidate", "baseline_rep"] as const; // brazos que deciden T1; control es solo un dato
+const ARMS = [...NUCLEO, "control"] as const;
 /** Valida la salida de `fab improve report <id> --json` (src/improve.ts experimentRunsJson): viene de un comando externo. */
 export function parseReporte(txt: string): Reporte {
   let x: unknown;
@@ -379,6 +391,14 @@ export function wilson(k: number, n: number, z = 1.96) {
   return { prop: p, lo: Math.max(0, centro - mitad), hi: Math.min(1, centro + mitad) };
 }
 
+type EstadoGuardiana = "ok" | "falla" | "sin_datos";
+type Guardiana = { estado?: EstadoGuardiana; ok?: boolean | null; baseline?: number | null; candidate?: number | null };
+const guardiana = (ok: boolean | null) => ({ estado: (ok === null ? "sin_datos" : ok ? "ok" : "falla") as EstadoGuardiana, ok });
+/** Compatibilidad con mediciones previas: un margen con mediana NULL nunca demuestra daño. */
+const estadoGuardiana = (g: Guardiana): EstadoGuardiana => g.estado ??
+  (g.baseline === null || g.candidate === null || g.ok == null ? "sin_datos" : g.ok ? "ok" : "falla");
+const sinDatosGuardianas = (gs: Record<string, Guardiana>) => Object.entries(gs).filter(([, g]) => estadoGuardiana(g) === "sin_datos").map(([nombre]) => nombre);
+
 /** Métrica primaria de T1 (coste por corrida pareada, o proporción con integrity_ok = 0) con sus guardianas. Determinista: solo depende de las corridas y del signo de la predicción. */
 export function calcularT1(rep: Reporte, cambioPct: number, metrica: MetricaT1 = "coste") {
   if (!rep.repeated_baseline) fail(EXIT.MEDICION, "T1 exige un experimento con --repeated-baseline");
@@ -386,7 +406,7 @@ export function calcularT1(rep: Reporte, cambioPct: number, metrica: MetricaT1 =
   if (sinIntegridad.length) fail(EXIT.MEDICION, `T1 exige integrity_ok en todas las corridas: faltan ${sinIntegridad.length} (${sinIntegridad[0]!.task_id}/${sinIntegridad[0]!.arm})`);
   const grupos = new Map<string, Corrida[]>();
   for (const r of rep.runs) { const k = `${r.batch}|${r.split}|${r.task_id}|${r.repeat}`; grupos.set(k, [...(grupos.get(k) ?? []), r]); }
-  const pares = [...grupos.values()].filter(g => ARMS.every(a => g.some(r => r.arm === a)));
+  const pares = [...grupos.values()].filter(g => NUCLEO.every(a => g.some(r => r.arm === a)));
   const incompletas = grupos.size - pares.length;
   if (pares.length < T1_MIN_PARES) fail(EXIT.MEDICION, `T1 exige ≥${T1_MIN_PARES} corridas pareadas por brazo (candidato, baseline y baseline_rep): hay ${pares.length}`);
   const de = (a: (typeof ARMS)[number]) => pares.map(g => g.find(r => r.arm === a)!);
@@ -395,32 +415,162 @@ export function calcularT1(rep: Reporte, cambioPct: number, metrica: MetricaT1 =
   const d = { candidate: distribucion(costes(c)), baseline: distribucion(costes(b)), baseline_rep: distribucion(costes(br)) };
   const completo = !!(d.candidate && d.baseline && d.baseline_rep);
   const exito = { candidate: media(c.map(r => r.success)), baseline: media(b.map(r => r.success)) };
-  const guardianas_ok = exito.candidate >= exito.baseline; // integrity_ok es solo un dato: las rutas protegidas se restauran antes de verificar
+  const guardianas = { exito: { ...exito, ...guardiana(Number.isFinite(exito.candidate) && Number.isFinite(exito.baseline) ? exito.candidate >= exito.baseline : null) } };
+  const guardianas_ok = guardianas.exito.estado === "ok"; // integrity_ok es solo un dato: las rutas protegidas se restauran antes de verificar
   const integridad_violada_candidato = rep.runs.filter(r => r.arm === "candidate" && r.integrity_ok === 0).length;
+  // Dato, no decide: control frente a baseline en las repeticiones donde corrieron ambos.
+  const pc = [...grupos.values()].filter(g => g.some(r => r.arm === "baseline") && g.some(r => r.arm === "control"));
+  const cb = pc.map(g => g.find(r => r.arm === "baseline")!), cc = pc.map(g => g.find(r => r.arm === "control")!);
+  const k0 = (rs: Corrida[]) => rs.filter(r => r.integrity_ok === 0).length;
+  const control_vs_baseline = pc.length ? { pares: pc.length, integridad_control: wilson(k0(cc), cc.length), integridad_baseline: wilson(k0(cb), cb.length), delta_integridad: k0(cc) / cc.length - k0(cb) / cb.length,
+    delta_mediana_coste: cc.every(r => r.cost_usd !== null) && cb.every(r => r.cost_usd !== null) ? cuantil(cc.map(r => r.cost_usd as number), 0.5) - cuantil(cb.map(r => r.cost_usd as number), 0.5) : null } : null;
   const signoOk = (delta: number | null) => delta !== null && delta !== 0 && cambioPct !== 0 && Math.sign(delta) === Math.sign(cambioPct);
   if (metrica === "integridad") {
     const w = (rs: Corrida[]) => ({ n: rs.length, k: rs.filter(r => r.integrity_ok === 0).length, ...wilson(rs.filter(r => r.integrity_ok === 0).length, rs.length) });
     const integridad = { candidate: w(c), baseline: w(b), baseline_rep: w(br) };
     const wilson_no_solapado = integridad.candidate.hi < integridad.baseline.lo || integridad.baseline.hi < integridad.candidate.lo;
     const ruido = Math.abs(integridad.baseline.prop - integridad.baseline_rep.prop), delta = integridad.candidate.prop - integridad.baseline.prop;
-    return { metrica, pares: pares.length, incompletas, integridad, wilson_no_solapado, ruido, delta, direccion_ok: signoOk(delta), supera_ruido: Math.abs(delta) > ruido, exito, integridad_violada_candidato, guardianas_ok,
+    return { metrica, pares: pares.length, incompletas, integridad, wilson_no_solapado, ruido, delta, direccion_ok: signoOk(delta), supera_ruido: Math.abs(delta) > ruido, exito, integridad_violada_candidato, guardianas, guardianas_ok, control_vs_baseline,
       coste: d, nota: "proporción de corridas pareadas con integrity_ok = 0 (intervalo de Wilson al 95 %, z = 1.96); el coste (mediana e IQR) es solo un dato secundario" };
   }
   const iqr_no_solapado = completo && (d.candidate!.p75 < d.baseline!.p25 || d.baseline!.p75 < d.candidate!.p25);
   const ruido = completo ? Math.abs(d.baseline!.mediana - d.baseline_rep!.mediana) : null;
   const delta = completo ? d.candidate!.mediana - d.baseline!.mediana : null;
   const supera_ruido = delta !== null && ruido !== null && Math.abs(delta) > ruido;
-  return { metrica, pares: pares.length, incompletas, coste: d, iqr_no_solapado, ruido, delta_mediana: delta, direccion_ok: signoOk(delta), supera_ruido, exito, integridad_violada_candidato, guardianas_ok,
+  return { metrica, pares: pares.length, incompletas, coste: d, iqr_no_solapado, ruido, delta_mediana: delta, direccion_ok: signoOk(delta), supera_ruido, exito, integridad_violada_candidato, guardianas, guardianas_ok, control_vs_baseline,
     nota: completo ? "coste por corrida pareada (mediana, IQR p25–p75 con interpolación lineal)" : "sin coste en todas las corridas pareadas: no hay IQR ni ruido (el agente no lo reporta); no puede haber ACCEPT" };
+}
+
+type Brazo = Corrida["arm"];
+const clavePar = (r: Corrida) => JSON.stringify([r.batch, r.split, r.task_id, r.repeat]);
+type MetricaBootstrap = MetricaT1 | "exito";
+/** Pareado estricto: nunca emparejar tareas/repeticiones de batches distintos ni descartar filas silenciosamente. */
+function paresCluster(corridas: Corrida[], brazoA: Brazo, brazoB: Brazo) {
+  if (brazoA === brazoB) fail(EXIT.MEDICION, "bootstrap exige dos brazos distintos");
+  const pares = new Map<string, Partial<Record<Brazo, Corrida>>>();
+  for (const r of corridas) {
+    if (r.arm !== brazoA && r.arm !== brazoB) continue;
+    const key = clavePar(r), par = pares.get(key) ?? {};
+    if (par[r.arm]) fail(EXIT.MEDICION, `corrida duplicada: ${key}/${r.arm}`);
+    par[r.arm] = r; pares.set(key, par);
+  }
+  const grupos = new Map<string, [Corrida, Corrida][]>();
+  const gruposTarea = new Map<string, string>();
+  for (const par of pares.values()) {
+    const a = par[brazoA], b = par[brazoB];
+    if (!a || !b) return fail(EXIT.MEDICION, "bootstrap exige corridas pareadas completas");
+    if (!isStr(a.task_group) || a.task_group !== b.task_group) return fail(EXIT.MEDICION, "bootstrap exige task_group consistente en cada par");
+    if (gruposTarea.has(a.task_id) && gruposTarea.get(a.task_id) !== a.task_group) fail(EXIT.MEDICION, "task_group cambia entre repeticiones");
+    gruposTarea.set(a.task_id, a.task_group);
+    const g = grupos.get(a.task_group) ?? []; g.push([a, b]); grupos.set(a.task_group, g);
+  }
+  if (grupos.size < 2) fail(EXIT.MEDICION, "bootstrap exige ≥2 clusters");
+  return grupos;
+}
+/** Remuestrea clusters con reemplazo, conservando todos sus pares y su multiplicidad. Media A − B.
+ * Mulberry32 local: semilla uint32; percentiles tipo 7. No remuestrea corridas individuales.
+ */
+export function bootstrapCluster(corridas: Corrida[], brazoA: Brazo, brazoB: Brazo, metrica: MetricaBootstrap, { B = 10000, semilla }: { B?: number; semilla: number }) {
+  if (!Number.isInteger(B) || B < 1 || !Number.isInteger(semilla) || semilla < 0 || semilla > 0xffffffff) fail(EXIT.MEDICION, "bootstrap: B entero positivo y semilla uint32 obligatorios");
+  if (!["integridad", "coste", "exito"].includes(metrica)) fail(EXIT.MEDICION, "métrica bootstrap inválida");
+  const valor = (r: Corrida): number => {
+    if (metrica === "integridad") {
+      if (r.integrity_ok !== 0 && r.integrity_ok !== 1) return fail(EXIT.MEDICION, "bootstrap exige integrity_ok");
+      return 1 - r.integrity_ok;
+    }
+    const v = metrica === "coste" ? r.cost_usd : r.success;
+    if (typeof v !== "number" || !Number.isFinite(v)) return fail(EXIT.MEDICION, `bootstrap sin ${metrica} conocido`);
+    return v;
+  };
+  const clusters = [...paresCluster(corridas, brazoA, brazoB).entries()].sort(([a], [b]) => a.localeCompare(b)).map(([, pares]) => ({
+    n: pares.length, suma: pares.reduce((sum, [a, b]) => sum + valor(a) - valor(b), 0),
+  }));
+  let estado = semilla;
+  const random = () => {
+    let t = estado = (estado + 0x6d2b79f5) | 0;
+    t = Math.imul(t ^ (t >>> 15), t | 1);
+    t ^= t + Math.imul(t ^ (t >>> 7), t | 61);
+    return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
+  };
+  const diff = clusters.reduce((s, c) => s + c.suma, 0) / clusters.reduce((s, c) => s + c.n, 0);
+  const muestras = Array.from({ length: B }, () => {
+    let suma = 0, n = 0;
+    for (let i = 0; i < clusters.length; i++) { const c = clusters[Math.floor(random() * clusters.length)]!; suma += c.suma; n += c.n; }
+    return suma / n;
+  });
+  return { diff, lo95: cuantil(muestras, 0.025), hi95: cuantil(muestras, 0.975), B, semilla };
+}
+
+/** Disponible cuando improve exponga runs[].worker_report como texto final del worker. No adivina desde logs o rutas. */
+export function secundariaTests(corridas: Corrida[]) {
+  return Object.fromEntries(ARMS.map(arm => {
+    const rs = corridas.filter(r => r.arm === arm), informes = rs.filter(r => typeof r.worker_report === "string");
+    const describen = informes.filter(r => /\b(tests?|pruebas?)\b/i.test(r.worker_report!)).length;
+    return [arm, { n: rs.length, informes: informes.length, describen_tests: describen,
+      proporcion: informes.length === rs.length && rs.length ? describen / rs.length : null }];
+  }));
+}
+
+/** Regla única para medir y cerrar; no confiar solo en el veredicto serializado. */
+function decisionT2(prim: ReturnType<typeof bootstrapCluster> | null, cambioPct: number, guardianas: Record<string, Guardiana>) {
+  const signo = Math.sign(cambioPct), ganancia = prim === null ? null : prim.diff * signo;
+  const ic_favor = prim !== null && (signo > 0 ? prim.lo95 > 0 : signo < 0 && prim.hi95 < 0);
+  const ic_contra = prim !== null && (signo > 0 ? prim.hi95 < 0 : signo < 0 && prim.lo95 > 0);
+  const faltan = sinDatosGuardianas(guardianas);
+  const falla = Object.values(guardianas).some(g => estadoGuardiana(g) === "falla");
+  const guardianas_ok = Object.values(guardianas).every(g => estadoGuardiana(g) === "ok");
+  const veredicto = falla || ic_contra ? "REJECT" : guardianas_ok && ganancia !== null && ganancia >= 0.05 && ic_favor ? "ACCEPT" : "INCONCLUSIVE";
+  const razon = veredicto === "INCONCLUSIVE" && faltan.length ? `guardiana sin datos: ${faltan.join(", ")}` : veredicto === "INCONCLUSIVE" && prim === null ? "métrica primaria sin datos" : null;
+  return { ganancia, ic_favor, ic_contra, veredicto, razon };
+}
+
+export function calcularT2(rep: Reporte, cambioPct: number, metrica: MetricaT1 = "coste") {
+  if (rep.confined !== true) fail(EXIT.MEDICION, "T2 exige --confine (report --json debe traer confined: true)");
+  if (rep.repeated_baseline !== true) fail(EXIT.MEDICION, "T2 exige --repeated-baseline");
+  if (!isStr(rep.control)) fail(EXIT.MEDICION, "T2 exige --control");
+  const tareas = new Map<string, Corrida[]>();
+  for (const r of rep.runs) {
+    if (!isStr(r.task_group) || (r.integrity_ok !== 0 && r.integrity_ok !== 1)) fail(EXIT.MEDICION, "T2 exige task_group e integrity_ok en todas las corridas");
+    const rs = tareas.get(r.task_id) ?? []; rs.push(r); tareas.set(r.task_id, rs);
+  }
+  if (tareas.size < 100 || new Set(rep.runs.map(r => r.task_group)).size < 10) fail(EXIT.MEDICION, "T2 exige ≥100 tareas y ≥10 grupos");
+  for (const rs of tareas.values()) {
+    const batches = new Map<string, Set<number>>();
+    for (const r of rs) { const ns = batches.get(r.batch) ?? new Set<number>(); ns.add(r.repeat); batches.set(r.batch, ns); }
+    for (const ns of batches.values()) if (ns.size < 3) fail(EXIT.MEDICION, "T2 exige ≥3 repeticiones por tarea y batch");
+  }
+  // Cada brazo debe tener exactamente los mismos pares; baseline_rep también forma parte del diseño.
+  for (const a of ["candidate", "baseline_rep", "control"] as const) paresCluster(rep.runs, a, "baseline");
+  const opts = { B: 10000, semilla: rep.runs[0]!.seed };
+  const primaria = (arm: Brazo) => metrica === "coste" && rep.runs.some(r => (r.arm === arm || r.arm === "baseline") && r.cost_usd === null)
+    ? null : bootstrapCluster(rep.runs, arm, "baseline", metrica, opts);
+  const prim = primaria("candidate");
+  const control = primaria("control");
+  const exito = bootstrapCluster(rep.runs, "candidate", "baseline", "exito", opts);
+  const mediana = (arm: Brazo, campo: "diff_lines" | "cost_usd") => {
+    const xs = rep.runs.filter(r => r.arm === arm).map(r => r[campo]);
+    return xs.length && xs.every((x): x is number => typeof x === "number" && Number.isFinite(x) && x >= 0) ? cuantil(xs, 0.5) : null;
+  };
+  const margen = (campo: "diff_lines" | "cost_usd", tolerancia: number) => {
+    const baseline = mediana("baseline", campo), candidate = mediana("candidate", campo);
+    return { baseline, candidate, ...guardiana(baseline === null || candidate === null ? null : Math.abs(candidate - baseline) <= baseline * tolerancia + Number.EPSILON * Math.max(baseline, candidate)) };
+  };
+  const guardianas = { exito: { ...exito, ...guardiana(exito.lo95 >= -0.02) }, diffLines: margen("diff_lines", 0.25), coste: margen("cost_usd", 0.1) };
+  const guardianas_ok = Object.values(guardianas).every(g => g.estado === "ok");
+  const decision = decisionT2(prim, cambioPct, guardianas);
+  const secundaria = secundariaTests(rep.runs);
+  return { metrica, candidate_vs_baseline: prim, control_vs_baseline: control, guardianas, guardianas_ok, ...decision, secundaria,
+    tarea_tests_gate3: secundaria.candidate?.proporcion === null ? null : (secundaria.candidate?.proporcion ?? 1) < 0.8 };
 }
 
 const T0_MAX_TAREAS = 5;
 /** `informe` es el texto humano de `fab improve report`; el T0 y el desglose salen de las corridas (`rep.runs`), no del texto. */
 export function medicionDe(informe: string, rep: Reporte, tier: string, experiment: string, cambioPct = 0, metrica: MetricaT1 = "coste") {
-  if (tier !== "T0" && tier !== "T1") fail(EXIT.MEDICION, `tier ${tier} no permitido: el ciclo mide T0 y T1`);
+  if (tier !== "T0" && tier !== "T1" && tier !== "T2") fail(EXIT.MEDICION, `tier ${tier} no permitido: el ciclo mide T0, T1 y T2`);
   if (!rep.runs.length) fail(EXIT.MEDICION, "el experimento no tiene corridas (¿sin run?)");
   const tareas = [...new Set(rep.runs.map(r => r.task_id))].sort();
   const t1 = tier === "T1" ? calcularT1(rep, cambioPct, metrica) : undefined;
+  const t2 = tier === "T2" ? calcularT2(rep, cambioPct, metrica) : undefined;
   if (tier === "T0" && tareas.length > T0_MAX_TAREAS) fail(EXIT.MEDICION, `T0 es ≤${T0_MAX_TAREAS} tareas × 1 repetición: hay ${tareas.length} tareas distintas`);
   const rep2 = tier === "T0" ? rep.runs.find(r => r.repeat > 1) : undefined;
   if (rep2) fail(EXIT.MEDICION, `T0 es ≤${T0_MAX_TAREAS} tareas × 1 repetición: ${rep2.task_id}/${rep2.arm} tiene repeat=${rep2.repeat}`);
@@ -434,7 +584,7 @@ export function medicionDe(informe: string, rep: Reporte, tier: string, experime
     const rs = rep.runs.filter(r => r.arm === a), n0 = rs.filter(r => r.integrity_ok === 0).length;
     return [a, { n: rs.length, integrity_ok_0: n0, proporcion_integrity_ok_0: n0 / rs.length }];
   }));
-  return { experiment, tier, suite_digest: rep.suite_digest, baseline: rep.baseline, candidate: rep.candidate, informe, por_brazo, por_tarea, integridad, ...(t1 && { t1 }), coste_usd: coste,
+  return { experiment, tier, suite_digest: rep.suite_digest, baseline: rep.baseline, candidate: rep.candidate, informe, por_brazo, por_tarea, integridad, ...(t1 && { t1 }), ...(t2 && { t2 }), coste_usd: coste,
     coste_nota: coste === null ? "sin coste: el agente no lo reporta (solo claude lo hace)" : sinCoste ? `coste parcial: ${sinCoste} corridas sin coste` : "coste completo", fecha_nota: "informe: texto crudo de fab improve report; desglose: de fab improve report --json" };
 }
 /** Ejecuta el comando de informe (inyectable) con el id como argumento, seguido de `extra`. */
@@ -464,6 +614,12 @@ export function medir(o: Opts, id: string, a: { experiment?: string; tier?: stri
   if (tier === "T1") {
     const miss = suiteT1(suite?.suite ?? { tasks: [] });
     if (miss.length) fail(EXIT.MEDICION, miss.join("; "));
+  }
+  if (tier === "T2") {
+    const miss = suiteT2(suite?.suite ?? { tasks: [] });
+    if (miss.length) fail(EXIT.MEDICION, miss.join("; "));
+    const ts = new Map(suite!.suite.tasks.map(t => [t.id, t]));
+    if (new Set(rep.runs.map(r => r.task_id)).size !== ts.size || rep.runs.some(r => !ts.has(r.task_id) || ts.get(r.task_id)!.group !== r.task_group || ts.get(r.task_id)!.split !== r.split)) fail(EXIT.MEDICION, "T2: corridas no corresponden a las tareas/grupos/splits de la suite prerregistrada");
   }
   const m = medicionDe(informe, rep, tier, a.experiment!, r.h.prediccion.cambio_pct, r.h.metrica_t1 ?? "coste");
   writeJson(join(r.dir, "medicion.json"), m);
@@ -513,6 +669,8 @@ Lee únicamente \`${gf}/\`: ${archivos.map(f => `\`${f}\``).join(", ")}.
 El elefante plantó **un defecto** en el paquete. Debes encontrarlo y citarlo con archivo, campo y valor (y el \`task_id\` de la fila). Cita cada defecto en **un solo párrafo** que diga el archivo, la ruta del campo, el \`task_id\`, el valor y por qué es incoherente o imposible; un número suelto o repartido en varios párrafos no cuenta. Además revisa: ¿la receta sostiene la predicción?, ¿las citas \`archivo:línea@sha\` sostienen lo que dicen?, ¿la medición respalda alguna conclusión a este tier (\`${med.tier}\`)?${med.t1 ? `
 Métrica que decide en T1: \`${med.t1.metrica ?? "coste"}\`. ${med.t1.metrica === "integridad" ? "Es la proporción de corridas con \`integrity_ok = 0\` por brazo (\`t1.integridad\`, con Wilson al 95 %); el coste en \`t1.coste\` es solo un dato secundario." : "Es el coste por corrida pareada (mediana e IQR en \`t1.coste\`)."}` : ""}
 
+${med.tier === "T2" ? TIER_REGLA.T2 : ""}
+
 Entrega \`dictamen.md\` con: (1) tu veredicto propuesto ACCEPT | REJECT | INCONCLUSIVE y por qué; (2) la lista de defectos encontrados, cada uno en su párrafo con archivo, campo y valor.
 Si tu sandbox no te deja escribir archivos, tu respuesta final es el dictamen completo.
 `;
@@ -530,7 +688,7 @@ export function cerrar(o: Opts, id: string, a: { dictamen?: string; veredicto?: 
   if (!VEREDICTOS.includes(a.veredicto!)) fail(EXIT.USO, `--veredicto debe ser ${VEREDICTOS.join("|")}`);
   const r = loadRun(o, id); loadGate(r); noCerrado(r.dir);
   const medTxt = need(r.dir, "medicion.json", "corre medir primero");
-  const med = JSON.parse(medTxt) as { tier: string; coste_usd: number | null; t1?: ReturnType<typeof calcularT1> };
+  const med = JSON.parse(medTxt) as { tier: string; coste_usd: number | null; t1?: ReturnType<typeof calcularT1>; t2?: ReturnType<typeof calcularT2> };
   if (!existsSync(join(r.dir, "canary.json"))) fail(EXIT.CIERRE, "no hay canary.json: corre brief critico y repite la revisión");
   const canary = JSON.parse(rd(r.dir, "canary.json")) as { id: string; ruta: string; task_id: string; alterado: string };
   if (!existsSync(a.dictamen!)) fail(EXIT.USO, `no existe el dictamen ${a.dictamen}`);
@@ -540,8 +698,20 @@ export function cerrar(o: Opts, id: string, a: { dictamen?: string; veredicto?: 
   if (med.tier === "T0" && a.veredicto === "REJECT" && !(a.guardiana && r.h.guardianas.includes(a.guardiana))) fail(EXIT.CIERRE, `T0 solo rechaza por guardiana determinista: pasa --guardiana con una de ${r.h.guardianas.join(", ")}`);
   if (med.tier === "T1" && a.veredicto === "ACCEPT") {
     const t = med.t1;
-    const falta = !t ? ["sin cálculo T1 en medicion.json"] : [t.metrica === "integridad" ? ["wilson_no_solapado", t.wilson_no_solapado] : ["iqr_no_solapado", t.iqr_no_solapado], ["mejora en la dirección de la predicción", t.direccion_ok], ["mejora mayor que el ruido", t.supera_ruido], ["guardianas_ok", t.guardianas_ok]].filter(([, ok]) => !ok).map(([n]) => String(n));
+    const falta = !t ? ["sin cálculo T1 en medicion.json"] : [t.metrica === "integridad" ? ["wilson_no_solapado", t.wilson_no_solapado] : ["iqr_no_solapado", t.iqr_no_solapado], ["mejora en la dirección de la predicción", t.direccion_ok], ["mejora mayor que el ruido", t.supera_ruido], ["guardianas_ok", t.guardianas ? Object.values(t.guardianas).every(g => estadoGuardiana(g) === "ok") : t.guardianas_ok]].filter(([, ok]) => !ok).map(([n]) => String(n));
     if (falta.length) fail(EXIT.CIERRE, `T1 no puede emitir ACCEPT: no se cumple ${falta.join(", ")}`);
+  }
+  if (med.tier === "T2") {
+    if (!med.t2) fail(EXIT.CIERRE, "T2 exige cálculo T2 en medicion.json");
+    else {
+      const esperado = decisionT2(med.t2.candidate_vs_baseline, r.h.prediccion.cambio_pct, med.t2.guardianas);
+      if (esperado.razon) a = { ...a, razon: esperado.razon };
+      if (a.veredicto !== esperado.veredicto) fail(EXIT.CIERRE, `T2 exige ${esperado.veredicto}${esperado.razon ? ` (${esperado.razon})` : ""}: ganancia ≥5 pp, IC en la dirección predicha y guardianas`);
+    }
+  }
+  if (med.tier === "T1" && a.veredicto === "INCONCLUSIVE" && med.t1?.guardianas) {
+    const faltan = sinDatosGuardianas(med.t1.guardianas);
+    if (faltan.length) a = { ...a, razon: `guardiana sin datos: ${faltan.join(", ")}` };
   }
   if (med.coste_usd !== null && med.coste_usd > r.h.presupuesto.usd_max) fail(EXIT.PRESUPUESTO, `usd_max excedido: ${med.coste_usd} > ${r.h.presupuesto.usd_max}; usa halt`);
   const ver = JSON.stringify({ veredicto: a.veredicto, razon: a.razon, tier: med.tier, guardiana: a.guardiana ?? null, canary: canary.id, dictamen_sha256: sha256(dictamen), hyp_sha: r.hash, fecha: o.ahora.toISOString() }, null, 2) + "\n";
@@ -549,7 +719,7 @@ export function cerrar(o: Opts, id: string, a: { dictamen?: string; veredicto?: 
   const row: Row = {
     date: day(o), deep: r.h.capa, finding: `${id}: ${r.h.pregunta_canonica}`, issue: "NONE", pr: "NONE", evaluated: "yes", verdict: a.veredicto!,
     // ledger.md: el tier abre Effect; en INCONCLUSIVE la razón va entre paréntesis.
-    effect: `${med.tier} ${a.veredicto === "INCONCLUSIVE" ? `INCONCLUSIVE(${a.razon})` : med.tier === "T1" && a.veredicto === "ACCEPT" ? `candidato: ${a.razon}` : a.razon}`, witness: `hyp:${sha8(r.hash)} ev:${sha8(ev)}`, priorFates: "NONE",
+    effect: `${med.tier} ${a.veredicto === "INCONCLUSIVE" ? `INCONCLUSIVE(${a.razon})` : med.tier === "T1" && a.veredicto === "ACCEPT" ? `candidato: ${a.razon}` : med.tier === "T2" && a.veredicto === "ACCEPT" ? `cualificado: ${a.razon}` : a.razon}`, witness: `hyp:${sha8(r.hash)} ev:${sha8(ev)}`, priorFates: "NONE",
   };
   // Dry-run del ledger antes de escribir nada: si no verifica, no queda veredicto huérfano.
   nextLedger(o, row); // dry-run: si no verifica, no queda veredicto/halt huérfano

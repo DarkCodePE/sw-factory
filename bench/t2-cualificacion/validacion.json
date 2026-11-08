@@ -1,0 +1,1393 @@
+{
+  "suite_sha256": "7ca7d970be400cc8466a08022af1111bbdb7baaf0726562617c644f3d18e3ce7",
+  "tareas": 100,
+  "validas": 100,
+  "visible_en_verde": 100,
+  "repos": {
+    "boltons": {
+      "commit": "d31d821d56c8f7756af9c30a864077f2e5855321",
+      "licencia": "BSD-3-Clause"
+    },
+    "cachetools": {
+      "commit": "7f6228eb3769fea9207a7fa0f22af623413a9b35",
+      "licencia": "MIT"
+    },
+    "idna": {
+      "commit": "d357725082245ff90f5cf8800a3fc297b1f2319a",
+      "licencia": "BSD-3-Clause"
+    },
+    "jmespath": {
+      "commit": "2812594e69d43098ef60f81f4efc404c071b0418",
+      "licencia": "MIT"
+    },
+    "pyflakes": {
+      "commit": "5324946c5d8602697f5df6d98ad162920b3e5d61",
+      "licencia": "MIT"
+    },
+    "semver": {
+      "commit": "f3c7138120d7f49e190bd7c555c6e7eb155b482d",
+      "licencia": "BSD-3-Clause"
+    },
+    "sortedcontainers": {
+      "commit": "3ac358631f58c1347f1d6d2d92784117db0f38ed",
+      "licencia": "Apache-2.0"
+    },
+    "tabulate": {
+      "commit": "268615a5c27dc40e5c22454c07b44d5c50410da0",
+      "licencia": "MIT"
+    },
+    "toolz": {
+      "commit": "451af60dec590a6010e2babdbf391ea8f815122f",
+      "licencia": "BSD-3-Clause"
+    },
+    "xmltodict": {
+      "commit": "6e29fba282e68631034dd2722a413b4e35276584",
+      "licencia": "MIT"
+    }
+  },
+  "filas": [
+    {
+      "id": "boltons-chunk-ranges-width",
+      "grupo": "boltons",
+      "split": "development",
+      "ocultos": [
+        "tests/test_iterutils.py"
+      ],
+      "visible_rc": 0,
+      "base_rc": 1,
+      "referencia_rc": 0,
+      "ok": true,
+      "verify_s": 2.8
+    },
+    {
+      "id": "boltons-windowed-fill-dropped",
+      "grupo": "boltons",
+      "split": "development",
+      "ocultos": [
+        "tests/test_iterutils.py"
+      ],
+      "visible_rc": 0,
+      "base_rc": 1,
+      "referencia_rc": 0,
+      "ok": true,
+      "verify_s": 2.9
+    },
+    {
+      "id": "boltons-lstrip-first-item",
+      "grupo": "boltons",
+      "split": "development",
+      "ocultos": [
+        "tests/test_iterutils.py"
+      ],
+      "visible_rc": 0,
+      "base_rc": 1,
+      "referencia_rc": 0,
+      "ok": true,
+      "verify_s": 2.8
+    },
+    {
+      "id": "boltons-frange-last-step",
+      "grupo": "boltons",
+      "split": "development",
+      "ocultos": [
+        "tests/test_iterutils.py"
+      ],
+      "visible_rc": 0,
+      "base_rc": 1,
+      "referencia_rc": 0,
+      "ok": true,
+      "verify_s": 2.8
+    },
+    {
+      "id": "boltons-backoff-count",
+      "grupo": "boltons",
+      "split": "development",
+      "ocultos": [
+        "tests/test_iterutils.py"
+      ],
+      "visible_rc": 0,
+      "base_rc": 1,
+      "referencia_rc": 0,
+      "ok": true,
+      "verify_s": 2.8
+    },
+    {
+      "id": "boltons-ceil-options-exact",
+      "grupo": "boltons",
+      "split": "development",
+      "ocultos": [
+        "tests/test_mathutils.py"
+      ],
+      "visible_rc": 0,
+      "base_rc": 1,
+      "referencia_rc": 0,
+      "ok": true,
+      "verify_s": 2.9
+    },
+    {
+      "id": "boltons-floor-options-exact",
+      "grupo": "boltons",
+      "split": "development",
+      "ocultos": [
+        "tests/test_mathutils.py"
+      ],
+      "visible_rc": 0,
+      "base_rc": 1,
+      "referencia_rc": 0,
+      "ok": true,
+      "verify_s": 2.8
+    },
+    {
+      "id": "boltons-bytes2human-unit-edge",
+      "grupo": "boltons",
+      "split": "development",
+      "ocultos": [
+        "tests/test_strutils.py"
+      ],
+      "visible_rc": 0,
+      "base_rc": 1,
+      "referencia_rc": 0,
+      "ok": true,
+      "verify_s": 2.9
+    },
+    {
+      "id": "boltons-parse-int-list-range",
+      "grupo": "boltons",
+      "split": "validation",
+      "ocultos": [
+        "tests/test_strutils.py"
+      ],
+      "visible_rc": 0,
+      "base_rc": 1,
+      "referencia_rc": 0,
+      "ok": true,
+      "verify_s": 2.8
+    },
+    {
+      "id": "boltons-format-int-list-space",
+      "grupo": "boltons",
+      "split": "validation",
+      "ocultos": [
+        "tests/test_strutils.py"
+      ],
+      "visible_rc": 0,
+      "base_rc": 1,
+      "referencia_rc": 0,
+      "ok": true,
+      "verify_s": 2.8
+    },
+    {
+      "id": "cachetools-lru-read-not-refresh",
+      "grupo": "cachetools",
+      "split": "development",
+      "ocultos": [
+        "tests/test_lru.py"
+      ],
+      "visible_rc": 0,
+      "base_rc": 1,
+      "referencia_rc": 0,
+      "ok": true,
+      "verify_s": 0.5
+    },
+    {
+      "id": "cachetools-lfu-tie-eviction",
+      "grupo": "cachetools",
+      "split": "development",
+      "ocultos": [
+        "tests/test_lfu.py"
+      ],
+      "visible_rc": 0,
+      "base_rc": 1,
+      "referencia_rc": 0,
+      "ok": true,
+      "verify_s": 0.5
+    },
+    {
+      "id": "cachetools-rr-delete-middle",
+      "grupo": "cachetools",
+      "split": "development",
+      "ocultos": [
+        "tests/test_func.py",
+        "tests/test_rr.py"
+      ],
+      "visible_rc": 0,
+      "base_rc": 1,
+      "referencia_rc": 0,
+      "ok": true,
+      "verify_s": 0.7
+    },
+    {
+      "id": "cachetools-ttl-contains-at-expiry",
+      "grupo": "cachetools",
+      "split": "development",
+      "ocultos": [
+        "tests/test_ttl.py"
+      ],
+      "visible_rc": 0,
+      "base_rc": 1,
+      "referencia_rc": 0,
+      "ok": true,
+      "verify_s": 0.5
+    },
+    {
+      "id": "cachetools-ttl-lifetime-too-long",
+      "grupo": "cachetools",
+      "split": "development",
+      "ocultos": [
+        "tests/test_func.py",
+        "tests/test_ttl.py"
+      ],
+      "visible_rc": 0,
+      "base_rc": 1,
+      "referencia_rc": 0,
+      "ok": true,
+      "verify_s": 0.6
+    },
+    {
+      "id": "cachetools-ttl-expire-at-boundary",
+      "grupo": "cachetools",
+      "split": "development",
+      "ocultos": [
+        "tests/test_func.py",
+        "tests/test_ttl.py"
+      ],
+      "visible_rc": 0,
+      "base_rc": 1,
+      "referencia_rc": 0,
+      "ok": true,
+      "verify_s": 0.5
+    },
+    {
+      "id": "cachetools-ttl-delete-expired",
+      "grupo": "cachetools",
+      "split": "development",
+      "ocultos": [
+        "tests/test_ttl.py"
+      ],
+      "visible_rc": 0,
+      "base_rc": 1,
+      "referencia_rc": 0,
+      "ok": true,
+      "verify_s": 0.5
+    },
+    {
+      "id": "cachetools-tlru-contains-at-expiry",
+      "grupo": "cachetools",
+      "split": "development",
+      "ocultos": [
+        "tests/test_tlru.py"
+      ],
+      "visible_rc": 0,
+      "base_rc": 1,
+      "referencia_rc": 0,
+      "ok": true,
+      "verify_s": 0.5
+    },
+    {
+      "id": "cachetools-tlru-read-not-refresh",
+      "grupo": "cachetools",
+      "split": "validation",
+      "ocultos": [
+        "tests/test_tlru.py"
+      ],
+      "visible_rc": 0,
+      "base_rc": 1,
+      "referencia_rc": 0,
+      "ok": true,
+      "verify_s": 0.6
+    },
+    {
+      "id": "cachetools-typedkey-kwarg-types",
+      "grupo": "cachetools",
+      "split": "validation",
+      "ocultos": [
+        "tests/test_keys.py"
+      ],
+      "visible_rc": 0,
+      "base_rc": 1,
+      "referencia_rc": 0,
+      "ok": true,
+      "verify_s": 0.5
+    },
+    {
+      "id": "idna-label-63",
+      "grupo": "idna",
+      "split": "development",
+      "ocultos": [
+        "tests/test_idna.py",
+        "tests/test_idna_codec.py",
+        "tests/test_idna_uts46.py"
+      ],
+      "visible_rc": 0,
+      "base_rc": 1,
+      "referencia_rc": 0,
+      "ok": true,
+      "verify_s": 12.8
+    },
+    {
+      "id": "idna-guiones-3-4",
+      "grupo": "idna",
+      "split": "development",
+      "ocultos": [
+        "tests/test_idna_errors.py",
+        "tests/test_idna_uts46.py"
+      ],
+      "visible_rc": 0,
+      "base_rc": 1,
+      "referencia_rc": 0,
+      "ok": true,
+      "verify_s": 8.7
+    },
+    {
+      "id": "idna-combinante-inicial",
+      "grupo": "idna",
+      "split": "development",
+      "ocultos": [
+        "tests/test_idna_uts46.py"
+      ],
+      "visible_rc": 0,
+      "base_rc": 1,
+      "referencia_rc": 0,
+      "ok": true,
+      "verify_s": 22.8
+    },
+    {
+      "id": "idna-contexto-rechazo",
+      "grupo": "idna",
+      "split": "development",
+      "ocultos": [
+        "tests/test_idna_errors.py",
+        "tests/test_idna_uts46.py"
+      ],
+      "visible_rc": 0,
+      "base_rc": 1,
+      "referencia_rc": 0,
+      "ok": true,
+      "verify_s": 12.2
+    },
+    {
+      "id": "idna-incremental-decodificador",
+      "grupo": "idna",
+      "split": "development",
+      "ocultos": [
+        "tests/test_idna_codec.py",
+        "tests/test_idna_fuzz_targets.py"
+      ],
+      "visible_rc": 0,
+      "base_rc": 1,
+      "referencia_rc": 0,
+      "ok": true,
+      "verify_s": 5.4
+    },
+    {
+      "id": "idna-incremental-codificador",
+      "grupo": "idna",
+      "split": "development",
+      "ocultos": [
+        "tests/test_idna_codec.py"
+      ],
+      "visible_rc": 0,
+      "base_rc": 1,
+      "referencia_rc": 0,
+      "ok": true,
+      "verify_s": 5.3
+    },
+    {
+      "id": "idna-intranges-agrupar",
+      "grupo": "idna",
+      "split": "development",
+      "ocultos": [
+        "tests/test_intranges.py"
+      ],
+      "visible_rc": 0,
+      "base_rc": 1,
+      "referencia_rc": 0,
+      "ok": true,
+      "verify_s": 5.3
+    },
+    {
+      "id": "idna-cli-xn-mayusculas",
+      "grupo": "idna",
+      "split": "development",
+      "ocultos": [
+        "tests/test_idna_cli.py"
+      ],
+      "visible_rc": 0,
+      "base_rc": 1,
+      "referencia_rc": 0,
+      "ok": true,
+      "verify_s": 5.4
+    },
+    {
+      "id": "idna-cli-stdin-vacias",
+      "grupo": "idna",
+      "split": "validation",
+      "ocultos": [
+        "tests/test_idna_cli.py"
+      ],
+      "visible_rc": 0,
+      "base_rc": 1,
+      "referencia_rc": 0,
+      "ok": true,
+      "verify_s": 5.2
+    },
+    {
+      "id": "idna-cli-codigo-salida",
+      "grupo": "idna",
+      "split": "validation",
+      "ocultos": [
+        "tests/test_idna_cli.py"
+      ],
+      "visible_rc": 0,
+      "base_rc": 1,
+      "referencia_rc": 0,
+      "ok": true,
+      "verify_s": 5.4
+    },
+    {
+      "id": "jmespath-avg-entero",
+      "grupo": "jmespath",
+      "split": "development",
+      "ocultos": [
+        "tests/test_compliance.py"
+      ],
+      "visible_rc": 0,
+      "base_rc": 1,
+      "referencia_rc": 0,
+      "ok": true,
+      "verify_s": 1.0
+    },
+    {
+      "id": "jmespath-to-number-bool",
+      "grupo": "jmespath",
+      "split": "development",
+      "ocultos": [
+        "tests/test_compliance.py"
+      ],
+      "visible_rc": 0,
+      "base_rc": 1,
+      "referencia_rc": 0,
+      "ok": true,
+      "verify_s": 1.0
+    },
+    {
+      "id": "jmespath-reverse-cadena",
+      "grupo": "jmespath",
+      "split": "development",
+      "ocultos": [
+        "tests/test_compliance.py"
+      ],
+      "visible_rc": 0,
+      "base_rc": 1,
+      "referencia_rc": 0,
+      "ok": true,
+      "verify_s": 1.0
+    },
+    {
+      "id": "jmespath-sort-by-orden",
+      "grupo": "jmespath",
+      "split": "development",
+      "ocultos": [
+        "tests/test_compliance.py"
+      ],
+      "visible_rc": 0,
+      "base_rc": 1,
+      "referencia_rc": 0,
+      "ok": true,
+      "verify_s": 1.1
+    },
+    {
+      "id": "jmespath-max-by-minimo",
+      "grupo": "jmespath",
+      "split": "development",
+      "ocultos": [
+        "tests/test_compliance.py"
+      ],
+      "visible_rc": 0,
+      "base_rc": 1,
+      "referencia_rc": 0,
+      "ok": true,
+      "verify_s": 1.1
+    },
+    {
+      "id": "jmespath-not-null-falsos",
+      "grupo": "jmespath",
+      "split": "development",
+      "ocultos": [
+        "tests/test_compliance.py"
+      ],
+      "visible_rc": 0,
+      "base_rc": 1,
+      "referencia_rc": 0,
+      "ok": true,
+      "verify_s": 1.1
+    },
+    {
+      "id": "jmespath-merge-orden",
+      "grupo": "jmespath",
+      "split": "development",
+      "ocultos": [
+        "tests/test_compliance.py"
+      ],
+      "visible_rc": 0,
+      "base_rc": 1,
+      "referencia_rc": 0,
+      "ok": true,
+      "verify_s": 1.0
+    },
+    {
+      "id": "jmespath-ceil-suelo",
+      "grupo": "jmespath",
+      "split": "development",
+      "ocultos": [
+        "tests/test_compliance.py"
+      ],
+      "visible_rc": 0,
+      "base_rc": 1,
+      "referencia_rc": 0,
+      "ok": true,
+      "verify_s": 1.0
+    },
+    {
+      "id": "jmespath-ends-with-inicio",
+      "grupo": "jmespath",
+      "split": "validation",
+      "ocultos": [
+        "tests/test_compliance.py"
+      ],
+      "visible_rc": 0,
+      "base_rc": 1,
+      "referencia_rc": 0,
+      "ok": true,
+      "verify_s": 1.0
+    },
+    {
+      "id": "jmespath-flatten-un-nivel",
+      "grupo": "jmespath",
+      "split": "validation",
+      "ocultos": [
+        "tests/test_compliance.py",
+        "tests/test_parser.py"
+      ],
+      "visible_rc": 0,
+      "base_rc": 1,
+      "referencia_rc": 0,
+      "ok": true,
+      "verify_s": 1.1
+    },
+    {
+      "id": "pyflakes-return-outside-function",
+      "grupo": "pyflakes",
+      "split": "development",
+      "ocultos": [
+        "pyflakes/test/test_doctests.py",
+        "pyflakes/test/test_other.py"
+      ],
+      "visible_rc": 0,
+      "base_rc": 1,
+      "referencia_rc": 0,
+      "ok": true,
+      "verify_s": 1.2
+    },
+    {
+      "id": "pyflakes-continue-in-loop-else",
+      "grupo": "pyflakes",
+      "split": "development",
+      "ocultos": [
+        "pyflakes/test/test_doctests.py",
+        "pyflakes/test/test_other.py"
+      ],
+      "visible_rc": 0,
+      "base_rc": 1,
+      "referencia_rc": 0,
+      "ok": true,
+      "verify_s": 1.3
+    },
+    {
+      "id": "pyflakes-is-literal-isnot",
+      "grupo": "pyflakes",
+      "split": "development",
+      "ocultos": [
+        "pyflakes/test/test_is_literal.py"
+      ],
+      "visible_rc": 0,
+      "base_rc": 1,
+      "referencia_rc": 0,
+      "ok": true,
+      "verify_s": 1.3
+    },
+    {
+      "id": "pyflakes-duplicate-dict-key-two",
+      "grupo": "pyflakes",
+      "split": "development",
+      "ocultos": [
+        "pyflakes/test/test_dict.py"
+      ],
+      "visible_rc": 0,
+      "base_rc": 1,
+      "referencia_rc": 0,
+      "ok": true,
+      "verify_s": 1.4
+    },
+    {
+      "id": "pyflakes-del-inside-if-undefined",
+      "grupo": "pyflakes",
+      "split": "development",
+      "ocultos": [
+        "pyflakes/test/test_doctests.py",
+        "pyflakes/test/test_undefined_names.py"
+      ],
+      "visible_rc": 0,
+      "base_rc": 1,
+      "referencia_rc": 0,
+      "ok": true,
+      "verify_s": 1.2
+    },
+    {
+      "id": "pyflakes-recursive-count-last-only",
+      "grupo": "pyflakes",
+      "split": "development",
+      "ocultos": [
+        "pyflakes/test/test_api.py"
+      ],
+      "visible_rc": 0,
+      "base_rc": 1,
+      "referencia_rc": 0,
+      "ok": true,
+      "verify_s": 1.2
+    },
+    {
+      "id": "pyflakes-duplicate-argument-first",
+      "grupo": "pyflakes",
+      "split": "development",
+      "ocultos": [
+        "pyflakes/test/test_doctests.py",
+        "pyflakes/test/test_other.py"
+      ],
+      "visible_rc": 0,
+      "base_rc": 1,
+      "referencia_rc": 0,
+      "ok": true,
+      "verify_s": 1.2
+    },
+    {
+      "id": "pyflakes-dict-valores-iguales",
+      "grupo": "pyflakes",
+      "split": "development",
+      "ocultos": [
+        "pyflakes/test/test_dict.py"
+      ],
+      "visible_rc": 0,
+      "base_rc": 1,
+      "referencia_rc": 0,
+      "ok": true,
+      "verify_s": 1.3
+    },
+    {
+      "id": "pyflakes-dict-clave-variable",
+      "grupo": "pyflakes",
+      "split": "validation",
+      "ocultos": [
+        "pyflakes/test/test_dict.py"
+      ],
+      "visible_rc": 0,
+      "base_rc": 1,
+      "referencia_rc": 0,
+      "ok": true,
+      "verify_s": 1.2
+    },
+    {
+      "id": "pyflakes-annotated-argumentos",
+      "grupo": "pyflakes",
+      "split": "validation",
+      "ocultos": [
+        "pyflakes/test/test_type_annotations.py"
+      ],
+      "visible_rc": 0,
+      "base_rc": 1,
+      "referencia_rc": 0,
+      "ok": true,
+      "verify_s": 1.2
+    },
+    {
+      "id": "semver-bump-major-keeps-minor",
+      "grupo": "semver",
+      "split": "development",
+      "ocultos": [
+        "tests/test_bump.py",
+        "tests/test_parsing.py",
+        "tests/test_pysemver-cli.py"
+      ],
+      "visible_rc": 0,
+      "base_rc": 1,
+      "referencia_rc": 0,
+      "ok": true,
+      "verify_s": 0.7
+    },
+    {
+      "id": "semver-bump-minor-keeps-patch",
+      "grupo": "semver",
+      "split": "development",
+      "ocultos": [
+        "tests/test_bump.py",
+        "tests/test_parsing.py",
+        "tests/test_pysemver-cli.py"
+      ],
+      "visible_rc": 0,
+      "base_rc": 1,
+      "referencia_rc": 0,
+      "ok": true,
+      "verify_s": 0.7
+    },
+    {
+      "id": "semver-bump-patch-keeps-prerelease",
+      "grupo": "semver",
+      "split": "development",
+      "ocultos": [
+        "tests/test_bump.py",
+        "tests/test_issue484.py"
+      ],
+      "visible_rc": 0,
+      "base_rc": 1,
+      "referencia_rc": 0,
+      "ok": true,
+      "verify_s": 0.7
+    },
+    {
+      "id": "semver-compare-release-vs-prerelease",
+      "grupo": "semver",
+      "split": "development",
+      "ocultos": [
+        "tests/test_bump.py",
+        "tests/test_compare.py"
+      ],
+      "visible_rc": 0,
+      "base_rc": 1,
+      "referencia_rc": 0,
+      "ok": true,
+      "verify_s": 0.7
+    },
+    {
+      "id": "semver-bump-prerelease-empty-token",
+      "grupo": "semver",
+      "split": "development",
+      "ocultos": [
+        "tests/test_bump.py",
+        "tests/test_bump_token_validation.py"
+      ],
+      "visible_rc": 0,
+      "base_rc": 1,
+      "referencia_rc": 0,
+      "ok": true,
+      "verify_s": 0.7
+    },
+    {
+      "id": "semver-increment-prerelease-nonnumeric",
+      "grupo": "semver",
+      "split": "development",
+      "ocultos": [
+        "tests/test_bump.py",
+        "tests/test_pysemver-cli.py"
+      ],
+      "visible_rc": 0,
+      "base_rc": 1,
+      "referencia_rc": 0,
+      "ok": true,
+      "verify_s": 0.7
+    },
+    {
+      "id": "semver-increment-string-digit-carry",
+      "grupo": "semver",
+      "split": "development",
+      "ocultos": [
+        "tests/test_bump.py",
+        "tests/test_bump_build_digitless.py"
+      ],
+      "visible_rc": 0,
+      "base_rc": 1,
+      "referencia_rc": 0,
+      "ok": true,
+      "verify_s": 0.7
+    },
+    {
+      "id": "semver-bump-build-default-suffix",
+      "grupo": "semver",
+      "split": "development",
+      "ocultos": [
+        "tests/test_bump.py",
+        "tests/test_bump_build_digitless.py",
+        "tests/test_bump_token_validation.py"
+      ],
+      "visible_rc": 0,
+      "base_rc": 1,
+      "referencia_rc": 0,
+      "ok": true,
+      "verify_s": 0.7
+    },
+    {
+      "id": "semver-next-version-minor-prerelease",
+      "grupo": "semver",
+      "split": "validation",
+      "ocultos": [
+        "tests/test_parsing.py"
+      ],
+      "visible_rc": 0,
+      "base_rc": 1,
+      "referencia_rc": 0,
+      "ok": true,
+      "verify_s": 0.7
+    },
+    {
+      "id": "semver-getitem-single-index",
+      "grupo": "semver",
+      "split": "validation",
+      "ocultos": [
+        "tests/test_index.py"
+      ],
+      "visible_rc": 0,
+      "base_rc": 1,
+      "referencia_rc": 0,
+      "ok": true,
+      "verify_s": 0.7
+    },
+    {
+      "id": "sortedcontainers-contains-igualdad",
+      "grupo": "sortedcontainers",
+      "split": "development",
+      "ocultos": [
+        "tests/test_coverage_sortedlist.py",
+        "tests/test_stress_sortedlist.py"
+      ],
+      "visible_rc": 0,
+      "base_rc": 1,
+      "referencia_rc": 0,
+      "ok": true,
+      "verify_s": 2.7
+    },
+    {
+      "id": "sortedcontainers-index-stop",
+      "grupo": "sortedcontainers",
+      "split": "development",
+      "ocultos": [
+        "tests/test_coverage_sortedlist.py",
+        "tests/test_coverage_sortedset.py",
+        "tests/test_stress_sortedset.py"
+      ],
+      "visible_rc": 0,
+      "base_rc": 1,
+      "referencia_rc": 0,
+      "ok": true,
+      "verify_s": 3.1
+    },
+    {
+      "id": "sortedcontainers-count-ultimo",
+      "grupo": "sortedcontainers",
+      "split": "development",
+      "ocultos": [
+        "tests/test_coverage_sortedlist.py"
+      ],
+      "visible_rc": 0,
+      "base_rc": 1,
+      "referencia_rc": 0,
+      "ok": true,
+      "verify_s": 3.3
+    },
+    {
+      "id": "sortedcontainers-irange-exclusivo",
+      "grupo": "sortedcontainers",
+      "split": "development",
+      "ocultos": [
+        "tests/test_coverage_sortedlist.py",
+        "tests/test_coverage_sortedset.py"
+      ],
+      "visible_rc": 0,
+      "base_rc": 1,
+      "referencia_rc": 0,
+      "ok": true,
+      "verify_s": 3.2
+    },
+    {
+      "id": "sortedcontainers-keylist-count",
+      "grupo": "sortedcontainers",
+      "split": "development",
+      "ocultos": [
+        "tests/test_coverage_sortedkeylist_modulo.py",
+        "tests/test_coverage_sortedkeylist_negate.py",
+        "tests/test_stress_sortedkeylist.py"
+      ],
+      "visible_rc": 0,
+      "base_rc": 1,
+      "referencia_rc": 0,
+      "ok": true,
+      "verify_s": 2.3
+    },
+    {
+      "id": "sortedcontainers-keylist-add-clave",
+      "grupo": "sortedcontainers",
+      "split": "development",
+      "ocultos": [
+        "tests/test_coverage_sortedkeylist_negate.py"
+      ],
+      "visible_rc": 0,
+      "base_rc": 1,
+      "referencia_rc": 0,
+      "ok": true,
+      "verify_s": 3.3
+    },
+    {
+      "id": "sortedcontainers-keylist-irange-key",
+      "grupo": "sortedcontainers",
+      "split": "development",
+      "ocultos": [
+        "tests/test_coverage_sortedkeylist_modulo.py",
+        "tests/test_coverage_sortedkeylist_negate.py",
+        "tests/test_coverage_sortedset.py"
+      ],
+      "visible_rc": 0,
+      "base_rc": 1,
+      "referencia_rc": 0,
+      "ok": true,
+      "verify_s": 3.4
+    },
+    {
+      "id": "sortedcontainers-dict-setdefault",
+      "grupo": "sortedcontainers",
+      "split": "development",
+      "ocultos": [
+        "tests/test_coverage_sorteddict.py",
+        "tests/test_stress_sorteddict.py"
+      ],
+      "visible_rc": 0,
+      "base_rc": 1,
+      "referencia_rc": 0,
+      "ok": true,
+      "verify_s": 3.0
+    },
+    {
+      "id": "sortedcontainers-dict-popitem",
+      "grupo": "sortedcontainers",
+      "split": "validation",
+      "ocultos": [
+        "tests/test_coverage_sorteddict.py",
+        "tests/test_stress_sorteddict.py"
+      ],
+      "visible_rc": 0,
+      "base_rc": 1,
+      "referencia_rc": 0,
+      "ok": true,
+      "verify_s": 2.8
+    },
+    {
+      "id": "sortedcontainers-dict-fromkeys",
+      "grupo": "sortedcontainers",
+      "split": "validation",
+      "ocultos": [
+        "tests/test_coverage_sorteddict.py"
+      ],
+      "visible_rc": 0,
+      "base_rc": 1,
+      "referencia_rc": 0,
+      "ok": true,
+      "verify_s": 3.3
+    },
+    {
+      "id": "tabulate-inf-negative-number",
+      "grupo": "tabulate",
+      "split": "development",
+      "ocultos": [
+        "test/test_output.py"
+      ],
+      "visible_rc": 0,
+      "base_rc": 1,
+      "referencia_rc": 0,
+      "ok": true,
+      "verify_s": 1.8
+    },
+    {
+      "id": "tabulate-separated-format-padding",
+      "grupo": "tabulate",
+      "split": "development",
+      "ocultos": [
+        "test/test_output.py",
+        "test/test_regression.py"
+      ],
+      "visible_rc": 0,
+      "base_rc": 1,
+      "referencia_rc": 0,
+      "ok": true,
+      "verify_s": 1.9
+    },
+    {
+      "id": "tabulate-missingval-list-default",
+      "grupo": "tabulate",
+      "split": "development",
+      "ocultos": [
+        "test/test_output.py"
+      ],
+      "visible_rc": 0,
+      "base_rc": 1,
+      "referencia_rc": 0,
+      "ok": true,
+      "verify_s": 1.9
+    },
+    {
+      "id": "tabulate-wrap-long-word-split",
+      "grupo": "tabulate",
+      "split": "development",
+      "ocultos": [
+        "test/test_internal.py",
+        "test/test_output.py",
+        "test/test_textwrapper.py"
+      ],
+      "visible_rc": 0,
+      "base_rc": 1,
+      "referencia_rc": 0,
+      "ok": true,
+      "verify_s": 2.0
+    },
+    {
+      "id": "tabulate-update-lines-reset",
+      "grupo": "tabulate",
+      "split": "development",
+      "ocultos": [
+        "test/test_internal.py",
+        "test/test_textwrapper.py"
+      ],
+      "visible_rc": 0,
+      "base_rc": 1,
+      "referencia_rc": 0,
+      "ok": true,
+      "verify_s": 2.0
+    },
+    {
+      "id": "tabulate-pad-center-strings",
+      "grupo": "tabulate",
+      "split": "development",
+      "ocultos": [
+        "test/test_internal.py",
+        "test/test_output.py"
+      ],
+      "visible_rc": 0,
+      "base_rc": 1,
+      "referencia_rc": 0,
+      "ok": true,
+      "verify_s": 2.4
+    },
+    {
+      "id": "tabulate-type-thousands-int",
+      "grupo": "tabulate",
+      "split": "development",
+      "ocultos": [
+        "test/test_regression.py"
+      ],
+      "visible_rc": 0,
+      "base_rc": 1,
+      "referencia_rc": 0,
+      "ok": true,
+      "verify_s": 1.9
+    },
+    {
+      "id": "tabulate-afterpoint-int-offset",
+      "grupo": "tabulate",
+      "split": "development",
+      "ocultos": [
+        "test/test_input.py",
+        "test/test_output.py",
+        "test/test_regression.py"
+      ],
+      "visible_rc": 0,
+      "base_rc": 1,
+      "referencia_rc": 0,
+      "ok": true,
+      "verify_s": 3.7
+    },
+    {
+      "id": "tabulate-multiline-width-min",
+      "grupo": "tabulate",
+      "split": "validation",
+      "ocultos": [
+        "test/test_internal.py",
+        "test/test_output.py"
+      ],
+      "visible_rc": 0,
+      "base_rc": 1,
+      "referencia_rc": 0,
+      "ok": true,
+      "verify_s": 2.3
+    },
+    {
+      "id": "tabulate-float-thousands-comma",
+      "grupo": "tabulate",
+      "split": "validation",
+      "ocultos": [
+        "test/test_output.py"
+      ],
+      "visible_rc": 0,
+      "base_rc": 1,
+      "referencia_rc": 0,
+      "ok": true,
+      "verify_s": 2.0
+    },
+    {
+      "id": "toolz-drop-count",
+      "grupo": "toolz",
+      "split": "development",
+      "ocultos": [
+        "toolz/tests/test_itertoolz.py"
+      ],
+      "visible_rc": 0,
+      "base_rc": 1,
+      "referencia_rc": 0,
+      "ok": true,
+      "verify_s": 0.9
+    },
+    {
+      "id": "toolz-unique-key-seen",
+      "grupo": "toolz",
+      "split": "development",
+      "ocultos": [
+        "toolz/sandbox/tests/test_core.py",
+        "toolz/tests/test_itertoolz.py"
+      ],
+      "visible_rc": 0,
+      "base_rc": 1,
+      "referencia_rc": 0,
+      "ok": true,
+      "verify_s": 0.9
+    },
+    {
+      "id": "toolz-isdistinct-list",
+      "grupo": "toolz",
+      "split": "development",
+      "ocultos": [
+        "toolz/tests/test_itertoolz.py"
+      ],
+      "visible_rc": 0,
+      "base_rc": 1,
+      "referencia_rc": 0,
+      "ok": true,
+      "verify_s": 0.9
+    },
+    {
+      "id": "toolz-tail-sequence",
+      "grupo": "toolz",
+      "split": "development",
+      "ocultos": [
+        "toolz/tests/test_itertoolz.py"
+      ],
+      "visible_rc": 0,
+      "base_rc": 1,
+      "referencia_rc": 0,
+      "ok": true,
+      "verify_s": 0.9
+    },
+    {
+      "id": "toolz-take-nth-start",
+      "grupo": "toolz",
+      "split": "development",
+      "ocultos": [
+        "toolz/tests/test_itertoolz.py"
+      ],
+      "visible_rc": 0,
+      "base_rc": 1,
+      "referencia_rc": 0,
+      "ok": true,
+      "verify_s": 0.9
+    },
+    {
+      "id": "toolz-nth-iterator",
+      "grupo": "toolz",
+      "split": "development",
+      "ocultos": [
+        "toolz/tests/test_itertoolz.py"
+      ],
+      "visible_rc": 0,
+      "base_rc": 1,
+      "referencia_rc": 0,
+      "ok": true,
+      "verify_s": 0.8
+    },
+    {
+      "id": "toolz-get-single-index-list",
+      "grupo": "toolz",
+      "split": "development",
+      "ocultos": [
+        "toolz/tests/test_itertoolz.py"
+      ],
+      "visible_rc": 0,
+      "base_rc": 1,
+      "referencia_rc": 0,
+      "ok": true,
+      "verify_s": 0.8
+    },
+    {
+      "id": "toolz-reduceby-constant-init",
+      "grupo": "toolz",
+      "split": "development",
+      "ocultos": [
+        "toolz/tests/test_itertoolz.py"
+      ],
+      "visible_rc": 0,
+      "base_rc": 1,
+      "referencia_rc": 0,
+      "ok": true,
+      "verify_s": 0.8
+    },
+    {
+      "id": "toolz-getter-single-list",
+      "grupo": "toolz",
+      "split": "validation",
+      "ocultos": [
+        "toolz/tests/test_itertoolz.py"
+      ],
+      "visible_rc": 0,
+      "base_rc": 1,
+      "referencia_rc": 0,
+      "ok": true,
+      "verify_s": 0.8
+    },
+    {
+      "id": "toolz-join-right-default-order",
+      "grupo": "toolz",
+      "split": "validation",
+      "ocultos": [
+        "toolz/tests/test_itertoolz.py"
+      ],
+      "visible_rc": 0,
+      "base_rc": 1,
+      "referencia_rc": 0,
+      "ok": true,
+      "verify_s": 0.8
+    },
+    {
+      "id": "xmltodict-ns-nombre",
+      "grupo": "xmltodict",
+      "split": "development",
+      "ocultos": [
+        "tests/test_xmltodict.py"
+      ],
+      "visible_rc": 0,
+      "base_rc": 1,
+      "referencia_rc": 0,
+      "ok": true,
+      "verify_s": 0.6
+    },
+    {
+      "id": "xmltodict-ns-decl-defecto",
+      "grupo": "xmltodict",
+      "split": "development",
+      "ocultos": [
+        "tests/test_xmltodict.py"
+      ],
+      "visible_rc": 0,
+      "base_rc": 1,
+      "referencia_rc": 0,
+      "ok": true,
+      "verify_s": 0.6
+    },
+    {
+      "id": "xmltodict-item-depth-borde",
+      "grupo": "xmltodict",
+      "split": "development",
+      "ocultos": [
+        "tests/test_xmltodict.py"
+      ],
+      "visible_rc": 0,
+      "base_rc": 1,
+      "referencia_rc": 0,
+      "ok": true,
+      "verify_s": 0.7
+    },
+    {
+      "id": "xmltodict-sin-strip-cdata",
+      "grupo": "xmltodict",
+      "split": "development",
+      "ocultos": [
+        "tests/test_xmltodict.py"
+      ],
+      "visible_rc": 0,
+      "base_rc": 1,
+      "referencia_rc": 0,
+      "ok": true,
+      "verify_s": 0.9
+    },
+    {
+      "id": "xmltodict-comentario-strip",
+      "grupo": "xmltodict",
+      "split": "development",
+      "ocultos": [
+        "tests/test_xmltodict.py"
+      ],
+      "visible_rc": 0,
+      "base_rc": 1,
+      "referencia_rc": 0,
+      "ok": true,
+      "verify_s": 0.7
+    },
+    {
+      "id": "xmltodict-force-list-clave",
+      "grupo": "xmltodict",
+      "split": "development",
+      "ocultos": [
+        "tests/test_xmltodict.py"
+      ],
+      "visible_rc": 0,
+      "base_rc": 1,
+      "referencia_rc": 0,
+      "ok": true,
+      "verify_s": 0.6
+    },
+    {
+      "id": "xmltodict-force-cdata-clave",
+      "grupo": "xmltodict",
+      "split": "development",
+      "ocultos": [
+        "tests/test_xmltodict.py"
+      ],
+      "visible_rc": 0,
+      "base_rc": 1,
+      "referencia_rc": 0,
+      "ok": true,
+      "verify_s": 0.7
+    },
+    {
+      "id": "xmltodict-entidades-permitidas",
+      "grupo": "xmltodict",
+      "split": "development",
+      "ocultos": [
+        "tests/test_xmltodict.py"
+      ],
+      "visible_rc": 0,
+      "base_rc": 1,
+      "referencia_rc": 0,
+      "ok": true,
+      "verify_s": 0.6
+    },
+    {
+      "id": "xmltodict-bool-texto",
+      "grupo": "xmltodict",
+      "split": "validation",
+      "ocultos": [
+        "tests/test_dicttoxml.py"
+      ],
+      "visible_rc": 0,
+      "base_rc": 1,
+      "referencia_rc": 0,
+      "ok": true,
+      "verify_s": 0.6
+    },
+    {
+      "id": "xmltodict-nombre-comillas",
+      "grupo": "xmltodict",
+      "split": "validation",
+      "ocultos": [
+        "tests/test_dicttoxml.py"
+      ],
+      "visible_rc": 0,
+      "base_rc": 1,
+      "referencia_rc": 0,
+      "ok": true,
+      "verify_s": 0.6
+    }
+  ]
+}

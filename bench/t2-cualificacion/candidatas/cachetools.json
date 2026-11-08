@@ -1,0 +1,114 @@
+[
+ {
+  "id": "cachetools-cache-exact-fit",
+  "archivo": "src/cachetools/__init__.py",
+  "buscar": "            if itemsize > maxsize:",
+  "reemplazar": "            if itemsize >= maxsize:",
+  "descripcion": "Con `Cache(maxsize=3, getsizeof=len)`, hacer `c['k'] = 'abc'` (tamaño 3, que cabe justo) lanza ValueError('value too large'); debería guardarse y quedar `c.currsize == 3`."
+ },
+ {
+  "id": "cachetools-lru-read-not-refresh",
+  "archivo": "src/cachetools/__init__.py",
+  "buscar": "        value = cache_getitem(self, key)\n        try:\n            self.__order.move_to_end(key)\n        except KeyError:  # __missing__ may not store item\n            pass\n        return value",
+  "reemplazar": "        value = cache_getitem(self, key)\n        return value",
+  "descripcion": "Con `c = LRUCache(2)`: `c[1]=1; c[2]=2; c[1]; c[3]=3` y luego `list(c)` da `[2, 3]`; debería ser `[1, 3]`, porque leer la clave 1 la hacía la más reciente."
+ },
+ {
+  "id": "cachetools-lfu-tie-eviction",
+  "archivo": "src/cachetools/__init__.py",
+  "buscar": "        key = next(iter(curr.keys))  # remove the \"oldest\" element",
+  "reemplazar": "        key = next(reversed(curr.keys))  # remove the \"oldest\" element",
+  "descripcion": "Con `c = LFUCache(2)`: `c['a']=1; c['b']=2; c['c']=3` deja `list(c)` en `['a', 'c']`; debería ser `['b', 'c']`, ya que entre claves con el mismo uso se expulsa la más antigua."
+ },
+ {
+  "id": "cachetools-rr-delete-middle",
+  "archivo": "src/cachetools/__init__.py",
+  "buscar": "        if index != len(self.__keys) - 1:",
+  "reemplazar": "        if index == len(self.__keys) - 1:",
+  "descripcion": "Con `c = RRCache(5)` y claves 1, 2, 3 insertadas, `del c[1]` seguido de `c.popitem()` falla con IndexError/KeyError o deja claves fantasma en vez de devolver 2 o 3."
+ },
+ {
+  "id": "cachetools-ttl-contains-at-expiry",
+  "archivo": "src/cachetools/__init__.py",
+  "buscar": "            return self.timer() < link.expires",
+  "reemplazar": "            return self.timer() <= link.expires",
+  "descripcion": "Con un `TTLCache(maxsize=2, ttl=2, timer=reloj)` donde `reloj()` es controlable: tras `c[1]=1` con reloj=0 y avanzar el reloj a 2, `1 in c` devuelve True; debería ser False, porque el elemento caduca exactamente al cumplirse el ttl."
+ },
+ {
+  "id": "cachetools-ttl-lifetime-too-long",
+  "archivo": "src/cachetools/__init__.py",
+  "buscar": "            expires = time + self.__ttl",
+  "reemplazar": "            expires = time + self.__ttl + 1",
+  "descripcion": "Con `TTLCache(maxsize=2, ttl=2, timer=reloj)`: se guarda `c[1]=1` con reloj=0 y al poner reloj=2 la clave 1 sigue presente; debería haber caducado, vive un tick más de lo indicado."
+ },
+ {
+  "id": "cachetools-ttl-expire-at-boundary",
+  "archivo": "src/cachetools/__init__.py",
+  "buscar": "        while curr is not root and not (time < curr.expires):",
+  "reemplazar": "        while curr is not root and (curr.expires < time):",
+  "descripcion": "`TTLCache(maxsize=3, ttl=1, timer=reloj)` con `c[1]=1` en reloj=0 y `c.expire(1)`: devuelve `[]` y el elemento sigue; debería devolver `[(1, 1)]`."
+ },
+ {
+  "id": "cachetools-ttl-delete-expired",
+  "archivo": "src/cachetools/__init__.py",
+  "buscar": "        if not (self.timer() < link.expires):\n            raise KeyError(key)",
+  "reemplazar": "        if not (self.timer() < link.expires - 1):\n            raise KeyError(key)",
+  "descripcion": "Con `TTLCache(maxsize=2, ttl=2, timer=reloj)`: `c[1]=1` en reloj=0, reloj=2 y `del c[1]` no lanza KeyError; debería lanzarlo porque el elemento ya había caducado."
+ },
+ {
+  "id": "cachetools-tlru-contains-at-expiry",
+  "archivo": "src/cachetools/__init__.py",
+  "buscar": "            return self.timer() < item.expires",
+  "reemplazar": "            return self.timer() <= item.expires",
+  "descripcion": "Con un `TLRUCache(maxsize=2, ttu=lambda k, v, t: t + 2, timer=reloj)`: `c[1]=1` con reloj=0 y reloj=2, `1 in c` devuelve True; debería ser False porque el elemento ya caducó."
+ },
+ {
+  "id": "cachetools-tlru-read-not-refresh",
+  "archivo": "src/cachetools/__init__.py",
+  "buscar": "        items.move_to_end(key)\n        if self.timer() < item.expires:",
+  "reemplazar": "        if self.timer() < item.expires:",
+  "descripcion": "Con `TLRUCache(2, ttu=lambda k, v, t: t + 100)`: `c[1]=1; c[2]=2; c[1]; c[3]=3` y `list(c)` da `[2, 3]`; debería ser `[1, 3]`: leer la clave 1 la marca como usada recientemente."
+ },
+ {
+  "id": "cachetools-hashkey-kwargs-order",
+  "archivo": "src/cachetools/keys.py",
+  "buscar": "        return _HashedTuple(args + _kwmark + tuple(sorted(kwargs.items())))",
+  "reemplazar": "        return _HashedTuple(args + _kwmark + tuple(kwargs.items()))",
+  "descripcion": "`hashkey(a=1, b=2) == hashkey(b=2, a=1)` devuelve False; debería ser True, el orden de los argumentos con nombre no debería importar."
+ },
+ {
+  "id": "cachetools-typedkey-kwarg-types",
+  "archivo": "src/cachetools/keys.py",
+  "buscar": "        key += tuple(type(v) for _, v in sorted_kwargs)",
+  "reemplazar": "        key += ()",
+  "descripcion": "`typedkey(x=1) == typedkey(x=1.0)` devuelve True; debería ser False, porque los valores por nombre tienen tipos distintos."
+ },
+ {
+  "id": "cachetools-lfu-cache-maxsize",
+  "archivo": "src/cachetools/func.py",
+  "buscar": "    return _cache(LFUCache(maxsize), maxsize, typed)",
+  "reemplazar": "    return _cache(LFUCache(maxsize + 1), maxsize, typed)",
+  "descripcion": "Con `@lfu_cache(maxsize=2)` sobre `f(x)`, tras llamar `f(1), f(2), f(3)`, `f.cache_info().currsize` es 3; debería ser 2."
+ },
+ {
+  "id": "cachetools-func-typed-key",
+  "archivo": "src/cachetools/func.py",
+  "buscar": "        key = keys.typedkey if typed else keys.hashkey",
+  "reemplazar": "        key = keys.hashkey if typed else keys.typedkey",
+  "descripcion": "Con `@lru_cache(typed=True)` sobre `f(x)`, llamar `f(1)` y `f(1.0)` cuenta 1 fallo y 1 acierto en `f.cache_info()`; deberían ser 2 fallos, y sin `typed=True` los tipos deberían ignorarse."
+ },
+ {
+  "id": "cachetools-cache-pop-default",
+  "archivo": "src/cachetools/__init__.py",
+  "buscar": "        elif default is self.__marker:",
+  "reemplazar": "        elif default is not self.__marker:",
+  "descripcion": "`Cache(2).pop('x', 5)` lanza KeyError('x'); debería devolver 5, y `Cache(2).pop('x')` sin valor por defecto debería ser quien lance KeyError."
+ },
+ {
+  "id": "cachetools-cache-negative-maxsize",
+  "archivo": "src/cachetools/__init__.py",
+  "buscar": "        if maxsize < 0:",
+  "reemplazar": "        if maxsize < -1:",
+  "descripcion": "`Cache(maxsize=-1)` se crea sin error; debería lanzar ValueError porque el tamaño máximo no puede ser negativo."
+ }
+]

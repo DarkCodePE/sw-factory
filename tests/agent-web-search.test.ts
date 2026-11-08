@@ -279,6 +279,7 @@ test('negative: HTTP 500 error throws with status and body', async () => {
   expect(String(toolRes?.value)).toContain('Internal Engine Error Occurred');
 });
 
+// Tres arranques completos de runCodingAgent (~0,3 s en reposo); con la máquina cargada superan los 5 s por defecto.
 test('limits: query length and maxResults boundaries', async () => {
   const f = await fixture();
 
@@ -330,7 +331,7 @@ test('limits: query length and maxResults boundaries', async () => {
   const res3 = events3.find(e => e.type === 'tool_result');
   expect(res3?.isError).toBe(true);
   expect(String(res3?.value)).toContain('between 1 and 20');
-});
+}, 30_000);
 
 test('limits: response body exceeding 64 KiB is aborted and rejected', async () => {
   const f = await fixture();

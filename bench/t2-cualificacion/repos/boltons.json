@@ -1,0 +1,23 @@
+{
+  "nombre": "boltons",
+  "url": "https://github.com/mahmoud/boltons",
+  "commit": "d31d821d56c8f7756af9c30a864077f2e5855321",
+  "license_spdx": "BSD-3-Clause",
+  "license_file": "LICENSE",
+  "license_sha256": "c301912653a8d8c99eab6212aa3aea8d164ea249d8ad53c941e0558a0a5ac1e3",
+  "env": {
+    "PYTEST_DISABLE_PLUGIN_AUTOLOAD": "1",
+    "PYTHONDONTWRITEBYTECODE": "1"
+  },
+  "test": [
+    "python3",
+    "-m",
+    "pytest",
+    "-q",
+    "-p",
+    "no:cacheprovider",
+    "-o",
+    "addopts=",
+    "tests"
+  ]
+}

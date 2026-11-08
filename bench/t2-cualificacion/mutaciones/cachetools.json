@@ -1,0 +1,105 @@
+[
+  {
+    "id": "cachetools-lru-read-not-refresh",
+    "archivo": "src/cachetools/__init__.py",
+    "buscar": "        value = cache_getitem(self, key)\n        try:\n            self.__order.move_to_end(key)\n        except KeyError:  # __missing__ may not store item\n            pass\n        return value",
+    "reemplazar": "        value = cache_getitem(self, key)\n        return value",
+    "descripcion": "Con `c = LRUCache(2)`: `c[1]=1; c[2]=2; c[1]; c[3]=3` y luego `list(c)` da `[2, 3]`; debería ser `[1, 3]`, porque leer la clave 1 la hacía la más reciente.",
+    "ocultos": [
+      "tests/test_lru.py"
+    ]
+  },
+  {
+    "id": "cachetools-lfu-tie-eviction",
+    "archivo": "src/cachetools/__init__.py",
+    "buscar": "        key = next(iter(curr.keys))  # remove the \"oldest\" element",
+    "reemplazar": "        key = next(reversed(curr.keys))  # remove the \"oldest\" element",
+    "descripcion": "Con `c = LFUCache(2)`: `c['a']=1; c['b']=2; c['c']=3` deja `list(c)` en `['a', 'c']`; debería ser `['b', 'c']`, ya que entre claves con el mismo uso se expulsa la más antigua.",
+    "ocultos": [
+      "tests/test_lfu.py"
+    ]
+  },
+  {
+    "id": "cachetools-rr-delete-middle",
+    "archivo": "src/cachetools/__init__.py",
+    "buscar": "        if index != len(self.__keys) - 1:",
+    "reemplazar": "        if index == len(self.__keys) - 1:",
+    "descripcion": "Con `c = RRCache(5)` y claves 1, 2, 3 insertadas, `del c[1]` seguido de `c.popitem()` falla con IndexError/KeyError o deja claves fantasma en vez de devolver 2 o 3.",
+    "ocultos": [
+      "tests/test_func.py",
+      "tests/test_rr.py"
+    ]
+  },
+  {
+    "id": "cachetools-ttl-contains-at-expiry",
+    "archivo": "src/cachetools/__init__.py",
+    "buscar": "            return self.timer() < link.expires",
+    "reemplazar": "            return self.timer() <= link.expires",
+    "descripcion": "Con un `TTLCache(maxsize=2, ttl=2, timer=reloj)` donde `reloj()` es controlable: tras `c[1]=1` con reloj=0 y avanzar el reloj a 2, `1 in c` devuelve True; debería ser False, porque el elemento caduca exactamente al cumplirse el ttl.",
+    "ocultos": [
+      "tests/test_ttl.py"
+    ]
+  },
+  {
+    "id": "cachetools-ttl-lifetime-too-long",
+    "archivo": "src/cachetools/__init__.py",
+    "buscar": "            expires = time + self.__ttl",
+    "reemplazar": "            expires = time + self.__ttl + 1",
+    "descripcion": "Con `TTLCache(maxsize=2, ttl=2, timer=reloj)`: se guarda `c[1]=1` con reloj=0 y al poner reloj=2 la clave 1 sigue presente; debería haber caducado, vive un tick más de lo indicado.",
+    "ocultos": [
+      "tests/test_func.py",
+      "tests/test_ttl.py"
+    ]
+  },
+  {
+    "id": "cachetools-ttl-expire-at-boundary",
+    "archivo": "src/cachetools/__init__.py",
+    "buscar": "        while curr is not root and not (time < curr.expires):",
+    "reemplazar": "        while curr is not root and (curr.expires < time):",
+    "descripcion": "`TTLCache(maxsize=3, ttl=1, timer=reloj)` con `c[1]=1` en reloj=0 y `c.expire(1)`: devuelve `[]` y el elemento sigue; debería devolver `[(1, 1)]`.",
+    "ocultos": [
+      "tests/test_func.py",
+      "tests/test_ttl.py"
+    ]
+  },
+  {
+    "id": "cachetools-ttl-delete-expired",
+    "archivo": "src/cachetools/__init__.py",
+    "buscar": "        if not (self.timer() < link.expires):\n            raise KeyError(key)",
+    "reemplazar": "        if not (self.timer() < link.expires - 1):\n            raise KeyError(key)",
+    "descripcion": "Con `TTLCache(maxsize=2, ttl=2, timer=reloj)`: `c[1]=1` en reloj=0, reloj=2 y `del c[1]` no lanza KeyError; debería lanzarlo porque el elemento ya había caducado.",
+    "ocultos": [
+      "tests/test_ttl.py"
+    ]
+  },
+  {
+    "id": "cachetools-tlru-contains-at-expiry",
+    "archivo": "src/cachetools/__init__.py",
+    "buscar": "            return self.timer() < item.expires",
+    "reemplazar": "            return self.timer() <= item.expires",
+    "descripcion": "Con un `TLRUCache(maxsize=2, ttu=lambda k, v, t: t + 2, timer=reloj)`: `c[1]=1` con reloj=0 y reloj=2, `1 in c` devuelve True; debería ser False porque el elemento ya caducó.",
+    "ocultos": [
+      "tests/test_tlru.py"
+    ]
+  },
+  {
+    "id": "cachetools-tlru-read-not-refresh",
+    "archivo": "src/cachetools/__init__.py",
+    "buscar": "        items.move_to_end(key)\n        if self.timer() < item.expires:",
+    "reemplazar": "        if self.timer() < item.expires:",
+    "descripcion": "Con `TLRUCache(2, ttu=lambda k, v, t: t + 100)`: `c[1]=1; c[2]=2; c[1]; c[3]=3` y `list(c)` da `[2, 3]`; debería ser `[1, 3]`: leer la clave 1 la marca como usada recientemente.",
+    "ocultos": [
+      "tests/test_tlru.py"
+    ]
+  },
+  {
+    "id": "cachetools-typedkey-kwarg-types",
+    "archivo": "src/cachetools/keys.py",
+    "buscar": "        key += tuple(type(v) for _, v in sorted_kwargs)",
+    "reemplazar": "        key += ()",
+    "descripcion": "`typedkey(x=1) == typedkey(x=1.0)` devuelve True; debería ser False, porque los valores por nombre tienen tipos distintos.",
+    "ocultos": [
+      "tests/test_keys.py"
+    ]
+  }
+]

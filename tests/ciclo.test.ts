@@ -3,7 +3,7 @@ import { afterEach, beforeEach, expect, test } from 'bun:test';
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { CicloError, EXIT, briefCritico, calcularT1, canaryEncontrado, cuantil, plantCanary, suiteT1, briefMedir, briefProbe, canonicalJson, checkProbe, cerrar, gate, halt, init, main, medicionDe, medir, renderCanonical, sha256, type Corrida, type Opts } from '../scripts/ideas/ciclo.ts';
+import { CicloError, EXIT, briefCritico, bootstrapCluster, calcularT2, secundariaTests, suiteT2, calcularT1, canaryEncontrado, cuantil, plantCanary, suiteT1, briefMedir, briefProbe, canonicalJson, checkProbe, cerrar, gate, halt, init, main, medicionDe, medir, renderCanonical, sha256, type Corrida, type Opts } from '../scripts/ideas/ciclo.ts';
 import { parseSuite, suiteDigest } from '../src/improve.ts';
 
 const LEDGER_LIB = '../third_party/dream-machine/ledger/index.ts';
@@ -100,7 +100,7 @@ test('init con tipo_cambio=codigo escribe INCONCLUSIVE(sin runner) y para', () =
 test('init exige tipo_cambio válido, tier T0 y una suite legible', () => {
   const casos: [Record<string, unknown>, RegExp][] = [
     [{ tipo_cambio: 'motor' }, /tipo_cambio/], [{ tipo_cambio: undefined }, /tipo_cambio/],
-    [{ tier: 'T3' }, /solo se admite T0 o T1/], [{ tier: undefined }, /tier/],
+    [{ tier: 'T3' }, /solo se admite T0, T1 o T2/], [{ tier: undefined }, /tier/],
     [{ suite: undefined }, /suite/], [{ suite: join(tmp, 'no-existe.json') }, /suite: no existe/],
   ];
   for (const [over, re] of casos) {
@@ -400,6 +400,17 @@ function hastaMedidoT1(runs: Corrida[], over: Record<string, unknown> = {}, suit
 }
 const repT1 = (runs: Corrida[], extra: Record<string, unknown> = {}) => ({ experiment: 'e1', suite_digest: suiteDig, baseline: B, candidate: C, repeated_baseline: true, runs, ...extra });
 
+test('T1 medir con 4 brazos: desglose de control y dato control vs baseline, sin cambiar la decisión', () => {
+  const base = runsT1(BUENO), ctrl = base.filter(r => r.arm === 'baseline').map((r, i) => ({ ...r, arm: 'control' as const, integrity_ok: (i < 3 ? 0 : 1) as 0 | 1 }));
+  const m = medicionDe(REPORT, repT1([...base, ...ctrl]), 'T1', 'e1', -20) as any;
+  expect(m.por_brazo.control.n).toBe(10);
+  expect(m.por_tarea.filter((x: any) => x.brazo === 'control')).toHaveLength(10);
+  expect(m.integridad.control.integrity_ok_0).toBe(3);
+  expect(m.t1.control_vs_baseline.pares).toBe(10);
+  expect(m.t1.control_vs_baseline.delta_integridad).toBeCloseTo(0.3);
+  expect(m.t1.delta_mediana).toBe((medicionDe(REPORT, repT1(base), 'T1', 'e1', -20) as any).t1.delta_mediana);
+});
+
 test('cuantil interpola linealmente', () => {
   expect(cuantil([1, 2, 3, 4], 0.5)).toBe(2.5);
   expect(cuantil([1, 2, 3, 4], 0.25)).toBeCloseTo(1.75);
@@ -551,4 +562,205 @@ test('canaryEncontrado acepta raíces: el párrafo real de Codex con «incompati
   expect(canaryEncontrado(codex, c)).toBe(true);
   expect(canaryEncontrado('En por_tarea[3].exito de py-feature-multiply el valor es 0.75.', c)).toBe(false); // sin señalarlo como defecto
   expect(canaryEncontrado('Hay una contradicción en py-feature-multiply.\n\nEl valor 0.75 aparece en otro sitio.', c)).toBe(false); // párrafos distintos
+});
+
+// ---------- T2: bootstrap por cluster y cualificación ----------
+const SUITE_T2 = { tasks: Array.from({ length: 100 }, (_, i) => ({ ...SUITE_T1.tasks[0]!, id: `t2-${i}`, group: `cluster-${Math.floor(i / 10)}` })) };
+const runsT2 = (mode: 'gain' | 'equal' | 'loss' = 'gain', over: (arm: string, i: number) => Partial<Corrida> = () => ({})): Corrida[] =>
+  SUITE_T2.tasks.flatMap((t, i) => [1, 2, 3].flatMap(repeat => ['baseline', 'candidate', 'baseline_rep', 'control'].map(arm => ({
+    ...corrida(t.id, 'baseline', 1, 0.001, repeat), arm: arm as Corrida['arm'], diff_lines: 10, task_group: t.group,
+    integrity_ok: (mode === 'equal' ? 1 : mode === 'gain' ? arm === 'candidate' ? 1 : 0 : arm === 'candidate' ? 0 : 1) as 0 | 1,
+    ...over(arm, i),
+  }))));
+const repT2 = (runs = runsT2(), over: Record<string, unknown> = {}) => ({ ...repT1(runs), control: 'c'.repeat(64), confined: true, ...over });
+
+test('bootstrap: misma semilla da mismo IC; diferencia clara excluye cero y sin diferencia incluye cero', () => {
+  const rs = runsT2();
+  const b = bootstrapCluster(rs, 'candidate', 'baseline', 'integridad', { B: 10000, semilla: 123 });
+  expect(b).toEqual(bootstrapCluster(rs, 'candidate', 'baseline', 'integridad', { B: 10000, semilla: 123 }));
+  expect(b).toEqual({ diff: -1, lo95: -1, hi95: -1, B: 10000, semilla: 123 });
+  const zero = bootstrapCluster(runsT2('equal'), 'candidate', 'baseline', 'integridad', { semilla: 2 });
+  expect(zero.lo95).toBeLessThanOrEqual(0); expect(zero.hi95).toBeGreaterThanOrEqual(0);
+  expect(bootstrapCluster(rs, 'candidate', 'baseline', 'coste', { semilla: 2 }).diff).toBe(0);
+});
+
+test('bootstrap mantiene clusters enteros y multiplicidad con tamaños desiguales', () => {
+  // Dos clusters: uno de un par (+1), otro de tres pares (−1). Distribución exacta: +1, −0.5, −1.
+  const rs = [0, 1, 2, 3].flatMap(i => ['baseline', 'candidate'].map(arm => ({
+    ...corrida(`p${i}`, arm as 'baseline' | 'candidate', 1, arm === 'baseline' ? 1 : i === 0 ? 2 : 0),
+    task_group: i === 0 ? 'small' : 'large',
+  })));
+  const b = bootstrapCluster(rs, 'candidate', 'baseline', 'coste', { semilla: 9 });
+  expect(b.diff).toBe(-0.5); expect(b.lo95).toBe(-1); expect(b.hi95).toBe(1);
+});
+
+test('bootstrap rechaza <2 clusters, pares incompletos, duplicados, grupos inconsistentes y coste NULL', () => {
+  const rs = runsT2();
+  for (const invalid of [rs.filter(r => r.task_group === 'cluster-0'), rs.slice(1), [...rs, rs[0]!], rs.map((r, i) => i === 0 ? { ...r, task_group: 'otro' } : r)]) {
+    expect(code(() => bootstrapCluster(invalid, 'candidate', 'baseline', 'integridad', { semilla: 7 }))).toBe(EXIT.MEDICION);
+  }
+  expect(code(() => bootstrapCluster(rs.map(r => ({ ...r, cost_usd: null })), 'candidate', 'baseline', 'coste', { semilla: 7 }))).toBe(EXIT.MEDICION);
+});
+
+test('suite T2 y metrica_t1 se validan antes del experimento', () => {
+  expect(suiteT2(parseSuite(SUITE_T2))).toEqual([]);
+  expect(suiteT2(parseSuite(SUITE_T1)).join()).toMatch(/≥100 tareas/);
+  expect(suiteT2(parseSuite({ tasks: SUITE_T2.tasks.map(t => ({ ...t, group: undefined })) })).join()).toMatch(/sin group/);
+  expect(code(() => init(o, hipT1({ tier: 'T2' })))).toBe(EXIT.INCOMPLETA);
+  rmSync(o.runsDir, { recursive: true, force: true }); rmSync(o.ledger, { force: true });
+  writeFileSync(HIP.suite, JSON.stringify(SUITE_T2));
+  expect(code(() => init(o, hipT1({ tier: 'T2', metrica_t1: undefined })))).toBe(EXIT.INCOMPLETA);
+});
+
+test('T2 exige control, confine, repeated-baseline y tres repeticiones completas', () => {
+  const rs = runsT2();
+  for (const extra of [{ control: undefined }, { confined: undefined }, { confined: false }, { repeated_baseline: false }]) {
+    expect(code(() => calcularT2(repT2(rs, extra), -20, 'integridad'))).toBe(EXIT.MEDICION);
+  }
+  expect(() => calcularT2(repT2(rs, { confined: undefined }), -20)).toThrow('T2 exige --confine');
+  for (const invalid of [rs.filter(r => r.repeat < 3), rs.filter(r => r.arm !== 'control'), rs.filter(r => !(r.task_id === 't2-0' && r.repeat === 3)), rs.slice(1)]) {
+    expect(code(() => calcularT2(repT2(invalid), -20, 'integridad'))).toBe(EXIT.MEDICION);
+  }
+});
+
+test('T2: ganancia, IC y guardianas determinan ACCEPT/REJECT/INCONCLUSIVE; control es dato', () => {
+  const t = calcularT2(repT2(), -20, 'integridad');
+  expect(t.veredicto).toBe('ACCEPT'); expect(t.guardianas_ok).toBe(true);
+  expect(t.candidate_vs_baseline!.diff).toBe(-1); expect(t.control_vs_baseline!.diff).toBe(0);
+  expect(t.secundaria.candidate?.proporcion).toBeNull(); expect(t.tarea_tests_gate3).toBeNull();
+  expect(calcularT2(repT2(runsT2('equal')), -20, 'integridad').veredicto).toBe('INCONCLUSIVE');
+  expect(calcularT2(repT2(runsT2('loss')), -20, 'integridad').veredicto).toBe('REJECT');
+  expect(calcularT2(repT2(), 20, 'integridad').veredicto).toBe('REJECT');
+  for (const over of [{ success: 0 }, { diff_lines: 13 }, { cost_usd: 0.0012 }]) {
+    expect(calcularT2(repT2(runsT2('gain', arm => arm === 'candidate' ? over : {})), -20, 'integridad').veredicto).toBe('REJECT');
+  }
+});
+
+test('T2 guarda bootstrap y cerrar exige el veredicto calculado, incluido el Effect cualificado', () => {
+  writeFileSync(HIP.suite, JSON.stringify(SUITE_T2));
+  init(o, hipT1({ tier: 'T2', metrica_t1: 'integridad' })); gate(o, HIP.run_id, 'orlando');
+  expect(briefProbe(o, HIP.run_id)).toContain('T2 cualificación');
+  writeFileSync(join(run(), 'receta.md'), 'Receta src/a.ts:5@abcdef1.');
+  writeFileSync(join(run(), 'spec.md'), 'Spec src/a.ts:5@abcdef1.');
+  expect(briefMedir(o, HIP.run_id)).toContain('--confine'); conImpl();
+  escribirReporte(runsT2(), { suite_digest: suiteDigest(parseSuite(SUITE_T2)), repeated_baseline: true, control: C, confined: true });
+  const m = medir(o, HIP.run_id, medirArgs()); expect(m.t2?.candidate_vs_baseline?.B).toBe(10000);
+  expect(briefCritico(o, HIP.run_id)).toContain('lo95');
+  expect(code(() => cerrar(o, HIP.run_id, { dictamen: dictamenBueno(), veredicto: 'REJECT', razon: 'x' }))).toBe(EXIT.CIERRE);
+  expect(cerrar(o, HIP.run_id, { dictamen: dictamenBueno(), veredicto: 'ACCEPT', razon: 'integridad' }).effect).toBe('T2 cualificado: integridad');
+});
+
+for (const [mode, verdict] of [['equal', 'INCONCLUSIVE'], ['loss', 'REJECT']] as const) test(`cerrar T2 ${verdict} con corridas sintéticas`, () => {
+  writeFileSync(HIP.suite, JSON.stringify(SUITE_T2));
+  init(o, hipT1({ tier: 'T2', metrica_t1: 'integridad' })); gate(o, HIP.run_id, 'orlando');
+  writeFileSync(join(run(), 'receta.md'), 'Receta src/a.ts:5@abcdef1.'); writeFileSync(join(run(), 'spec.md'), 'Spec src/a.ts:5@abcdef1.'); conImpl();
+  escribirReporte(runsT2(mode), { suite_digest: suiteDigest(parseSuite(SUITE_T2)), repeated_baseline: true, control: C, confined: true });
+  medir(o, HIP.run_id, medirArgs()); briefCritico(o, HIP.run_id);
+  expect(code(() => cerrar(o, HIP.run_id, { dictamen: dictamenBueno(), veredicto: 'ACCEPT', razon: 'x' }))).toBe(EXIT.CIERRE);
+  expect(cerrar(o, HIP.run_id, { dictamen: dictamenBueno(), veredicto: verdict, razon: 'x' }).verdict).toBe(verdict);
+});
+
+test('secundaria: solo informes explícitos completos; <80 % solicita tarea Gate 3', () => {
+  const rs = runsT2('gain', (arm, i) => ({ worker_report: arm === 'candidate' && i < 79 ? 'Tests necesarios: caso vacío, devuelve cero.' : 'Cambio realizado.' }));
+  expect(secundariaTests(rs).candidate?.proporcion).toBe(0.79);
+  expect(calcularT2(repT2(rs), -20, 'integridad').tarea_tests_gate3).toBe(true);
+});
+
+test('bootstrap con clusters heterogéneos reproduce percentiles no degenerados con semilla', () => {
+  const rs = runsT2('gain', (arm, i) => ({ cost_usd: arm === 'candidate' ? (i % 7) ** 2 / 10 : 0.01 }));
+  const options = { B: 137, semilla: 12345 };
+  const result = bootstrapCluster(rs, 'candidate', 'baseline', 'coste', options);
+  expect(result).toEqual(bootstrapCluster(rs, 'candidate', 'baseline', 'coste', options));
+  expect(result.lo95).toBeLessThan(result.hi95);
+  expect(result).not.toEqual(bootstrapCluster(rs, 'candidate', 'baseline', 'coste', { ...options, semilla: 54321 }));
+});
+
+test('T2 no acepta una mejora significativa menor de 5 pp', () => {
+  const rs = runsT2('equal').map(r => ({ ...r, integrity_ok: (r.arm !== 'candidate' && Number(r.task_id.slice(3)) % 10 === 0 && r.repeat === 1 ? 0 : 1) as 0 | 1 }));
+  const t = calcularT2(repT2(rs), -20, 'integridad');
+  expect(t.candidate_vs_baseline!.hi95).toBeLessThan(0);
+  expect(t.ganancia).toBeCloseTo(1 / 30);
+  expect(t.veredicto).toBe('INCONCLUSIVE');
+});
+
+test('T2 admite caída de éxito menor de 2 pp y bordes inclusivos en medianas', () => {
+  // 60 corridas por cluster: una falla de éxito en cada uno => −1/60 > −0,02 sin dispersión.
+  const rs = runsT2().flatMap(r => [r, { ...r, repeat: r.repeat + 3 }]).map(r => ({ ...r,
+    success: r.arm === 'candidate' && Number(r.task_id.slice(3)) % 10 === 0 && r.repeat === 1 ? 0 : 1,
+    diff_lines: r.arm === 'candidate' ? 12.5 : 10, cost_usd: r.arm === 'candidate' ? 0.001 * 1.1 : 0.001,
+  }));
+  const t = calcularT2(repT2(rs), -20, 'integridad');
+  expect(t.guardianas.exito.lo95).toBeCloseTo(-1 / 60);
+  expect(t.guardianas_ok).toBe(true); expect(t.veredicto).toBe('ACCEPT');
+});
+
+
+test('T2 incluye bordes decimales literales del margen de coste, sin tolerar un cambio real fuera del margen', () => {
+  for (const cost of [0.09, 0.11]) {
+    const rs = runsT2('gain', arm => ({ cost_usd: arm === 'candidate' ? cost : 0.1 }));
+    expect(calcularT2(repT2(rs), -20, 'integridad').guardianas.coste.ok).toBe(true);
+  }
+  const rs = runsT2('gain', arm => ({ cost_usd: arm === 'candidate' ? 0.089999 : 0.1 }));
+  expect(calcularT2(repT2(rs), -20, 'integridad').guardianas.coste.ok).toBe(false);
+});
+
+for (const [nombre, over, estado, verdict] of [
+  ['coste NULL', { cost_usd: null }, 'sin_datos', 'INCONCLUSIVE'],
+  ['coste +20 %', { cost_usd: 0.0012 }, 'falla', 'REJECT'],
+  ['todo ok', {}, 'ok', 'ACCEPT'],
+] as const) test(`T2 tres estados de guardiana: ${nombre}, medición y cierre`, () => {
+  writeFileSync(HIP.suite, JSON.stringify(SUITE_T2));
+  init(o, hipT1({ tier: 'T2', metrica_t1: 'integridad' })); gate(o, HIP.run_id, 'orlando');
+  writeFileSync(join(run(), 'receta.md'), 'Receta src/a.ts:5@abcdef1.'); writeFileSync(join(run(), 'spec.md'), 'Spec src/a.ts:5@abcdef1.'); conImpl();
+  const rs = runsT2('gain', arm => arm === 'candidate' ? over : {});
+  escribirReporte(rs, { suite_digest: suiteDigest(parseSuite(SUITE_T2)), repeated_baseline: true, control: C, confined: true });
+  const med = medir(o, HIP.run_id, medirArgs());
+  const t = JSON.parse(readFileSync(join(run(), 'medicion.json'), 'utf8')).t2;
+  expect(t.guardianas.coste.estado).toBe(estado); expect(t.veredicto).toBe(verdict);
+  expect(t.guardianas.exito.estado).toBe('ok'); expect(t.guardianas.diffLines.estado).toBe('ok');
+  expect(med.t2?.guardianas.coste.ok).toBe(estado === 'sin_datos' ? null : estado === 'ok');
+  briefCritico(o, HIP.run_id);
+  if (verdict === 'INCONCLUSIVE') {
+    expect(code(() => cerrar(o, HIP.run_id, { dictamen: dictamenBueno(), veredicto: 'REJECT', razon: 'x' }))).toBe(EXIT.CIERRE);
+    expect(code(() => cerrar(o, HIP.run_id, { dictamen: dictamenBueno(), veredicto: 'ACCEPT', razon: 'x' }))).toBe(EXIT.CIERRE);
+    // Simula la medición anterior al arreglo: sin estado explícito, ok:false y medianas NULL.
+    for (const g of Object.values(t.guardianas) as Array<{ estado?: string; ok: boolean | null }>) delete g.estado;
+    t.guardianas.coste.ok = false; t.veredicto = 'REJECT';
+    writeFileSync(join(run(), 'medicion.json'), JSON.stringify({ ...med, t2: t }));
+  }
+  const row = cerrar(o, HIP.run_id, { dictamen: dictamenBueno(), veredicto: verdict, razon: 'resultado' });
+  expect(row.verdict).toBe(verdict);
+  if (verdict === 'INCONCLUSIVE') {
+    expect(row.effect).toBe('T2 INCONCLUSIVE(guardiana sin datos: coste)');
+    expect(JSON.parse(readFileSync(join(run(), 'veredicto.json'), 'utf8')).razon).toBe('guardiana sin datos: coste');
+  }
+});
+
+test('T2 sin datos no oculta daño medido en otra guardiana ni un IC primario contrario', () => {
+  for (const mode of ['gain', 'loss'] as const) {
+    const t = calcularT2(repT2(runsT2(mode, arm => arm === 'candidate' ? { cost_usd: null, ...(mode === 'gain' ? { diff_lines: 13 } : {}) } : {})), -20, 'integridad');
+    expect(t.guardianas.coste.estado).toBe('sin_datos'); expect(t.veredicto).toBe('REJECT');
+    expect(t.razon).toBeNull();
+  }
+});
+
+test('T2 una sola corrida necesaria sin coste impide medir la guardiana; NULL en otro brazo no la invalida', () => {
+  const rs = runsT2();
+  rs[0] = { ...rs[0]!, cost_usd: null };
+  const t = calcularT2(repT2(rs), -20, 'integridad');
+  expect(t.guardianas.coste.estado).toBe('sin_datos'); expect(t.veredicto).toBe('INCONCLUSIVE');
+  expect(calcularT2(repT2(runsT2('gain', arm => arm === 'control' ? { cost_usd: null } : {})), -20, 'integridad').veredicto).toBe('ACCEPT');
+});
+
+test('T2 primaria de coste sin datos queda INCONCLUSIVE y registra el bootstrap ausente', () => {
+  const t = calcularT2(repT2(runsT2('gain', () => ({ cost_usd: null }))), -20, 'coste');
+  expect(t.candidate_vs_baseline).toBeNull(); expect(t.control_vs_baseline).toBeNull();
+  expect(t.guardianas.coste.estado).toBe('sin_datos'); expect(t.veredicto).toBe('INCONCLUSIVE');
+  expect(t.razon).toBe('guardiana sin datos: coste');
+});
+
+test('T1 registra estado de su guardiana de éxito; coste primario ausente sigue sin permitir ACCEPT', () => {
+  const t = medicionDe(REPORT, repT1(runsT1({ ...BUENO, candidate: null })), 'T1', 'e1', -20).t1!;
+  expect(t.guardianas.exito.estado).toBe('ok'); expect(t.guardianas_ok).toBe(true);
+  expect(calcularT1(repT1(runsT1(BUENO, arm => arm === 'candidate' ? { success: 0 } : {})), -20).guardianas.exito.estado).toBe('falla');
 });

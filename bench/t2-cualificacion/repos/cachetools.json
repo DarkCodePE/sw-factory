@@ -1,0 +1,24 @@
+{
+  "nombre": "cachetools",
+  "url": "https://github.com/tkem/cachetools",
+  "commit": "7f6228eb3769fea9207a7fa0f22af623413a9b35",
+  "license_spdx": "MIT",
+  "license_file": "LICENSE",
+  "license_sha256": "28c000b52b0ee27138a68ef778227e4057046e86b65f62f1cacb99b0cc49e0d2",
+  "env": {
+    "PYTEST_DISABLE_PLUGIN_AUTOLOAD": "1",
+    "PYTHONDONTWRITEBYTECODE": "1",
+    "PYTHONPATH": "src"
+  },
+  "test": [
+    "python3",
+    "-m",
+    "pytest",
+    "-q",
+    "-p",
+    "no:cacheprovider",
+    "-o",
+    "addopts=",
+    "tests"
+  ]
+}
