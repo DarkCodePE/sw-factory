@@ -53,7 +53,7 @@ export async function searchVault(query: string, options: {
   if (!Number.isInteger(maxResults) || maxResults < 1 || maxResults > 500) throw new Error("maxResults debe estar entre 1 y 500");
   const rg = Bun.which("rg");
   if (!rg) throw new Error("rg no está disponible para buscar en la bóveda");
-  const args = ["-n", "--no-heading", "--color", "never", "--max-count", String(maxResults), "-g", "*.md", "-g", "*.txt", "-e", query, "--", directory];
+  const args = ["-n", "-i", "--no-heading", "--color", "never", "--max-count", String(maxResults), "-g", "*.md", "-g", "*.txt", "-e", query, "--", directory];
   const wrapped = await wrapMcpCommand(rg, args, { PATH: process.env.PATH ?? "" }, { cwd: directory } as ToolContext, false, false, [directory]);
   const result = spawnSync(wrapped.argv[0]!, wrapped.argv.slice(1), {
     encoding: "utf8", env: wrapped.env, maxBuffer: Math.max(maxBytes * 4, 65_536), timeout: 10_000,

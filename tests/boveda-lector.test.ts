@@ -26,6 +26,13 @@ test("busca en wiki y entrega resultados envueltos y defangeados", async () => {
   } finally { rmSync(f.root, { recursive: true, force: true }); }
 });
 
+test("la búsqueda no distingue mayúsculas", async () => {
+  const f = fixture();
+  try {
+    expect(await searchVault("HALLAZGO ALFA", { vault: f.vault })).toContain("hallazgo alfa");
+  } finally { rmSync(f.root, { recursive: true, force: true }); }
+});
+
 test("rechaza bóveda inexistente, traversal y symlink de wiki que escapa", async () => {
   const f = fixture();
   const outside = join(f.root, "outside"); mkdirSync(outside);
