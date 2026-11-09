@@ -1,5 +1,28 @@
 import { expect, test } from 'bun:test';
-import { boundedAgentOutput, runAgent, type AgentAdapter } from '../src/agents.ts';
+import { boundedAgentOutput, getAgent, runAgent, type AgentAdapter } from '../src/agents.ts';
+
+// Literal pre-confinement allowlist: host runs must retain it byte for byte.
+const originalClaudeTools = 'Read,Edit,Write,Glob,Grep,Bash(git:*),Bash(python3:*),Bash(python:*),Bash(pytest:*),Bash(npm ci:*),Bash(npm test:*),Bash(npm run test:*),Bash(npm run lint:*),Bash(npx vitest:*),Bash(npx tsc:*),Bash(bun test:*),Bash(ls:*),Bash(cat:*),Bash(rtk:*)';
+
+test('claude host allowlist stays literally unchanged without confinement', () => {
+  const agent = getAgent('claude');
+  const expected = ['claude', '-p', 'prompt', '--permission-mode', 'acceptEdits', '--allowedTools', originalClaudeTools, '--output-format', 'json'];
+  expect(agent.command('prompt')).toEqual(expected);
+  expect(agent.command('prompt', {})).toEqual(expected);
+  expect(agent.command('prompt', { confine: false })).toEqual(expected);
+  expect(agent.command('prompt', { readOnly: true, confine: false })).toEqual(expected);
+});
+
+test('claude confined allowlist adds only environment and scratch commands', () => {
+  const agent = getAgent('claude');
+  const extra = ',Bash(PYTHONPATH=*),Bash(cd:*),Bash(mkdir:*),Bash(cp:*),Bash(rm:*)';
+  for (const readOnly of [false, true]) {
+    const argv = agent.command('prompt', { confine: true, readOnly });
+    expect(argv).toEqual(['claude', '-p', 'prompt', '--permission-mode', 'acceptEdits', '--allowedTools', originalClaudeTools + extra, '--output-format', 'json']);
+  }
+  // A confined call must not mutate the shared adapter's host policy.
+  expect(agent.command('prompt')[6]).toBe(originalClaudeTools);
+});
 
 test('D3: boundedAgentOutput does not invent a STATUS line when none is present', () => {
   const longWithoutStatus = 'A'.repeat(24_000);
