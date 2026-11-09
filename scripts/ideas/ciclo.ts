@@ -261,7 +261,7 @@ export function checkProbe(dir: string): { citas: number } {
   return { citas };
 }
 const LECTOR = "bun scripts/ideas/graft-lector.ts";
-const defang = (s: string) => s.replace(/</g, "‹").replace(/>/g, "›"); // evita cerrar el envoltorio desde dentro
+export const defang = (s: string) => s.replace(/</g, "‹").replace(/>/g, "›"); // evita cerrar el envoltorio desde dentro
 
 /** ARQUITECTURA.md §6: qué contiene cada tier y qué puede emitir. */
 const TIER_REGLA: Record<string, string> = {
