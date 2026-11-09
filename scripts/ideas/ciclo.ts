@@ -22,6 +22,8 @@ import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { dirname, join, resolve } from "node:path";
 import { parseSuite, suiteDigest, type Suite } from "../../src/improve.ts";
 import { validateProbeBudget, type ProbeBudget } from "./graft-lector.ts";
+import { reflejar, type ReflejarOpts, type ReflejarResult } from "./reflejar.ts";
+export { reflejar, type ReflejarOpts, type ReflejarResult };
 
 // Upstream no compila con noUncheckedIndexedAccess y no se parchea: ruta en variable para que tsc no lo siga (como tests/provenance.test.ts).
 const LEDGER_LIB = "../../third_party/dream-machine/ledger/index.ts";
@@ -35,7 +37,7 @@ export const EXIT = { USO: 2, INCOMPLETA: 3, HASH: 4, PRECOND: 5, ENTREGABLE: 6,
 export class CicloError extends Error {
   constructor(public code: number, msg: string) { super(msg); }
 }
-const fail = (code: number, msg: string): never => { throw new CicloError(code, msg); };
+export const fail = (code: number, msg: string): never => { throw new CicloError(code, msg); };
 
 const ROOT = resolve(import.meta.dir, "../..");
 export type Opts = { runsDir: string; ledger: string; ahora: Date };
@@ -50,8 +52,8 @@ export function canonicalJson(v: unknown): string {
 }
 
 // ---------- archivos de un run ----------
-const RUN_ID_RE = /^[A-Za-z0-9][A-Za-z0-9._-]{2,80}$/;
-const runDir = (o: Opts, id: string) => { if (!RUN_ID_RE.test(id)) fail(EXIT.USO, `run_id inválido: ${id}`); return join(o.runsDir, id); };
+export const RUN_ID_RE = /^[A-Za-z0-9][A-Za-z0-9._-]{2,80}$/;
+export const runDir = (o: Opts, id: string) => { if (!RUN_ID_RE.test(id)) fail(EXIT.USO, `run_id inválido: ${id}`); return join(o.runsDir, id); };
 const rd = (dir: string, f: string) => readFileSync(join(dir, f), "utf8");
 function need(dir: string, f: string, hint: string): string {
   if (!existsSync(join(dir, f))) fail(EXIT.PRECOND, `falta ${f} en ${dir}: ${hint}`);
@@ -81,7 +83,7 @@ export function appendLedger(o: Opts, row: Row) {
   writeFileSync(o.ledger, next);
 }
 const day = (o: Opts) => o.ahora.toISOString().slice(0, 10);
-const sha8 = (s: string | null) => (s ? s.slice(0, 8) : "NONE");
+export const sha8 = (s: string | null) => (s ? s.slice(0, 8) : "NONE");
 
 // ---------- hipótesis ----------
 export type Hipotesis = {
@@ -246,8 +248,8 @@ function loadGate(r: Run) {
 }
 
 // ---------- probe ----------
-const CITA_CAND = /(?<![\w/:.-])[\w./+-]+\.[A-Za-z0-9]+:\d+(?:-\d+)?(?:@[0-9A-Za-z]+)?/g;
-const CITA_OK = /^[\w./+-]+:\d+(?:-\d+)?@[0-9a-f]{7,40}$/;
+export const CITA_CAND = /(?<![\w/:.-])[\w./+-]+\.[A-Za-z0-9]+:\d+(?:-\d+)?(?:@[0-9A-Za-z]+)?/g;
+export const CITA_OK = /^[\w./+-]+:\d+(?:-\d+)?@[0-9a-f]{7,40}$/;
 /** Valida receta.md y spec.md: existen, no vacíos, y toda cita candidata es archivo:línea@sha. */
 export function checkProbe(dir: string): { citas: number } {
   const bad: string[] = [];
@@ -261,7 +263,7 @@ export function checkProbe(dir: string): { citas: number } {
   return { citas };
 }
 const LECTOR = "bun scripts/ideas/graft-lector.ts";
-const defang = (s: string) => s.replace(/</g, "‹").replace(/>/g, "›"); // evita cerrar el envoltorio desde dentro
+export const defang = (s: string) => s.replace(/</g, "‹").replace(/>/g, "›"); // evita cerrar el envoltorio desde dentro
 
 /** ARQUITECTURA.md §6: qué contiene cada tier y qué puede emitir. */
 const TIER_REGLA: Record<string, string> = {
@@ -747,8 +749,8 @@ export function halt(o: Opts, id: string, razon: string) {
 }
 
 // ---------- CLI ----------
-const FLAGS = ["--runs-dir", "--ledger", "--ahora", "--operador", "--experiment", "--tier", "--report-cmd", "--dictamen", "--veredicto", "--razon", "--guardiana"];
-const USAGE = "uso: ciclo.ts <init <hipotesis.json> | gate <id> --operador N | brief <probe|medir|critico> <id> | check probe <id> | medir <id> --experiment E [--tier T0] [--report-cmd C] | cerrar <id> --dictamen F --veredicto V --razon R [--guardiana G] | halt <id> <razón>>  [--runs-dir D] [--ledger F] [--ahora ISO]";
+const FLAGS = ["--runs-dir", "--ledger", "--ahora", "--operador", "--experiment", "--tier", "--report-cmd", "--dictamen", "--veredicto", "--razon", "--guardiana", "--aprobado-por", "--proyecto", "--vault", "--knowledge-id"];
+const USAGE = "uso: ciclo.ts <init <hipotesis.json> | gate <id> --operador N | brief <probe|medir|critico> <id> | check probe <id> | medir <id> --experiment E [--tier T0] [--report-cmd C] | cerrar <id> --dictamen F --veredicto V --razon R [--guardiana G] | reflejar <id> [--aprobado-por N] [--proyecto P] [--dry-run] | halt <id> <razón>>  [--runs-dir D] [--ledger F] [--ahora ISO]";
 
 export function main(argv: string[]): number {
   const opt = (f: string) => (argv.includes(f) ? argv[argv.indexOf(f) + 1] : undefined);
@@ -772,6 +774,23 @@ export function main(argv: string[]): number {
     else if (cmd === "check" && a === "probe") { const r = checkProbe(runDir(o, need2(b, "<run_id>"))); console.log(`probe ok: ${r.citas} citas válidas`); }
     else if (cmd === "medir") { const m = medir(o, need2(a, "<run_id>"), { experiment: opt("--experiment"), tier: opt("--tier"), reportCmd: opt("--report-cmd") }); console.log(`medicion.json escrito (${m.tier}, coste ${m.coste_usd ?? "NULL"}: ${m.coste_nota})`); }
     else if (cmd === "cerrar") { const row = cerrar(o, need2(a, "<run_id>"), { dictamen: opt("--dictamen"), veredicto: opt("--veredicto"), razon: opt("--razon"), guardiana: opt("--guardiana") }); console.log(`cerrado: ${row.verdict} (${row.effect}) ${row.witness}`); }
+    else if (cmd === "reflejar") {
+      const r = reflejar(o, need2(a, "<run_id>"), {
+        aprobadoPor: opt("--aprobado-por"),
+        proyecto: opt("--proyecto") ?? opt("--vault"),
+        dryRun: argv.includes("--dry-run"),
+        knowledgeId: opt("--knowledge-id"),
+      });
+      if (r.dryRun || !r.written) {
+        if (r.action === "unchanged") {
+          console.log(`reflejar: sin cambios (idempotente) en ${r.path}`);
+        } else {
+          console.log(`[dry-run] ${r.path}\n${r.content}`);
+        }
+      } else {
+        console.log(`reflejado ok: ${r.path} (${r.action}, rev ${r.revision}${r.supersedes ? `, supersedes ${r.supersedes.slice(0, 8)}` : ""})`);
+      }
+    }
     else if (cmd === "halt") { halt(o, need2(a, "<run_id>"), pos.slice(2).join(" ")); console.log("halt registrado"); }
     else fail(EXIT.USO, USAGE);
     return 0;
