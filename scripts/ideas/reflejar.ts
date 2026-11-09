@@ -277,7 +277,7 @@ export function reflejar(o: Opts, id: string, opts: ReflejarOpts = {}): Reflejar
   const dictamenPath = join(dir, "dictamen.md");
   const dictamen = existsSync(dictamenPath) ? readFileSync(dictamenPath, "utf8") : undefined;
 
-  // Clave canónica del contenido
+  // Clave canónica del contenido (sin aprobado_por: el revisor no altera el contenido de la hipótesis/veredicto)
   const contentPayload = {
     knowledgeId,
     origin_session: id,
@@ -295,17 +295,18 @@ export function reflejar(o: Opts, id: string, opts: ReflejarOpts = {}): Reflejar
     metrica_primaria: h.metrica_primaria,
     guardianas: h.guardianas,
     limitacion_actual: h.limitacion_actual,
-    aprobado_por: aprobadoPor ?? null,
   };
   const contentHash = computeContentHash(contentPayload);
 
   let revision = 1;
   let supersedes: string | null = null;
   let action: "created" | "superseded" | "unchanged" | "dry-run" = "created";
+  let existingContent: string | null = null;
+  let prevRev = 1;
 
   const fileExists = existsSync(targetPath);
   if (fileExists) {
-    const existingContent = readFileSync(targetPath, "utf8");
+    existingContent = readFileSync(targetPath, "utf8");
     const { frontmatter: prevFm } = parseFrontmatter(existingContent);
     const prevHash = prevFm.content_hash ?? sha256(existingContent);
 
@@ -324,10 +325,11 @@ export function reflejar(o: Opts, id: string, opts: ReflejarOpts = {}): Reflejar
       };
     }
 
-    // Contenido distinto con el mismo knowledge_id -> nueva revisión con supersedes
-    const prevRev = typeof prevFm.canonical_revision === "number" ? prevFm.canonical_revision : 1;
+    // Contenido distinto con el mismo knowledge_id -> nueva revisión con supersedes sin pérdida
+    prevRev = typeof prevFm.canonical_revision === "number" ? prevFm.canonical_revision : 1;
     revision = prevRev + 1;
-    supersedes = prevHash;
+    const prevFileName = `${knowledgeId}.r${prevRev}.md`;
+    supersedes = `${prevFileName}@${prevHash}`;
     action = "superseded";
   }
 
@@ -363,6 +365,12 @@ export function reflejar(o: Opts, id: string, opts: ReflejarOpts = {}): Reflejar
   }
 
   mkdirSync(targetDir, { recursive: true });
+  if (action === "superseded" && existingContent !== null) {
+    // Conserva la revisión anterior antes de escribir la nueva (<knowledge_id>.r<N>.md)
+    const prevFileName = `${knowledgeId}.r${prevRev}.md`;
+    const prevFilePath = join(targetDir, prevFileName);
+    writeFileSync(prevFilePath, existingContent, "utf8");
+  }
   writeFileSync(targetPath, renderedContent, "utf8");
 
   return {

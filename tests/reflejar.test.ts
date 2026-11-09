@@ -203,7 +203,25 @@ test("idempotencia: misma clave (knowledge_id, canonical_revision, content_hash)
   expect(stat2.mtimeMs).toBe(stat1.mtimeMs);
 });
 
-test("supersedes: contenido distinto con el mismo knowledge_id produce nueva revisión", () => {
+test("mismo run, distinto --aprobado-por -> unchanged (content_hash no incluye revisor)", () => {
+  prepararRunCerrado();
+  const res1 = reflejar(o, HIP.run_id, {
+    proyecto: vaultTmp,
+    aprobadoPor: "orlando",
+  });
+  expect(res1.written).toBe(true);
+  expect(res1.action).toBe("created");
+
+  // Mismo run, revisor distinto
+  const res2 = reflejar(o, HIP.run_id, {
+    proyecto: vaultTmp,
+    aprobadoPor: "revisor-segundo",
+  });
+  expect(res2.written).toBe(false);
+  expect(res2.action).toBe("unchanged");
+});
+
+test("supersedes sin pérdida: conserva revisión previa en <knowledge_id>.r<N>.md y supersedes referencia archivo y hash", () => {
   prepararRunCerrado();
   const res1 = reflejar(o, HIP.run_id, {
     proyecto: vaultTmp,
@@ -211,6 +229,7 @@ test("supersedes: contenido distinto con el mismo knowledge_id produce nueva rev
   });
   expect(res1.written).toBe(true);
   expect(res1.revision).toBe(1);
+  const rev1Content = readFileSync(res1.path, "utf8");
 
   // Simulamos que el contenido del run cambia (nueva evaluación / razón modificada)
   const vPath = join(run(), "veredicto.json");
@@ -224,15 +243,22 @@ test("supersedes: contenido distinto con el mismo knowledge_id produce nueva rev
     aprobadoPor: "orlando",
   });
 
+  const expectedSupersedes = `${HIP.run_id}.r1.md@${res1.contentHash}`;
   expect(res2.written).toBe(true);
   expect(res2.action).toBe("superseded");
   expect(res2.revision).toBe(2);
-  expect(res2.supersedes).toBe(res1.contentHash);
+  expect(res2.supersedes).toBe(expectedSupersedes);
+
+  const prevFilePath = join(vaultTmp, "raw/sources/agentes", `${HIP.run_id}.r1.md`);
+  // Tras superseder existen las dos y la vieja no cambió
+  expect(existsSync(prevFilePath)).toBe(true);
+  expect(existsSync(res2.path)).toBe(true);
+  expect(readFileSync(prevFilePath, "utf8")).toBe(rev1Content);
 
   const updatedTxt = readFileSync(res2.path, "utf8");
   const { frontmatter } = parseFrontmatter(updatedTxt);
   expect(frontmatter.canonical_revision).toBe(2);
-  expect(frontmatter.supersedes).toBe(res1.contentHash);
+  expect(frontmatter.supersedes).toBe(expectedSupersedes);
   expect(updatedTxt).toContain("nueva evidencia demostró que la hipótesis requiere mayor exploración en T1");
 });
 
