@@ -1,7 +1,7 @@
 // Worker pool: claims pending activities FIFO, runs one headless agent per activity
 // in the change's worktree, and records the result back in the store.
 import { runGates, runSetupAt, type GateStep } from './gates.ts';
-import { createHash } from 'node:crypto';
+import { createHash, randomUUID } from 'node:crypto';
 import { rmSync } from 'node:fs';
 import { join, resolve } from 'node:path';
 import { selfCommand } from './self.ts';
@@ -414,7 +414,7 @@ export async function runPool(store: Store, opts: PoolOptions): Promise<void> {
         throw err;
       }
       while (!interrupted && current.state === 'active' && running.size < current.workerConcurrency) {
-        const workerId = `w${(slot++ % current.workerConcurrency) + 1}-${process.pid}`;
+        const workerId = `w${(slot++ % current.workerConcurrency) + 1}-${process.pid}-${randomUUID()}`;
         let claimed: Activity | null = null;
         try {
           claimed = store.claimActivity(ws.id, workerId, opts.leaseTtlMs);

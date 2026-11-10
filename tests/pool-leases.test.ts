@@ -542,3 +542,34 @@ printf "STATUS: done\\n\\nCompleted\\n"
 });
 
 
+
+
+test('successive claims in one pool slot have distinct tokens and fence late writes', async () => {
+  const store = new Store(join(dir, 'tokens.db'), { clock: () => simTime });
+  try {
+    const ws = store.createWorkstream({ slug: 'tokens', goal: 'g', repo: join(dir, 'missing-repo'), agent: 'fake',
+      workerConcurrency: 1, requireChangeApproval: false, requireApproval: false });
+    store.setWorkstreamState(ws.id, 'active');
+    const change = store.createChange(ws.id, 'retry the same activity', 'd');
+    const original = store.claimActivity.bind(store);
+    const claims: string[] = [];
+    store.claimActivity = (workstream, workerId, ttl) => {
+      const activity = original(workstream, workerId, ttl);
+      if (activity) {
+        expect(workerId.startsWith(`w1-${process.pid}-`)).toBe(true);
+        for (const stale of claims) {
+          expect(workerId).not.toBe(stale);
+          expect(() => store.heartbeat(activity.id, stale)).toThrow(StoreError);
+          expect(() => store.completeActivity(activity.id, stale, 'STATUS: done')).toThrow(StoreError);
+        }
+        claims.push(workerId);
+      }
+      return activity;
+    };
+    // A missing repository fails before launch, forcing successive claims of the SAME activity.
+    await runPool(store, { workstream: ws.id, stateDir: dir, untilIdle: true, pollMs: 1, log: () => {} });
+    expect(claims.length).toBeGreaterThanOrEqual(2);
+    expect(new Set(claims).size).toBe(claims.length);
+    expect(store.getChange(change.id).status).toBe('failed');
+  } finally { store.close(); }
+});
