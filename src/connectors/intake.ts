@@ -37,7 +37,7 @@ export async function importIssue(store: Store, links: ChangeLinkStore, tickets:
   if (prior && (links.findBySource('jira', opts.key) || !prior.changeId && !opts.triage)) return prior;
   const issue = await tickets.getIssue(opts.key);
   if (issue.ref.system !== 'jira' || issue.ref.key !== opts.key) throw new Error('La HU recibida no coincide con la solicitada');
-  return store.db.transaction(() => {
+  return store.withRetry(() => store.db.transaction(() => {
     const prior = existing();
     if (prior?.changeId) { links.setSource(prior.changeId, issue.ref); return prior; }
     let signalId = prior?.signalId;
@@ -49,7 +49,7 @@ export async function importIssue(store: Store, links: ChangeLinkStore, tickets:
     const change = opts.triage ? store.triageSignal(signalId) : undefined;
     if (change) links.setSource(change.id, issue.ref);
     return { signalId, ...(change ? { changeId: change.id } : {}), reused: !!prior };
-  })();
+  }).immediate());
 }
 
 export function pullRequestBody(change: Change, links: ChangeLinks | undefined, activities: Activity[]): string {

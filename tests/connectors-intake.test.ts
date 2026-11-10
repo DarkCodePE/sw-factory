@@ -1,5 +1,8 @@
 import { afterEach, beforeEach, expect, test } from 'bun:test';
 import { Store } from '../src/store.ts';
+import { existsSync, mkdtempSync, rmSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 import { ChangeLinkStore } from '../src/connectors/links.ts';
 import { importIssue, issueToSignal, pullRequestBody, ticketComment } from '../src/connectors/intake.ts';
 import type { TicketGateway, TicketIssue } from '../src/connectors/types.ts';
@@ -107,4 +110,39 @@ test('PR and ticket bodies include source, truncated investigation and closure m
   expect(body).not.toContain('R'.repeat(4001));
   expect(body).toContain(`Cerrado por fab change ${change.id.slice(0, 8)}`);
   for (const kind of ['pr_opened', 'merged', 'status'] as const) expect(ticketComment(kind, change, links.get(change.id)!, 'Extra')).toContain(pr.url);
+});
+
+
+test('importIssue retries a contended transaction and remains idempotent', async () => {
+  // A second process holds the SQLite write lock, as in the lease tests of tests/store.test.ts.
+  const dir = mkdtempSync(join(tmpdir(), 'fab-intake-busy-'));
+  const dbPath = join(dir, 'fab.db');
+  const ready = join(dir, 'ready');
+  const fileStore = new Store(dbPath);
+  const fileLinks = new ChangeLinkStore(fileStore.db);
+  fileStore.createWorkstream({ slug: 'busy', goal: 'g', repo: '/fixture/repo', requireChangeApproval: false });
+  fileStore.db.exec('PRAGMA busy_timeout = 5');
+  const script = `import { Database } from 'bun:sqlite';
+    import { writeFileSync } from 'node:fs';
+    const db = new Database(${JSON.stringify(dbPath)});
+    db.exec('BEGIN IMMEDIATE');
+    writeFileSync(${JSON.stringify(ready)}, 'ready');
+    Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, 60);
+    db.exec('COMMIT'); db.close();`;
+  const child = Bun.spawn([process.execPath, '-e', script], { stdout: 'ignore', stderr: 'pipe' });
+  try {
+    for (let n = 0; n < 200 && !existsSync(ready); n++) await Bun.sleep(5);
+    expect(existsSync(ready)).toBe(true);
+    const opts = { key: issue.ref.key, workstream: 'busy', triage: true };
+    const imported = await importIssue(fileStore, fileLinks, tickets, opts);
+    expect(imported.changeId).toBeDefined();
+    expect(await importIssue(fileStore, fileLinks, tickets, opts)).toMatchObject({ ...imported, reused: true });
+    expect(fileStore.listSignals('busy')).toHaveLength(1);
+    expect(fileStore.listChanges('busy')).toHaveLength(1);
+    expect(await child.exited).toBe(0);
+  } finally {
+    await child.exited;
+    fileStore.close();
+    rmSync(dir, { recursive: true, force: true });
+  }
 });
