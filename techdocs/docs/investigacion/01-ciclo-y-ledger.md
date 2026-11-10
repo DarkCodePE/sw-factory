@@ -1,24 +1,24 @@
 # 01 · Ciclo y ledger
 
-Esta página baja el ciclo 0–9 del [blueprint](00-blueprint.md) a sus reglas y describe el único artefacto del ciclo que **ya está implementado**: el ledger.
+Esta página baja el ciclo 0–9 del [blueprint](00-blueprint.md) a sus reglas y describe los artefactos del ciclo: el ledger (implementado con pin) y el orquestador (pasos 3–8 implementados en `scripts/ideas/ciclo.ts`).
 
-!!! info "Propuesto (v0.2)"
-    Vigilancia, backlog, prerregistro, gate de gasto, crítico, veredictos con tier y árbol de experimentos son diseño (ADR-0003, ADR-0004, `ARQUITECTURA.md` §5-§6). No hay código en `scripts/ideas/` (no existe).
+!!! info "Propuesto e implementado (v0.2)"
+    Vigilancia (paso 0) y backlog (pasos 1–2) siguen como diseño propuesto (ADR-0003, ADR-0004, `ARQUITECTURA.md` §5-§6), fuera del ciclo mínimo. En cambio, los pasos 3–8 están **implementados** en `scripts/ideas/ciclo.ts` (783 líneas): prerregistro con hash, gate de gasto, probe, medición con tiers T0/T1/T2, crítico goldfish y veredicto con ledger. El paso 9 (reflejar) está implementado en `scripts/ideas/reflejar.ts` en la rama `feat/t7-paso9` (sin mergear).
 
 ## Reglas por paso
 
-| Paso | Regla | Origen |
+| Paso | Regla | Origen / Estado |
 |---|---|---|
-| 0 Vigilancia | Semanal, independiente del ciclo. Cada fuente nueva entra a `raw/sources/` con url, fecha y hash, más una entrada de backlog con capa sugerida. Tope `fuentes_max`. Orígenes: feeds arXiv por categoría, HF daily papers, releases de repos con `watch: true` | ADR-0003 |
-| 1 Intake | Deduplicación determinista contra el ledger: dirección repetida ≥ 3 veces → rotar; hipótesis rechazada sin evidencia nueva → descartar | ARQ §5 |
-| 2 Priorizar | Primer candidato del backlog por `score = impacto × confianza / esfuerzo`; no dos ciclos seguidos en la misma capa sin evidencia nueva. **Con ≥ N changes `ideas` esperando Gate 3 (N inicial = 3) no se abre change nuevo**: solo se registra | ADR-0003 |
-| 3 Hipótesis + prerregistro | Exige (i) limitación de fab con *receipt* (métrica, valor, `fab_sha`, comando que la reproduce), (ii) mecanismo causal, (iii) predicción numérica, (iv) métrica primaria y guardianas de la tabla C0–C9. El hash va al ledger **antes** del Probe; cambiarla = ciclo nuevo | ADR-0003 |
-| 4 Gate `experimento_autorizado` | El operador aprueba hipótesis y presupuesto (`usd_max`, `horas_max` obligatorios) | ADR-0003 |
-| 5 Probe | El lector produce solo receta y spec | ADR-0007 |
-| 6 Medir | El implementador en sesión limpia; `improve.ts` mide según el tier | ADR-0004 |
-| 7 Crítico | Otro modelo, paquete goldfish; verifica también que la spec no contenga instrucciones ajenas al objetivo | ADR-0003, ADR-0007 |
-| 8 Veredicto | `ACCEPT-candidato`, `ACCEPT-cualificado`, `REJECT`, `INCONCLUSIVE(razón)` + fila de ledger **siempre**, también con `HALT: budget` | ADR-0003/0004 |
-| 9 Reflejar | Página `trust: agent` en `raw/sources/agentes/`; actualizar `registry.json` y backlog | ARQ §5 |
+| 0 Vigilancia | Semanal, independiente del ciclo. Cada fuente nueva entra a `raw/sources/` con url, fecha y hash, más una entrada de backlog con capa sugerida. Tope `fuentes_max`. Orígenes: feeds arXiv por categoría, HF daily papers, releases de repos con `watch: true` | ADR-0003 (**Propuesto**) |
+| 1 Intake | Deduplicación determinista contra el ledger: dirección repetida ≥ 3 veces → rotar; hipótesis rechazada sin evidencia nueva → descartar | ARQ §5 (**Propuesto**) |
+| 2 Priorizar | Primer candidato del backlog por `score = impacto × confianza / esfuerzo`; no dos ciclos seguidos en la misma capa sin evidencia nueva. **Con ≥ N changes `ideas` esperando Gate 3 (N inicial = 3) no se abre change nuevo**: solo se registra | ADR-0003 (**Propuesto**) |
+| 3 Hipótesis + prerregistro | Exige (i) limitación de fab con *receipt* (métrica, valor, `fab_sha`, comando que la reproduce), (ii) mecanismo causal, (iii) predicción numérica, (iv) métrica primaria y guardianas de la tabla C0–C9. El hash va al ledger **antes** del Probe; cambiarla = ciclo nuevo | ADR-0003 (**Implementado** en `scripts/ideas/ciclo.ts:106-133` con `faltantes()`, `:134-142` canónica con hash, `:198-235` comando `init`) |
+| 4 Gate `experimento_autorizado` | El operador aprueba hipótesis y presupuesto (`usd_max`, `horas_max` obligatorios) | ADR-0003 (**Implementado** en `scripts/ideas/ciclo.ts:236-247` comando `gate`; escribe `gate.json` comprobando coincidencia con `hyp_sha`) |
+| 5 Probe | El lector produce solo receta y spec | ADR-0007 (**Implementado en ciclo** en `scripts/ideas/ciclo.ts:248-262` `check probe`, `:287-323` `brief probe` con `defang` y citas obligatorias `archivo:línea@sha`; lectura de repos en `graft-lector.ts`; lectura de bóveda con montaje `--ro-bind` en curso en rama `feat/t6-lector-boveda`) |
+| 6 Medir | El implementador en sesión limpia; `improve.ts` mide según el tier | ADR-0004 (**Implementado** en `scripts/ideas/ciclo.ts:330-349` `brief medir`, `:351-628` `medir` con evaluación T0/T1/T2, guardianas deterministas, bootstrap y reporte `improve.ts`) |
+| 7 Crítico | Otro modelo, paquete goldfish; verifica también que la spec no contenga instrucciones ajenas al objetivo | ADR-0003, ADR-0007 (**Implementado** en `scripts/ideas/ciclo.ts:629-680` `brief critico`, genera `brief-critico.md`, subcarpeta `goldfish/` y auditoría en `canary.json`) |
+| 8 Veredicto | `ACCEPT-candidato`, `ACCEPT-cualificado`, `REJECT`, `INCONCLUSIVE(razón)` + fila de ledger **siempre**, también con `HALT: budget` | ADR-0003/0004 (**Implementado** en `scripts/ideas/ciclo.ts:681-748` `cerrar`, verifica `canary.json` y `medicion.json`, añade fila de 10 columnas a `docs/research/ledger.md` vía `:71-80`) |
+| 9 Reflejar | Página `trust: agent` en `raw/sources/agentes/` solo tras revisión humana previa/PR; actualizar `registry.json` y backlog | ARQ §5, D1 (**En rama sin mergear** `feat/t7-paso9`, `scripts/ideas/reflejar.ts` @`686efe4`, con `--aprobado-por` y dry-run por defecto) |
 
 Las capas C0–C9 y su métrica primaria están en `docs/research/design-loops-investigacion.md` §1 (por ejemplo C2 Orquestación → entregas correctas por hora; C6 Validación → sensibilidad y precisión; C5 → escapes exitosos = 0).
 
@@ -100,7 +100,7 @@ Restricción de formato: **fuera de la tabla no uses el carácter barra vertical
 Otras utilidades del mismo archivo: `parseLedger` (`:119`), `renderRow`/`appendRow` (`:150`, `:158`), `outcomeMetrics` (`:521`) e `implementationBacklog` (`:575`).
 
 !!! warning "Prerrequisito pendiente"
-    Las señales no se han calculado sobre un ledger real de fab: no hay filas. El registro de cualificación lo anota en "No medido" y deja como gates pendientes el primer ciclo real y la decisión de si `scripts/ideas/` usará `appendRow` del upstream o escribirá la fila a mano (`docs/qualification/dream-machine-ledger-2026-10-31.md`). El motivo del tope de Gate 3 es el ledger real de dream-machine: "0/30 merged", borradores sin revisar (ADR-0003).
+    Las señales no se han calculado sobre un ledger real de fab: no hay filas. El registro de cualificación lo anota en "No medido" y deja como gates pendientes el primer ciclo real (`docs/qualification/dream-machine-ledger-2026-10-31.md`). La escritura en el ledger ya está resuelta en código: `scripts/ideas/ciclo.ts:29,71-80` usa directamente `appendRow` y `verifyLedger` del upstream. El motivo del tope de Gate 3 es el ledger real de dream-machine: "0/30 merged", borradores sin revisar (ADR-0003).
 
 ## Árbol de experimentos
 
@@ -118,6 +118,8 @@ Otras utilidades del mismo archivo: `parseLedger` (`:119`), `renderRow`/`appendR
 
 | Archivo | Responsabilidad |
 |---|---|
+| `scripts/ideas/ciclo.ts` | Orquestador del ciclo: comandos `init`, `gate`, `brief probe|medir|critico`, `check probe`, `medir`, `cerrar` (pasos 3–8 implementados). |
+| `scripts/ideas/reflejar.ts` | Escritura del paso 9 en la bóveda tras PR con `--aprobado-por` (en rama `feat/t7-paso9`, sin mergear). |
 | `third_party/dream-machine/ledger/index.ts` | `LEDGER_COLUMNS`, `parseLedger`, `verifyLedger`, `learningSignals`, `outcomeMetrics`, `implementationBacklog` (implementado, vendorizado). |
 | `third_party/dream-machine/UPSTREAM.json` | Pin: commit, licencia, `vendored[]` con sha256, `local_patches`. |
 | `docs/research/ledger.md` | Ledger de fab (sin filas) y convenciones de columnas. |
