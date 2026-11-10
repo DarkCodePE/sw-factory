@@ -31,7 +31,7 @@ export interface AgentRun {
 
 export interface AgentAdapter {
   name: string;
-  command(prompt: string, options?: { readOnly?: boolean; promptStdin?: boolean }): string[];
+  command(prompt: string, options?: { readOnly?: boolean; confine?: boolean; promptStdin?: boolean }): string[];
   /** runAgent sends the prompt on stdin; command() keeps argv input by default. */
   promptStdin?: boolean;
   env?(): Record<string, string>;
@@ -59,6 +59,11 @@ const claude: AgentAdapter = {
       // The user's global RTK hook rewrites `git ...`/`pytest ...` to `rtk git ...` before the
       // permission check, so the rewritten form must be allowed too.
       'Bash(rtk:*)',
+      // runAgent wraps this command in bwrap when confine is set; never widen host runs.
+      // `*` matches spaces too, covering `PYTHONPATH=src python3 -m pytest ...`.
+      ...(options?.confine ? [
+        'Bash(PYTHONPATH=*)', 'Bash(cd:*)', 'Bash(mkdir:*)', 'Bash(cp:*)', 'Bash(rm:*)',
+      ] : []),
     ].join(','),
     '--output-format',
     'json',

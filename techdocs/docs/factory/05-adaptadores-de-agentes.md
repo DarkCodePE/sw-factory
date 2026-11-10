@@ -55,6 +55,14 @@ classDiagram
 !!! info "Frontera con el agente nativo"
     El adaptador `native` es la única costura entre la factory y `src/agent/**`: arma un `argv` con `selfCommand` (`src/self.ts:14-16`) y lo ejecuta como cualquier otro CLI. Lo que hace `fab exec` por dentro (herramientas, router de modelos, proveedores, sandbox de herramientas, sonda de egress) se documenta en [fab exec](../exec/index.md). Desde la factory solo se observan: el código de salida, el informe, el `usage` (hoy ausente, `:11`) y el archivo de la sonda de egress que el hijo escribe en `FABRICA_EGRESS_PROBE_FILE` (`src/pool.ts:210`, `src/agent/registry.ts:162-169`).
 
+### Allowlist de Claude bajo confinamiento
+
+`AgentAdapter.command(prompt, { readOnly, confine })` recibe el mismo indicador `confine` que `runAgent` usa para envolver el comando con `confineAgent` (bubblewrap). Solo con `confine: true` se añaden `Bash(PYTHONPATH=*)`, `Bash(cd:*)`, `Bash(mkdir:*)`, `Bash(cp:*)` y `Bash(rm:*)`. Sin `--confine`, la lista permanece idéntica. Si bubblewrap falla, la corrida falla sin ejecutar el agente en el host.
+
+Según la [sintaxis de permisos de Claude Code](https://code.claude.com/docs/en/permissions#wildcard-patterns), `*` incluye espacios: `Bash(PYTHONPATH=*)` cubre `PYTHONPATH=src python3 -m pytest …`. También permite otros comandos que empiecen por esa asignación; el aislamiento del sistema de archivos lo aporta bubblewrap. En [comandos compuestos](https://code.claude.com/docs/en/permissions#compound-commands), cada subcomando requiere permiso, por lo que `cd x && python3 …` queda cubierto por las reglas de `cd` y `python3`; pueden seguir aplicándose comprobaciones de rutas y redirecciones de Claude Code.
+
+No se añaden reglas para clientes de red (`curl`, `wget`, `nc`, `ssh`, etc.). La allowlist no es un aislamiento de red: Python y otros programas permitidos pueden acceder a ella, y este confinamiento no usa `--unshare-net`. La regla existente `Bash(rtk:*)` ya cubre las formas reescritas; además, `confineAgent` desactiva los hooks y la configuración del usuario de Claude, por lo que el hook global RTK no se carga bajo `--confine`.
+
 ## `runAgent`: ejecución y cancelación
 
 `runAgent(agent, prompt, cwd, timeoutMs = 20 min, { readOnly, signal, onSpawn })` (`src/agents.ts:162-252`):
