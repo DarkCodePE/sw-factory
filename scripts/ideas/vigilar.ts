@@ -249,20 +249,22 @@ export function writeClipToInbox(item: FeedItem, inboxDir: string): string {
   const fileName = `${item.fecha}-${slugify(item.titulo)}-${item.hash.slice(0, 8)}.md`;
   const filePath = join(normalizedInbox, fileName);
 
-  const defangedTitle = defang(item.titulo);
-  const defangedUrl = defang(item.url);
+  // Una sola línea y entre comillas JSON (YAML válido): un título del feed no puede cerrar la cabecera ni inyectar claves como trust.
+  const yaml = (v: string) => JSON.stringify(v.replace(/\s+/g, " ").trim());
+  const defangedTitle = defang(item.titulo).replace(/\s+/g, " ").trim();
+  const defangedUrl = defang(item.url).replace(/["\s]/g, encodeURIComponent);
   const defangedResumen = defang(item.resumen || "Sin resumen disponible.");
 
   const content = [
     "---",
     "type: clip",
     "trust: clip",
-    `source: ${item.url}`,
-    `published: ${item.fecha}`,
-    `title: ${defangedTitle}`,
+    `source: ${yaml(item.url)}`,
+    `published: ${yaml(item.fecha)}`,
+    `title: ${yaml(defangedTitle)}`,
     `category: ${item.capa}`,
     `content_hash: ${item.hash}`,
-    `origin: ${item.origen}`,
+    `origin: ${yaml(item.origen)}`,
     "---",
     "",
     `# ${defangedTitle}`,
