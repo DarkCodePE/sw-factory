@@ -1,0 +1,269 @@
+{
+  "model": "qwen3.5-32k",
+  "answers": {
+    "WIKI": {
+      "type": "noul",
+      "noul": 0.01923925114717203,
+      "x_jevify": {
+        "semantics": "readout",
+        "rung": "top_k",
+        "degraded": false,
+        "off_menu_mass": 0.0020901827571766507,
+        "permutation": "none",
+        "calls": 1,
+        "latency_ms": 195.30300999758765,
+        "prompt_tokens": 2226,
+        "cached_tokens": 1681,
+        "recipe_hash": "b1da0a89f81a39f6456b117fe4945f2ac54f369f4f65d181bdfb0495a41fda1c",
+        "temperature": null,
+        "confidence": 0.961521497705656
+      }
+    },
+    "RL": {
+      "type": "noul",
+      "noul": 0.34166026229056956,
+      "x_jevify": {
+        "semantics": "readout",
+        "rung": "top_k",
+        "degraded": false,
+        "off_menu_mass": 0.0035355689378581134,
+        "permutation": "none",
+        "calls": 1,
+        "latency_ms": 186.40529800904915,
+        "prompt_tokens": 2220,
+        "cached_tokens": 1714,
+        "recipe_hash": "b1da0a89f81a39f6456b117fe4945f2ac54f369f4f65d181bdfb0495a41fda1c",
+        "temperature": null,
+        "confidence": 0.3166794754188609
+      }
+    },
+    "HARNESS": {
+      "type": "noul",
+      "noul": 0.06067291059812371,
+      "x_jevify": {
+        "semantics": "readout",
+        "rung": "top_k",
+        "degraded": false,
+        "off_menu_mass": 0.0029260283842632573,
+        "permutation": "none",
+        "calls": 1,
+        "latency_ms": 186.60102400463074,
+        "prompt_tokens": 2226,
+        "cached_tokens": 1714,
+        "recipe_hash": "b1da0a89f81a39f6456b117fe4945f2ac54f369f4f65d181bdfb0495a41fda1c",
+        "temperature": null,
+        "confidence": 0.8786541788037526
+      }
+    },
+    "CONTEXT": {
+      "type": "noul",
+      "noul": 0.0042164871593777945,
+      "x_jevify": {
+        "semantics": "readout",
+        "rung": "top_k",
+        "degraded": false,
+        "off_menu_mass": 0.0018117401675944445,
+        "permutation": "none",
+        "calls": 1,
+        "latency_ms": 190.6974749872461,
+        "prompt_tokens": 2222,
+        "cached_tokens": 1714,
+        "recipe_hash": "b1da0a89f81a39f6456b117fe4945f2ac54f369f4f65d181bdfb0495a41fda1c",
+        "temperature": null,
+        "confidence": 0.9915670256812444
+      }
+    },
+    "LOOP": {
+      "type": "noul",
+      "noul": 0.08661640126461212,
+      "x_jevify": {
+        "semantics": "readout",
+        "rung": "top_k",
+        "degraded": false,
+        "off_menu_mass": 0.0029371445508288296,
+        "permutation": "none",
+        "calls": 1,
+        "latency_ms": 190.51908099208958,
+        "prompt_tokens": 2221,
+        "cached_tokens": 1714,
+        "recipe_hash": "b1da0a89f81a39f6456b117fe4945f2ac54f369f4f65d181bdfb0495a41fda1c",
+        "temperature": null,
+        "confidence": 0.8267671974707758
+      }
+    },
+    "GRAPH": {
+      "type": "noul",
+      "noul": 0.00283368850767729,
+      "x_jevify": {
+        "semantics": "readout",
+        "rung": "top_k",
+        "degraded": false,
+        "off_menu_mass": 0.00132697623703526,
+        "permutation": "none",
+        "calls": 1,
+        "latency_ms": 184.45286300266162,
+        "prompt_tokens": 2223,
+        "cached_tokens": 1714,
+        "recipe_hash": "b1da0a89f81a39f6456b117fe4945f2ac54f369f4f65d181bdfb0495a41fda1c",
+        "temperature": null,
+        "confidence": 0.9943326229846454
+      }
+    },
+    "MODEL": {
+      "type": "noul",
+      "noul": 0.815130517614662,
+      "x_jevify": {
+        "semantics": "readout",
+        "rung": "top_k",
+        "degraded": false,
+        "off_menu_mass": 0.3549209694315748,
+        "permutation": "none",
+        "calls": 1,
+        "latency_ms": 190.65330200828612,
+        "prompt_tokens": 2223,
+        "cached_tokens": 1714,
+        "recipe_hash": "b1da0a89f81a39f6456b117fe4945f2ac54f369f4f65d181bdfb0495a41fda1c",
+        "temperature": null,
+        "confidence": 0.6302610352293241
+      }
+    },
+    "SELF_IMPROVING": {
+      "type": "noul",
+      "noul": 0.8153024070293466,
+      "x_jevify": {
+        "semantics": "readout",
+        "rung": "top_k",
+        "degraded": false,
+        "off_menu_mass": 0.0030116860539860513,
+        "permutation": "none",
+        "calls": 1,
+        "latency_ms": 188.1119339959696,
+        "prompt_tokens": 2225,
+        "cached_tokens": 1714,
+        "recipe_hash": "b1da0a89f81a39f6456b117fe4945f2ac54f369f4f65d181bdfb0495a41fda1c",
+        "temperature": null,
+        "confidence": 0.6306048140586933
+      }
+    },
+    "FACTORY": {
+      "type": "noul",
+      "noul": 0.0036401972470848643,
+      "x_jevify": {
+        "semantics": "readout",
+        "rung": "top_k",
+        "degraded": false,
+        "off_menu_mass": 0.0013629898789526695,
+        "permutation": "none",
+        "calls": 1,
+        "latency_ms": 184.8487030074466,
+        "prompt_tokens": 2222,
+        "cached_tokens": 1714,
+        "recipe_hash": "b1da0a89f81a39f6456b117fe4945f2ac54f369f4f65d181bdfb0495a41fda1c",
+        "temperature": null,
+        "confidence": 0.9927196055058303
+      }
+    },
+    "EVAL": {
+      "type": "noul",
+      "noul": 0.5985079546942124,
+      "x_jevify": {
+        "semantics": "readout",
+        "rung": "top_k",
+        "degraded": false,
+        "off_menu_mass": 0.0019134568171428334,
+        "permutation": "none",
+        "calls": 1,
+        "latency_ms": 185.53391497698613,
+        "prompt_tokens": 2220,
+        "cached_tokens": 1714,
+        "recipe_hash": "b1da0a89f81a39f6456b117fe4945f2ac54f369f4f65d181bdfb0495a41fda1c",
+        "temperature": null,
+        "confidence": 0.19701590938842473
+      }
+    },
+    "SKILL": {
+      "type": "noul",
+      "noul": 0.10703992416851593,
+      "x_jevify": {
+        "semantics": "readout",
+        "rung": "top_k",
+        "degraded": false,
+        "off_menu_mass": 0.002065715775596666,
+        "permutation": "none",
+        "calls": 1,
+        "latency_ms": 185.00579698593356,
+        "prompt_tokens": 2222,
+        "cached_tokens": 1714,
+        "recipe_hash": "b1da0a89f81a39f6456b117fe4945f2ac54f369f4f65d181bdfb0495a41fda1c",
+        "temperature": null,
+        "confidence": 0.7859201516629681
+      }
+    },
+    "ONTOLOGIA": {
+      "type": "noul",
+      "noul": 0.014808437216404853,
+      "x_jevify": {
+        "semantics": "readout",
+        "rung": "top_k",
+        "degraded": false,
+        "off_menu_mass": 0.0014129842586998453,
+        "permutation": "none",
+        "calls": 1,
+        "latency_ms": 193.82743499591015,
+        "prompt_tokens": 2226,
+        "cached_tokens": 1714,
+        "recipe_hash": "b1da0a89f81a39f6456b117fe4945f2ac54f369f4f65d181bdfb0495a41fda1c",
+        "temperature": null,
+        "confidence": 0.9703831255671903
+      }
+    },
+    "FINE_TUNING": {
+      "type": "noul",
+      "noul": 0.3000689977095904,
+      "x_jevify": {
+        "semantics": "readout",
+        "rung": "top_k",
+        "degraded": false,
+        "off_menu_mass": 0.0022829319093340406,
+        "permutation": "none",
+        "calls": 1,
+        "latency_ms": 196.85056700836867,
+        "prompt_tokens": 2228,
+        "cached_tokens": 1714,
+        "recipe_hash": "b1da0a89f81a39f6456b117fe4945f2ac54f369f4f65d181bdfb0495a41fda1c",
+        "temperature": null,
+        "confidence": 0.3998620045808192
+      }
+    },
+    "MEMORY": {
+      "type": "noul",
+      "noul": 0.0029120459153317373,
+      "x_jevify": {
+        "semantics": "readout",
+        "rung": "top_k",
+        "degraded": false,
+        "off_menu_mass": 0.0015580317221013384,
+        "permutation": "none",
+        "calls": 1,
+        "latency_ms": 185.49815900041722,
+        "prompt_tokens": 2220,
+        "cached_tokens": 1716,
+        "recipe_hash": "b1da0a89f81a39f6456b117fe4945f2ac54f369f4f65d181bdfb0495a41fda1c",
+        "temperature": null,
+        "confidence": 0.9941759081693365
+      }
+    }
+  },
+  "usage": {
+    "input_tokens": 31124,
+    "output_tokens": 14
+  },
+  "x_jevify": {
+    "state_id": "3e167d9d4cd801fabd72f43d14aa1b1b63a2e6a9f16edcd53e5e38f86e9771ef",
+    "warm_ms": 605.5408169922885,
+    "elapsed_ms": 2647.3019480181392,
+    "recipe": "qwen35.ollama.yaml",
+    "recipe_hash": "b1da0a89f81a39f6456b117fe4945f2ac54f369f4f65d181bdfb0495a41fda1c",
+    "base_url": "http://127.0.0.1:11434/v1"
+  }
+}

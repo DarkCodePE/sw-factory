@@ -22,3 +22,9 @@ v0.1 hacía del MCP de llm_wiki el acceso de los agentes. Verificado: el MCP es 
 ## Consecuencias
 + Modo headless sin red ni app.
 − La búsqueda de agentes es léxica (`rg`), no semántica, salvo con la app abierta.
+
+## Enmienda (2026-11-09)
+
+1. **Quién escribe en la bóveda (decisión D1):** Se enmienda el punto 3 de la decisión original («Los agentes escriben solo en...»). Los agentes no escriben directamente en la bóveda: quien escribe en `<proyecto>/raw/sources/agentes/` (con frontmatter `trust: agent`) es el **orquestador**, y únicamente **tras revisión humana previa / PR aprobada** (decisión D1; ver `techdocs/docs/investigacion/09-flujo-de-conocimiento.md` §1 y §2). Los agentes en sandbox confinado permanecen en estricto solo-lectura (`--ro-bind`).
+2. **Repos de referencia Loop B:** Se enmienda el punto 6 («Las fichas Loop B siguen en fab»). La autoridad técnica del análisis exhaustivo (`archivo:línea@sha`) permanece en fab (`docs/research/analisis/<repo>.md`), pero el orquestador exporta de forma idempotente una **ficha de catálogo derivada** a `<proyecto>/raw/sources/repos/<repo>/<revisión>.md` para que otros proyectos puedan descubrir el repo y sus módulos reutilizables desde llm_wiki (`09-flujo-de-conocimiento.md` §1).
+3. **Nombre del proyecto (decisión D2):** El proyecto en llm_wiki se denomina **`FAB`** (en lugar de `fab-research`), y su ruta en disco es configurable por variable de entorno.
