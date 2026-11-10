@@ -117,15 +117,15 @@ Estado de los dos registros hoy: ambos `Estado: candidato`; ningún experimento 
     2. `parseClaudeJson` lee `claude -p --output-format json` y aporta `usage` solo si `total_cost_usd` es un número finito ≥ 0 (`:64-74`); el adaptador `claude` lo registra como `parse` (`:60`).
     3. `runAgent` devuelve `usage` en `AgentRun` (`:248`).
     4. El pool lo escribe en `runs/<change>/<activity>.json` como `usage: run.usage ?? null` (`src/pool.ts:223-226`). Ver [Factory · evidencia](../factory/08-evidencia.md).
-    5. `armCost` suma `usage.costUsd` de todas las activities del change del brazo (`src/improve.ts:116-129`); `ArmResult.costUsd` (`:110`) y `experiment_runs.cost_usd` (migración `:32-33`) lo guardan; el informe muestra el coste medio con `(k/n)` (`:217-219`).
+    5. `armCost` suma los costes de todos los intentos (`attemptCosts`) de todas las activities del change del brazo; devuelve `null` si falta algún coste (`src/improve.ts:116-129`); `ArmResult.costUsd` (`:110`) y `experiment_runs.cost_usd` (migración `:32-33`) lo guardan; el informe muestra el coste medio con `(k/n)` (`:217-219`).
 
 ### Cuándo el coste es `NULL` (nunca 0)
 
 | Caso | Por qué | Código |
 |---|---|---|
 | Agente distinto de `claude` (`codex`, `agy`, `droid`, `native`, `fake`) | Sus CLIs no reportan coste a la factory | `src/agents.ts:11`, solo `claude` tiene `parse` |
-| Activity reintentada (`retryCount > 0`) | El reintento conserva el id y sobrescribe el JSON del intento anterior; un coste parcial subestimaría | `src/improve.ts:121` |
-| Falta el JSON de la activity o `costUsd` no es número finito | Evidencia incompleta | `:122-126` |
+| Evidencia antigua con reintentos, sin costes de todos los intentos | El JSON antiguo solo conservó el último coste; no se reconstruye el coste perdido | `src/improve.ts`, `armCost` |
+| Falta el JSON, algún intento o algún coste no es número finito | Evidencia incompleta o intento lanzado sin coste reportado; un fallo previo al lanzamiento registra coste 0 | `src/improve.ts`, `armCost` |
 | El change no tiene activities | Nada que sumar | `:118` |
 
 Consecuencias: con un brazo de coste `NULL`, el gate ×1.2 de ESF da `INCONCLUSIVE` para ese agente (registro `improve-fase1`). Es decir, **con `native` el ciclo no puede medir coste** hasta resolver [12](12-prerrequisitos-exec.md), y los experimentos solo tienen coste real con `claude`.

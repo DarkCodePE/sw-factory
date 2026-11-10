@@ -94,7 +94,7 @@ Dos escrituras en `processActivity` (`src/pool.ts:214`, `:223-226`):
 | Tras la corrida | `{ isolation, durationMs, exitCode, usage: run.usage ?? null, egressProbe }` — `egressProbe` solo para `native` |
 | Gate | `{ isolation: {adapter:'gates', posture}, verifiedHead, durationMs, steps[] }` (`:145-149`) |
 
-`usage` es la fuente del coste por corrida ([05](05-adaptadores-de-agentes.md)): solo `claude` lo aporta. `improve.ts` lo lee con `armCost` ([09](09-perfiles-e-improve.md)). Un reintento conserva el id de la activity, así que **sobrescribe** el JSON del intento anterior (por eso `armCost` devuelve `null` si `retryCount > 0`, `src/improve.ts:112-121`); el pool borra la sonda de egress previa por la misma razón (`src/pool.ts:208-209`).
+`usage` es la fuente del coste por corrida ([05](05-adaptadores-de-agentes.md)): solo `claude` lo aporta. `improve.ts` lo lee con `armCost` ([09](09-perfiles-e-improve.md)). Un reintento conserva el id de la activity y actualiza su JSON: `usage` e informe corresponden al último intento, mientras `attemptCosts` conserva los costes de todos los intentos. El pool añade un `0` antes del setup (un fallo previo al lanzamiento no consume), lo cambia a `null` justo antes de llamar al agente y lo sustituye por el coste reportado al terminar; `armCost` suma todos los valores y devuelve `null` si falta alguno. La evidencia antigua sin reintentos sigue usando `usage.costUsd`; con reintentos cuyo coste anterior se perdió no se puede calcular el total. El pool también borra la sonda de egress previa para no reutilizarla (`src/pool.ts`).
 
 ## Lectura de la evidencia
 

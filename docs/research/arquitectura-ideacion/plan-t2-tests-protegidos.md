@@ -28,7 +28,7 @@
 - **Guardianas** (no pueden empeorar, margen declarado de 2 pp en el IC):
   - éxito de `verify` con **tests ocultos**: archivos que el agente no puede ver, copiados solo al verificar desde fuera del worktree y sin mencionarse en la descripción;
   - `diffLines` (±25 %);
-  - `costUsd` (± 10 % en la mediana).
+  - `costUsd` (mediana del candidato ≤ baseline + 10 %; unilateral desde el ciclo 03, motivado por los datos exploratorios del ciclo 02, donde candidate costó un 14,5 % menos).
 - **Secundaria nueva, el coste que T1 no midió.** Proporción de informes del worker que **describen tests** cuando no los escriben. Es una lectura determinista del informe de la activity. Si cae por debajo del 80 % en el candidato, el ACCEPT-cualificado se acompaña de una tarea para que alguien escriba esos tests (Gate 3), en vez de dejarlos perdidos.
 
 ## Corpus (el prerrequisito más caro)

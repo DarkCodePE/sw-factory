@@ -636,6 +636,33 @@ test('T2: ganancia, IC y guardianas determinan ACCEPT/REJECT/INCONCLUSIVE; contr
   }
 });
 
+test('T2 coste unilateral admite −15 % y +9 %, falla con +11 %; diffLines sigue bilateral', () => {
+  for (const [factor, estado] of [[0.85, 'ok'], [1.09, 'ok'], [1.11, 'falla']] as const) {
+    const t = calcularT2(repT2(runsT2('gain', arm => ({ cost_usd: 0.001 * (arm === 'candidate' ? factor : 1) }))), -20, 'integridad');
+    expect(t.guardianas.coste.estado).toBe(estado);
+    expect(t.veredicto).toBe(estado === 'ok' ? 'ACCEPT' : 'REJECT');
+  }
+  const t = calcularT2(repT2(runsT2('gain', arm => ({ diff_lines: arm === 'candidate' ? 7 : 10 }))), -20, 'integridad');
+  expect(t.guardianas.diffLines.estado).toBe('falla');
+  expect(t.veredicto).toBe('REJECT');
+});
+
+test('briefs T2 explican la guardiana de coste unilateral y diffLines bilateral', () => {
+  writeFileSync(HIP.suite, JSON.stringify(SUITE_T2));
+  init(o, hipT1({ tier: 'T2', metrica_t1: 'integridad' })); gate(o, HIP.run_id, 'orlando');
+  const probe = briefProbe(o, HIP.run_id);
+  writeFileSync(join(run(), 'receta.md'), 'Receta src/a.ts:5@abcdef1.');
+  writeFileSync(join(run(), 'spec.md'), 'Spec src/a.ts:5@abcdef1.');
+  const implementador = briefMedir(o, HIP.run_id); conImpl();
+  escribirReporte(runsT2(), { suite_digest: suiteDigest(parseSuite(SUITE_T2)), repeated_baseline: true, control: C, confined: true });
+  medir(o, HIP.run_id, medirArgs());
+  for (const texto of [probe, implementador, briefCritico(o, HIP.run_id)]) {
+    expect(texto).toContain('mediana coste del candidato ≤ baseline + 10 %');
+    expect(texto).not.toContain('mediana coste dentro de ±10 %');
+    expect(texto).toContain('mediana diffLines dentro de ±25 %');
+  }
+});
+
 test('T2 guarda bootstrap y cerrar exige el veredicto calculado, incluido el Effect cualificado', () => {
   writeFileSync(HIP.suite, JSON.stringify(SUITE_T2));
   init(o, hipT1({ tier: 'T2', metrica_t1: 'integridad' })); gate(o, HIP.run_id, 'orlando');
@@ -695,12 +722,12 @@ test('T2 admite caída de éxito menor de 2 pp y bordes inclusivos en medianas',
 });
 
 
-test('T2 incluye bordes decimales literales del margen de coste, sin tolerar un cambio real fuera del margen', () => {
-  for (const cost of [0.09, 0.11]) {
+test('T2 incluye borde decimal +10 % y admite ahorros, sin tolerar sobrecoste fuera del margen', () => {
+  for (const cost of [0, 0.089999, 0.09, 0.11]) {
     const rs = runsT2('gain', arm => ({ cost_usd: arm === 'candidate' ? cost : 0.1 }));
     expect(calcularT2(repT2(rs), -20, 'integridad').guardianas.coste.ok).toBe(true);
   }
-  const rs = runsT2('gain', arm => ({ cost_usd: arm === 'candidate' ? 0.089999 : 0.1 }));
+  const rs = runsT2('gain', arm => ({ cost_usd: arm === 'candidate' ? 0.110001 : 0.1 }));
   expect(calcularT2(repT2(rs), -20, 'integridad').guardianas.coste.ok).toBe(false);
 });
 
