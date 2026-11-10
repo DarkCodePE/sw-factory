@@ -1,0 +1,133 @@
+schema_version: 1
+model:
+  name: qwen3.5-32k
+  kind: endpoint
+  revision: ollama qwen3.5-32k
+endpoint:
+  base_url: http://127.0.0.1:11434/v1
+  dialect: generic
+  timeout_s: 300.0
+  extra_body:
+    reasoning_effort: none
+template:
+  mode: messages
+  system: You answer typed questions about the state with a single token.
+  state: 'State:
+
+    {state}'
+  state_end: '
+
+
+    '
+  kwargs: {}
+  image_marker: <__media__>
+  questions:
+    choice: 'Question: {instructions}
+
+      Options:
+
+      {options}
+
+      Answer with the identifier of the best option.'
+    option_line: '{identifier}. {key}{description}'
+    description_sep: ': '
+    score: 'Question: {instructions}
+
+      Levels:
+
+      {levels}
+
+      Answer with the identifier of the level that applies.'
+    level_line: '{identifier}. {text}'
+    noul: 'Question: {instructions}
+
+      Answer with exactly one word, yes or no.'
+    choice_strategy: identifiers
+answers:
+  noul:
+    'true':
+    - text: 'yes'
+    - text: 'Yes'
+    - text: ' yes'
+    - text: ' Yes'
+    'false':
+    - text: 'no'
+    - text: 'No'
+    - text: ' no'
+    - text: ' No'
+  identifiers:
+  - - text: A
+    - text: ' A'
+  - - text: B
+    - text: ' B'
+  - - text: C
+    - text: ' C'
+  - - text: D
+    - text: ' D'
+  - - text: E
+    - text: ' E'
+  - - text: F
+    - text: ' F'
+  - - text: G
+    - text: ' G'
+  - - text: H
+    - text: ' H'
+  - - text: I
+    - text: ' I'
+  - - text: J
+    - text: ' J'
+readout:
+  rung: auto
+  top_k: 20
+  permutation: none
+  permutation_calls: 1
+probe:
+  kind: endpoint
+  model: qwen3.5-32k
+  dialect: generic
+  backend_version: null
+  max_context: null
+  modalities:
+  - image
+  - text
+  rungs:
+  - top_k
+  - top_k_floor
+  top_k_cap: null
+  logprobs_post_bias: null
+  prefill_honored: null
+  template_kwargs_honored: null
+  token_ids_verified: false
+  answer_tokens: {}
+  multi_token_answers: []
+  cache:
+    block_tokens: 1
+    first_ms: 210.83181598805822
+    second_ms: 82.4453410168644
+    cached_tokens: 935
+    warm_prefix_tokens: 923
+    warm_reuse_tokens: 427
+  fanout:
+    concurrency: 1
+    concurrent_ms: 288.72147799120285
+    sequential_ms: 308.78250100067817
+  slots: null
+  probed_at: '2026-11-09T02:30:56+00:00'
+  notes:
+  - 'no tokenize endpoint: answer token ids are unverified'
+  - could not render the template server-side; thinking state unknown
+  - 'prompt_logprobs on /v1/completions with messages: the answers ''no'' and ''yes'' sent as the assistant''s
+    reply did not each come back as one prompt row of their own, so the prompt_logprobs rung is not proven
+    for this recipe'
+  - warm prefix is not reused by question requests (427 of 923 prefix tokens); on a recurrent model use
+    raw mode so the warm prompt ends at the state boundary
+  - token-granular cache; up to 4 trailing prompt tokens are re-evaluated on a call
+  image_marker: null
+  prompt_rows_after_answer: null
+provenance:
+  author: fab
+  created: '2026-11-08'
+  status: probed
+  notes:
+  - adaptada de gemma-4-e4b-it.llamacpp para Ollama
+  scorecards: []
