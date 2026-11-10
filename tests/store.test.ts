@@ -4,6 +4,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
 import { Store, StoreError } from '../src/store.ts';
+import { MAX_ACTIVITY_RETRIES } from '../src/enums.ts';
 
 let store: Store;
 let simTime: Date;
@@ -223,4 +224,76 @@ test('F1: lock mantenido por otra conexión durante una completeActivity → la 
   } finally {
     rmSync(tmpDir, { recursive: true, force: true });
   }
+});
+
+
+test('expired leases consume the retry budget and permanently fail the activity and change', () => {
+  const ws = activeWs({ changeApproval: false, specApproval: false });
+  const change = store.createChange(ws.id, 'orphan', 'd');
+  let id = '';
+  for (let attempt = 1; attempt <= MAX_ACTIVITY_RETRIES; attempt++) {
+    const activity = store.claimActivity(ws.id, `worker-${attempt}`)!;
+    if (id) expect(activity.id).toBe(id);
+    id = activity.id;
+    simTime = new Date(simTime.getTime() + 91_000);
+    expect(store.requeueOrphans(ws.id)).toBe(1);
+    expect(store.getActivity(id)).toMatchObject({
+      retryCount: attempt, status: attempt < MAX_ACTIVITY_RETRIES ? 'pending' : 'failed',
+      workerId: null, leaseExpiresAt: null, agentPgid: null,
+    });
+  }
+  expect(store.getActivity(id).completedAt).toBe(simTime.toISOString());
+  expect(store.getChange(change.id).status).toBe('failed');
+  expect(store.claimActivity(ws.id, 'late-worker')).toBeNull();
+  expect(store.requeueOrphans(ws.id)).toBe(0);
+  expect(store.listEvents(ws.id).some(e => e.severity === 'error' && typeof e.message === 'string' && e.message.includes('lease expired'))).toBe(true);
+});
+
+test('worker failures and expired leases share one retry budget', () => {
+  const ws = activeWs({ changeApproval: false });
+  const change = store.createChange(ws.id, 'mixed', 'd');
+  const first = store.claimActivity(ws.id, 'worker')!;
+  store.failActivity(first.id, 'worker', 'first failure');
+  for (let attempt = 2; attempt <= MAX_ACTIVITY_RETRIES; attempt++) {
+    store.claimActivity(ws.id, 'worker');
+    simTime = new Date(simTime.getTime() + 91_000);
+    store.requeueOrphans(ws.id);
+  }
+  expect(store.getActivity(first.id)).toMatchObject({ status: 'failed', retryCount: MAX_ACTIVITY_RETRIES });
+  expect(store.getChange(change.id).status).toBe('failed');
+});
+
+test('an orphaned gates activity keeps the implemented change closable', () => {
+  const ws = store.createWorkstream({ slug: 'gated', goal: 'g', repo: '/tmp/demo', verify: ['true'],
+    requireChangeApproval: false, requireApproval: false });
+  store.setWorkstreamState(ws.id, 'active');
+  const change = store.createChange(ws.id, 'gated', 'd');
+  for (let step = 0; step < 2; step++) {
+    const a = store.claimActivity(ws.id, 'worker')!;
+    store.completeActivity(a.id, 'worker', 'STATUS: done');
+  }
+  expect(store.getChange(change.id).status).toBe('implemented');
+  const gate = store.claimActivity(ws.id, 'gate-worker')!;
+  expect(gate.kind).toBe('gates');
+  simTime = new Date(simTime.getTime() + 91_000);
+  expect(store.requeueOrphans(ws.id)).toBe(1);
+  expect(store.getActivity(gate.id)).toMatchObject({ status: 'pending', retryCount: 1 });
+  expect(store.getChange(change.id).status).toBe('implemented');
+});
+
+test('orphaned validators exhaust retries without failing the implemented change', () => {
+  const ws = activeWs({ changeApproval: false, specApproval: false });
+  const change = store.createChange(ws.id, 'validate', 'd');
+  for (let step = 0; step < 2; step++) {
+    const a = store.claimActivity(ws.id, 'worker')!;
+    store.completeActivity(a.id, 'worker', 'STATUS: done');
+  }
+  const [qa] = store.requestValidation(change.id, ['qa']);
+  for (let attempt = 1; attempt <= MAX_ACTIVITY_RETRIES; attempt++) {
+    expect(store.claimActivity(ws.id, 'validator')!.id).toBe(qa!.id);
+    simTime = new Date(simTime.getTime() + 91_000);
+    store.requeueOrphans(ws.id);
+  }
+  expect(store.getActivity(qa!.id)).toMatchObject({ status: 'failed', retryCount: MAX_ACTIVITY_RETRIES });
+  expect(store.getChange(change.id).status).toBe('implemented');
 });
