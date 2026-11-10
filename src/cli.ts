@@ -30,6 +30,7 @@ import { connectorsMain } from './connectors/cli.ts';
 import { createGhGateway } from './connectors/github.ts';
 import { ChangeLinkStore } from './connectors/links.ts';
 import { validateMain } from './validators/cli.ts';
+import { residentMain } from './admission/cli.ts';
 import { protectedIntegrity, purgeRegenerableCaches } from './validators/integrity.ts';
 import { mergeRecoverably } from './validators/publish.ts';
 
@@ -87,6 +88,8 @@ const HELP = `fab — agente de código y fábrica de software local
   --verify <comando>  Gate argv repetible al crear workstream (sin shell, timeout 120s)
   --verify-setup <comando>  Fase previa al gate, repetible: con red, worktree solo lectura, escribe solo en $FAB_DEPS; el gate lo monta ro
                       (PYTHONPATH, PATH/bin, NODE_PATH). Se repite solo si cambia. Ej: --verify-setup 'python3 -m pip install --target $FAB_DEPS pytest' --verify 'pytest -q'
+  fab resident --repo owner/name [--mode off|observe] [--once] [--interval s] [--label fab] [--allow-author u] [--trust OWNER,MEMBER]
+                                residente en modo observe: registra would_admit de issues sin crear changes
   fab inbox [slug]
   fab review <activityId> <approve|comment|decline> [--comment <text>]
   fab run <slug> [--once] [--agent <name>] [--accept-agent-binaries]
@@ -140,6 +143,10 @@ async function main(argv: string[]): Promise<number> {
     } finally {
       store.close();
     }
+  }
+  if (argv[0] === 'resident') {
+    const store = openStore();
+    try { return await residentMain(argv.slice(1), store); } finally { store.close(); }
   }
   if (argv[0] === 'exec') return execMain(argv.slice(1));
   if (argv[0] === 'update') return updateMain(argv.slice(1));
@@ -368,7 +375,7 @@ async function main(argv: string[]): Promise<number> {
   }
 }
 
-const COMMANDS = new Set(['ws', 'signal', 'triage', 'inbox', 'review', 'run', 'status', 'show', 'merge', 'retry', 'gate', 'reject', 'events', 'tui', 'doctor', 'agents', 'profile', 'improve', 'help']);
+const COMMANDS = new Set(['ws', 'signal', 'triage', 'inbox', 'review', 'run', 'status', 'show', 'merge', 'retry', 'gate', 'reject', 'events', 'tui', 'doctor', 'agents', 'profile', 'improve', 'resident', 'help']);
 
 // A forced exit is still needed for handles left by dependencies, but pipe
 // writes are asynchronous: wait for both write queues before terminating.
