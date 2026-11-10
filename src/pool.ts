@@ -211,7 +211,7 @@ export async function processActivity(
     const probeFile = `${runDirectory(opts.stateDir, change.id)}/${a.id}.egress.json`;
     // A retry keeps the activity id: drop the previous attempt's probe so it is never reported as this one's.
     rmSync(probeFile, { force: true });
-    const captureAgent = { ...agent, env: () => ({ ...agent.env?.(), FABRICA_EGRESS_PROBE_FILE: probeFile }), command: (text: string, options?: { readOnly?: boolean }) => [
+    const captureAgent = { ...agent, env: () => ({ ...agent.env?.(), FABRICA_EGRESS_PROBE_FILE: probeFile }), command: (text: string, options?: { readOnly?: boolean; promptStdin?: boolean }) => [
       ...selfCommand('__capture', new URL('./manifest-capture.ts', import.meta.url)),
       activityLog(opts.stateDir, change.id, a.id), ...agent.command(text, options),
     ] };
