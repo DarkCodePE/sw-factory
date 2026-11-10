@@ -5,12 +5,14 @@ import type { Store } from '../store.ts';
 import { AdmissionDb } from './db.ts';
 import { Effects, type CrashPoint } from './effects.ts';
 import { gate, type GateInput, type GatePolicy } from './gate.ts';
-import { pollIssues, type IssueEvent } from './github.ts';
+import { labeler, pollIssues, type IssueEvent } from './github.ts';
 import { ResidentLock } from './lock.ts';
 
 export type Mode = 'off' | 'observe';
 export type ResidentConfig = {
   repo: string; policy: GatePolicy; mode: Mode; run?: CommandRunner; intervalMs?: number;
+  /** Desde dónde leer cuando aún no hay cursor (ISO). Por defecto, el último día (D3). */
+  since?: string;
   maxAttempts?: number; baseMs?: number; lockTtlMs?: number; crash?: (point: CrashPoint) => void;
 };
 
@@ -51,11 +53,15 @@ export class Resident {
     return added;
   }
 
-  private admit(triggerKey: string): void {
+  private async admit(triggerKey: string): Promise<void> {
     const row = this.adm.db.query('SELECT event FROM adm_triggers WHERE key = ?').get(triggerKey) as { event: string } | null;
     if (!row) throw new Error(`Trigger ${triggerKey} inexistente`);
     const event = JSON.parse(row.event) as IssueEvent;
     const input: GateInput = { repo: event.repo, labels: event.labels, author: event.author, authorAssociation: event.authorAssociation, state: event.state };
+    // Solo se consulta quién puso la etiqueta cuando el resto del gate la dejaría pasar: evita llamadas inútiles a la API.
+    const label = this.cfg.policy.triggerLabel.toLowerCase();
+    if (event.state === 'open' && event.labels.some(l => l.toLowerCase() === label) && this.cfg.policy.repos.some(r => r.toLowerCase() === event.repo.toLowerCase()))
+      input.labeler = await labeler(event.repo, event.number, this.cfg.policy.triggerLabel, this.cfg.run ?? runCommand);
     const d = gate(input, this.cfg.policy);
     // INSERT OR IGNORE: reejecutar tras una caída no cambia el registro (el efecto es `rerunnable`).
     this.adm.db.query('INSERT OR IGNORE INTO adm_decisions(trigger_key, would_admit, strength, scope_max, reasons, policy, decided_at) VALUES (?,?,?,?,?,?,?)')
@@ -67,7 +73,8 @@ export class Resident {
     if (this.cfg.mode === 'off') return { triggers: 0, effects: 0 };
     this.lock.assertOwned();
     const cursor = (this.adm.db.query('SELECT value FROM adm_cursors WHERE source = ?').get(this.source) as { value: string } | null)?.value;
-    const events = await pollIssues(this.cfg.repo, cursor, this.cfg.run ?? runCommand);
+    const since = cursor ?? this.cfg.since ?? new Date(this.adm.now() - 86_400_000).toISOString().replace(/\.\d{3}Z$/, 'Z');
+    const events = await pollIssues(this.cfg.repo, since, this.cfg.run ?? runCommand);
     this.cfg.crash?.('after-read');
     const triggers = this.register(events);
     this.cfg.crash?.('after-register');
