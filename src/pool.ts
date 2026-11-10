@@ -401,7 +401,7 @@ export async function runPool(store: Store, opts: PoolOptions): Promise<void> {
         }
         throw err;
       }
-      if (recovered) log(`requeued ${recovered} orphaned activities`);
+      if (recovered) log(`recovered ${recovered} orphaned activities`);
 
       let current: Workstream;
       try {
