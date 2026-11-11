@@ -32,6 +32,8 @@ CREATE TABLE IF NOT EXISTS adm_comment_decisions (
 -- Vínculo hilo → change (T23): N hilos (issue, PR, ...) para un mismo change; un hilo solo se admite una vez.
 CREATE TABLE IF NOT EXISTS adm_thread_changes (thread_id TEXT PRIMARY KEY REFERENCES adm_threads(id), change_id TEXT NOT NULL, linked_at TEXT NOT NULL);
 CREATE INDEX IF NOT EXISTS adm_thread_changes_change ON adm_thread_changes(change_id);
+-- Signal creado al admitir un hilo (T30): una admisión por hilo.
+CREATE TABLE IF NOT EXISTS adm_thread_signals (thread_id TEXT PRIMARY KEY REFERENCES adm_threads(id), signal_id TEXT NOT NULL, scope TEXT NOT NULL, created_at TEXT NOT NULL);
 -- Contenido admitido de un hilo (T20): la copia que vio quien etiquetó. El prompt usa solo esta copia, nunca una relectura.
 CREATE TABLE IF NOT EXISTS adm_content (
   thread_id TEXT PRIMARY KEY REFERENCES adm_threads(id), title TEXT NOT NULL, body TEXT NOT NULL, hash TEXT NOT NULL,
