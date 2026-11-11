@@ -1,6 +1,6 @@
 import { expect, test } from "bun:test";
 import { spawnSync } from "node:child_process";
-import { mkdtempSync } from "node:fs";
+import { mkdirSync, mkdtempSync, rmSync, symlinkSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { buildMcpConfig } from "../scripts/ideas/lector-fab.ts";
@@ -17,4 +17,26 @@ test.skipIf(!graftBin || !nodeBin || !bwrapBin)("A6: graft --version arranca den
   expect(w.argv).toContain("--unshare-net");
   const r = spawnSync(w.argv[0]!, w.argv.slice(1), { encoding: "utf8", env: w.env, timeout: 30_000 });
   expect(r.stdout).toMatch(/^\d+\.\d+\.\d+/);
+});
+
+test.skipIf(!graftBin || !nodeBin)("mcp-config monta wiki por defecto y raw/sources solo si se solicita", () => {
+  const root = mkdtempSync(join(tmpdir(), "vault-config-"));
+  try {
+    mkdirSync(join(root, "wiki")); mkdirSync(join(root, "raw/sources"), { recursive: true });
+    const base = buildMcpConfig(graftBin!, nodeBin!, { vault: root }).graft;
+    expect(base.readPaths).toContain(join(root, "wiki"));
+    expect(base.readPaths).not.toContain(join(root, "raw/sources"));
+    const withRaw = buildMcpConfig(graftBin!, nodeBin!, { vault: root, includeRawSources: true }).graft;
+    expect(withRaw.readPaths).toContain(join(root, "raw/sources"));
+  } finally { rmSync(root, { recursive: true, force: true }); }
+});
+
+test.skipIf(!graftBin || !nodeBin)("mcp-config rechaza wiki enlazada fuera de la bóveda", () => {
+  const root = mkdtempSync(join(tmpdir(), "vault-config-"));
+  try {
+    const outside = mkdtempSync(join(tmpdir(), "vault-outside-"));
+    symlinkSync(outside, join(root, "wiki"));
+    expect(() => buildMcpConfig(graftBin!, nodeBin!, { vault: root })).toThrow(/escapa de la bóveda/);
+    rmSync(outside, { recursive: true, force: true });
+  } finally { rmSync(root, { recursive: true, force: true }); }
 });

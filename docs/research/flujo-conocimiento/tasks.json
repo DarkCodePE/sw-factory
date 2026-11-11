@@ -1,0 +1,153 @@
+{
+  "proyecto": "flujo-de-conocimiento",
+  "fuente": "techdocs/docs/investigacion/09-flujo-de-conocimiento.md#lo-que-queda-por-hacer",
+  "actualizado": "2026-11-08",
+  "decisiones": [
+    "AgentDB se abandona como registro operativo (usuario, 2026-11-08)",
+    "Memoria propia: fork local de ai-memory (MIT, commit 957b1dd) adaptado; sin fork en GitHub sin OK",
+    "Clasificación en las 14 categorías con jevify (MIT, fidecastro/jevify@0f60a53) sobre Ollama qwen3.5-32k: una noul por categoría, 1–3 con mayor p"
+  ],
+  "tareas": [
+    {
+      "id": "T1",
+      "titulo": "Taxonomía de 14 categorías y ficha de ubicación en schema.md/purpose.md del vault FAB",
+      "responsable": "agy",
+      "terminal": "t1t",
+      "estado": "hecho",
+      "entregable": "/home/orlando/Desktop/VAUL-FAB/FAB/schema.md, purpose.md",
+      "informe": "scratchpad/informe-agy-t1-t5.md"
+    },
+    {
+      "id": "T2",
+      "titulo": "Registro operativo único: memoria propia basada en ai-memory (fork local, endurecido)",
+      "responsable": "codex",
+      "terminal": "t1q",
+      "estado": "hecho",
+      "entregable": "/home/orlando/Desktop/factory/fab-memoria",
+      "informe": "scratchpad/informe-codex-t2.md",
+      "resultado": "fab-memoria@25fab65 (fab/main): DISENO.md + 3 endurecimientos; 3354 tests en verde; no instalado. Siguiente: perfil diario aplicado y piloto aislado"
+    },
+    {
+      "id": "T3",
+      "titulo": "Script de exportación fab -> raw/sources/repos/ con clave idempotente y control de sha",
+      "responsable": null,
+      "estado": "pendiente",
+      "depende_de": [
+        "T1"
+      ]
+    },
+    {
+      "id": "T4",
+      "titulo": "Endpoint de ingesta y temporizador a hora fija en llm_wiki_v2",
+      "responsable": null,
+      "estado": "pendiente"
+    },
+    {
+      "id": "T5",
+      "titulo": "Plantilla de candidato (YAML) en la skill compartida de los tres harness",
+      "responsable": "agy",
+      "terminal": "t1t",
+      "estado": "hecho",
+      "entregable": "/home/orlando/.agents/skills/llm-wiki-ingesta/",
+      "informe": "scratchpad/informe-agy-t1-t5.md"
+    },
+    {
+      "id": "V1",
+      "titulo": "Comprobar integración fab <-> llm_wiki y del ciclo de investigación (00-blueprint) con llm_wiki",
+      "responsable": "sonnet",
+      "terminal": "t1v",
+      "estado": "hecho",
+      "entregable": "solo lectura",
+      "informe": "scratchpad/informe-sonnet-v1.md",
+      "resultado": "Ningún paso del ciclo que toca la bóveda (0,1,5,9) está implementado; fab no tiene código que toque llm_wiki"
+    },
+    {
+      "id": "D1",
+      "titulo": "Decidir quién escribe en la bóveda (orquestador tras PR) y enmendar ADR-0002",
+      "tipo": "decisión",
+      "responsable": "usuario",
+      "estado": "hecho",
+      "bloquea": [
+        "T3",
+        "T7"
+      ],
+      "resultado": "Escribe el orquestador tras PR (usuario, 2026-11-08)"
+    },
+    {
+      "id": "D2",
+      "titulo": "Fijar nombre/ruta del proyecto (FAB vs fab-research), configurable",
+      "tipo": "decisión",
+      "responsable": "usuario",
+      "estado": "hecho",
+      "resultado": "Proyecto FAB (usuario, 2026-11-08)"
+    },
+    {
+      "id": "T6",
+      "titulo": "Lector con acceso a la bóveda: --ro-bind de <proyecto>/wiki en fab exec + rg envuelto como no confiable",
+      "responsable": "codex",
+      "estado": "hecho",
+      "depende_de": [
+        "D2"
+      ],
+      "terminal": "t1q",
+      "worktree": "sw-factory-t6 (feat/t6-lector-boveda)",
+      "resultado": "feat/t6-lector-boveda @c650ca5: boveda-lector.ts (rg en bwrap --ro-bind sin red, envuelto+defang, 40 resultados/8 KB, -i), acción graft-lector boveda; 76 tests verdes; probado contra FAB real; sin push",
+      "pr": "https://github.com/DarkCodePE/sw-factory/pull/45"
+    },
+    {
+      "id": "T7",
+      "titulo": "Escritor del paso 9: página trust: agent en raw/sources/agentes/ con clave idempotente",
+      "responsable": "agy",
+      "estado": "hecho",
+      "depende_de": [
+        "D1",
+        "T1"
+      ],
+      "terminal": "t1z",
+      "worktree": "sw-factory-t7 (feat/t7-paso9)",
+      "informe": "scratchpad/informe-agy-t7.md",
+      "resultado": "feat/t7-paso9 @686efe4: reflejar.ts + subcomando; dry-run por defecto, --aprobado-por, supersesión sin pérdida (.r<N>.md); 78 tests verdes; sin push",
+      "pr": "https://github.com/DarkCodePE/sw-factory/pull/46"
+    },
+    {
+      "id": "T8",
+      "titulo": "Piezas 0-2: watch_sources, backlog.json, intake y dedup",
+      "responsable": null,
+      "estado": "pendiente"
+    },
+    {
+      "id": "T9",
+      "titulo": "Actualizar docs: 00/01/03 (scripts/ideas sí existe), 08 (decisión cerrada por 09), 09 (T2 y abandono de AgentDB)",
+      "responsable": "agy",
+      "estado": "hecho",
+      "terminal": "t21",
+      "worktree": "sw-factory (techdocs, sin commit)",
+      "resultado": "00/01/03/index + enmienda ADR-0002 (2026-11-09); mkdocs --strict ok; sin commit"
+    },
+    {
+      "id": "T10",
+      "titulo": "Calidad de ingesta local: sin páginas de entidad/concepto ni wikilinks; prueba con Haiku",
+      "responsable": null,
+      "estado": "pendiente"
+    },
+    {
+      "id": "T11",
+      "titulo": "Clasificador jevify: receta Ollama probada; falta script clips/papers/repos -> categorías (frontmatter) y calibración",
+      "responsable": "codex",
+      "estado": "hecho",
+      "evidencia": "jevify/qwen35.ollama.yaml (probe ok), jevify/sparks.json: MODEL 0.815, SELF_IMPROVING 0.815, EVAL 0.599; 14 preguntas en 3,4 s",
+      "limites": [
+        "gemma4 no sirve: Ollama no apaga su thinking (primer token <|channel>)",
+        "estado truncado a 8000 caracteres",
+        "una sola muestra, sin calibrar",
+        "ids de token sin verificar (Ollama no tiene /tokenize)"
+      ],
+      "terminal": "t1q",
+      "worktree": "sw-factory-t11 (feat/t11-clasificador)",
+      "informe": "scratchpad/informe-codex-t11.md",
+      "resultado": "feat/t11-clasificador @e2cc907: clasificar.ts (md/pdf/repo, --write solo frontmatter, atómico y confinado a raw/sources); 16 tests verdes; Sparks=MODEL,LOOP; jevify=SKILL,EVAL,MODEL; sin push",
+      "pendiente": "calibración con conjunto etiquetado",
+      "pr": "https://github.com/DarkCodePE/sw-factory/pull/47"
+    }
+  ]
+}

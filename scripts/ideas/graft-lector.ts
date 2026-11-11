@@ -6,6 +6,7 @@ import { spawnSync } from "node:child_process";
 import { existsSync, mkdtempSync, readFileSync, statSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { searchVault } from "./boveda-lector.ts";
 
 export const MAX_BYTES = 8192;
 export type Hit = { title: string; pointer: string; snippet: string; scope?: string; kind?: string };
@@ -133,14 +134,21 @@ function run(cmd: string, args: string[], cwd?: string): { out: string; code: nu
 }
 
 const USAGE = "uso: graft-lector <init|ask|callers|skeleton|grep|rg|measure> [arg] --repo <ruta> [--meta f] [--in ruta] [--fixed] [--bodies] [--allow-stale] [--session f] [--budget N]\n" +
+  "     graft-lector boveda <consulta> [--vault <proyecto>] [--area <wiki|raw/sources>]\n" +
   "     graft-lector session-init <archivo> --tipo-fuente <paper|articulo|repo> --tokens N --tope N [--budget N]";
 
-function main(argv: string[]): number {
+async function main(argv: string[]): Promise<number> {
   const opt = (f: string) => (argv.includes(f) ? argv[argv.indexOf(f) + 1] : undefined);
-  const flags = new Set(["--repo", "--meta", "--in", "--max-bytes", "--session", "--budget", "--tipo-fuente", "--tokens", "--tope"]);
+  const flags = new Set(["--repo", "--meta", "--in", "--max-bytes", "--session", "--budget", "--tipo-fuente", "--tokens", "--tope", "--vault", "--area"]);
   const pos = argv.filter((a, i) => !a.startsWith("--") && !flags.has(argv[i - 1] ?? ""));
   const [cmd, arg] = pos;
   const repo = opt("--repo");
+
+  if (cmd === "boveda") {
+    try { console.log(await searchVault(arg ?? "", { vault: opt("--vault"), area: opt("--area") === "raw/sources" ? "raw/sources" : "wiki" })); }
+    catch (error) { console.error((error as Error).message); return 2; }
+    return 0;
+  }
 
   if (cmd === "session-init") {
     if (!arg) { console.error(USAGE); return 2; }
@@ -230,4 +238,4 @@ function main(argv: string[]): number {
   return 0;
 }
 
-if (import.meta.main) process.exit(main(process.argv.slice(2)));
+if (import.meta.main) void main(process.argv.slice(2)).then((code) => process.exit(code));
