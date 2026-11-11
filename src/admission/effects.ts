@@ -10,6 +10,8 @@ export type EffectHandler = {
   run: (payload: any, ctx: EffectCtx) => void | Promise<void>;
   /** true: reejecutar tras una caída es inocuo (idempotente). false: el efecto queda `unknown` hasta reconciliarlo. */
   rerunnable: boolean;
+  /** Para un efecto `unknown`: consulta el mundo exterior y dice si ya se hizo (`done`) o hay que reintentar (`retry`). */
+  reconcile?: (payload: any) => Promise<'done' | 'retry'>;
 };
 export type CrashPoint = 'after-read' | 'after-register' | 'effect-claimed' | 'effect-ran'
   | 'report-recorded' | 'report-applied';

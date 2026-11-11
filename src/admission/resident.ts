@@ -8,6 +8,7 @@ import { Effects, type CrashPoint } from './effects.ts';
 import { commentGate, gate, type GateDecision, type GateInput, type GatePolicy } from './gate.ts';
 import { collaboratorRole, issueContent, labeler, pollComments, pollIssues, type CommentEvent, type IssueEvent } from './github.ts';
 import { ThreadLinks } from './links.ts';
+import { Outbox } from './outbox.ts';
 import { ResidentLock } from './lock.ts';
 
 export type Mode = 'off' | 'observe';
@@ -16,7 +17,9 @@ export type ResidentConfig = {
   /** Login con el que la fab publica (T23): sus eventos se descartan para no dispararse a sí misma. */
   selfLogin?: string;
   /** Lee también los comentarios (opt-in, T21): cada uno es un Trigger con su actor y se decide si podría responder una pregunta abierta. */
-  comments?: boolean; run?: CommandRunner; intervalMs?: number;
+  comments?: boolean;
+  /** Registra el efecto `reply` (T22): publica las preguntas de los turnos vivos. Solo para el modo auto (T12); la CLI no lo expone. Exige selfLogin. */
+  outbox?: boolean; run?: CommandRunner; intervalMs?: number;
   /** Desde dónde leer cuando aún no hay cursor (ISO). Por defecto, el último día (D3). */
   since?: string;
   maxAttempts?: number; baseMs?: number; lockTtlMs?: number; crash?: (point: CrashPoint) => void;
@@ -36,8 +39,11 @@ export class Resident {
     this.adm = new AdmissionDb(store);
     this.lock = new ResidentLock(this.adm, { ttlMs: cfg.lockTtlMs });
     this.source = `github:${cfg.repo}`;
+    if (cfg.outbox && !cfg.selfLogin) throw new Error('outbox exige selfLogin');
+    // Decisión de T24: el residente solo hace poll, Outbox y reencolado; los turnos los lanza el pool (no hay efectos launch/deliver/stop).
     this.effects = new Effects(this.adm, { admit: { run: payload => this.admit(payload.triggerKey), rerunnable: true },
-      inbound: { run: payload => this.inbound(payload.triggerKey), rerunnable: true } },
+      inbound: { run: payload => this.inbound(payload.triggerKey), rerunnable: true },
+      ...(cfg.outbox ? { reply: new Outbox(this.adm, { selfLogin: cfg.selfLogin!, run: cfg.run }).handler() } : {}) },
       { maxAttempts: cfg.maxAttempts, baseMs: cfg.baseMs, fence: () => this.lock.assertOwned(), crash: cfg.crash });
   }
 
