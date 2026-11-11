@@ -67,6 +67,13 @@ export class Outbox {
     return c ? this.stamp(c.created_at) : undefined;
   }
 
+  /** A4: ¿la pregunta ya está publicada? Busca el marcador y, si lo hay, guarda `published_at` (el residente pudo morir entre publicar y guardarlo). */
+  async reconcileQuestion(questionId: string): Promise<boolean> {
+    const q = this.question(questionId), at = await this.posted(q);
+    if (at) this.markPosted(q.id, at);
+    return !!at;
+  }
+
   /** Publica la pregunta (una vez): marcador primero, plantilla después. Una pregunta que ya no está abierta no se publica. */
   async send(questionId: string): Promise<'posted' | 'already-posted' | 'not-open'> {
     const q = this.question(questionId);

@@ -15,6 +15,8 @@ import { ResidentLock } from './lock.ts';
 export type Mode = 'off' | 'observe' | 'auto';
 export type ResidentConfig = {
   repo: string; policy: GatePolicy; mode: Mode;
+  /** Workstream donde el modo auto crea el signal/change de un hilo admitido (obligatorio en auto). */
+  workstream?: string;
   /** Login con el que la fab publica (T23): sus eventos se descartan para no dispararse a sí misma. */
   selfLogin?: string;
   /** Lee también los comentarios (opt-in, T21): cada uno es un Trigger con su actor y se decide si podría responder una pregunta abierta. */
@@ -33,6 +35,7 @@ export class Resident {
   private readonly source: string;
   /** Avisos de efectos `dead`/`unknown` aún sin mostrar (T29); `run` los saca al log. */
   readonly alerts: string[] = [];
+  private readonly outbox?: Outbox;
   private stopped = false;
   private wake?: () => void;
 
@@ -42,11 +45,14 @@ export class Resident {
     this.adm = new AdmissionDb(store);
     this.lock = new ResidentLock(this.adm, { ttlMs: cfg.lockTtlMs });
     this.source = `github:${cfg.repo}`;
+    if (cfg.mode === 'auto' && !cfg.selfLogin) throw new Error('el modo auto exige --self <login>: la fab publica sus preguntas con esa identidad y descarta sus propios eventos');
     if (cfg.outbox && !cfg.selfLogin) throw new Error('outbox exige selfLogin');
+    // S7: en modo auto el Outbox siempre está (las preguntas de los turnos vivos salen por aquí).
+    if (cfg.outbox || cfg.mode === 'auto') this.outbox = new Outbox(this.adm, { selfLogin: cfg.selfLogin!, run: cfg.run });
     // Decisión de T24: el residente solo hace poll, Outbox y reencolado; los turnos los lanza el pool (no hay efectos launch/deliver/stop).
     this.effects = new Effects(this.adm, { admit: { run: payload => this.admit(payload.triggerKey), rerunnable: true },
       inbound: { run: payload => this.inbound(payload.triggerKey), rerunnable: true },
-      ...(cfg.outbox ? { reply: new Outbox(this.adm, { selfLogin: cfg.selfLogin!, run: cfg.run }).handler() } : {}) },
+      ...(this.outbox ? { reply: this.outbox.handler() } : {}) },
       { maxAttempts: cfg.maxAttempts, baseMs: cfg.baseMs, fence: () => this.lock.assertOwned(), crash: cfg.crash, onAlert: a => this.alert(a) });
   }
 
@@ -152,6 +158,14 @@ export class Resident {
     const q = change ? this.adm.db.query("SELECT id, published_at FROM adm_questions WHERE change_id = ? AND status = 'open' ORDER BY asked_at DESC LIMIT 1").get(change) as { id: string; published_at: string | null } | null : null;
     const input = { author: c.author, authorType: c.authorType, self: this.cfg.selfLogin!, createdAt: c.createdAt, question: q ? { publishedAt: q.published_at } : undefined };
     let v = commentGate(input);
+    // A4: la pregunta pudo publicarse sin que se guardara `published_at` (caída entre ambos). Se reconcilia por marcador; si sigue sin
+    // publicarse, se lanza para que el efecto reintente en vez de registrar una decisión definitiva que descartaría una respuesta válida.
+    if (v.reason === 'question-not-published' && this.cfg.mode === 'auto' && this.outbox) {
+      if (!await this.outbox.reconcileQuestion(q!.id)) throw new Error(`la pregunta ${q!.id} aún no está publicada: el comentario se reevalúa luego`);
+      const published = (this.adm.db.query('SELECT published_at FROM adm_questions WHERE id = ?').get(q!.id) as { published_at: string | null }).published_at;
+      input.question = { publishedAt: published };
+      v = commentGate(input);
+    }
     if (v.reason === 'role-unchecked') v = commentGate({ ...input, role: await collaboratorRole(c.repo, c.author, this.cfg.run ?? runCommand) });
     this.adm.db.query('INSERT OR IGNORE INTO adm_comment_decisions(trigger_key, accept, reason, question_id, decided_at) VALUES (?,?,?,?,?)')
       .run(triggerKey, v.accept ? 1 : 0, v.reason, v.accept ? q!.id : null, this.adm.iso());
