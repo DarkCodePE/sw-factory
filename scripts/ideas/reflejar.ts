@@ -225,6 +225,31 @@ export function renderCandidatePage(params: {
   return `${frontmatter}\n\n${bodyLines.join("\n")}`;
 }
 
+/** Plan común de revisión; no escribe, también sirve para simulaciones. */
+export function prepareRevision(targetPath: string, contentHash: string) {
+  const existingContent = existsSync(targetPath) ? readFileSync(targetPath, "utf8") : null;
+  const fm = existingContent === null ? {} : parseFrontmatter(existingContent).frontmatter;
+  const prevHash = fm.content_hash ?? (existingContent === null ? null : sha256(existingContent));
+  const prevRev = typeof fm.canonical_revision === "number" ? fm.canonical_revision : 1;
+  const unchanged = existingContent !== null && prevHash === contentHash;
+  const previousPath = targetPath.replace(/\.md$/, `.r${prevRev}.md`);
+  return {
+    existingContent, previousPath,
+    revision: existingContent === null ? 1 : unchanged ? prevRev : prevRev + 1,
+    supersedes: existingContent === null ? null : unchanged ? fm.supersedes ?? null : `${previousPath.split("/").pop()}@${prevHash}`,
+    action: (unchanged ? "unchanged" : existingContent === null ? "created" : "superseded") as "unchanged" | "created" | "superseded",
+  };
+}
+
+/** Conserva la revisión anterior antes de sustituir la página vigente. */
+export function writeRevision(targetPath: string, state: ReturnType<typeof prepareRevision>, content: string): void {
+  mkdirSync(dirname(targetPath), { recursive: true });
+  if (state.action === "superseded" && state.existingContent !== null) {
+    writeFileSync(state.previousPath, state.existingContent, "utf8");
+  }
+  writeFileSync(targetPath, content, "utf8");
+}
+
 /**
  * Refleja un run cerrado en la bóveda llm_wiki.
  * Genera la página trust: agent en <proyecto>/raw/sources/agentes/<knowledge_id>.md.
@@ -298,39 +323,12 @@ export function reflejar(o: Opts, id: string, opts: ReflejarOpts = {}): Reflejar
   };
   const contentHash = computeContentHash(contentPayload);
 
-  let revision = 1;
-  let supersedes: string | null = null;
-  let action: "created" | "superseded" | "unchanged" | "dry-run" = "created";
-  let existingContent: string | null = null;
-  let prevRev = 1;
-
-  const fileExists = existsSync(targetPath);
-  if (fileExists) {
-    existingContent = readFileSync(targetPath, "utf8");
-    const { frontmatter: prevFm } = parseFrontmatter(existingContent);
-    const prevHash = prevFm.content_hash ?? sha256(existingContent);
-
-    if (prevHash === contentHash) {
-      // Idempotente: misma clave -> no reescribe
-      return {
-        written: false,
-        dryRun: isDryRun,
-        path: targetPath,
-        content: existingContent,
-        action: "unchanged",
-        knowledgeId,
-        revision: typeof prevFm.canonical_revision === "number" ? prevFm.canonical_revision : 1,
-        supersedes: prevFm.supersedes ?? null,
-        contentHash,
-      };
-    }
-
-    // Contenido distinto con el mismo knowledge_id -> nueva revisión con supersedes sin pérdida
-    prevRev = typeof prevFm.canonical_revision === "number" ? prevFm.canonical_revision : 1;
-    revision = prevRev + 1;
-    const prevFileName = `${knowledgeId}.r${prevRev}.md`;
-    supersedes = `${prevFileName}@${prevHash}`;
-    action = "superseded";
+  const state = prepareRevision(targetPath, contentHash);
+  const { revision, supersedes, action, existingContent } = state;
+  const fileExists = existingContent !== null;
+  if (action === "unchanged") {
+    return { written: false, dryRun: isDryRun, path: targetPath, content: existingContent!,
+      action, knowledgeId, revision, supersedes, contentHash };
   }
 
   const fechaAprobacion = o.ahora.toISOString();
@@ -364,14 +362,7 @@ export function reflejar(o: Opts, id: string, opts: ReflejarOpts = {}): Reflejar
     };
   }
 
-  mkdirSync(targetDir, { recursive: true });
-  if (action === "superseded" && existingContent !== null) {
-    // Conserva la revisión anterior antes de escribir la nueva (<knowledge_id>.r<N>.md)
-    const prevFileName = `${knowledgeId}.r${prevRev}.md`;
-    const prevFilePath = join(targetDir, prevFileName);
-    writeFileSync(prevFilePath, existingContent, "utf8");
-  }
-  writeFileSync(targetPath, renderedContent, "utf8");
+  writeRevision(targetPath, state, renderedContent);
 
   return {
     written: true,
