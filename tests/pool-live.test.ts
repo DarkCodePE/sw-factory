@@ -133,3 +133,54 @@ test('S3 + A6: agotado el tope la activity falla; fab retry lo reinicia y deja u
   expect((adm.db.query('SELECT MAX(generation) g FROM adm_sessions').get() as { g: number }).g).toBeGreaterThan(before.g - 1);
 });
 class SessionNotFoundErrorLike extends (await import('../src/live/contract.ts')).SessionNotFoundError { constructor() { super('s', 'gone'); } }
+
+// ---- S4: turno huérfano ------------------------------------------------------------------------------------------------
+import { CrashInjected, type CrashPoint } from '../src/admission/effects.ts';
+
+const once = (point: CrashPoint) => { let fired = false; return (p: CrashPoint) => { if (p === point && !fired) { fired = true; throw new CrashInjected(p); } }; };
+const future = () => new Date(Date.now() + 3_600_000).toISOString();
+/** Mata el pool en `point`, deja vencer el lease y devuelve lo necesario para reiniciar. */
+async function killedAt(point: CrashPoint, backend: ReturnType<typeof fakeLive>) {
+  const { ws, c } = setup();
+  await expect(pool(ws.id, { fake: backend }, { crash: once(point) })).rejects.toThrow(CrashInjected);
+  expect(store.listActivities({ changeId: c.id })[0]?.status).toBe('in_progress'); // una caída real no deja ni un fallo registrado
+  store.requeueOrphans(ws.id, future());
+  return { ws, c, adm: new AdmissionDb(store) };
+}
+
+test('S4: el pool muere con el report ya guardado → se aplica en vez de reejecutar (no se lanza ningún agente)', async () => {
+  const backend = fakeLive([ASK]), { ws, c, adm } = await killedAt('turn-ended', backend);
+  expect(backend.turns).toHaveLength(1);
+  await pool(ws.id, { fake: backend });
+  expect(backend.turns).toHaveLength(1); // el segundo claim no lanzó nada
+  expect(store.listActivities({ changeId: c.id })[0]).toMatchObject({ status: 'waiting_reply' });
+  expect(adm.db.query('SELECT status FROM adm_questions').all()).toEqual([{ status: 'open' }]);
+});
+
+test('S4: un report done guardado antes de morir cierra la activity sin relanzar', async () => {
+  const backend = fakeLive([DONE]), { ws, c } = await killedAt('report-recorded', backend);
+  await pool(ws.id, { fake: backend });
+  expect(backend.turns).toHaveLength(1);
+  expect(store.listActivities({ changeId: c.id })[0]?.status).toBe('completed');
+});
+
+test('S4: sin report, el turno huérfano reanuda con «continúa» (no con el prompt inicial); una sesión que nunca arrancó cae en sesión perdida', async () => {
+  const backend = fakeLive([DONE]), { ws, c, adm } = await killedAt('session-launched', backend);
+  await pool(ws.id, { fake: backend });
+  expect(backend.turns).toHaveLength(2); // 1: reanudar la sesión inexistente (NotFound); 2: generación nueva reconstruida
+  expect(backend.turns[0]!.prompt).toContain('interrupted before it finished');
+  expect(backend.turns[0]!.prompt).not.toContain('# Workstream goal');
+  expect(adm.db.query('SELECT generation, status FROM adm_sessions ORDER BY generation').all()).toEqual([{ generation: 1, status: 'lost' }, { generation: 2, status: 'open' }]);
+  expect(store.listActivities({ changeId: c.id })[0]?.status).toBe('completed');
+});
+
+test('S4: un report done de un intento que falló con motivo no se aplica en el reintento: se vuelve a lanzar', async () => {
+  const { ws, c } = setup(), backend = fakeLive([DONE]);
+  const a = store.claimActivity(ws.id, 'w1')!;
+  const adm = new AdmissionDb(store);
+  new (await import('../src/admission/reports.ts')).ReportStore(adm).recorder(a.id, 'att-old')({ state: 'done', summary: 'viejo' });
+  store.failActivity(a.id, 'w1', 'implementation reported done but left no commits on the branch');
+  await pool(ws.id, { fake: backend });
+  expect(backend.turns).toHaveLength(1);
+  expect(store.listActivities({ changeId: c.id })[0]).toMatchObject({ status: 'completed', result: 'hecho' });
+});

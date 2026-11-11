@@ -17,7 +17,9 @@ export type TurnPlan =
 
 export function planTurn(adm: AdmissionDb, activity: Activity, opts: { worktreeNote?: string } = {}): TurnPlan {
   const pending = new ReportStore(adm).pending(activity.id);
-  if (pending) return { action: 'apply-report', report: pending };
+  // Solo un turno que murió (orfandad: sin error o `lease expired`) deja un report por aplicar. Si la activity falló con un motivo
+  // (p. ej. «done» sin commits), ese report es de un intento ya resuelto y el reintento debe lanzar de nuevo.
+  if (pending && (!activity.error || activity.error.startsWith('lease expired'))) return { action: 'apply-report', report: pending };
   const session = new SessionStore(adm).current(activity.changeId, activity.kind);
   if (!session?.launched) return { action: 'fresh' };
   // Una respuesta humana aún no entregada: ese es el mensaje del turno, no «continúa».

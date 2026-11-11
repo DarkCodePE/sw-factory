@@ -54,7 +54,10 @@ function asRun(run: AgentRun, outcome: LiveOutcome | undefined): AgentRun {
 export async function runLiveActivity(store: Store, adm: AdmissionDb, a: Activity, ctx: LiveActivityCtx): Promise<{ run: AgentRun; outcome?: LiveOutcome }> {
   const sessions = new SessionStore(adm), reports = new ReportStore(adm);
   const plan = planTurn(adm, a);
-  if (plan.action === 'apply-report') throw new Error('report pendiente: recuperación de turno huérfano sin implementar');
+  if (plan.action === 'apply-report') { // S4: el turno huérfano ya había informado: se aplica el report, no se reejecuta ni se lanza nada
+    const outcome = liveOutcome([plan.report]);
+    return { run: asRun({ ok: true, output: '', exitCode: 0, durationMs: 0, status: { kind: 'missing', reason: 'recuperado de un report guardado' } }, outcome), outcome };
+  }
   const meta = { backend: ctx.backend.name, cwd: ctx.cwd, model: null, profileDigest: ctx.profileDigest };
   let prompt = plan.action === 'fresh' ? ctx.prompt + LIVE_RULES : plan.prompt;
   const questionId = plan.action === 'resume' ? plan.questionId : undefined;
