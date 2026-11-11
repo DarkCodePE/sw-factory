@@ -14,7 +14,7 @@ export type EffectHandler = {
   reconcile?: (payload: any) => Promise<'done' | 'retry'>;
 };
 export type CrashPoint = 'after-read' | 'after-register' | 'effect-claimed' | 'effect-ran'
-  | 'report-recorded' | 'report-applied';
+  | 'report-recorded' | 'report-applied' | 'answer-applied';
 type Row = { id: number; kind: string; key: string; payload: string; attempts: number; attempt_id: string };
 
 export class Effects {

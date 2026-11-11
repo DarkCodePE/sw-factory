@@ -3,6 +3,7 @@
 import { createHash } from 'node:crypto';
 import { runCommand, type CommandRunner } from '../connectors/github.ts';
 import type { Store } from '../store.ts';
+import { reapQuestions } from './answers.ts';
 import { AdmissionDb } from './db.ts';
 import { Effects, type CrashPoint } from './effects.ts';
 import { commentGate, gate, type GateDecision, type GateInput, type GatePolicy } from './gate.ts';
@@ -150,6 +151,7 @@ export class Resident {
   async cycle(): Promise<{ triggers: number; effects: number }> {
     if (this.cfg.mode === 'off') return { triggers: 0, effects: 0 };
     this.lock.assertOwned();
+    reapQuestions(this.adm); // T27: una pregunta cuya activity ya no espera (change cerrado) no queda abierta para siempre
     const cursor = (this.adm.db.query('SELECT value FROM adm_cursors WHERE source = ?').get(this.source) as { value: string } | null)?.value;
     const since = cursor ?? this.cfg.since ?? new Date(this.adm.now() - 86_400_000).toISOString().replace(/\.\d{3}Z$/, 'Z');
     const events = await pollIssues(this.cfg.repo, since, this.cfg.run ?? runCommand);

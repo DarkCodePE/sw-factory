@@ -1,6 +1,7 @@
 import { afterEach, expect, test } from 'bun:test';
 import { commentGate } from '../src/admission/gate.ts';
 import { ThreadLinks } from '../src/admission/links.ts';
+import { applyReport, ReportStore } from '../src/admission/reports.ts';
 import { dbPath, issue, open, REPO, type RawComment } from './helpers/admission.ts';
 
 const open_ = new Set<{ close(): void }>();
@@ -15,10 +16,14 @@ async function withQuestion(comments: RawComment[], roles: Record<string, string
   const list: RawComment[] = []; // los comentarios llegan después de que exista la pregunta
   const t = track(open(dbPath(), { comments: true, selfLogin: 'fab-bot' }, ISSUES, { comments: list, roles }));
   await t.resident.run({ once: true });
-  const ws = t.store.createWorkstream({ slug: 'w', goal: 'g', repo: '/tmp/x', agent: 'fake' });
-  const change = t.store.triageSignal(t.store.addSignal(ws.slug, 't', 'b').id);
+  const ws = t.store.createWorkstream({ slug: 'w', goal: 'g', repo: '/tmp/x', agent: 'fake', requireChangeApproval: false, requireApproval: false });
+  t.store.setWorkstreamState(ws.slug, 'active');
+  const change = t.store.triageSignal(t.store.addSignal(ws.slug, 't', 'b').id), a = t.store.claimActivity(ws.slug, 'w1')!;
   new ThreadLinks(t.resident.adm).link(T1, change.id);
-  t.store.db.query("INSERT INTO adm_questions(id, activity_id, change_id, text, asked_at) VALUES ('q1','a1',?,'¿color?','2026-01-01T12:00:00.500Z')").run(change.id);
+  // una pregunta real (la activity espera): el residente cancela las que su activity ya no espera
+  new ReportStore(t.resident.adm).recorder(a.id, 'att')({ state: 'awaiting', summary: 's', human_action: '¿color?' });
+  applyReport(t.store, t.resident.adm, t.resident.effects, { activityId: a.id, workerId: 'w1' });
+  t.store.db.query("UPDATE adm_questions SET asked_at = '2026-01-01T12:00:00.500Z'").run();
   list.push(...comments);
   return Object.assign(t, { list });
 }
@@ -49,7 +54,7 @@ test('por defecto no se leen comentarios (el comportamiento de la fase 1 no camb
 test('un comentario de quien tiene rol triage o superior, posterior a la pregunta, se acepta; el trigger lleva actor e id', async () => {
   const { store, resident } = await withQuestion([cm(7, 'maint', '2026-01-01T12:05:00Z', { body: 'rojo' })], { maint: 'write' });
   resident.lock.acquire(); await resident.cycle();
-  expect(verdict(store, 7)).toEqual({ a: 1, r: 'role:write', q: 'q1' });
+  expect(verdict(store, 7)).toEqual({ a: 1, r: 'role:write', q: 'q-att' });
   expect(store.db.query("SELECT event FROM adm_triggers WHERE key = ?").get(`${T1}!c7`)).toEqual({ event: expect.stringContaining('"author":"maint"') });
   expect(store.db.query('SELECT body FROM adm_comments').all()).toEqual([{ body: 'rojo' }]);
   expect(JSON.stringify(store.db.query('SELECT event FROM adm_triggers').all())).not.toContain('rojo'); // el texto no va en el evento
