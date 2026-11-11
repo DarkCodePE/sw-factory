@@ -37,12 +37,15 @@ export class Resident {
   /** Avisos de efectos `dead`/`unknown` aún sin mostrar (T29); `run` los saca al log. */
   readonly alerts: string[] = [];
   private readonly outbox?: Outbox;
+  /** M4: en auto siempre se leen los comentarios (el Outbox publica preguntas; sin leer respuestas vencerían todas). */
+  private readonly comments: boolean;
   private stopped = false;
   private wake?: () => void;
 
   constructor(private readonly store: Store, private readonly cfg: ResidentConfig) {
     if (!['off', 'observe', 'auto'].includes(cfg.mode)) throw new Error(`Modo "${cfg.mode}" no admitido: usa off|observe|auto`);
     if (cfg.comments && !cfg.selfLogin) throw new Error('--comments exige --self <login>: sin la identidad de la fab no se puede filtrar su propio comentario');
+    this.comments = !!cfg.comments || cfg.mode === 'auto';
     this.adm = new AdmissionDb(store);
     this.lock = new ResidentLock(this.adm, { ttlMs: cfg.lockTtlMs });
     this.source = `github:${cfg.repo}`;
@@ -86,14 +89,26 @@ export class Resident {
     const skip = link ? ['thread-already-admitted', `change:${link}`]
       : this.cfg.selfLogin && event.author.toLowerCase() === this.cfg.selfLogin.toLowerCase() ? ['self-authored'] : undefined;
     if (skip) { this.record(triggerKey, { would_admit: false, strength: 'inferred', scope_max: 'none', reasons: skip }); return; }
-    const input: GateInput = { repo: event.repo, labels: event.labels, author: event.author, authorAssociation: event.authorAssociation, state: event.state };
-    // Solo se consulta quién puso la etiqueta cuando el resto del gate la dejaría pasar: evita llamadas inútiles a la API.
-    const label = this.cfg.policy.triggerLabel.toLowerCase();
-    if (event.state === 'open' && event.labels.some(l => l.toLowerCase() === label) && this.cfg.policy.repos.some(r => r.toLowerCase() === event.repo.toLowerCase()))
-      input.labeler = await labeler(event.repo, event.number, this.cfg.policy.triggerLabel, this.cfg.run ?? runCommand);
-    let d = gate(input, this.cfg.policy);
-    if (d.would_admit) d = await this.bindContent(triggerKey, event, input);
-    this.record(triggerKey, d);
+    const registered = (): GateDecision | undefined => {
+      const r = this.adm.db.query('SELECT would_admit, strength, scope_max, reasons FROM adm_decisions WHERE trigger_key = ?').get(triggerKey) as
+        { would_admit: number; strength: GateDecision['strength']; scope_max: GateDecision['scope_max']; reasons: string } | null;
+      return r ? { would_admit: r.would_admit === 1, strength: r.strength, scope_max: r.scope_max, reasons: JSON.parse(r.reasons) as string[] } : undefined;
+    };
+    // B1: si ya hay una decisión registrada para este trigger (reejecución tras una caída) se aplica esa, sin volver a consultar el gate:
+    // el mundo pudo cambiar (etiqueta quitada, issue editado) y `adm_decisions` y lo aplicado dirían cosas distintas.
+    let d = registered();
+    if (!d) {
+      const input: GateInput = { repo: event.repo, labels: event.labels, author: event.author, authorAssociation: event.authorAssociation, state: event.state };
+      // Solo se consulta quién puso la etiqueta cuando el resto del gate la dejaría pasar: evita llamadas inútiles a la API.
+      const label = this.cfg.policy.triggerLabel.toLowerCase();
+      if (event.state === 'open' && event.labels.some(l => l.toLowerCase() === label) && this.cfg.policy.repos.some(r => r.toLowerCase() === event.repo.toLowerCase()))
+        input.labeler = await labeler(event.repo, event.number, this.cfg.policy.triggerLabel, this.cfg.run ?? runCommand);
+      let fresh = gate(input, this.cfg.policy);
+      if (fresh.would_admit) fresh = await this.bindContent(triggerKey, event, input);
+      this.record(triggerKey, fresh);
+      this.cfg.crash?.('decision-recorded');
+      d = registered()!;
+    }
     // S8 (auto): la decisión se aplica con comandos del Store, en una transacción y una vez por hilo (`applyAdmission`); `observe` solo registra.
     if (this.cfg.mode === 'auto') applyAdmission(this.store, this.adm, { thread: triggerKey.slice(0, triggerKey.lastIndexOf('@')), workstream: this.cfg.workstream!, decision: d, crash: this.cfg.crash });
   }
@@ -196,7 +211,7 @@ export class Resident {
     const triggers = this.register(events);
     this.cfg.crash?.('after-register');
     let comments = 0;
-    if (this.cfg.comments) {
+    if (this.comments) {
       const ccursor = (this.adm.db.query('SELECT value FROM adm_cursors WHERE source = ?').get(`${this.source}/comments`) as { value: string } | null)?.value;
       comments = this.registerComments(await pollComments(this.cfg.repo, ccursor ?? since, this.cfg.run ?? runCommand));
     }

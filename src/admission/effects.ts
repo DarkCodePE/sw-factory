@@ -17,7 +17,7 @@ export type EffectHandler = {
 export type EffectAlert = { kind: string; key: string; status: 'dead' | 'unknown'; error: string; payload: any };
 export type CrashPoint = 'after-read' | 'after-register' | 'effect-claimed' | 'effect-ran'
   | 'report-recorded' | 'report-applied' | 'answer-applied' | 'signal-created'
-  | 'session-written' | 'session-launched' | 'turn-ended';
+  | 'session-written' | 'session-launched' | 'turn-ended' | 'decision-recorded';
 
 /** Caída inyectada por un test en un `CrashPoint`: el pool no la convierte en un fallo de la activity (una caída real no deja rastro). */
 export class CrashInjected extends Error {
