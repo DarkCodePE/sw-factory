@@ -16,10 +16,8 @@ const labeled = (t0: typeof t, extra = {}) => t0.issue(7, '2026-01-07T10:00:00Z'
 test('auto: un issue etiquetado por un maintainer, de un autor de confianza, crea signal + change y une el hilo', async () => {
   t = rig({ issues: [] }); t.issues.push(labeled(t));
   await t.cycle();
-  const [change] = t.store.listChanges?.('p') ?? (t.store.db.query('SELECT id, title, description FROM changes').all() as any[]);
   expect(t.store.db.query('SELECT title, description FROM changes').all()).toEqual([{ title: 'Falla el login', description: 'Pasa al pulsar enter' }]);
   expect(new ThreadLinks(t.adm).changeOf(T7)).toBe((t.store.db.query('SELECT id FROM changes').get() as { id: string }).id);
-  void change;
   expect(t.adm.db.query('SELECT scope FROM adm_thread_signals').all()).toEqual([{ scope: 'change' }]);
 });
 
