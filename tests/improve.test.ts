@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, expect, test } from 'bun:test';
-import { existsSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
@@ -85,7 +85,7 @@ test('varianza muestral', () => {
   expect(variance([0, 1, 1, 0])).toBeCloseTo(1 / 3);
 });
 
-test('armCost suma el coste por activity y es null si falta en alguna o hubo reintento', () => {
+test('armCost suma todos los intentos y es null si falta el coste de alguno', () => {
   const ws = store.createWorkstream({ slug: 'c', goal: 'g', repo, agent: 'fake' });
   const ch = store.createChange(ws.id, 't', 'd');
   const acts = store.listActivities({ changeId: ch.id });
@@ -100,7 +100,51 @@ test('armCost suma el coste por activity y es null si falta en alguna o hubo rei
   expect(armCost(store, dir, ch.id)).toBeNull();
   write(acts[0]!.id, { costUsd: 0.25, inputTokens: 1, outputTokens: 1 });
   store.db.query('UPDATE activities SET retry_count = 1 WHERE id = ?').run(acts[0]!.id);
-  expect(armCost(store, dir, ch.id)).toBeNull();
+  expect(armCost(store, dir, ch.id)).toBeNull(); // evidencia antigua: se perdió el primer intento
+  const attempts = (costs: unknown[]) => writeFileSync(join(run, `${acts[0]!.id}.json`), JSON.stringify({ attemptCosts: costs }));
+  attempts([0.25, 0.5]);
+  expect(armCost(store, dir, ch.id)).toBeCloseTo(0.25 * acts.length + 0.5);
+  for (const costs of [[null, 0.5], [0.25, null], [0.5], [0.25, 'unknown']]) {
+    attempts(costs);
+    expect(armCost(store, dir, ch.id)).toBeNull();
+  }
+  store.db.query("UPDATE activities SET status = 'failed', retry_count = 2 WHERE id = ?").run(acts[0]!.id);
+  attempts([0.25, 0.5]);
+  expect(armCost(store, dir, ch.id)).toBeCloseTo(0.25 * acts.length + 0.5);
+});
+
+for (const missing of [false, true]) test(`pool conserva coste de ambos intentos (primero sin coste: ${missing})`, async () => {
+  const ws = store.createWorkstream({ slug: 'retry-cost', goal: 'g', repo, agent: 'fake', requireChangeApproval: false });
+  store.setWorkstreamState(ws.id, 'active');
+  const ch = store.createChange(ws.id, 'task', 'description');
+  const agent = getAgent('fake'), command = agent.command, parse = agent.parse;
+  const meta = join(runDirectory(dir, ch.id), `${store.listActivities({ changeId: ch.id })[0]!.id}.json`);
+  const costsAtLaunch: unknown[] = [];
+  let attempt = 0;
+  agent.command = () => {
+    costsAtLaunch.push(JSON.parse(readFileSync(meta, 'utf8')).attemptCosts.at(-1));
+    const first = attempt++ === 0;
+    const usage = first && missing ? undefined : { costUsd: first ? 0.25 : 0.5, inputTokens: 1, outputTokens: 1 };
+    return ['sh', '-c', 'printf "%s" "$1"; exit "$2"', 'fake', JSON.stringify({ text: 'STATUS: done\n\nReport.', usage }), first ? '1' : '0'];
+  };
+  agent.parse = stdout => JSON.parse(stdout);
+  try {
+    const activity = store.claimActivity(ws.id, 'worker')!;
+    const opts = { workstream: ws.id, stateDir: dir, log: () => {} };
+    await processActivity(store, activity, 'worker', opts);
+    expect(store.getActivity(activity.id).retryCount).toBe(1);
+    const retry = store.claimActivity(ws.id, 'worker')!;
+    expect(retry.id).toBe(activity.id);
+    await processActivity(store, retry, 'worker', opts);
+    const evidence = JSON.parse(readFileSync(join(runDirectory(dir, ch.id), `${activity.id}.json`), 'utf8'));
+    expect(evidence.attemptCosts).toEqual([missing ? null : 0.25, 0.5]);
+    expect(evidence.usage.costUsd).toBe(0.5);
+    expect(costsAtLaunch).toEqual([null, null]);
+    const others = store.listActivities({ changeId: ch.id }).filter(a => a.id !== activity.id);
+    for (const a of others) writeFileSync(join(runDirectory(dir, ch.id), `${a.id}.json`), JSON.stringify({ usage: { costUsd: 0.1 } }));
+    if (missing) expect(armCost(store, dir, ch.id)).toBeNull();
+    else expect(armCost(store, dir, ch.id)).toBeCloseTo(0.75 + others.length * 0.1);
+  } finally { agent.command = command; agent.parse = parse; }
 });
 
 test('ensureSchema migra experiment_runs sin cost_usd', () => {
@@ -476,10 +520,12 @@ test('un intento que falla antes de lanzar el agente descarta la evidencia anter
   const activity = store.claimActivity(ws.id, 'worker')!;
   const run = runDirectory(dir, change.id);
   mkdirSync(run, { recursive: true });
-  writeFileSync(join(run, `${activity.id}.json`), JSON.stringify({ workerReport: 'STATUS: done\nTests needed: previous attempt' }));
+  writeFileSync(join(run, `${activity.id}.json`), JSON.stringify({ workerReport: 'STATUS: done\nTests needed: previous attempt', attemptCosts: [0.25] }));
   // Only this test's disposable repo is removed; setup fails before an agent can emit a new report.
   rmSync(repo, { recursive: true, force: true });
   await processActivity(store, activity, 'worker', { workstream: ws.id, stateDir: dir, log: () => {} });
   expect(store.getActivity(activity.id).retryCount).toBe(1);
   expect(armWorkerReport(store, dir, change.id)).toBeNull();
+  expect(JSON.parse(readFileSync(join(run, `${activity.id}.json`), 'utf8')).attemptCosts).toEqual([0.25, 0]);
+  expect(armCost(store, dir, change.id)).toBe(0.25);
 });

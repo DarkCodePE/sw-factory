@@ -160,20 +160,25 @@ export function armWorkerReport(store: Store, stateDir: string, changeId: string
 }
 
 /**
- * Coste del brazo: suma de `usage.costUsd` que el pool registra por activity. null si alguna activity no lo reporta
- * (agente sin coste) o se reintentó (el reintento sobrescribe la evidencia del intento anterior): un coste parcial subestimaría.
+ * Coste del brazo: suma de todos los intentos de todas las activities. null si falta algún coste.
+ * Evidencia antigua sin reintentos conserva la lectura de `usage.costUsd`.
  */
 export function armCost(store: Store, stateDir: string, changeId: string): number | null {
   const acts = store.listActivities({ changeId });
   if (!acts.length) return null;
   let total = 0;
   for (const a of acts) {
-    if (a.retryCount > 0) return null;
     const meta = join(runDirectory(stateDir, changeId), `${a.id}.json`);
     if (!existsSync(meta)) return null;
-    const cost = JSON.parse(readFileSync(meta, 'utf8'))?.usage?.costUsd;
-    if (typeof cost !== 'number' || !Number.isFinite(cost)) return null;
-    total += cost;
+    const evidence = JSON.parse(readFileSync(meta, 'utf8'));
+    const costs = evidence.attemptCosts ?? (a.retryCount === 0 ? [evidence.usage?.costUsd] : null);
+    // A permanent failure increments retryCount without starting another attempt.
+    const attempts = Math.max(1, a.retryCount + (a.status === 'failed' ? 0 : 1));
+    if (!Array.isArray(costs) || costs.length < attempts) return null;
+    for (const cost of costs) {
+      if (typeof cost !== 'number' || !Number.isFinite(cost)) return null;
+      total += cost;
+    }
   }
   return total;
 }

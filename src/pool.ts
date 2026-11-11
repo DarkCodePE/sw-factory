@@ -2,7 +2,7 @@
 // in the change's worktree, and records the result back in the store.
 import { runGates, runSetupAt, type GateStep } from './gates.ts';
 import { createHash, randomUUID } from 'node:crypto';
-import { rmSync } from 'node:fs';
+import { existsSync, readFileSync, rmSync } from 'node:fs';
 import { join, resolve } from 'node:path';
 import { selfCommand } from './self.ts';
 import { activityLog, atomicEvidence, gitEvidence, isolationFor, readEgressProbe, runDirectory, writeManifest } from './manifest.ts';
@@ -125,8 +125,15 @@ export async function processActivity(
       return;
     }
 
-    // Reset attempt evidence before setup too: a launch/setup failure must not reuse an earlier report.
-    atomicEvidence(`${runDirectory(opts.stateDir, change.id)}/${a.id}.json`, JSON.stringify({ isolation: opts.confine ? 'bwrap-allowlist' : isolationFor(agent.name), workerReport: null }));
+    const meta = `${runDirectory(opts.stateDir, change.id)}/${a.id}.json`;
+    const previous = existsSync(meta) ? JSON.parse(readFileSync(meta, 'utf8')) : null;
+    // Preserve all costs, including unknown attempts from legacy evidence. Reports remain attempt-local.
+    const attemptCosts: unknown[] = previous?.attemptCosts ?? Array.from({ length: a.retryCount }, (_, i) =>
+      i === a.retryCount - 1 ? previous?.usage?.costUsd ?? null : null);
+    attemptCosts.push(0);
+    // Reset before setup too: a launch/setup failure must not reuse an earlier report or cost.
+    const pendingEvidence = { isolation: opts.confine ? 'bwrap-allowlist' : isolationFor(agent.name), workerReport: null, attemptCosts };
+    atomicEvidence(meta, JSON.stringify(pendingEvidence));
     const { path, branch, baseSha } = await ensureWorktree(ws.repo, opts.stateDir, change.id);
     store.setChangeBranch(change.id, branch);
     store.setChangeBase(change.id, baseSha);
@@ -146,6 +153,7 @@ export async function processActivity(
       const started = Date.now();
       const stepEvidence: Array<Record<string, unknown>> = [];
       const deps = join(resolve(opts.stateDir), 'deps', ws.slug);
+      // Gates record no cost; if used in improve, armCost will return null for this activity.
       const metadata = () => atomicEvidence(`${runDirectory(opts.stateDir, change.id)}/${a.id}.json`, JSON.stringify({
         isolation: { adapter: 'gates', posture: 'required OS sandbox; no network; disposable source; read-only dependencies; filtered environment' },
         verifiedHead: head, durationMs: Date.now() - started, steps: stepEvidence,
@@ -215,6 +223,9 @@ export async function processActivity(
       ...selfCommand('__capture', new URL('./manifest-capture.ts', import.meta.url)),
       activityLog(opts.stateDir, change.id, a.id), ...agent.command(text, options),
     ] };
+    // From launch onward the cost is unknown until the agent reports it.
+    attemptCosts[attemptCosts.length - 1] = null;
+    atomicEvidence(meta, JSON.stringify(pendingEvidence));
     const run = await runAgent(opts.confine ? agent : captureAgent, prompt, path, undefined, {
       confine: opts.confine,
       capturePath: opts.confine ? activityLog(opts.stateDir, change.id, a.id) : undefined,
@@ -225,8 +236,10 @@ export async function processActivity(
       },
     });
 
-    atomicEvidence(`${runDirectory(opts.stateDir, change.id)}/${a.id}.json`, JSON.stringify({
+    attemptCosts[attemptCosts.length - 1] = run.usage?.costUsd ?? null;
+    atomicEvidence(meta, JSON.stringify({
       isolation: opts.confine ? 'bwrap-allowlist' : isolationFor(agent.name), durationMs: run.durationMs, exitCode: run.exitCode, usage: run.usage ?? null,
+      attemptCosts,
       egressProbe: agent.name === 'native' ? readEgressProbe(probeFile) : null,
       // Keep only a declared final worker report, independently of later block/failure decisions; never diagnostics or an earlier attempt.
       workerReport: !a.validator && !abortController.signal.aborted && run.status.kind !== 'missing' ? run.output : null,

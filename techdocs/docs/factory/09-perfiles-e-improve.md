@@ -111,7 +111,7 @@ sequenceDiagram
 
 ### Coste por brazo (`armCost`)
 
-(`:112-129`) suma `usage.costUsd` de los `<activity>.json` del change; devuelve **`null`** (nunca 0) si no hay actividades, si alguna se **reintentó** (`retryCount > 0`: el reintento sobrescribió la evidencia anterior, un coste parcial subestimaría), si falta el JSON o si algún `costUsd` no es un número finito. La migración añade `experiment_runs.cost_usd` (`:32-33`).
+Suma `attemptCosts` de los `<activity>.json` del change: el pool conserva el coste de cada intento, incluidos los fallidos, y registra `0` si el intento falla antes de lanzar el agente. Justo antes del lanzamiento marca el coste como `null` hasta recibir el consumo real; los intentos lanzados sin coste reportado permanecen en `null`. `usage` e informe siguen describiendo el último intento. Para evidencia antigua sin reintentos lee `usage.costUsd`; con reintentos antiguos cuyo coste se perdió devuelve **`null`**. También devuelve **`null`** si no hay actividades, falta evidencia de algún intento o algún coste no es un número finito; un coste parcial subestimaría. Un coste reportado de cero sí cuenta como cero. La migración añade `experiment_runs.cost_usd` (`:32-33`).
 
 ### Informe
 
