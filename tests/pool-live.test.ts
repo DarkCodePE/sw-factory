@@ -174,6 +174,17 @@ test('S4: sin report, el turno huérfano reanuda con «continúa» (no con el pr
   expect(store.listActivities({ changeId: c.id })[0]?.status).toBe('completed');
 });
 
+test('S4/M5: un report done de un intento que el pool falla (sin commits) se descarta: el reintento vuelve a lanzar en vez de reaplicarlo', async () => {
+  // Con el adaptador «claude» una implementación sin commits falla (con «fake» está exenta).
+  const ws = store.createWorkstream({ slug: 'cl', goal: 'g', repo, agent: 'claude', requireChangeApproval: false, requireApproval: false });
+  store.setWorkstreamState(ws.id, 'active');
+  const c = store.createChange(ws.id, 't', 'd'), backend = fakeLive([DONE], { name: 'claude' });
+  await runPool(store, { workstream: ws.id, stateDir: dir, untilIdle: true, log: () => {}, live: true, liveBackends: { claude: backend }, acceptAgentBinaries: true });
+  const impl = store.listActivities({ changeId: c.id }).find(a => a.kind === 'implementation')!;
+  expect(impl.status).toBe('failed');
+  expect(backend.turns.length).toBe(1 + 3); // investigación + 3 intentos que lanzaron de verdad (sin descarte serían 1 + 1: se reaplicaría el report viejo)
+});
+
 // ---- verificación de Fable (H1, H2, M1, M2, M5, B3, B4) ---------------------------------------------------------------------
 import { ReportStore } from '../src/admission/reports.ts';
 import { claimed } from './helpers/live.ts';
@@ -196,3 +207,44 @@ test('H2: si el turno que lleva la respuesta falla con un error transitorio, el 
   expect(new AdmissionDb(store).db.query('SELECT delivered_at FROM adm_questions').get()).toEqual({ delivered_at: expect.any(String) }); // sí tras el turno que acabó
 });
 
+test('M1: un pool sin --live no ejecuta de un disparo una activity con sesión viva: la bloquea con motivo', async () => {
+  const backend = fakeLive([ASK, DONE]), { ws, c } = await asked(backend);
+  await runPool(store, { workstream: ws.id, stateDir: dir, untilIdle: true, log: () => {} }); // sin --live
+  expect(backend.turns).toHaveLength(1);
+  expect(store.listActivities({ changeId: c.id })[0]).toMatchObject({ status: 'blocked' });
+  expect(store.listActivities({ changeId: c.id })[0]?.error).toContain('LIVE_SESSION_REQUIRED');
+});
+
+test('M2: un huérfano con un report guardado por aplicar no gasta un reintento y se aplica después', () => {
+  const t = claimed();
+  let a = t.claim();
+  for (let i = 0; i < 2; i++) { t.store.failActivity(a.id, 'w1', 'x'); a = t.claim(); } // retry_count = 2
+  new ReportStore(t.adm).recorder(a.id, 'att-1')({ state: 'awaiting', summary: 's', human_action: '¿color?' });
+  expect(t.store.requeueOrphans('ws', future(), id => new ReportStore(t.adm).pending(id) !== undefined)).toBe(0);
+  expect(t.store.getActivity(a.id)).toMatchObject({ status: 'pending', retryCount: 2 });
+  expect(t.claim('w2').id).toBe(a.id);
+  // sin el filtro, el mismo caso agota los reintentos y pierde la pregunta
+  const u = claimed(); let b = u.claim();
+  for (let i = 0; i < 2; i++) { u.store.failActivity(b.id, 'w1', 'x'); b = u.claim(); }
+  u.store.requeueOrphans('ws', future());
+  expect(u.store.getActivity(b.id).status).toBe('failed');
+});
+
+test('B4: --live con un adaptador sin backend vivo avisa al arrancar', async () => {
+  const { ws } = setup(), logs: string[] = [];
+  await runPool(store, { workstream: ws.id, stateDir: dir, untilIdle: true, log: m => logs.push(m), live: true });
+  expect(logs.some(m => m.includes('no tiene backend vivo'))).toBe(true);
+});
+
+test('B3: el pool crea el AdmissionDb una vez, no en cada vuelta del bucle', async () => {
+  const backend = fakeLive([ASK]), { ws, c } = setup();
+  await pool(ws.id, { fake: backend });
+  void c;
+  // un worker ajeno tiene otra activity con lease corto: el pool da varias vueltas esperando
+  const c2 = store.createChange(ws.id, 'otra', 'd');
+  store.claimActivity(ws.id, 'ajeno', 400); void c2;
+  let schemaRuns = 0; const exec = store.db.exec.bind(store.db);
+  (store.db as { exec: unknown }).exec = (sql: string) => { if (sql.includes('adm_effects')) schemaRuns++; return exec(sql); };
+  await pool(ws.id, { fake: fakeLive([DONE]) }, { pollMs: 20 });
+  expect(schemaRuns).toBeLessThanOrEqual(3); // 1 en runPool + 1 por activity procesada (antes: una por vuelta, decenas)
+});

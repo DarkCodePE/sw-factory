@@ -1124,7 +1124,7 @@ export class Store {
   }
 
   /** Recover activities held by dead workers (lease expired): requeued, or failed once retries run out. Returns how many. */
-  requeueOrphans(workstream: string, nowIso = this.now()): number {
+  requeueOrphans(workstream: string, nowIso = this.now(), keep?: (activityId: string) => boolean): number {
     const ws = this.getWorkstream(workstream);
     return this.withRetry(() => {
       return this.db.transaction(() => {
@@ -1165,6 +1165,13 @@ export class Store {
             }
           }
 
+          // M2: un huérfano con un report guardado por aplicar no es un fallo: vuelve a pending sin gastar un reintento y el
+          // siguiente claim lo aplica. El error queda marcado como de orfandad para que no se confunda con un fallo con motivo.
+          if (keep?.(act.id) && !isTerminalChange(this.getChange(act.change_id).status)) {
+            this.db.query(`UPDATE activities SET status = 'pending', error = 'lease expired (orphaned activity; report pending)', worker_id = NULL, started_at = NULL,
+              lease_expires_at = NULL, agent_pgid = NULL WHERE id = ? AND status = 'in_progress'`).run(act.id);
+            continue;
+          }
           if (isTerminalChange(this.getChange(act.change_id).status)) {
             this.db
               .query(
