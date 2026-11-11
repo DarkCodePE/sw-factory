@@ -1,9 +1,10 @@
-// Residente en modo observe: poll de GitHub → Trigger/Thread → efecto `admit` → gate → registro de would_admit.
-// No crea signals ni changes ni lanza agentes, y no escribe tablas de la fab (solo lee `activities`/`signals` para vencer o cancelar preguntas y decidir si un change es de canal; los cambios van por comandos del Store).
+// Residente: poll de GitHub → Trigger/Thread → efecto `admit` → gate → registro de would_admit. En `observe` no crea signals ni changes;
+// en `auto` (T12) aplica la decisión (`applyAdmission`), entrega respuestas y publica preguntas. Nunca lanza agentes (los lanza el pool), y no escribe tablas de la fab (solo lee `activities`/`signals` para vencer o cancelar preguntas y decidir si un change es de canal; los cambios van por comandos del Store).
 import { createHash } from 'node:crypto';
 import { runCommand, type CommandRunner } from '../connectors/github.ts';
 import type { Store } from '../store.ts';
 import { answerQuestion, expireQuestions, reapQuestions } from './answers.ts';
+import { applyAdmission } from './apply.ts';
 import { AdmissionDb } from './db.ts';
 import { Effects, type CrashPoint, type EffectAlert } from './effects.ts';
 import { commentGate, gate, type GateDecision, type GateInput, type GatePolicy } from './gate.ts';
@@ -45,6 +46,7 @@ export class Resident {
     this.adm = new AdmissionDb(store);
     this.lock = new ResidentLock(this.adm, { ttlMs: cfg.lockTtlMs });
     this.source = `github:${cfg.repo}`;
+    if (cfg.mode === 'auto' && !cfg.workstream) throw new Error('el modo auto exige --workstream <slug>: dónde se crean los signals y changes admitidos');
     if (cfg.mode === 'auto' && !cfg.selfLogin) throw new Error('el modo auto exige --self <login>: la fab publica sus preguntas con esa identidad y descarta sus propios eventos');
     if (cfg.outbox && !cfg.selfLogin) throw new Error('outbox exige selfLogin');
     // S7: en modo auto el Outbox siempre está (las preguntas de los turnos vivos salen por aquí).
@@ -92,6 +94,8 @@ export class Resident {
     let d = gate(input, this.cfg.policy);
     if (d.would_admit) d = await this.bindContent(triggerKey, event, input);
     this.record(triggerKey, d);
+    // S8 (auto): la decisión se aplica con comandos del Store, en una transacción y una vez por hilo (`applyAdmission`); `observe` solo registra.
+    if (this.cfg.mode === 'auto') applyAdmission(this.store, this.adm, { thread: triggerKey.slice(0, triggerKey.lastIndexOf('@')), workstream: this.cfg.workstream!, decision: d, crash: this.cfg.crash });
   }
 
   /** INSERT OR IGNORE: reejecutar tras una caída no cambia el registro (el efecto es `rerunnable`). */

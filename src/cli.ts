@@ -31,6 +31,7 @@ import { createGhGateway } from './connectors/github.ts';
 import { ChangeLinkStore } from './connectors/links.ts';
 import { validateMain } from './validators/cli.ts';
 import { residentMain } from './admission/cli.ts';
+import { linkTriagedSignal } from './admission/apply.ts';
 import { AdmissionDb, hasAdmission } from './admission/db.ts';
 import { resetSessionCap } from './admission/sessions.ts';
 import { protectedIntegrity, purgeRegenerableCaches } from './validators/integrity.ts';
@@ -91,7 +92,7 @@ const HELP = `fab — agente de código y fábrica de software local
   --verify-setup <comando>  Fase previa al gate, repetible: con red, worktree solo lectura, escribe solo en $FAB_DEPS; el gate lo monta ro
                       (PYTHONPATH, PATH/bin, NODE_PATH). Se repite solo si cambia. Ej: --verify-setup 'python3 -m pip install --target $FAB_DEPS pytest' --verify 'pytest -q'
   fab resident report [--json]  informe de solo lectura de lo registrado (cursor, decisiones, label-not-verified, efectos con reintentos)
-  fab resident --repo owner/name [--mode off|observe] [--once] [--since ISO] [--interval s] [--label fab] [--allow-author u] [--trust OWNER,MEMBER]
+  fab resident --repo owner/name [--mode off|observe|auto] [--workstream <slug>] [--once] [--since ISO] [--interval s] [--label fab] [--allow-author u] [--trust OWNER,MEMBER]
                                 residente en modo observe: registra would_admit de issues sin crear changes
   fab inbox [slug]
   fab review <activityId> <approve|comment|decline> [--comment <text>]
@@ -254,6 +255,7 @@ async function main(argv: string[]): Promise<number> {
           : [findByPrefix(store.listWorkstreams().flatMap((w) => store.listSignals(w.id)), sub ?? '', 'signal')];
         for (const s of signals) {
           const c = store.triageSignal(s.id);
+          if (hasAdmission(store)) linkTriagedSignal(new AdmissionDb(store), s.id, c.id); // M1
           console.log(`signal ${short(s.id)} -> change ${short(c.id)} (${c.status})`);
         }
         return 0;
