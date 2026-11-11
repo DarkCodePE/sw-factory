@@ -1,13 +1,13 @@
 import { afterEach, beforeEach, expect, test } from 'bun:test';
-import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
 import { parseReportStatus, validateReportStatus } from '../src/prompts.ts';
 import { boundedAgentOutput } from '../src/agents.ts';
-import { runPool } from '../src/pool.ts';
+import { processActivity, runPool } from '../src/pool.ts';
 import { Store } from '../src/store.ts';
-import { branchCommits } from '../src/worktrees.ts';
+import { branchCommits, branchFor, ensureWorktree } from '../src/worktrees.ts';
 
 let dir: string;
 let repo: string;
@@ -162,4 +162,47 @@ test('the factory commits for agents whose sandbox keeps Git metadata read-only'
   const input = { workstream: { goal: 'g' }, change: { title: 't', description: 'd' }, activity: { kind: 'implementation' }, history: [], worktree: repo, branch: 'b' } as never;
   expect(buildWorkerPrompt(input, { factoryCommits: true })).toContain('Do NOT run git add or git commit');
   expect(buildWorkerPrompt(input)).toContain('Commit your work on the current branch');
+});
+
+for (const damage of ['marker', 'foreign', 'branch', 'directory']) {
+  test(`worktree ${damage} blocks once, preserves retry budget and reaches inbox`, async () => {
+    const ws = store.createWorkstream({ slug: 'repair', goal: 'g', repo, agent: 'fake', requireChangeApproval: false });
+    store.setWorkstreamState(ws.id, 'active');
+    const c = store.createChange(ws.id, 'broken', 'desc');
+    const stateDir = join(dir, 'busy-state');
+    const root = join(stateDir, 'worktrees'), path = join(root, c.id.slice(0, 8));
+    mkdirSync(root, { recursive: true });
+    if (damage === 'marker') writeFileSync(join(root, `.${c.id.slice(0, 8)}.preparing`), 'intent');
+    if (damage === 'directory') mkdirSync(path);
+    if (damage === 'branch') {
+      await ensureWorktree(repo, stateDir, c.id);
+      expect(Bun.spawnSync(['git', '-C', path, 'checkout', '-b', 'wrong']).exitCode).toBe(0);
+    }
+    if (damage === 'foreign') {
+      const foreign = join(dir, 'foreign');
+      expect(Bun.spawnSync(['git', 'clone', '-q', repo, foreign]).exitCode).toBe(0);
+      expect(Bun.spawnSync(['git', '-C', foreign, 'worktree', 'add', '-b', branchFor(c.id), path]).exitCode).toBe(0);
+    }
+    await runPool(store, { workstream: ws.id, stateDir, untilIdle: true, log: () => {} });
+    const acts = store.listActivities({ changeId: c.id });
+    expect(acts).toHaveLength(1); expect(acts[0]?.status).toBe('blocked');
+    expect(acts[0]?.retryCount).toBe(0); expect(acts[0]?.error).toContain('WORKTREE_NEEDS_REPAIR:');
+    expect(acts[0]?.error).toContain(path); expect(store.getChange(c.id).status).toBe('blocked');
+    expect(store.inbox(ws.id).map(a => a.id)).toContain(acts[0]!.id);
+  });
+}
+
+test('git add failure that leaves no worktree still consumes the normal retry budget', async () => {
+  const ws = store.createWorkstream({ slug: 'transient', goal: 'g', repo, agent: 'fake', requireChangeApproval: false });
+  store.setWorkstreamState(ws.id, 'active');
+  const c = store.createChange(ws.id, 'retry git', 'desc');
+  // Keep the branch busy elsewhere: worktree add fails before creating any directory.
+  expect(Bun.spawnSync(['git', '-C', repo, 'worktree', 'add', '-b', branchFor(c.id), join(dir, 'occupied')]).exitCode).toBe(0);
+  const claimed = store.claimActivity(ws.id, 'transient-worker')!;
+  await processActivity(store, claimed, 'transient-worker', { workstream: ws.id, stateDir: dir, log: () => {} });
+  const [a] = store.listActivities({ changeId: c.id });
+  expect(a?.status).toBe('pending'); expect(a!.retryCount).toBe(1);
+  expect(a?.error).not.toContain('WORKTREE_NEEDS_REPAIR:');
+  expect(store.getChange(c.id).status).toBe('pending');
+  expect(existsSync(join(dir, 'worktrees', `.${c.id.slice(0, 8)}.preparing`))).toBe(false);
 });

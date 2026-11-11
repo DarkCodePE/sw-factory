@@ -18,6 +18,7 @@ CREATE INDEX IF NOT EXISTS adm_effects_due ON adm_effects(status, due_at);
 CREATE TABLE IF NOT EXISTS adm_lock (
   id INTEGER PRIMARY KEY CHECK (id = 1), owner TEXT NOT NULL, pid INTEGER NOT NULL, host TEXT NOT NULL, heartbeat_at INTEGER NOT NULL);
 CREATE TABLE IF NOT EXISTS adm_cursors (source TEXT PRIMARY KEY, value TEXT NOT NULL);
+CREATE TABLE IF NOT EXISTS adm_polls (source TEXT PRIMARY KEY, polled_at TEXT NOT NULL, events INTEGER NOT NULL);
 CREATE TABLE IF NOT EXISTS adm_threads (id TEXT PRIMARY KEY, source TEXT NOT NULL, first_seen TEXT NOT NULL);
 CREATE TABLE IF NOT EXISTS adm_triggers (
   key TEXT PRIMARY KEY, thread_id TEXT NOT NULL REFERENCES adm_threads(id), event TEXT NOT NULL, observed_at TEXT NOT NULL);
