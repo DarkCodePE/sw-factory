@@ -1,6 +1,27 @@
 {
   "schema_version": 1,
   "note": "Capas C0-C9 y campos segun design-loops-investigacion.md §7. Rutas relativas a /home/orlando/Desktop/factory. status provisional = sin last_sha ni evidencias con linea.",
+  "fuentes_max": 20,
+  "watch_sources": {
+    "arxiv": [
+      {
+        "categoria": "cs.SE",
+        "url": "https://rss.arxiv.org/rss/cs.SE"
+      },
+      {
+        "categoria": "cs.AI",
+        "url": "https://rss.arxiv.org/rss/cs.AI"
+      },
+      {
+        "categoria": "cs.CL",
+        "url": "https://rss.arxiv.org/rss/cs.CL"
+      }
+    ],
+    "hf_daily_papers": {
+      "nombre": "hf-daily-papers",
+      "url": "https://huggingface.co/api/daily_papers"
+    }
+  },
   "repos": [
     {
       "name": "droid-factory",
