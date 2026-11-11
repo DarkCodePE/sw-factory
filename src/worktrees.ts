@@ -1,5 +1,5 @@
 // One git worktree per change, on branch fab/<short-change-id>, under <state>/worktrees/.
-import { existsSync, lstatSync, mkdirSync, realpathSync, unlinkSync, writeFileSync } from 'node:fs';
+import { existsSync, lstatSync, mkdirSync, realpathSync, rmSync, unlinkSync, writeFileSync } from 'node:fs';
 import { join, resolve } from 'node:path';
 
 export const GIT_SAFE_FLAGS = ['-c', 'core.fsmonitor=false', '-c', 'core.hooksPath=/dev/null', '-c', 'diff.external='];
@@ -13,6 +13,13 @@ async function git(cwd: string, ...args: string[]): Promise<string> {
   ]);
   if (code !== 0) throw new Error(`git ${args.join(' ')} failed in ${cwd}: ${err.trim() || out.trim()}`);
   return out.trim();
+}
+
+export class WorktreeNeedsRepair extends Error {
+  constructor(message: string, options?: ErrorOptions) {
+    super(`WORKTREE_NEEDS_REPAIR: ${message}`, options);
+    this.name = 'WorktreeNeedsRepair';
+  }
 }
 
 export const branchFor = (changeId: string): string => `fab/${changeId.slice(0, 8)}`;
@@ -55,19 +62,19 @@ async function verifyWorktree(repoPath: string, path: string, branch: string): P
     }
     await git(path, 'rev-parse', '--verify', 'HEAD^{commit}');
   } catch (error) {
-    throw new Error(`Cannot reuse worktree ${path}: ${(error as Error).message}; inspect it manually`, { cause: error });
+    throw new WorktreeNeedsRepair(`Cannot reuse worktree ${path}: ${(error as Error).message}; inspect it manually`, { cause: error });
   }
 }
 
 /** Create (or reuse) the worktree for a change. Investigation and implementation share it. */
 export async function ensureWorktree(repo: string, stateDir: string, changeId: string): Promise<{ path: string; branch: string; baseSha: string }> {
   const repoPath = resolve(repo);
-  if (!existsSync(join(repoPath, '.git'))) throw new Error(`${repoPath} is not a git repository`);
+  if (!existsSync(join(repoPath, '.git'))) throw new WorktreeNeedsRepair(`${repoPath} is not a git repository`);
   const branch = branchFor(changeId);
   const path = resolve(stateDir, 'worktrees', changeId.slice(0, 8));
   // Persist intent before Git starts: a crash (even after checkout) must fail closed on reuse.
   const preparing = resolve(stateDir, 'worktrees', `.${changeId.slice(0, 8)}.preparing`);
-  if (existsSync(preparing)) throw new Error(`Worktree preparation is incomplete at ${path}; inspect it, then delete ${preparing}`);
+  if (existsSync(preparing)) throw new WorktreeNeedsRepair(`Worktree preparation is incomplete at ${path}; inspect it, then delete ${preparing}`);
   if (existsSync(path)) {
     await verifyWorktree(repoPath, path, branch);
     return { path, branch, baseSha: await baseSha(repoPath, branch, true) };
@@ -81,12 +88,50 @@ export async function ensureWorktree(repo: string, stateDir: string, changeId: s
   } catch (error) {
     // Nothing was created: drop the marker so a later attempt can retry. A partial checkout keeps it (fail closed).
     if (!existsSync(path)) unlinkSync(preparing);
+    else throw new WorktreeNeedsRepair(`Worktree preparation is incomplete at ${path}: ${(error as Error).message}`, { cause: error });
     throw error;
   }
   await verifyWorktree(repoPath, path, branch);
   const base = await baseSha(repoPath, branch, !!branches);
   unlinkSync(preparing);
   return { path, branch, baseSha: base };
+}
+
+/** Repair only explicit preparation intent; never remove a branch or automatically retry work. */
+export async function repairWorktree(repo: string, stateDir: string, changeId: string, discard = false): Promise<{ ok: boolean; message: string }> {
+  const repoPath = resolve(repo);
+  const path = resolve(stateDir, 'worktrees', changeId.slice(0, 8));
+  const preparing = resolve(stateDir, 'worktrees', `.${changeId.slice(0, 8)}.preparing`);
+  const marked = existsSync(preparing);
+  let reason: string | undefined;
+  try {
+    await verifyWorktree(repoPath, path, branchFor(changeId));
+  } catch (error) {
+    reason = error instanceof Error ? error.message : String(error);
+  }
+  if (!reason) {
+    if (marked) unlinkSync(preparing);
+    return { ok: true, message: `${path}: worktree válido; ${marked ? 'marca eliminada' : 'sin marca'}.` };
+  }
+  if (!marked) return { ok: true, message: `${path}: sin marca. ${reason}` };
+  const quote = (value: string) => "'" + value.replaceAll("'", "'\\''") + "'";
+  const registered = (await git(repoPath, 'worktree', 'list', '--porcelain')).split('\n').includes(`worktree ${path}`);
+  const linked = existsSync(join(path, '.git')) && lstatSync(join(path, '.git')).isFile();
+  const owner = registered ? repoPath : linked ? path : null;
+  const cleanup = owner
+    ? `git -C ${quote(owner)} worktree remove --force ${quote(path)}`
+    : `rm -rf -- ${quote(path)}`;
+  const instructions = `${reason}\nInspecciona y limpia manualmente:\n${cleanup}\nrm -- ${quote(preparing)}`;
+  if (!discard) return { ok: false, message: instructions };
+  // Discard only what belongs to this repo: a worktree of another repo (e.g. a change from another workstream that
+  // shares the 8-character prefix) or an independent repository may hold someone else's uncommitted work.
+  if (owner !== repoPath && existsSync(join(path, '.git'))) {
+    return { ok: false, message: `${instructions}\nNo se descarta: la ruta pertenece a otro repositorio o tiene metadatos Git no registrados; revisa el repositorio propietario.` };
+  }
+  if (owner) await git(owner, 'worktree', 'remove', '--force', path);
+  else rmSync(path, { recursive: true, force: true });
+  unlinkSync(preparing);
+  return { ok: true, message: `${path}: preparación descartada y marca eliminada; rama conservada.` };
 }
 
 /**

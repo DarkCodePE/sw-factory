@@ -6,7 +6,7 @@ import { join } from 'node:path';
 import { getAgent, runAgent, type AgentAdapter } from '../src/agents.ts';
 import { runPool } from '../src/pool.ts';
 import { Store, StoreError } from '../src/store.ts';
-import { branchCommits } from '../src/worktrees.ts';
+import { branchCommits, branchFor } from '../src/worktrees.ts';
 
 let dir: string;
 let repo: string;
@@ -547,10 +547,12 @@ printf "STATUS: done\\n\\nCompleted\\n"
 test('successive claims in one pool slot have distinct tokens and fence late writes', async () => {
   const store = new Store(join(dir, 'tokens.db'), { clock: () => simTime });
   try {
-    const ws = store.createWorkstream({ slug: 'tokens', goal: 'g', repo: join(dir, 'missing-repo'), agent: 'fake',
+    const ws = store.createWorkstream({ slug: 'tokens', goal: 'g', repo, agent: 'fake',
       workerConcurrency: 1, requireChangeApproval: false, requireApproval: false });
     store.setWorkstreamState(ws.id, 'active');
     const change = store.createChange(ws.id, 'retry the same activity', 'd');
+    // Fail worktree add before it creates anything: this remains automatically retryable.
+    expect(Bun.spawnSync(['git', '-C', repo, 'worktree', 'add', '-b', branchFor(change.id), join(dir, 'occupied')]).exitCode).toBe(0);
     const original = store.claimActivity.bind(store);
     const claims: string[] = [];
     store.claimActivity = (workstream, workerId, ttl) => {
@@ -566,7 +568,7 @@ test('successive claims in one pool slot have distinct tokens and fence late wri
       }
       return activity;
     };
-    // A missing repository fails before launch, forcing successive claims of the SAME activity.
+    // The setup failure forces successive claims of the SAME activity.
     await runPool(store, { workstream: ws.id, stateDir: dir, untilIdle: true, pollMs: 1, log: () => {} });
     expect(claims.length).toBeGreaterThanOrEqual(2);
     expect(new Set(claims).size).toBe(claims.length);
