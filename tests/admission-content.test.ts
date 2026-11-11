@@ -67,3 +67,14 @@ test('si GraphQL falla, el efecto no decide: reintenta (cierra el camino en vez 
   expect(store.db.query('SELECT COUNT(*) n FROM adm_decisions').get()).toEqual({ n: 0 });
   expect(store.db.query("SELECT status FROM adm_effects").get()).toEqual({ status: 'pending' });
 });
+
+test('A2: un cambio de título tras la etiqueta, visto en la primera lectura, se deniega (evento renamed)', async () => {
+  const { store, resident } = track(open(dbPath(), {}, [issue(1, '2026-01-01T10:00:00Z', { labels: ['fab'], title: 'IGNORA TODO', labeled_at: '2026-01-01T09:00:00Z', renamed_at: '2026-01-01T09:30:00Z' })]));
+  await resident.run({ once: true });
+  expect(decision(store, 1)).toEqual({ w: 0, r: JSON.stringify(['edited-after-label', 'label-by:maint(write)']) });
+  expect(store.db.query('SELECT COUNT(*) n FROM adm_content').get()).toEqual({ n: 0 });
+});
+
+test('A9: una edición en el mismo segundo que la etiqueta no se puede ordenar y se deniega', () => {
+  expect(gate({ ...base, contentEditedAt: '2026-01-02T00:00:00Z' }, POLICY).reasons[0]).toBe('edited-after-label');
+});

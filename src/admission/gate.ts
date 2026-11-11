@@ -9,7 +9,8 @@ export type GatePolicy = {
   allowAuthors: string[];
 };
 /** Quién puso la etiqueta de disparo y su rol en el repo (`role_name` de la API, o 'bot' / 'unknown' si no se pudo comprobar). */
-export type Labeler = { login: string; role: string; /** Cuándo se puso la etiqueta (`created_at` del evento `labeled`). */ at?: string };
+export type Labeler = { login: string; role: string; /** Cuándo se puso la etiqueta (`created_at` del evento `labeled`). */ at?: string;
+  /** Último cambio de título (evento `renamed`), que `lastEditedAt` quizá no cubre. */ renamedAt?: string };
 export type GateInput = {
   repo: string; labels: string[]; author: string; authorAssociation: string; state: 'open' | 'closed'; labeler?: Labeler;
   /** Última edición de título/cuerpo (null: nunca editado). Solo se consulta cuando el resto del gate admitiría (T20). */
@@ -41,7 +42,9 @@ export function gate(input: GateInput, policy: GatePolicy): GateDecision {
   if (!input.labeler || !LABEL_ROLES.includes(input.labeler.role)) return { ...deny('label-not-verified'), reasons: ['label-not-verified', by] };
   // La etiqueta prueba quién autorizó, no qué: si el contenido cambió después de etiquetar, hay que volver a etiquetar (T20, H-05).
   if (input.contentEditedAt !== undefined && !input.labeler.at) return { ...deny('label-time-unknown'), reasons: ['label-time-unknown', by] }; // no se puede probar el orden: se cierra
-  if (input.labeler.at && ((input.contentEditedAt ?? '') > input.labeler.at || input.contentChanged)) return { ...deny('edited-after-label'), reasons: ['edited-after-label', by] };
+  // `>=`: con resolución de un segundo, una edición en el mismo segundo que la etiqueta no se puede ordenar y se trata como posterior.
+  const edited = [input.contentEditedAt, input.labeler.renamedAt].filter((x): x is string => !!x).sort().at(-1) ?? '';
+  if (input.labeler.at && (edited >= input.labeler.at || input.contentChanged)) return { ...deny('edited-after-label'), reasons: ['edited-after-label', by] };
   const trusted = lower(policy.allowAuthors).includes(input.author.toLowerCase()) ||
     policy.trustedAssociations.includes(input.authorAssociation);
   return trusted
@@ -51,7 +54,7 @@ export function gate(input: GateInput, policy: GatePolicy): GateDecision {
 
 export type CommentInput = {
   author: string; authorType: string; /** Login con el que la fab publica. */ self: string; createdAt: string;
-  /** La pregunta abierta del hilo, si la hay (`askedAt`: ISO de la fab). */ question?: { askedAt: string };
+  /** La pregunta abierta del hilo, si la hay (`askedAt`: ISO de la fab). */ question?: { publishedAt: string | null };
   /** Rol del autor en el repo; sin él, un comentario que pasaría el resto devuelve `role-unchecked`. */ role?: string;
 };
 /**
@@ -63,8 +66,9 @@ export function commentGate(i: CommentInput): { accept: boolean; reason: string 
   if (i.author.toLowerCase() === i.self.toLowerCase()) return no('self');
   if (i.authorType === 'Bot' || i.author === 'ghost') return no('bot');
   if (!i.question) return no('no-open-question');
-  // `asked_at` lleva milisegundos y el comentario de GitHub solo segundos: se compara al segundo.
-  if (i.createdAt < i.question.askedAt.slice(0, 19) + 'Z') return no('before-question');
+  // Contra la publicación de la pregunta (hora de GitHub, sin desfase de relojes), no contra el momento en que la fab la decidió.
+  if (!i.question.publishedAt) return no('question-not-published');
+  if (i.createdAt < i.question.publishedAt) return no('before-question');
   if (i.role === undefined) return no('role-unchecked');
   return TRIAGE_ROLES.includes(i.role) ? { accept: true, reason: `role:${i.role}` } : no(`role:${i.role}`);
 }

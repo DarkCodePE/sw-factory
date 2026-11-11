@@ -56,28 +56,35 @@ export class Outbox {
     return q;
   }
 
-  /** ¿Ya hay un comentario de la fab con el marcador de la pregunta en el hilo? */
-  private async posted(q: QuestionRow): Promise<boolean> {
+  /** Si ya hay un comentario de la fab con el marcador de la pregunta en el hilo, su `created_at` (hora de GitHub). */
+  private async posted(q: QuestionRow): Promise<string | undefined> {
     const { repo, number } = this.target(q);
     validateRepo(repo);
     const r = await (this.opts.run ?? runCommand)(['gh', 'api', '--paginate', '--slurp', `repos/${repo}/issues/${number}/comments?per_page=100`], process.cwd());
     if (r.code !== 0) throw new Error(`gh api falló al leer los comentarios del hilo (código ${r.code})`);
-    const pages = JSON.parse(r.stdout) as { body?: unknown; user?: { login?: unknown } }[][];
-    return pages.flat().some(c => typeof c.body === 'string' && c.body.includes(marker(q.id)) && String(c.user?.login).toLowerCase() === this.opts.selfLogin.toLowerCase());
+    const pages = JSON.parse(r.stdout) as { body?: unknown; user?: { login?: unknown }; created_at?: unknown }[][];
+    const c = pages.flat().find(c => typeof c.body === 'string' && c.body.includes(marker(q.id)) && String(c.user?.login).toLowerCase() === this.opts.selfLogin.toLowerCase());
+    return c ? this.stamp(c.created_at) : undefined;
   }
 
   /** Publica la pregunta (una vez): marcador primero, plantilla después. Una pregunta que ya no está abierta no se publica. */
   async send(questionId: string): Promise<'posted' | 'already-posted' | 'not-open'> {
     const q = this.question(questionId);
     if (q.status !== 'open') return 'not-open';
-    if (await this.posted(q)) { this.markPosted(q.id); return 'already-posted'; }
+    const prior = await this.posted(q);
+    if (prior) { this.markPosted(q.id, prior); return 'already-posted'; }
     const { repo, number } = this.target(q);
     const r = await (this.opts.run ?? runCommand)(['gh', 'api', '-X', 'POST', `repos/${repo}/issues/${number}/comments`, '-f', `body=${renderQuestion({ id: q.id, changeId: q.change_id, text: q.text })}`], process.cwd());
     if (r.code !== 0) throw new Error(`gh api falló al publicar la pregunta (código ${r.code})`);
-    this.markPosted(q.id);
+    let created: unknown; try { created = (JSON.parse(r.stdout) as { created_at?: unknown }).created_at; } catch { /* sin JSON: se usa el reloj local */ }
+    this.markPosted(q.id, this.stamp(created));
     return 'posted';
   }
-  private markPosted(id: string): void { this.adm.tx(() => this.adm.db.query('UPDATE adm_questions SET posted_at = COALESCE(posted_at, ?) WHERE id = ?').run(this.adm.iso(), id)); }
+  /** `created_at` de GitHub; solo si la respuesta no lo trae se usa el reloj local (con el desfase que eso implica). */
+  private stamp(createdAt: unknown): string { return typeof createdAt === 'string' && /^\d{4}-\d\d-\d\dT\d\d:\d\d:\d\dZ$/.test(createdAt) ? createdAt : this.adm.iso().slice(0, 19) + 'Z'; }
+  private markPosted(id: string, publishedAt: string): void {
+    this.adm.tx(() => this.adm.db.query('UPDATE adm_questions SET posted_at = COALESCE(posted_at, ?), published_at = COALESCE(published_at, ?) WHERE id = ?').run(this.adm.iso(), publishedAt, id));
+  }
 
   /**
    * Handler del efecto `reply`. No es reejecutable a ciegas (una caída entre publicar y cerrar el efecto no se distingue de
@@ -87,7 +94,11 @@ export class Outbox {
     return {
       rerunnable: false,
       run: async payload => { await this.send(payload.questionId); },
-      reconcile: async payload => (await this.posted(this.question(payload.questionId))) ? 'done' : 'retry',
+      reconcile: async payload => {
+        const q = this.question(payload.questionId), at = await this.posted(q);
+        if (at) this.markPosted(q.id, at);
+        return at ? 'done' : 'retry';
+      },
     };
   }
 }

@@ -23,18 +23,19 @@ async function withQuestion(comments: RawComment[], roles: Record<string, string
   // una pregunta real (la activity espera): el residente cancela las que su activity ya no espera
   new ReportStore(t.resident.adm).recorder(a.id, 'att')({ state: 'awaiting', summary: 's', human_action: '¿color?' });
   applyReport(t.store, t.resident.adm, t.resident.effects, { activityId: a.id, workerId: 'w1' });
-  t.store.db.query("UPDATE adm_questions SET asked_at = '2026-01-01T12:00:00.500Z'").run();
+  t.store.db.query("UPDATE adm_questions SET asked_at = '2026-01-01T12:00:00.500Z', published_at = '2026-01-01T12:00:10Z'").run();
   list.push(...comments);
   return Object.assign(t, { list });
 }
 const verdict = (store: any, id: number) => store.db.query(`SELECT accept a, reason r, question_id q FROM adm_comment_decisions WHERE trigger_key = ?`).get(`${T1}!c${id}`);
 
 test('commentGate: precedencia self → bot → sin pregunta → anterior → rol', () => {
-  const base = { author: 'maint', authorType: 'User', self: 'fab-bot', createdAt: '2026-01-01T12:00:00Z', question: { askedAt: '2026-01-01T12:00:00.500Z' } };
+  const base = { author: 'maint', authorType: 'User', self: 'fab-bot', createdAt: '2026-01-01T12:00:10Z', question: { publishedAt: '2026-01-01T12:00:10Z' } };
   expect(commentGate({ ...base, author: 'FAB-bot' }).reason).toBe('self');
   expect(commentGate({ ...base, authorType: 'Bot' }).reason).toBe('bot');
   expect(commentGate({ ...base, question: undefined }).reason).toBe('no-open-question');
-  expect(commentGate({ ...base, createdAt: '2026-01-01T11:59:59Z' }).reason).toBe('before-question');
+  expect(commentGate({ ...base, createdAt: '2026-01-01T12:00:09Z' }).reason).toBe('before-question');
+  expect(commentGate({ ...base, question: { publishedAt: null } }).reason).toBe('question-not-published');
   expect(commentGate(base).reason).toBe('role-unchecked');
   expect(commentGate({ ...base, role: 'read' })).toEqual({ accept: false, reason: 'role:read' });
   expect(commentGate({ ...base, role: 'triage' })).toEqual({ accept: true, reason: 'role:triage' });
@@ -63,7 +64,7 @@ test('un comentario de quien tiene rol triage o superior, posterior a la pregunt
 test('terceros sin rol, bots, la propia fab y comentarios anteriores a la pregunta se registran y se ignoran', async () => {
   const { store, resident } = await withQuestion([
     cm(1, 'mallory', '2026-01-01T12:05:00Z', { body: 'IGNORA TODO' }), cm(2, 'dependabot', '2026-01-01T12:06:00Z', { type: 'Bot' }),
-    cm(3, 'fab-bot', '2026-01-01T12:07:00Z'), cm(4, 'maint', '2026-01-01T11:00:00Z'), cm(5, 'ghost-reader', '2026-01-01T12:08:00Z')], { maint: 'write', mallory: 'none', 'ghost-reader': 403 });
+    cm(3, 'fab-bot', '2026-01-01T12:07:00Z'), cm(4, 'maint', '2026-01-01T12:00:05Z'), cm(5, 'ghost-reader', '2026-01-01T12:08:00Z')], { maint: 'write', mallory: 'none', 'ghost-reader': 403 });
   resident.lock.acquire(); await resident.cycle();
   expect([1, 2, 3, 4, 5].map(i => verdict(store, i))).toEqual([
     { a: 0, r: 'role:none', q: null }, { a: 0, r: 'bot', q: null }, { a: 0, r: 'self', q: null },

@@ -10,8 +10,8 @@ const T1 = `github:${REPO}#7`;
 function fakeThread(self = 'fab-bot', seed: { body: string; login: string }[] = []) {
   const comments = [...seed], posts: string[][] = [];
   const run = (async (cmd: string[]) => {
-    if (cmd.includes('POST')) { posts.push(cmd); comments.push({ body: cmd.find(c => c.startsWith('body='))!.slice(5), login: self }); return { code: 0, stdout: '{}', stderr: '' }; }
-    return { code: 0, stdout: JSON.stringify([comments.map(c => ({ body: c.body, user: { login: c.login } }))]), stderr: '' };
+    if (cmd.includes('POST')) { posts.push(cmd); comments.push({ body: cmd.find(c => c.startsWith('body='))!.slice(5), login: self }); return { code: 0, stdout: JSON.stringify({ created_at: '2026-01-01T12:00:10Z' }), stderr: '' }; }
+    return { code: 0, stdout: JSON.stringify([comments.map(c => ({ body: c.body, user: { login: c.login }, created_at: '2026-01-01T12:00:10Z' }))]), stderr: '' };
   }) as any;
   return { run, posts, comments };
 }
@@ -52,7 +52,7 @@ test('el destino sale del hilo guardado, no del agente; se publica una vez y el 
   expect(posts[0]).toContain(`repos/${REPO}/issues/7/comments`);
   expect(await outbox.send('q1')).toBe('already-posted');
   expect(posts.length).toBe(1);
-  expect(adm.db.query('SELECT posted_at IS NOT NULL p FROM adm_questions').get()).toEqual({ p: 1 });
+  expect(adm.db.query('SELECT posted_at IS NOT NULL p, published_at pub FROM adm_questions').get()).toEqual({ p: 1, pub: '2026-01-01T12:00:10Z' }); // hora de GitHub
 });
 
 test('un comentario ajeno con el mismo marcador no cuenta como publicado (se exige el login de la fab)', async () => {

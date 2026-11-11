@@ -15,7 +15,7 @@ export type RawIssue = { number: number; state?: string; updated_at: string; use
   /** Quién puso las etiquetas (solo lo usa el runner falso). `role: 403` simula un token sin acceso push. */
   labeled_by?: { login: string; type?: 'User' | 'Bot'; role?: string | 403 };
   /** Cuándo se etiquetó (por defecto, antes de todo) y cuándo se editó por última vez título/cuerpo (null: nunca). */
-  labeled_at?: string; edited_at?: string | null };
+  labeled_at?: string; edited_at?: string | null; renamed_at?: string };
 export const MAINTAINER: NonNullable<RawIssue['labeled_by']> = { login: 'maint', role: 'write' };
 export const issue = (n: number, updated: string, extra: Partial<RawIssue> = {}): RawIssue => ({ number: n, state: 'open', updated_at: updated,
   user: { login: 'alice' }, author_association: 'MEMBER', labels: [], html_url: `https://github.com/${REPO}/issues/${n}`, ...extra });
@@ -46,8 +46,8 @@ export function fakeGh(issues: RawIssue[], extra: FakeExtra = {}): CommandRunner
     const events = /issues\/(\d+)\/events/.exec(path);
     if (events) {
       const i = issues.find(x => x.number === Number(events[1]))!;
-      return ok([(i.labels ?? []).map(l => ({ event: 'labeled', label: { name: typeof l === 'string' ? l : l.name },
-        actor: { login: by(i).login, type: by(i).type ?? 'User' }, created_at: i.labeled_at ?? '2025-12-31T00:00:00Z' }))]);
+      return ok([[...(i.renamed_at ? [{ event: 'renamed', created_at: i.renamed_at, actor: { login: 'alice' } }] : []), ...(i.labels ?? []).map(l => ({ event: 'labeled', label: { name: typeof l === 'string' ? l : l.name },
+        actor: { login: by(i).login, type: by(i).type ?? 'User' }, created_at: i.labeled_at ?? '2025-12-31T00:00:00Z' }))]]);
     }
     const perm = /collaborators\/([^/]+)\/permission/.exec(path);
     if (perm) {

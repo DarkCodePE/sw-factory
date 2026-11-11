@@ -62,9 +62,10 @@ export async function labeler(repo: string, issue: number, label: string, run: C
   if (!last) throw new Error(`issue ${issue}: no se encontró el evento labeled de «${label}»`);
   const login = typeof last.actor?.login === 'string' ? last.actor.login : 'ghost';
   const at = typeof last.created_at === 'string' && ISO.test(last.created_at) ? last.created_at : undefined;
-  if (last.actor?.type === 'Bot' || login === 'ghost') return { login, role: last.actor?.type === 'Bot' ? 'bot' : 'none', at };
+  const renamed = (events.body.flat() as Record<string, any>[]).filter(e => e?.event === 'renamed' && typeof e.created_at === 'string' && ISO.test(e.created_at)).map(e => e.created_at as string).sort().at(-1);
+  if (last.actor?.type === 'Bot' || login === 'ghost') return { login, role: last.actor?.type === 'Bot' ? 'bot' : 'none', at, renamedAt: renamed };
   if (!/^[A-Za-z0-9-]+$/.test(login)) throw bad(`actor ${login}`);
-  return { login, role: await collaboratorRole(repo, login, run), at };
+  return { login, role: await collaboratorRole(repo, login, run), at, renamedAt: renamed };
 }
 
 /** Rol de `login` en el repo (`role_name`); 'unknown' si el token no puede verlo (403), 'none' si no es colaborador (404). */

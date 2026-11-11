@@ -149,8 +149,8 @@ export class Resident {
     if (!row) throw new Error(`Trigger ${triggerKey} inexistente`);
     const c = JSON.parse(row.event) as { repo: string; author: string; authorType: string; createdAt: string };
     const change = new ThreadLinks(this.adm).changeOf(row.thread_id);
-    const q = change ? this.adm.db.query("SELECT id, asked_at FROM adm_questions WHERE change_id = ? AND status = 'open' ORDER BY asked_at DESC LIMIT 1").get(change) as { id: string; asked_at: string } | null : null;
-    const input = { author: c.author, authorType: c.authorType, self: this.cfg.selfLogin!, createdAt: c.createdAt, question: q ? { askedAt: q.asked_at } : undefined };
+    const q = change ? this.adm.db.query("SELECT id, published_at FROM adm_questions WHERE change_id = ? AND status = 'open' ORDER BY asked_at DESC LIMIT 1").get(change) as { id: string; published_at: string | null } | null : null;
+    const input = { author: c.author, authorType: c.authorType, self: this.cfg.selfLogin!, createdAt: c.createdAt, question: q ? { publishedAt: q.published_at } : undefined };
     let v = commentGate(input);
     if (v.reason === 'role-unchecked') v = commentGate({ ...input, role: await collaboratorRole(c.repo, c.author, this.cfg.run ?? runCommand) });
     this.adm.db.query('INSERT OR IGNORE INTO adm_comment_decisions(trigger_key, accept, reason, question_id, decided_at) VALUES (?,?,?,?,?)')
