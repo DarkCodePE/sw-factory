@@ -152,6 +152,14 @@ test('brief probe envuelve las fuentes como no confiables y trae el session-init
   expect(t).toContain('--tope 20');
 });
 
+test('brief probe indica consultar la bóveda sin gastar tope_consultas', () => {
+  init(o, HIP); gate(o, HIP.run_id, 'orlando');
+  const t = briefProbe(o, HIP.run_id);
+  expect(t).toContain('graft-lector.ts boveda');
+  expect(t).toContain('raw/sources/agentes/');
+  expect(t).toContain('no cuenta');
+});
+
 test('check probe rechaza citas sin @sha y acepta las completas', () => {
   hastaProbe();
   expect(checkProbe(run()).citas).toBe(2);
