@@ -52,7 +52,7 @@ export class Effects {
 
   /**
    * Salida de los efectos `unknown` (T29): si el handler sabe consultar el mundo exterior (`reconcile`), se decide aquí si ya se
-   * hizo (`done`) o hay que reintentar (`pending`). Sin `reconcile`, el efecto sigue `unknown` y avisa en cada llamada de recover.
+   * hizo (`done`) o hay que reintentar (`pending`). Sin `reconcile`, el efecto sigue `unknown`; el aviso (`onAlert`) salió una sola vez, al pasar a `unknown` en `recover`.
    * Un fallo al consultar deja el efecto como estaba. Devuelve cuántos resolvió.
    */
   async reconcile(): Promise<number> {

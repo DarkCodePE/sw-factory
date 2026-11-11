@@ -1,5 +1,5 @@
 // Residente en modo observe: poll de GitHub → Trigger/Thread → efecto `admit` → gate → registro de would_admit.
-// No crea signals ni changes ni lanza agentes, y no lee ni escribe tablas de la fab.
+// No crea signals ni changes ni lanza agentes, y no escribe tablas de la fab (solo lee `activities`/`signals` para vencer o cancelar preguntas y decidir si un change es de canal; los cambios van por comandos del Store).
 import { createHash } from 'node:crypto';
 import { runCommand, type CommandRunner } from '../connectors/github.ts';
 import type { Store } from '../store.ts';
