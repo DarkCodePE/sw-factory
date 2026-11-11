@@ -35,7 +35,7 @@ test('B1: tras una caída entre registrar la decisión y aplicarla se aplica la 
   const i = t.issue(7, '2026-01-07T10:00:00Z', { labels: [{ name: 'fab' }], title: 'T', body: 'B' });
   t.issues.push(i);
   let fired = false;
-  await t.cycle({ crash: p => { if (p === 'decision-recorded' && !fired) { fired = true; i.labels = []; throw new Error('caída'); } } }); // se quita la etiqueta y el efecto reintenta
+  await t.cycle({ crash: p => { if (p === 'signal-created' && !fired) { fired = true; i.labels = []; throw new Error('caída'); } } }); // la decisión ya está registrada; el signal se deshace con la caída; se quita la etiqueta y el efecto reintenta
   await Bun.sleep(20); await t.cycle();
   expect(t.adm.db.query('SELECT would_admit, scope_max FROM adm_decisions').all()).toEqual([{ would_admit: 1, scope_max: 'change' }]);
   expect(t.store.db.query('SELECT COUNT(*) n FROM changes').get()).toEqual({ n: 1 });
