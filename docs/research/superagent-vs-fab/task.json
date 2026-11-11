@@ -19,6 +19,18 @@
       "topic": "Primera lectura sin cursor",
       "decision": "Sin cursor, el poller lee solo el último día (now - 24h). `--since` permite ir más atrás de forma explícita.",
       "date": "2026-11-10"
+    },
+    {
+      "id": "D4",
+      "topic": "Quién lanza los turnos (S1, H-09)",
+      "decision": "El pool lanza los turnos; el residente solo hace poll, Outbox y reencolado. Sin launch/deliver/stop en la fase 2.",
+      "date": "2026-11-11"
+    },
+    {
+      "id": "D5",
+      "topic": "Identidad de la sesión (S2, H-02)",
+      "decision": "Una sesión por (change, tipo de activity, generación), escrita antes de lanzar. Abiertos: dónde vive la tabla (hoy adm_sessions), marcarla lanzada antes de lanzar y si fab retry reinicia el tope de generaciones.",
+      "date": "2026-11-11"
     }
   ],
   "tasks": [
