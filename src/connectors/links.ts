@@ -1,7 +1,7 @@
 import type { Database } from 'bun:sqlite';
 import type { ChangeLinkLookup, ChangeLinks, ExternalRef, PullRequestRef } from './types.ts';
 
-type Row = { change_id: string; source_system: 'jira' | null; source_key: string | null; source_url: string | null; pr_json: string | null };
+type Row = { change_id: string; source_system: 'jira' | 'github' | null; source_key: string | null; source_url: string | null; pr_json: string | null };
 
 export class ChangeLinkStore {
   constructor(private readonly db: Database) {
@@ -18,7 +18,8 @@ export class ChangeLinkStore {
   setSource(changeId: string, ref: ExternalRef): void {
     const current = this.get(changeId)?.source;
     if (current && (current.system !== ref.system || current.key !== ref.key)) throw new Error('La HU de origen de un change no se puede reemplazar');
-    const reserved = this.db.query(`SELECT s.change_id FROM jira_imports i JOIN signals s ON s.id=i.signal_id
+    // jira_imports solo reserva claves de Jira: una clave de GitHub (`owner/repo#n`) no puede colisionar con ella.
+    const reserved = ref.system !== 'jira' ? null : this.db.query(`SELECT s.change_id FROM jira_imports i JOIN signals s ON s.id=i.signal_id
       WHERE i.issue_key=?`).get(ref.key) as { change_id: string | null } | null;
     if (reserved && reserved.change_id !== changeId) throw new Error(`HU ${ref.key} reservada para su signal de origen`);
     const existing = this.findBySource(ref.system, ref.key);
@@ -45,9 +46,10 @@ export class ChangeLinkStore {
       ...(row?.pr_json ? { pr: JSON.parse(row.pr_json) as PullRequestRef } : {}) } : undefined;
   }
 
-  findBySource(system: 'jira', key: string): ChangeLinks | undefined {
+  findBySource(system: 'jira' | 'github', key: string): ChangeLinks | undefined {
     const row = this.db.query('SELECT change_id FROM change_links WHERE source_system = ? AND source_key = ?').get(system, key) as { change_id: string } | null;
     if (row) return this.get(row.change_id);
+    if (system !== 'jira') return undefined;
     const imported = this.db.query(`SELECT s.change_id FROM jira_imports i JOIN signals s ON s.id=i.signal_id
       WHERE i.issue_key=? AND s.change_id IS NOT NULL`).get(key) as { change_id: string } | null;
     const linked = imported ? this.get(imported.change_id) : undefined;

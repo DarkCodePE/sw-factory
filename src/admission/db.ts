@@ -24,6 +24,9 @@ CREATE TABLE IF NOT EXISTS adm_triggers (
 CREATE TABLE IF NOT EXISTS adm_decisions (
   trigger_key TEXT PRIMARY KEY REFERENCES adm_triggers(key), would_admit INTEGER NOT NULL, strength TEXT NOT NULL,
   scope_max TEXT NOT NULL, reasons TEXT NOT NULL, policy TEXT NOT NULL, decided_at TEXT NOT NULL);
+-- Vínculo hilo → change (T23): N hilos (issue, PR, ...) para un mismo change; un hilo solo se admite una vez.
+CREATE TABLE IF NOT EXISTS adm_thread_changes (thread_id TEXT PRIMARY KEY REFERENCES adm_threads(id), change_id TEXT NOT NULL, linked_at TEXT NOT NULL);
+CREATE INDEX IF NOT EXISTS adm_thread_changes_change ON adm_thread_changes(change_id);
 -- Contenido admitido de un hilo (T20): la copia que vio quien etiquetó. El prompt usa solo esta copia, nunca una relectura.
 CREATE TABLE IF NOT EXISTS adm_content (
   thread_id TEXT PRIMARY KEY REFERENCES adm_threads(id), title TEXT NOT NULL, body TEXT NOT NULL, hash TEXT NOT NULL,

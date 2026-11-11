@@ -5,13 +5,16 @@ import { runCommand, type CommandRunner } from '../connectors/github.ts';
 import type { Store } from '../store.ts';
 import { AdmissionDb } from './db.ts';
 import { Effects, type CrashPoint } from './effects.ts';
-import { gate, type GateInput, type GatePolicy } from './gate.ts';
+import { gate, type GateDecision, type GateInput, type GatePolicy } from './gate.ts';
 import { issueContent, labeler, pollIssues, type IssueEvent } from './github.ts';
+import { ThreadLinks } from './links.ts';
 import { ResidentLock } from './lock.ts';
 
 export type Mode = 'off' | 'observe';
 export type ResidentConfig = {
-  repo: string; policy: GatePolicy; mode: Mode; run?: CommandRunner; intervalMs?: number;
+  repo: string; policy: GatePolicy; mode: Mode;
+  /** Login con el que la fab publica (T23): sus eventos se descartan para no dispararse a sí misma. */
+  selfLogin?: string; run?: CommandRunner; intervalMs?: number;
   /** Desde dónde leer cuando aún no hay cursor (ISO). Por defecto, el último día (D3). */
   since?: string;
   maxAttempts?: number; baseMs?: number; lockTtlMs?: number; crash?: (point: CrashPoint) => void;
@@ -58,6 +61,10 @@ export class Resident {
     const row = this.adm.db.query('SELECT event FROM adm_triggers WHERE key = ?').get(triggerKey) as { event: string } | null;
     if (!row) throw new Error(`Trigger ${triggerKey} inexistente`);
     const event = JSON.parse(row.event) as IssueEvent;
+    const link = new ThreadLinks(this.adm).changeOf(triggerKey.slice(0, triggerKey.lastIndexOf('@')));
+    const skip = link ? ['thread-already-admitted', `change:${link}`]
+      : this.cfg.selfLogin && event.author.toLowerCase() === this.cfg.selfLogin.toLowerCase() ? ['self-authored'] : undefined;
+    if (skip) { this.record(triggerKey, { would_admit: false, strength: 'inferred', scope_max: 'none', reasons: skip }); return; }
     const input: GateInput = { repo: event.repo, labels: event.labels, author: event.author, authorAssociation: event.authorAssociation, state: event.state };
     // Solo se consulta quién puso la etiqueta cuando el resto del gate la dejaría pasar: evita llamadas inútiles a la API.
     const label = this.cfg.policy.triggerLabel.toLowerCase();
@@ -65,7 +72,11 @@ export class Resident {
       input.labeler = await labeler(event.repo, event.number, this.cfg.policy.triggerLabel, this.cfg.run ?? runCommand);
     let d = gate(input, this.cfg.policy);
     if (d.would_admit) d = await this.bindContent(triggerKey, event, input);
-    // INSERT OR IGNORE: reejecutar tras una caída no cambia el registro (el efecto es `rerunnable`).
+    this.record(triggerKey, d);
+  }
+
+  /** INSERT OR IGNORE: reejecutar tras una caída no cambia el registro (el efecto es `rerunnable`). */
+  private record(triggerKey: string, d: GateDecision): void {
     this.adm.db.query('INSERT OR IGNORE INTO adm_decisions(trigger_key, would_admit, strength, scope_max, reasons, policy, decided_at) VALUES (?,?,?,?,?,?,?)')
       .run(triggerKey, d.would_admit ? 1 : 0, d.strength, d.scope_max, JSON.stringify(d.reasons), JSON.stringify(this.cfg.policy), this.adm.iso());
   }
