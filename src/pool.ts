@@ -368,7 +368,7 @@ export async function processActivity(
     store.completeActivity(a.id, workerId, run.output);
     log(`[${workerId}] ${a.kind} done in ${Math.round(run.durationMs / 1000)}s`);
   } catch (err) {
-    if (!(err instanceof WorktreeNeedsRepair) && isBusyError(err)) {
+    if (isBusyError(err)) {
       log(`[${workerId}] database locked during activity processing, preserving activity without failing`);
       try {
         store.requeueActivity(activity.id, workerId);
