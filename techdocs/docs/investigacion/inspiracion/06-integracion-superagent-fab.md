@@ -13,7 +13,7 @@ Esta página describe cómo incorporar a la fab el tramo que resuelve `dsh-super
 
     - Las fases 0 y 1 están en `release/0.1.0-rc.12`.
     - Las piezas de la fase 2 que pide la ronda 3 (T16-T34) están en el PR #62, todavía **sin integrar en el pool**.
-    - De las decisiones de §5.3, el PR #62 implementa todas. **S1 y S2 están aprobadas**; S3 a S8 son todavía propuestas.
+    - Las decisiones de §5.3 están **aprobadas** y el PR #62 las implementa como piezas; falta integrarlas en el pool (T12).
     - Tareas en `docs/research/superagent-vs-fab/task.json`.
 
 Commits de referencia:
@@ -184,9 +184,9 @@ Renumeradas de D1-D5 a I1-I5 en la v0.5, porque D1-D3 ya se usan en `task.json` 
 | I4 | Cada operación del contrato lleva id de intento; el `steer` idempotente por `requestId` se exige solo cuando haya steer | **Reducida**: `assertAuthorized`, prompt versionado y `handoff` dejan de ser condición de la fase 2 |
 | I5 | Gate duro fuera del prompt y por adaptador. MCP generado por la fab con lista cerrada y **token por turno**. El gate fija el `scope` máximo con metadatos verificados, y nada posterior puede ampliarlo | Vigente; `scope_max` se aplica al crear el signal (T30) |
 
-### 5.3 Decisiones de la ronda 3 (propuestas)
+### 5.3 Decisiones de la ronda 3
 
-Están implementadas como piezas en el PR #62 y ninguna está integrada en el pool. **S1 y S2 están aprobadas (2026-11-11); S3 a S8 requieren aprobación** antes de la integración (T12).
+Están implementadas como piezas en el PR #62 y ninguna está integrada en el pool. **Todas están aprobadas (S1 y S2 el 2026-11-11, S3 a S8 el mismo día).** Falta integrarlas en el pool (T12).
 
 S2 deja tres detalles abiertos:
 
@@ -252,7 +252,7 @@ Observaciones abiertas del verificador del PR #62, que conviene cerrar al integr
 | Primer adaptador vivo | **Decidido: los dos en paralelo, reanudando por id turno a turno y sin steer**: `claude` en `feat/live-claude`, también confinado, y `native` en `feat/live-native`, con la suscripción ChatGPT. Informes en `docs/research/superagent-vs-fab/live/`. Por S8, el trabajo que entra por canal solo va a `claude` confinado; `native` queda para changes creados a mano |
 | Quién lanza los turnos (S1) | **Decidido (2026-11-11): el pool.** El residente solo hace poll, Outbox y reencolado |
 | Identidad de la sesión (S2) | **Decidido (2026-11-11): una sesión por (change, tipo de activity, generación)**, escrita antes de lanzar |
-| Resto de la ronda 3 (S3-S8) | **Pendiente de aprobación** |
+| Resto de la ronda 3 (S3-S8) | **Decidido (2026-11-11)** tal como se describen en §5.3. Por S8, `native` queda solo para changes creados a mano |
 
 ---
 

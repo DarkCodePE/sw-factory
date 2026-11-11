@@ -31,6 +31,12 @@
       "topic": "Identidad de la sesión (S2, H-02)",
       "decision": "Una sesión por (change, tipo de activity, generación), escrita antes de lanzar. Abiertos: dónde vive la tabla (hoy adm_sessions), marcarla lanzada antes de lanzar y si fab retry reinicia el tope de generaciones.",
       "date": "2026-11-11"
+    },
+    {
+      "id": "D6",
+      "topic": "Ronda 3, S3-S8 (06 §5.3)",
+      "decision": "Aprobadas tal cual: sesión perdida con generación nueva visible (S3), turno huérfano sin reejecutar (S4), waiting_reply con plazo (S5), report durable con prioridad sobre STATUS (S6), Outbox con plantilla fija (S7), autoridad y solo adaptador confinable para trabajo de canal (S8).",
+      "date": "2026-11-11"
     }
   ],
   "tasks": [
@@ -105,9 +111,10 @@
     {
       "id": "T7",
       "title": "Guardar lo que no está en ningún PR: commit local ce84fc4 (doc Inspiración) y docs/research/superagent-vs-fab/",
-      "status": "in_review",
+      "status": "done",
       "depends_on": [],
-      "branch": "docs/integracion-superagent"
+      "branch": "docs/integracion-superagent",
+      "note": "Fusionado (#59)."
     },
     {
       "id": "T8",
@@ -129,42 +136,47 @@
       "title": "Riesgo fase 0: la marca `.preparing` de una creación a medias se borra a mano",
       "why": "Si git deja un checkout parcial, la marca queda y ensureWorktree falla hasta que alguien la borre. Sin supervisión, el change se queda atascado.",
       "where": "src/worktrees.ts — p. ej. comando `fab worktree repair <change>` o recuperación cuando el checkout parcial es reconocible; como mínimo, un evento visible.",
-      "status": "in_review",
+      "status": "done",
       "depends_on": [],
       "owner": "codex",
       "reviewer": "agy",
       "pr": 60,
-      "branch": "fix/t10-worktree-reparar"
+      "branch": "fix/t10-worktree-reparar",
+      "note": "Fusionado (#60)."
     },
     {
       "id": "T11",
       "title": "Ejecutar `fab resident --mode observe` contra un repo real unos días y revisar los registros de would_admit",
-      "status": "in_review",
+      "status": "in_progress",
       "depends_on": [
         "T6"
       ],
       "owner": "sonnet",
       "reviewer": "agy",
       "branch": "feat/t11-observe-informe",
-      "note": "fab resident report hecho. DarkCodePE/sw-factory no tiene issues: el observe real necesita un repo con issues y alguien que etiquete fab.",
+      "note": "fab resident report fusionado (#61). Falta observe real: repo con issues y etiqueta fab puesta por alguien con triage+.",
       "pr": 61
     },
     {
       "id": "T12",
-      "title": "Fase 2: contrato en vivo (estado awaiting, Outbox, efectos launch/deliver/stop, paso de observe a crear changes)",
-      "status": "pending",
+      "title": "Fase 2: integrar en el pool las piezas del #62 (sesión, report, espera, preguntas/respuestas, Outbox) y modo auto mínimo",
+      "status": "in_progress",
       "depends_on": [
-        "T11",
-        "T16",
-        "T17",
-        "T18",
-        "T19",
-        "T20",
-        "T21",
-        "T22",
-        "T23"
+        "T36"
       ],
-      "note": "Ronda 3 (review3/fable.md): veredicto «sí con cambios». Los hallazgos de severidad alta (T16-T23) bloquean la fase 2; los de severidad media (T24-T32) se resuelven dentro de ella."
+      "note": "Ronda 3 (review3/fable.md): veredicto «sí con cambios». Los hallazgos de severidad alta (T16-T23) bloquean la fase 2; los de severidad media (T24-T32) se resuelven dentro de ella.",
+      "open_items": [
+        "Marcar la sesión lanzada antes de lanzar y comparar profile_digest (A8)",
+        "¿fab retry reinicia el tope de generaciones? (A6, detalle de S2)",
+        "Dónde vive la tabla de sesiones (adm_sessions vs Store)",
+        "Delimitar el texto no confiable en reconstructPrompt y activar untrusted (B1)",
+        "Unir hilo y change cuando un signal propose se triaja a mano (M1)",
+        "report done/blocked marcado aplicado junto al cierre de la activity (A5)",
+        "question-not-published no definitiva si el residente murió entre publicar y guardar (A4)",
+        "Prueba manual de T34 con claude real confinado (B2)",
+        "Qué puede hacer la persona con una activity waiting_reply en el inbox (M2)",
+        "El plazo de espera solo vence si el residente corre (M4)"
+      ]
     },
     {
       "id": "T13",
@@ -190,12 +202,13 @@
       "why": "Hoy vive en memoria del pool: si el pool muere tras un awaiting, la pregunta se pierde y el turno se reejecuta. Aplicarlo a mitad de turno haría fallar el latido y abortar al agente.",
       "where": "src/live/{claude,native}.ts (handler MCP), src/pool.ts:108-115, src/store.ts:685-689",
       "proposal": "El handler persiste el report por attemptId sin cambiar el estado; el pool lo aplica al final en una transacción con el efecto reply; la recuperación lo aplica en vez de reejecutar.",
-      "status": "in_review",
+      "status": "partial",
       "depends_on": [],
       "pr": 62,
       "branch": "feat/ronda3-hallazgos",
       "owner": "sonnet",
-      "reviewer": "fable"
+      "reviewer": "fable",
+      "note": "Fusionado (#62). Falta integrar en el pool (T12)."
     },
     {
       "id": "T17",
@@ -205,12 +218,13 @@
       "why": "activities no tiene columna de sesión y las espigas lo devuelven solo en memoria. No sobrevive a la caída del pool ni a requeueOrphans; retryChange crea otra activity.",
       "where": "src/store.ts:152-158,307-322,1030; src/live/claude.ts:55",
       "proposal": "Fila por (change, tipo de activity, generación) escrita antes de lanzar, con backend, cwd, modelo y huella de perfil.",
-      "status": "in_review",
+      "status": "partial",
       "depends_on": [],
       "pr": 62,
       "branch": "feat/ronda3-hallazgos",
       "owner": "sonnet",
-      "reviewer": "fable"
+      "reviewer": "fable",
+      "note": "Fusionado (#62). Falta integrar en el pool (T12)."
     },
     {
       "id": "T18",
@@ -220,12 +234,13 @@
       "why": "El contrato define SessionNotFoundError pero ninguna transición lo usa. Bajo confine sin directorio persistente o tras recrear el worktree, la activity falla 3 veces con una respuesta humana ya dada.",
       "where": "06 §5.1 y §6; src/live/contract.ts:48",
       "proposal": "Generación nueva con prompt reconstruido desde estado durable (change, historial, preguntas y respuestas), con evento y contando para el tope. Nunca sesión nueva por un error transitorio.",
-      "status": "in_review",
+      "status": "partial",
       "depends_on": [],
       "pr": 62,
       "branch": "feat/ronda3-hallazgos",
       "owner": "sonnet",
-      "reviewer": "fable"
+      "reviewer": "fable",
+      "note": "Fusionado (#62). Falta integrar en el pool (T12)."
     },
     {
       "id": "T19",
@@ -235,12 +250,13 @@
       "why": "Un fallo u orfandad devuelve la activity a pending y el agente se reejecuta solo; no existe «resultado desconocido» en activities. El prompt inicial se reenviaría a una sesión que ya hizo el trabajo.",
       "where": "src/store.ts:923-932,1102-1103",
       "proposal": "Para activities vivas: reconciliar (report persistido, estado del worktree) y reanudar con un mensaje «continúa», no con el prompt inicial.",
-      "status": "in_review",
+      "status": "partial",
       "depends_on": [],
       "pr": 62,
       "branch": "feat/ronda3-hallazgos",
       "owner": "sonnet",
-      "reviewer": "fable"
+      "reviewer": "fable",
+      "note": "Fusionado (#62). Falta integrar en el pool (T12)."
     },
     {
       "id": "T20",
@@ -250,12 +266,13 @@
       "why": "La etiqueta verifica quién autorizó, no qué. El autor puede editar el issue después del labeled y el gate vuelve a admitir.",
       "where": "src/admission/resident.ts:42-47, gate.ts:34-41, github.ts:54-72",
       "proposal": "Guardar el contenido admitido (texto y hash) y exigir que la última edición sea anterior al labeled; si no, denegar con edited-after-label. El prompt usa solo esa copia.",
-      "status": "in_review",
+      "status": "done",
       "depends_on": [],
       "pr": 62,
       "branch": "feat/ronda3-hallazgos",
       "owner": "sonnet",
-      "reviewer": "fable"
+      "reviewer": "fable",
+      "note": "Fusionado (#62)."
     },
     {
       "id": "T21",
@@ -265,12 +282,13 @@
       "why": "No se leen comentarios, el evento no tiene actor y no se define quién puede responder. En un repo público, un tercero podría meter texto en una sesión con permisos de escritura.",
       "where": "src/admission/github.ts:18, resident.ts:44-46; 06 §5.1",
       "proposal": "Trigger por comentario con actor e id del comentario; permiso con la consulta existente (github.ts:66-71), solo triage o superior; posterior al recibo de la pregunta; el resto se registra y se ignora.",
-      "status": "in_review",
+      "status": "partial",
       "depends_on": [],
       "pr": 62,
       "branch": "feat/ronda3-hallazgos",
       "owner": "sonnet",
-      "reviewer": "fable"
+      "reviewer": "fable",
+      "note": "Fusionado (#62). Falta integrar en el pool (T12)."
     },
     {
       "id": "T22",
@@ -280,12 +298,13 @@
       "why": "human_action es texto libre: la fab publicaría con su identidad lo que el agente escriba, incluidos secretos leídos del entorno, menciones u órdenes a otros bots.",
       "where": "src/live/contract.ts:11; src/sandbox/confine.ts:21,62; src/agents.ts:55-58",
       "proposal": "Plantilla fija, tope de longitud, destino derivado del hilo guardado, neutralizar menciones y órdenes, pasar ThreatMonitor al texto saliente, una pregunta abierta por activity.",
-      "status": "in_review",
+      "status": "done",
       "depends_on": [],
       "pr": 62,
       "branch": "feat/ronda3-hallazgos",
       "owner": "sonnet",
-      "reviewer": "fable"
+      "reviewer": "fable",
+      "note": "Fusionado (#62)."
     },
     {
       "id": "T23",
@@ -295,12 +314,13 @@
       "why": "Nada une adm_threads con un change y ExternalRef solo admite jira. En modo auto, el comentario de la propia fab crearía un trigger que admite otra vez.",
       "where": "src/admission/db.ts:21, resident.ts:42-47; src/connectors/types.ts:7, links.ts:48",
       "proposal": "Relación N hilos → 1 change, ExternalRef con github, una admisión por hilo, y descartar los eventos del actor de la fab.",
-      "status": "in_review",
+      "status": "partial",
       "depends_on": [],
       "pr": 62,
       "branch": "feat/ronda3-hallazgos",
       "owner": "sonnet",
-      "reviewer": "fable"
+      "reviewer": "fable",
+      "note": "Fusionado (#62). Falta integrar en el pool (T12)."
     },
     {
       "id": "T24",
@@ -310,12 +330,13 @@
       "why": "El 06 asigna el lanzamiento al residente (diagrama §5) y al pool (§5.1). La cola de efectos es serie: un turno de 20 minutos pararía el poll y el Outbox.",
       "where": "06:L124 contra L140,147; src/admission/effects.ts:44-48",
       "proposal": "El pool ejecuta; el residente solo hace poll, Outbox y reencolado. Parar ya funciona por el latido.",
-      "status": "in_review",
+      "status": "done",
       "depends_on": [],
       "pr": 62,
       "branch": "feat/ronda3-hallazgos",
       "owner": "sonnet",
-      "reviewer": "fable"
+      "reviewer": "fable",
+      "note": "Fusionado (#62)."
     },
     {
       "id": "T25",
@@ -325,9 +346,10 @@
       "why": "D2 pide seis métodos y la espiga funciona con run y steer?. assess, handoff y dispose no tienen uso sin proceso retenido.",
       "where": "06:L155,L157; src/live/contract.ts:38-45",
       "proposal": "Actualizar el 06 al contrato implementado y aplazar el resto a cuando haya steer.",
-      "status": "in_review",
+      "status": "done",
       "depends_on": [],
-      "branch": "docs/06-v05"
+      "branch": "docs/06-v05",
+      "note": "Fusionado (#63)."
     },
     {
       "id": "T26",
@@ -337,12 +359,13 @@
       "why": "Un turno vivo con report válido y sin STATUS da status missing, y el pool falla esa activity. Tampoco hay regla para varios reports en un turno.",
       "where": "src/pool.ts:305-309; live/native.md",
       "proposal": "En modo vivo manda el report; gana el último válido; sin report, falla como hoy.",
-      "status": "in_review",
+      "status": "partial",
       "depends_on": [],
       "pr": 62,
       "branch": "feat/ronda3-hallazgos",
       "owner": "sonnet",
-      "reviewer": "fable"
+      "reviewer": "fable",
+      "note": "Fusionado (#62). Falta integrar en el pool (T12)."
     },
     {
       "id": "T27",
@@ -352,12 +375,13 @@
       "why": "awaiting choca con review_status=awaiting. El claim, el barrido terminal, requeueOrphans, waitForRelease, inbox y la salida de --once no conocen el estado nuevo.",
       "where": "src/store.ts:560-562,619-625,640-645,849,961,1063,1143; src/pool.ts:450-455; src/enums.ts:59",
       "proposal": "Nombre distinto, transición condicionada al id de la pregunta, e incluirlo en el barrido al cerrar un change.",
-      "status": "in_review",
+      "status": "done",
       "depends_on": [],
       "pr": 62,
       "branch": "feat/ronda3-hallazgos",
       "owner": "sonnet",
-      "reviewer": "fable"
+      "reviewer": "fable",
+      "note": "Fusionado (#62)."
     },
     {
       "id": "T28",
@@ -367,12 +391,13 @@
       "why": "Cualquier error del latido aborta al agente, también un SQLITE_BUSY agotado. El tope real del turno son 20 minutos fijos de runAgent.",
       "where": "src/pool.ts:108-115,229; src/store.ts:281-300; src/agents.ts:181",
       "proposal": "Tolerar fallos de bloqueo consecutivos hasta cerca del lease y hacer configurable el timeout del turno. Relacionada con T15.",
-      "status": "in_review",
+      "status": "done",
       "depends_on": [],
       "pr": 62,
       "branch": "feat/ronda3-hallazgos",
       "owner": "sonnet",
-      "reviewer": "fable"
+      "reviewer": "fable",
+      "note": "Fusionado (#62)."
     },
     {
       "id": "T29",
@@ -382,12 +407,13 @@
       "why": "No hay reconciliación ni evento. Una caída entre enviar el comentario y cerrar el efecto deja reply en unknown y la activity espera para siempre.",
       "where": "src/admission/effects.ts:35,74-78",
       "proposal": "Marcador en el comentario y reconciliación antes de reenviar; evento visible al quedar dead o unknown.",
-      "status": "in_review",
+      "status": "done",
       "depends_on": [],
       "pr": 62,
       "branch": "feat/ronda3-hallazgos",
       "owner": "sonnet",
-      "reviewer": "fable"
+      "reviewer": "fable",
+      "note": "Fusionado (#62)."
     },
     {
       "id": "T30",
@@ -397,12 +423,13 @@
       "why": "El gate lo calcula y lo guarda, pero nadie lo lee fuera de src/admission.",
       "where": "src/admission/resident.ts:67-68",
       "proposal": "propose → solo addSignal (triage humano); change → triageSignal.",
-      "status": "in_review",
+      "status": "partial",
       "depends_on": [],
       "pr": 62,
       "branch": "feat/ronda3-hallazgos",
       "owner": "sonnet",
-      "reviewer": "fable"
+      "reviewer": "fable",
+      "note": "Fusionado (#62). Falta integrar en el pool (T12)."
     },
     {
       "id": "T31",
@@ -412,12 +439,13 @@
       "why": "Sin plazo, 20 conversaciones sin respuesta llenan el taskLimit. El slot reservado del 06 no existe ni hace falta: el claim ya ordena por created_at. La concurrencia es por proceso de pool.",
       "where": "06:L170; src/store.ts:486,645; src/pool.ts:429",
       "proposal": "Plazo → blocked con motivo; quitar el slot reservado del 06; documentar un pool por workstream.",
-      "status": "in_review",
+      "status": "done",
       "depends_on": [],
       "pr": 62,
       "branch": "feat/ronda3-hallazgos",
       "owner": "sonnet",
-      "reviewer": "fable"
+      "reviewer": "fable",
+      "note": "Fusionado (#62)."
     },
     {
       "id": "T32",
@@ -427,12 +455,13 @@
       "why": "native lanza si se le pide confine, y el 06 decide los dos adaptadores en paralelo para texto no confiable (ADR-0007).",
       "where": "06:L193; src/live/native.ts:35-37",
       "proposal": "La salida de la fase 2 exige claude confinado; native sigue en paralelo solo para changes creados a mano.",
-      "status": "in_review",
+      "status": "partial",
       "depends_on": [],
       "pr": 62,
       "branch": "feat/ronda3-hallazgos",
       "owner": "sonnet",
-      "reviewer": "fable"
+      "reviewer": "fable",
+      "note": "Fusionado (#62). Falta integrar en el pool (T12)."
     },
     {
       "id": "T33",
@@ -442,12 +471,13 @@
       "why": "change.description entra literal bajo # Change y puede imitar secciones del prompt.",
       "where": "src/prompts.ts:57-60",
       "proposal": "Delimitador con nonce y aviso. No sustituye al sandbox.",
-      "status": "in_review",
+      "status": "partial",
       "depends_on": [],
       "pr": 62,
       "branch": "feat/ronda3-hallazgos",
       "owner": "sonnet",
-      "reviewer": "fable"
+      "reviewer": "fable",
+      "note": "Fusionado (#62). Falta integrar en el pool (T12)."
     },
     {
       "id": "T34",
@@ -457,12 +487,13 @@
       "why": "El token va dentro de --mcp-config y se ve en la lista de procesos. Que dos --allowedTools y dos --mcp-config se fusionen es solo empírico.",
       "where": "src/live/claude.ts:13-17; src/sandbox/confine.ts:64",
       "proposal": "Pasar la config por archivo y añadir un test que fije el comportamiento.",
-      "status": "in_review",
+      "status": "partial",
       "depends_on": [],
       "pr": 62,
       "branch": "feat/ronda3-hallazgos",
       "owner": "sonnet",
-      "reviewer": "fable"
+      "reviewer": "fable",
+      "note": "Fusionado (#62). Falta integrar en el pool (T12)."
     },
     {
       "id": "T35",
@@ -472,9 +503,28 @@
       "why": "Unas quince afirmaciones ya no coinciden con rc.12, y los ids D1-D3 se duplican entre el 06 y este archivo.",
       "where": "techdocs/docs/investigacion/inspiracion/06-integracion-superagent-fab.md",
       "proposal": "Aplicar la tabla de la sección 6 de review3/fable.md.",
-      "status": "in_review",
+      "status": "done",
       "depends_on": [],
-      "branch": "docs/06-v05"
+      "branch": "docs/06-v05",
+      "note": "Fusionado (#63)."
+    },
+    {
+      "id": "T36",
+      "title": "Aprobar las decisiones S3-S8 del 06 §5.3",
+      "status": "done",
+      "depends_on": []
+    },
+    {
+      "id": "T37",
+      "title": "Test inestable notify … wake the model once (falló en el CI de #59)",
+      "status": "pending",
+      "depends_on": []
+    },
+    {
+      "id": "T38",
+      "title": "Limpieza: worktrees de ramas fusionadas y archivos 06/07 sin seguimiento en el repo principal",
+      "status": "pending",
+      "depends_on": []
     }
   ]
 }
