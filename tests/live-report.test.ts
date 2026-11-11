@@ -95,3 +95,12 @@ echo '{"type":"result","result":"ok","session_id":"x"}'`);
     expect(new ReportStore(adm).pending(a.id)).toMatchObject({ attemptId: 'att-9', state: 'awaiting' });
   } finally { process.env.PATH = saved; }
 });
+
+test('T26: manda el report, gana el último válido y la línea STATUS no decide; sin report no hay resultado (falla como hoy)', async () => {
+  const { liveOutcome } = await import('../src/admission/reports.ts');
+  expect(liveOutcome([])).toBeUndefined();
+  expect(liveOutcome([{ state: 'awaiting', summary: 's', human_action: '¿?' }])?.kind).toBe('awaiting'); // sin STATUS en el texto: no es `missing`
+  expect(liveOutcome([{ state: 'blocked', summary: 'a' }, { state: 'done', summary: 'b' }])?.report.summary).toBe('b');
+  expect(liveOutcome([{ state: 'done', summary: 'ok' }, { state: 'awaiting', summary: 'x' }])?.kind).toBe('done'); // el último no es válido
+  expect(liveOutcome([{ state: 'nope' as never, summary: 'x' }])).toBeUndefined();
+});

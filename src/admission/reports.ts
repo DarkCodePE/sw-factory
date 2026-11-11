@@ -63,3 +63,16 @@ export function applyReport(store: Store, adm: AdmissionDb, effects: Effects, p:
   p.crash?.('report-applied');
   return { state: 'awaiting', questionId: result };
 }
+
+export type LiveOutcome = { kind: LiveReport['state']; report: LiveReport };
+
+/**
+ * Precedencia entre los dos canales de estado de un turno vivo (T26, H-11): manda el `report`; gana el último válido
+ * (un `awaiting` sin `human_action` no lo es); la línea `STATUS:` del texto se ignora si hay report. Sin report válido
+ * devuelve undefined y el pool decide por `run.status`, es decir, falla como hoy (`missing`).
+ */
+export function liveOutcome(reports: readonly LiveReport[]): LiveOutcome | undefined {
+  const last = [...reports].reverse().find(r => (r.state === 'done' || r.state === 'blocked' || r.state === 'awaiting') && typeof r.summary === 'string'
+    && (r.state !== 'awaiting' || !!r.human_action?.trim()));
+  return last ? { kind: last.state, report: last } : undefined;
+}
