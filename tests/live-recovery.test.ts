@@ -43,3 +43,15 @@ test('respuesta humana aún no entregada: es el mensaje del turno; tras entregar
   expect(planTurn(adm, a)).toMatchObject({ action: 'resume', reason: 'orphan' });
   void store;
 });
+
+test('A3: un reintento con motivo (fallo de gate o comentario del revisor) lleva el motivo; «continúa» solo para la orfandad', () => {
+  const { store, adm, change, claim } = claimed(), a = claim();
+  new SessionStore(adm).markLaunched(new SessionStore(adm).begin(change.id, a.kind, meta).session.sessionId);
+  store.failActivity(a.id, 'w1', 'gate failed: tests red in calc.test.ts');
+  const plan = planTurn(adm, claim('w2'));
+  expect(plan).toMatchObject({ action: 'resume', reason: 'retry' });
+  expect((plan as { prompt: string }).prompt).toContain('tests red in calc.test.ts');
+  expect((plan as { prompt: string }).prompt).not.toContain(CONTINUE_PROMPT);
+  const withReview = { ...store.getActivity(a.id), error: null, reviewComment: 'falta el caso vacío' };
+  expect((planTurn(adm, withReview as never) as { prompt: string }).prompt).toContain('falta el caso vacío');
+});
