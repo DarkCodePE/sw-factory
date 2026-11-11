@@ -16,7 +16,13 @@ export type EffectHandler = {
 /** Un efecto que queda `dead` o `unknown` pide atención humana o reconciliación: no puede quedarse mudo (T29). */
 export type EffectAlert = { kind: string; key: string; status: 'dead' | 'unknown'; error: string; payload: any };
 export type CrashPoint = 'after-read' | 'after-register' | 'effect-claimed' | 'effect-ran'
-  | 'report-recorded' | 'report-applied' | 'answer-applied' | 'signal-created';
+  | 'report-recorded' | 'report-applied' | 'answer-applied' | 'signal-created'
+  | 'session-written' | 'session-launched' | 'turn-ended' | 'decision-recorded';
+
+/** Caída inyectada por un test en un `CrashPoint`: el pool no la convierte en un fallo de la activity (una caída real no deja rastro). */
+export class CrashInjected extends Error {
+  constructor(readonly point: string) { super(`caída inyectada en ${point}`); this.name = 'CrashInjected'; }
+}
 type Row = { id: number; kind: string; key: string; payload: string; attempts: number; attempt_id: string };
 
 export class Effects {

@@ -31,6 +31,9 @@ import { createGhGateway } from './connectors/github.ts';
 import { ChangeLinkStore } from './connectors/links.ts';
 import { validateMain } from './validators/cli.ts';
 import { residentMain } from './admission/cli.ts';
+import { linkTriagedSignal } from './admission/apply.ts';
+import { AdmissionDb, hasAdmission } from './admission/db.ts';
+import { resetSessionCap } from './admission/sessions.ts';
 import { protectedIntegrity, purgeRegenerableCaches } from './validators/integrity.ts';
 import { mergeRecoverably } from './validators/publish.ts';
 
@@ -89,11 +92,11 @@ const HELP = `fab — agente de código y fábrica de software local
   --verify-setup <comando>  Fase previa al gate, repetible: con red, worktree solo lectura, escribe solo en $FAB_DEPS; el gate lo monta ro
                       (PYTHONPATH, PATH/bin, NODE_PATH). Se repite solo si cambia. Ej: --verify-setup 'python3 -m pip install --target $FAB_DEPS pytest' --verify 'pytest -q'
   fab resident report [--json]  informe de solo lectura de lo registrado (cursor, decisiones, label-not-verified, efectos con reintentos)
-  fab resident --repo owner/name [--mode off|observe] [--once] [--since ISO] [--interval s] [--label fab] [--allow-author u] [--trust OWNER,MEMBER]
+  fab resident --repo owner/name [--mode off|observe|auto] [--workstream <slug>] [--once] [--since ISO] [--interval s] [--label fab] [--allow-author u] [--trust OWNER,MEMBER]
                                 residente en modo observe: registra would_admit de issues sin crear changes
   fab inbox [slug]
   fab review <activityId> <approve|comment|decline> [--comment <text>]
-  fab run <slug> [--once] [--agent <name>] [--accept-agent-binaries]
+  fab run <slug> [--once] [--agent <name>] [--accept-agent-binaries] [--live]
   fab tui <slug>                panel interactivo: changes, bandeja y eventos
   fab status <slug>
   fab show <changeId>
@@ -127,6 +130,12 @@ function allActivities(store: Store) {
 
 function allChanges(store: Store) {
   return store.listWorkstreams().flatMap((w) => store.listChanges(w.id));
+}
+
+/** Texto de la pregunta abierta de una activity `waiting_reply` (vive en adm_questions). */
+function waitingQuestion(store: Store, activityId: string): string {
+  if (!hasAdmission(store)) return '-';
+  return (new AdmissionDb(store).db.query("SELECT text FROM adm_questions WHERE activity_id = ? AND status = 'open'").get(activityId) as { text: string } | null)?.text ?? '-';
 }
 
 async function main(argv: string[]): Promise<number> {
@@ -181,6 +190,7 @@ async function main(argv: string[]): Promise<number> {
       force: { type: 'boolean' },
       discard: { type: 'boolean' },
       'accept-agent-binaries': { type: 'boolean' },
+      live: { type: 'boolean' },
       protect: { type: 'string', multiple: true },
       verify: { type: 'string', multiple: true },
       'verify-setup': { type: 'string', multiple: true },
@@ -245,6 +255,7 @@ async function main(argv: string[]): Promise<number> {
           : [findByPrefix(store.listWorkstreams().flatMap((w) => store.listSignals(w.id)), sub ?? '', 'signal')];
         for (const s of signals) {
           const c = store.triageSignal(s.id);
+          if (hasAdmission(store)) linkTriagedSignal(new AdmissionDb(store), s.id, c.id); // M1
           console.log(`signal ${short(s.id)} -> change ${short(c.id)} (${c.status})`);
         }
         return 0;
@@ -255,6 +266,11 @@ async function main(argv: string[]): Promise<number> {
         for (const a of items) {
           const c = store.getChange(a.changeId);
           console.log(`\n== ${short(a.id)}  ${a.kind}  change ${short(c.id)}: ${c.title}`);
+          if (a.status === 'waiting_reply') { // M2: la pregunta que espera la persona y qué puede hacer
+            console.log(`espera respuesta (plazo ${a.waitUntil ?? '-'}): ${waitingQuestion(store, a.id)}`);
+            console.log(`-> responde en el hilo del issue | fab retry ${short(c.id)} (abandona la espera) | fab reject ${short(c.id)} (cancela)`);
+            continue;
+          }
           if (a.status === 'blocked' || a.status === 'quarantined') {
             console.log(`${a.status}: ${a.error ?? ''}`);
             console.log(`-> fab retry ${short(c.id)} | fab reject ${short(c.id)}`);
@@ -274,7 +290,7 @@ async function main(argv: string[]): Promise<number> {
         return 0;
       }
       case 'run': {
-        await runPool(store, { workstream: sub ?? '', stateDir: STATE_DIR, agentOverride: values.agent, untilIdle: !!values.once, acceptAgentBinaries: !!values['accept-agent-binaries'] });
+        await runPool(store, { workstream: sub ?? '', stateDir: STATE_DIR, agentOverride: values.agent, untilIdle: !!values.once, acceptAgentBinaries: !!values['accept-agent-binaries'], live: !!values.live });
         return 0;
       }
       case 'tui': {
@@ -300,6 +316,7 @@ async function main(argv: string[]): Promise<number> {
         for (const a of store.listActivities({ changeId: c.id })) {
           console.log(`\n--- ${a.kind} ${short(a.id)} ${a.status}${a.reviewStatus ? ` review=${a.reviewStatus}` : ''} retries=${a.retryCount}`);
           if (a.reviewComment) console.log(`comentario: ${a.reviewComment}`);
+          if (a.status === 'waiting_reply') console.log(`pregunta: ${waitingQuestion(store, a.id)}`);
           if (a.result) console.log(a.result.slice(0, 3000));
           if (a.error) console.log(`error: ${a.error.slice(0, 1500)}`);
         }
@@ -353,7 +370,9 @@ async function main(argv: string[]): Promise<number> {
       }
       case 'retry': {
         const c = findByPrefix(allChanges(store), sub ?? '', 'change');
+        for (const w of store.listActivities({ changeId: c.id }).filter(x => x.status === 'waiting_reply')) store.abandonWait(w.id); // M2
         const a = store.retryChange(c.id);
+        if (hasAdmission(store)) resetSessionCap(store, new AdmissionDb(store), c.id); // A6: un reintento humano es una decisión nueva
         console.log(`change ${short(c.id)}: ${a.kind} re-encolada`);
         return 0;
       }

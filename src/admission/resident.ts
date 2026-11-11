@@ -1,9 +1,10 @@
-// Residente en modo observe: poll de GitHub → Trigger/Thread → efecto `admit` → gate → registro de would_admit.
-// No crea signals ni changes ni lanza agentes, y no escribe tablas de la fab (solo lee `activities`/`signals` para vencer o cancelar preguntas y decidir si un change es de canal; los cambios van por comandos del Store).
+// Residente: poll de GitHub → Trigger/Thread → efecto `admit` → gate → registro de would_admit. En `observe` no crea signals ni changes;
+// en `auto` (T12) aplica la decisión (`applyAdmission`), entrega respuestas y publica preguntas. Nunca lanza agentes (los lanza el pool), y no escribe tablas de la fab (solo lee `activities`/`signals` para vencer o cancelar preguntas y decidir si un change es de canal; los cambios van por comandos del Store).
 import { createHash } from 'node:crypto';
 import { runCommand, type CommandRunner } from '../connectors/github.ts';
 import type { Store } from '../store.ts';
-import { expireQuestions, reapQuestions } from './answers.ts';
+import { answerQuestion, expireQuestions, reapQuestions } from './answers.ts';
+import { applyAdmission } from './apply.ts';
 import { AdmissionDb } from './db.ts';
 import { Effects, type CrashPoint, type EffectAlert } from './effects.ts';
 import { commentGate, gate, type GateDecision, type GateInput, type GatePolicy } from './gate.ts';
@@ -12,9 +13,11 @@ import { ThreadLinks } from './links.ts';
 import { Outbox } from './outbox.ts';
 import { ResidentLock } from './lock.ts';
 
-export type Mode = 'off' | 'observe';
+export type Mode = 'off' | 'observe' | 'auto';
 export type ResidentConfig = {
   repo: string; policy: GatePolicy; mode: Mode;
+  /** Workstream donde el modo auto crea el signal/change de un hilo admitido (obligatorio en auto). */
+  workstream?: string;
   /** Login con el que la fab publica (T23): sus eventos se descartan para no dispararse a sí misma. */
   selfLogin?: string;
   /** Lee también los comentarios (opt-in, T21): cada uno es un Trigger con su actor y se decide si podría responder una pregunta abierta. */
@@ -33,20 +36,28 @@ export class Resident {
   private readonly source: string;
   /** Avisos de efectos `dead`/`unknown` aún sin mostrar (T29); `run` los saca al log. */
   readonly alerts: string[] = [];
+  private readonly outbox?: Outbox;
+  /** M4: en auto siempre se leen los comentarios (el Outbox publica preguntas; sin leer respuestas vencerían todas). */
+  private readonly comments: boolean;
   private stopped = false;
   private wake?: () => void;
 
   constructor(private readonly store: Store, private readonly cfg: ResidentConfig) {
-    if ((cfg.mode as string) !== 'off' && (cfg.mode as string) !== 'observe') throw new Error(`Modo "${cfg.mode}" no admitido en la fase 1: usa off|observe`);
+    if (!['off', 'observe', 'auto'].includes(cfg.mode)) throw new Error(`Modo "${cfg.mode}" no admitido: usa off|observe|auto`);
     if (cfg.comments && !cfg.selfLogin) throw new Error('--comments exige --self <login>: sin la identidad de la fab no se puede filtrar su propio comentario');
+    this.comments = !!cfg.comments || cfg.mode === 'auto';
     this.adm = new AdmissionDb(store);
     this.lock = new ResidentLock(this.adm, { ttlMs: cfg.lockTtlMs });
     this.source = `github:${cfg.repo}`;
+    if (cfg.mode === 'auto' && !cfg.workstream) throw new Error('el modo auto exige --workstream <slug>: dónde se crean los signals y changes admitidos');
+    if (cfg.mode === 'auto' && !cfg.selfLogin) throw new Error('el modo auto exige --self <login>: la fab publica sus preguntas con esa identidad y descarta sus propios eventos');
     if (cfg.outbox && !cfg.selfLogin) throw new Error('outbox exige selfLogin');
+    // S7: en modo auto el Outbox siempre está (las preguntas de los turnos vivos salen por aquí).
+    if (cfg.outbox || cfg.mode === 'auto') this.outbox = new Outbox(this.adm, { selfLogin: cfg.selfLogin!, run: cfg.run });
     // Decisión de T24: el residente solo hace poll, Outbox y reencolado; los turnos los lanza el pool (no hay efectos launch/deliver/stop).
     this.effects = new Effects(this.adm, { admit: { run: payload => this.admit(payload.triggerKey), rerunnable: true },
       inbound: { run: payload => this.inbound(payload.triggerKey), rerunnable: true },
-      ...(cfg.outbox ? { reply: new Outbox(this.adm, { selfLogin: cfg.selfLogin!, run: cfg.run }).handler() } : {}) },
+      ...(this.outbox ? { reply: this.outbox.handler() } : {}) },
       { maxAttempts: cfg.maxAttempts, baseMs: cfg.baseMs, fence: () => this.lock.assertOwned(), crash: cfg.crash, onAlert: a => this.alert(a) });
   }
 
@@ -78,14 +89,28 @@ export class Resident {
     const skip = link ? ['thread-already-admitted', `change:${link}`]
       : this.cfg.selfLogin && event.author.toLowerCase() === this.cfg.selfLogin.toLowerCase() ? ['self-authored'] : undefined;
     if (skip) { this.record(triggerKey, { would_admit: false, strength: 'inferred', scope_max: 'none', reasons: skip }); return; }
-    const input: GateInput = { repo: event.repo, labels: event.labels, author: event.author, authorAssociation: event.authorAssociation, state: event.state };
-    // Solo se consulta quién puso la etiqueta cuando el resto del gate la dejaría pasar: evita llamadas inútiles a la API.
-    const label = this.cfg.policy.triggerLabel.toLowerCase();
-    if (event.state === 'open' && event.labels.some(l => l.toLowerCase() === label) && this.cfg.policy.repos.some(r => r.toLowerCase() === event.repo.toLowerCase()))
-      input.labeler = await labeler(event.repo, event.number, this.cfg.policy.triggerLabel, this.cfg.run ?? runCommand);
-    let d = gate(input, this.cfg.policy);
-    if (d.would_admit) d = await this.bindContent(triggerKey, event, input);
-    this.record(triggerKey, d);
+    const registered = (): GateDecision | undefined => {
+      const r = this.adm.db.query('SELECT would_admit, strength, scope_max, reasons FROM adm_decisions WHERE trigger_key = ?').get(triggerKey) as
+        { would_admit: number; strength: GateDecision['strength']; scope_max: GateDecision['scope_max']; reasons: string } | null;
+      return r ? { would_admit: r.would_admit === 1, strength: r.strength, scope_max: r.scope_max, reasons: JSON.parse(r.reasons) as string[] } : undefined;
+    };
+    // B1: si ya hay una decisión registrada para este trigger (reejecución tras una caída) se aplica esa, sin volver a consultar el gate:
+    // el mundo pudo cambiar (etiqueta quitada, issue editado) y `adm_decisions` y lo aplicado dirían cosas distintas.
+    let d = registered();
+    if (!d) {
+      const input: GateInput = { repo: event.repo, labels: event.labels, author: event.author, authorAssociation: event.authorAssociation, state: event.state };
+      // Solo se consulta quién puso la etiqueta cuando el resto del gate la dejaría pasar: evita llamadas inútiles a la API.
+      const label = this.cfg.policy.triggerLabel.toLowerCase();
+      if (event.state === 'open' && event.labels.some(l => l.toLowerCase() === label) && this.cfg.policy.repos.some(r => r.toLowerCase() === event.repo.toLowerCase()))
+        input.labeler = await labeler(event.repo, event.number, this.cfg.policy.triggerLabel, this.cfg.run ?? runCommand);
+      let fresh = gate(input, this.cfg.policy);
+      if (fresh.would_admit) fresh = await this.bindContent(triggerKey, event, input);
+      this.record(triggerKey, fresh);
+      this.cfg.crash?.('decision-recorded');
+      d = registered()!;
+    }
+    // S8 (auto): la decisión se aplica con comandos del Store, en una transacción y una vez por hilo (`applyAdmission`); `observe` solo registra.
+    if (this.cfg.mode === 'auto') applyAdmission(this.store, this.adm, { thread: triggerKey.slice(0, triggerKey.lastIndexOf('@')), workstream: this.cfg.workstream!, decision: d, crash: this.cfg.crash });
   }
 
   /** INSERT OR IGNORE: reejecutar tras una caída no cambia el registro (el efecto es `rerunnable`). */
@@ -152,9 +177,23 @@ export class Resident {
     const q = change ? this.adm.db.query("SELECT id, published_at FROM adm_questions WHERE change_id = ? AND status = 'open' ORDER BY asked_at DESC LIMIT 1").get(change) as { id: string; published_at: string | null } | null : null;
     const input = { author: c.author, authorType: c.authorType, self: this.cfg.selfLogin!, createdAt: c.createdAt, question: q ? { publishedAt: q.published_at } : undefined };
     let v = commentGate(input);
+    // A4: la pregunta pudo publicarse sin que se guardara `published_at` (caída entre ambos). Se reconcilia por marcador; si sigue sin
+    // publicarse, se lanza para que el efecto reintente en vez de registrar una decisión definitiva que descartaría una respuesta válida.
+    if (v.reason === 'question-not-published' && this.cfg.mode === 'auto' && this.outbox) {
+      if (!await this.outbox.reconcileQuestion(q!.id)) throw new Error(`la pregunta ${q!.id} aún no está publicada: el comentario se reevalúa luego`);
+      const published = (this.adm.db.query('SELECT published_at FROM adm_questions WHERE id = ?').get(q!.id) as { published_at: string | null }).published_at;
+      input.question = { publishedAt: published };
+      v = commentGate(input);
+    }
     if (v.reason === 'role-unchecked') v = commentGate({ ...input, role: await collaboratorRole(c.repo, c.author, this.cfg.run ?? runCommand) });
     this.adm.db.query('INSERT OR IGNORE INTO adm_comment_decisions(trigger_key, accept, reason, question_id, decided_at) VALUES (?,?,?,?,?)')
       .run(triggerKey, v.accept ? 1 : 0, v.reason, v.accept ? q!.id : null, this.adm.iso());
+    // S5 (auto): una respuesta autorizada se entrega y reencola la activity en una transacción. Reejecutar tras una caída es inocuo
+    // (`ignored:not-open`): la decisión ya quedó registrada y la pregunta ya no está abierta.
+    if (v.accept && this.cfg.mode === 'auto') {
+      const body = (this.adm.db.query('SELECT body FROM adm_comments WHERE trigger_key = ?').get(triggerKey) as { body: string }).body;
+      answerQuestion(this.store, this.adm, { questionId: q!.id, answer: body, by: c.author, crash: this.cfg.crash });
+    }
   }
 
   /** Un ciclo: poll de la fuente y despacho de efectos. Exige el lock tomado. */
@@ -172,7 +211,7 @@ export class Resident {
     const triggers = this.register(events);
     this.cfg.crash?.('after-register');
     let comments = 0;
-    if (this.cfg.comments) {
+    if (this.comments) {
       const ccursor = (this.adm.db.query('SELECT value FROM adm_cursors WHERE source = ?').get(`${this.source}/comments`) as { value: string } | null)?.value;
       comments = this.registerComments(await pollComments(this.cfg.repo, ccursor ?? since, this.cfg.run ?? runCommand));
     }

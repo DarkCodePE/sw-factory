@@ -33,3 +33,12 @@ export function applyAdmission(store: Store, adm: AdmissionDb, p: { thread: stri
     return change ? { scope: 'change', signalId: signal.id, changeId: change.id } : { scope: 'propose', signalId: signal.id };
   });
 }
+
+/**
+ * M1: un signal `propose` que una persona triaja a mano (`fab triage`) da un change sin hilo: su pregunta no tendría destino. Si el
+ * signal nació de un hilo admitido, se une ese hilo al change (y el change pasa a ser «de canal»). Sin hilo, no hace nada.
+ */
+export function linkTriagedSignal(adm: AdmissionDb, signalId: string, changeId: string): void {
+  const t = adm.db.query('SELECT thread_id FROM adm_thread_signals WHERE signal_id = ?').get(signalId) as { thread_id: string } | null;
+  if (t) new ThreadLinks(adm).link(t.thread_id, changeId);
+}

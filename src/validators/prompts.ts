@@ -1,5 +1,5 @@
 import type { ValidatorKind } from '../connectors/types.ts';
-import { historyBlock } from '../prompts.ts';
+import { historyBlock, untrusted as delimit } from '../prompts.ts';
 import type { Activity, Change } from '../store.ts';
 
 const VALIDATOR_RULES = `Rules:
@@ -57,6 +57,9 @@ export function buildValidatorPrompt(
     branch: string;
     worktree: string;
     history: Activity[];
+    /** M3: el change viene de un canal: título y descripción van delimitados como texto no confiable (igual que en el worker). */
+    untrusted?: boolean;
+    nonce?: string;
   },
   tpl: ValidatorTemplates = DEFAULT_VALIDATOR_TEMPLATES
 ): string {
@@ -82,9 +85,7 @@ export function buildValidatorPrompt(
   return `You are a specialized validation agent performing ${v} in a software factory.
 
 # Change
-Title: ${input.change.title}
-
-${input.change.description}
+${input.untrusted ? delimit(`Title: ${input.change.title}\n\n${input.change.description}`, input.nonce) : `Title: ${input.change.title}\n\n${input.change.description}`}
 
 # Context
 Working directory: ${input.worktree}

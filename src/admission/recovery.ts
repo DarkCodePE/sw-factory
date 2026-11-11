@@ -15,7 +15,16 @@ export type TurnPlan =
   | { action: 'resume'; reason: 'answer' | 'orphan' | 'retry'; prompt: string; questionId?: string }
   | { action: 'fresh' };                                                     // primer turno: prompt completo
 
-export function planTurn(adm: AdmissionDb, activity: Activity, opts: { worktreeNote?: string } = {}): TurnPlan {
+/** El motivo de un fallo o de una revisión: el error (salvo el de orfandad) y el comentario del revisor. */
+const reasonOf = (a: Pick<Activity, 'error' | 'reviewComment'>): string => [a.error && !a.error.startsWith('lease expired') ? `Failure: ${a.error}` : '', a.reviewComment ? `Reviewer comment: ${a.reviewComment}` : ''].filter(Boolean).join('\n');
+
+/**
+ * `opts.history`: las demás activities del change, de la más antigua a la más reciente (H1). Un reintento humano (`fab retry`,
+ * `resolveReview`) crea una activity NUEVA sin error ni comentario sobre la misma sesión: su motivo está en la anterior. Se toma
+ * el de la más reciente que lo tenga, y la búsqueda se corta en una activity completada del mismo tipo sin comentario.
+ * Un report pendiente siempre se aplica (M5): el pool lo descarta (`ReportStore.markApplied`) al fallar la activity, no se adivina por el texto del error.
+ */
+export function planTurn(adm: AdmissionDb, activity: Activity, opts: { worktreeNote?: string; history?: Activity[] } = {}): TurnPlan {
   const pending = new ReportStore(adm).pending(activity.id);
   if (pending) return { action: 'apply-report', report: pending };
   const session = new SessionStore(adm).current(activity.changeId, activity.kind);
@@ -25,7 +34,11 @@ export function planTurn(adm: AdmissionDb, activity: Activity, opts: { worktreeN
     .get(activity.id) as { id: string; answer: string } | null;
   if (answered) return { action: 'resume', reason: 'answer', questionId: answered.id, prompt: answered.answer };
   // Un reintento con motivo (gate, validador, revisión) debe llevarlo al agente; «continúa» solo es para una caída (orfandad).
-  const why = [activity.error && !activity.error.startsWith('lease expired') ? `Failure: ${activity.error}` : '', activity.reviewComment ? `Reviewer comment: ${activity.reviewComment}` : ''].filter(Boolean).join('\n');
+  let why = reasonOf(activity);
+  if (!why) for (const h of [...(opts.history ?? [])].reverse()) {
+    why = reasonOf(h);
+    if (why || (h.kind === activity.kind && h.status === 'completed')) break;
+  }
   if (why) return { action: 'resume', reason: 'retry', prompt: `Your previous attempt did not pass.\n${why}\n\nCheck the working tree (git status, git log), fix this and continue; do not start over.` };
   return { action: 'resume', reason: 'orphan', prompt: opts.worktreeNote ? `${CONTINUE_PROMPT}\n\nWorking tree now:\n${opts.worktreeNote}` : CONTINUE_PROMPT };
 }

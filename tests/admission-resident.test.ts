@@ -82,12 +82,12 @@ test('mismos fixtures, mismos registros en bases distintas (reproducible)', asyn
   expect(await clean()).toEqual(await clean());
 });
 
-test('CLI: auto se rechaza, y una segunda instancia sobre la misma base se niega', async () => {
+test('CLI: auto sin --workstream se rechaza, y una segunda instancia sobre la misma base se niega', async () => {
   const { store, resident } = track(open(dbPath()));
   const errors: string[] = []; const orig = console.error; console.error = (m: string) => { errors.push(String(m)); };
   try {
     expect(await residentMain(['--repo', REPO, '--mode', 'auto', '--once'], store, { run: fakeGh([]) })).toBe(1);
-    expect(errors.at(-1)).toMatch(/auto/);
+    expect(errors.at(-1)).toMatch(/--workstream/);
     resident.lock.acquire(); // primera instancia activa
     expect(await residentMain(['--repo', REPO, '--once'], store, { run: fakeGh([]) })).toBe(1);
     expect(errors.at(-1)).toMatch(/Ya hay un residente activo/);

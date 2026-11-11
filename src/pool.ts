@@ -7,7 +7,17 @@ import { join, resolve } from 'node:path';
 import { selfCommand } from './self.ts';
 import { activityLog, atomicEvidence, gitEvidence, isolationFor, readEgressProbe, runDirectory, writeManifest } from './manifest.ts';
 import { verifyAgentStart } from './agents-verify.ts';
-import { getAgent, runAgent } from './agents.ts';
+import { getAgent, runAgent, type AgentRun } from './agents.ts';
+import { expireQuestions } from './admission/answers.ts';
+import { isChannelChange } from './admission/channel.ts';
+import { AdmissionDb, hasAdmission } from './admission/db.ts';
+import { CrashInjected, Effects, type CrashPoint } from './admission/effects.ts';
+import { planTurn } from './admission/recovery.ts';
+import { applyReport, closeWithReport, ReportStore } from './admission/reports.ts';
+import { assertConfinement } from './sandbox/confine.ts';
+import { backendOf, liveBackendFor, runLiveActivity } from './live/turn.ts';
+import type { LiveOutcome } from './admission/reports.ts';
+import type { LiveBackend } from './live/contract.ts';
 import { buildWorkerPrompt } from './prompts.ts';
 import { fabSha, resolveProfile } from './profile.ts';
 import { HEARTBEAT_INTERVAL_MS, isBusyError, LEASE_TTL_MS, type Activity, type Store, type Workstream } from './store.ts';
@@ -63,6 +73,12 @@ export interface PoolOptions {
   untilIdle?: boolean;
   /** Start even when the workstream agent's pinned sha256 does not match the binary on PATH. */
   acceptAgentBinaries?: boolean;
+  /** Rama viva (S1): las activities de trabajo cuyo adaptador tiene backend vivo corren con sesión reanudable y `report`. Por defecto, no. */
+  live?: boolean;
+  /** Backends vivos por adaptador; por defecto los de `src/live/turn.ts`. Para tests. */
+  liveBackends?: Record<string, LiveBackend>;
+  /** Caída inyectada por un test en un punto del turno vivo; un `CrashInjected` sale del pool sin tocar la activity. */
+  crash?: (point: CrashPoint) => void;
   pollMs?: number;
   heartbeatMs?: number;
   leaseTtlMs?: number;
@@ -108,6 +124,13 @@ export function heartbeatVerdict(err: unknown, sinceLastOkMs: number, ttlMs: num
 export function turnTimeoutMs(opts: { turnTimeoutMs?: number }): number | undefined {
   const value = opts.turnTimeoutMs ?? Number(process.env.FAB_TURN_TIMEOUT_MS);
   return Number.isFinite(value) && value > 0 ? value : undefined;
+}
+
+/** M5: al fallar una activity (que se reintentará) el report pendiente es de un intento ya resuelto: se descarta en la misma transacción. */
+function failLive(store: Store, activityId: string, workerId: string, error: string): void {
+  if (!hasAdmission(store)) { store.failActivity(activityId, workerId, error); return; }
+  const adm = new AdmissionDb(store);
+  adm.tx(() => { new ReportStore(adm).markApplied(activityId); store.failActivity(activityId, workerId, error); });
 }
 
 export async function processActivity(
@@ -234,9 +257,27 @@ export async function processActivity(
         diffStat = '';
       }
     }
+    const live = liveBackendFor(opts, agent.name, a);
+    const adm = live || hasAdmission(store) ? new AdmissionDb(store) : undefined;
+    // T32/B1: el trabajo que entra por un canal es texto no confiable: va delimitado en el prompt y solo corre confinado.
+    const channel = !!adm && isChannelChange(adm, change.id);
+    const confine = !!opts.confine || channel;
+    if (channel && !opts.confine) {
+      try { assertConfinement(agent.name); } catch (err) {
+        store.blockActivity(a.id, workerId, `CHANNEL_NOT_CONFINABLE: ${(err as Error).message}`);
+        log(`[${workerId}] ${a.kind} blocked: change de canal sin adaptador confinable (${agent.name})`);
+        return;
+      }
+    }
+    // M1: un pool sin --live no ejecuta de un disparo una activity que ya tiene sesión lanzada, una respuesta por entregar o un report guardado.
+    if (!live && adm && !a.validator && planTurn(adm, a).action !== 'fresh') {
+      store.blockActivity(a.id, workerId, 'LIVE_SESSION_REQUIRED: la activity tiene una sesión viva (lanzada, respuesta pendiente o report guardado); arranca el pool con `fab run --live`');
+      log(`[${workerId}] ${a.kind} blocked: requiere un pool --live`);
+      return;
+    }
     const prompt = a.validator
-      ? buildValidatorPrompt(a.validator, { change, diffStat, base: 'main', branch, worktree: path, history }, profile.validators)
-      : buildWorkerPrompt({ workstream: ws, change, activity: a, history, worktree: path, branch }, { factoryCommits: agent.factoryCommits }, profile.worker);
+      ? buildValidatorPrompt(a.validator, { change, diffStat, base: 'main', branch, worktree: path, history, untrusted: channel || undefined }, profile.validators)
+      : buildWorkerPrompt({ workstream: ws, change, activity: a, history, worktree: path, branch, untrusted: channel || undefined }, { factoryCommits: agent.factoryCommits }, profile.worker);
     log(`[${workerId}] ${a.validator ?? a.kind} "${change.title}" -> ${agent.name} in ${path}`);
     const readOnly = a.validator ? (a.validator !== 'qa') : (a.kind === 'investigation');
     const probeFile = `${runDirectory(opts.stateDir, change.id)}/${a.id}.egress.json`;
@@ -249,9 +290,20 @@ export async function processActivity(
     // From launch onward the cost is unknown until the agent reports it.
     attemptCosts[attemptCosts.length - 1] = null;
     atomicEvidence(meta, JSON.stringify(pendingEvidence));
-    const run = await runAgent(opts.confine ? agent : captureAgent, prompt, path, turnTimeoutMs(opts), {
-      confine: opts.confine,
-      capturePath: opts.confine ? activityLog(opts.stateDir, change.id, a.id) : undefined,
+    const crash = (point: CrashPoint) => opts.crash?.(point);
+    let outcome: LiveOutcome | undefined;
+    let run: AgentRun;
+    if (live) {
+      ({ run, outcome } = await runLiveActivity(store, adm!, a, {
+        backend: live, cwd: path, profileDigest, prompt, timeoutMs: turnTimeoutMs(opts), signal: abortController.signal, confine,
+        capturePath: confine ? activityLog(opts.stateDir, change.id, a.id) : undefined,
+        onSpawn: pgid => store.setActivityAgentPgid(a.id, pgid), crash,
+        templates: profile.worker, branch, factoryCommits: agent.factoryCommits,
+      }));
+      if (!confine) atomicEvidence(activityLog(opts.stateDir, change.id, a.id), `${run.stdout ?? ''}${run.stderr ?? ''}`);
+    } else run = await runAgent(confine ? agent : captureAgent, prompt, path, turnTimeoutMs(opts), {
+      confine,
+      capturePath: confine ? activityLog(opts.stateDir, change.id, a.id) : undefined,
       readOnly,
       signal: abortController.signal,
       onSpawn: (pgid) => {
@@ -261,7 +313,7 @@ export async function processActivity(
 
     attemptCosts[attemptCosts.length - 1] = run.usage?.costUsd ?? null;
     atomicEvidence(meta, JSON.stringify({
-      isolation: opts.confine ? 'bwrap-allowlist' : isolationFor(agent.name), durationMs: run.durationMs, exitCode: run.exitCode, usage: run.usage ?? null,
+      isolation: confine ? 'bwrap-allowlist' : isolationFor(agent.name), durationMs: run.durationMs, exitCode: run.exitCode, usage: run.usage ?? null,
       attemptCosts,
       egressProbe: agent.name === 'native' ? readEgressProbe(probeFile) : null,
       // Keep only a declared final worker report, independently of later block/failure decisions; never diagnostics or an earlier attempt.
@@ -315,26 +367,33 @@ export async function processActivity(
         return;
       }
     }
+    if (outcome?.kind === 'awaiting') {
+      const r = applyReport(store, adm!, new Effects(adm!, {}), { activityId: a.id, workerId, crash });
+      log(`[${workerId}] ${a.kind} waiting for a human reply${r.state === 'awaiting' ? ` (${r.questionId})` : ''}`);
+      return;
+    }
+    // A5: con un turno vivo, el cierre y la marca del report como aplicado van en una sola transacción.
+    const close = <T>(fn: () => T): T => outcome ? closeWithReport(store, adm!, { activityId: a.id, workerId }, fn) : fn();
     if (run.status.kind === 'blocked') {
-      store.blockActivity(a.id, workerId, run.status.reason);
+      close(() => store.blockActivity(a.id, workerId, run.status.reason));
       log(`[${workerId}] ${a.validator ?? a.kind} blocked: ${run.status.reason}`);
       return;
     }
     if (!run.ok) {
-      store.failActivity(a.id, workerId, `agent exit ${run.exitCode}: ${run.output.slice(-1000)}`);
+      failLive(store, a.id, workerId, `agent exit ${run.exitCode}: ${run.output.slice(-1000)}`);
       log(`[${workerId}] ${a.validator ?? a.kind} failed (exit ${run.exitCode})`);
       return;
     }
     if (run.status.kind !== 'done') {
       const prefix = run.status.reason;
-      store.failActivity(a.id, workerId, `${prefix}\n\n${run.output.slice(-2000)}`);
+      failLive(store, a.id, workerId, `${prefix}\n\n${run.output.slice(-2000)}`);
       log(`[${workerId}] ${a.validator ?? a.kind} failed: ${run.status.reason}`);
       return;
     }
     if (a.validator) {
       const verdictResult = parseVerdict(run.output);
       if (!verdictResult) {
-        store.failActivity(a.id, workerId, `report has no valid VERDICT line:\n\n${run.output.slice(-2000)}`);
+        failLive(store, a.id, workerId, `report has no valid VERDICT line:\n\n${run.output.slice(-2000)}`);
         log(`[${workerId}] ${a.validator} rejected: missing valid VERDICT`);
         return;
       }
@@ -345,7 +404,7 @@ export async function processActivity(
         if (statusText.length > 0) isDirty = true;
       } catch {}
       if (isDirty) {
-        store.failActivity(a.id, workerId, `${a.validator} dejó cambios en el worktree`);
+        failLive(store, a.id, workerId, `${a.validator} dejó cambios en el worktree`);
         log(`[${workerId}] ${a.validator} dejó cambios en el worktree`);
         return;
       }
@@ -360,14 +419,15 @@ export async function processActivity(
       if (agent.factoryCommits) await commitWorktree(path, `${change.title}\n\nImplemented by ${agent.name} (fab activity ${a.id.slice(0, 8)}).`);
       const commits = await branchCommits(ws.repo, branch);
       if (commits.length === 0 && agent.name !== 'fake') {
-        store.failActivity(a.id, workerId, 'implementation reported done but left no commits on the branch');
+        failLive(store, a.id, workerId, 'implementation reported done but left no commits on the branch');
         log(`[${workerId}] implementation produced no commits`);
         return;
       }
     }
-    store.completeActivity(a.id, workerId, run.output);
+    close(() => store.completeActivity(a.id, workerId, run.output));
     log(`[${workerId}] ${a.kind} done in ${Math.round(run.durationMs / 1000)}s`);
   } catch (err) {
+    if (err instanceof CrashInjected) throw err;
     if (isBusyError(err)) {
       log(`[${workerId}] database locked during activity processing, preserving activity without failing`);
       try {
@@ -381,7 +441,7 @@ export async function processActivity(
       if (!store.isTerminalChange(currentChange.status) && !abortController.signal.aborted) {
         if (err instanceof WorktreeNeedsRepair) store.blockActivity(activity.id, workerId, msg);
         else if (activity.kind === 'gates') store.blockActivity(activity.id, workerId, `GATES_FAIL: ${msg}`);
-        else store.failActivity(activity.id, workerId, msg);
+        else failLive(store, activity.id, workerId, msg);
       } else {
         store.releaseActivity(activity.id, workerId);
       }
@@ -405,6 +465,8 @@ export async function runPool(store: Store, opts: PoolOptions): Promise<void> {
   const agentCheck = verifyAgentStart(opts.agentOverride ?? ws.agent);
   if (agentCheck.violation && !opts.acceptAgentBinaries) throw new Error(agentCheck.violation);
   if (agentCheck.warning) log(agentCheck.warning);
+  if (opts.live && !backendOf(opts, opts.agentOverride ?? ws.agent)) log(`aviso: --live pero el adaptador «${opts.agentOverride ?? ws.agent}» no tiene backend vivo: sus activities correrán de un disparo, sin sesión reanudable`); // B4
+  const adm = opts.live || hasAdmission(store) ? new AdmissionDb(store) : undefined; // una vez, no en cada vuelta del bucle (B3)
   const running = new Set<Promise<void>>();
   const activeControllers = new Map<Promise<void>, AbortController>();
   let slot = 0;
@@ -431,7 +493,9 @@ export async function runPool(store: Store, opts: PoolOptions): Promise<void> {
       if (interrupted) break;
       let recovered = 0;
       try {
-        recovered = store.requeueOrphans(ws.id);
+        recovered = store.requeueOrphans(ws.id, undefined, id => !!adm && new ReportStore(adm).pending(id) !== undefined); // M2
+        // M4: el plazo de una espera también lo vigila el pool (no solo el residente), para que venza aunque el residente no corra.
+        if (opts.live && adm) expireQuestions(store, adm);
       } catch (err) {
         if (isBusyError(err)) {
           await Promise.race([Bun.sleep(50), interruptPromise]);

@@ -26,8 +26,8 @@ export const issue = (n: number, updated: string, extra: Partial<RawIssue> = {})
  * `collaborators/L/permission` devuelve su rol.
  */
 export type RawComment = { id: number; issue: number; login: string; type?: 'User' | 'Bot'; association?: string; created_at: string; updated_at?: string; body?: string };
-export type FakeExtra = { comments?: RawComment[]; /** Rol por login para `collaborators/L/permission`. */ roles?: Record<string, string | 403> };
-export function fakeGh(issues: RawIssue[], extra: FakeExtra = {}): CommandRunner & { calls: string[][] } {
+export type FakeExtra = { comments?: RawComment[]; /** Login con el que la fab publica y `created_at` de sus comentarios (Outbox, T12). */ self?: string; postedAt?: string; /** Rol por login para `collaborators/L/permission`. */ roles?: Record<string, string | 403> };
+export function fakeGh(issues: RawIssue[], extra: FakeExtra = {}): CommandRunner & { calls: string[][]; posts: { issue: number; body: string }[] } {
   const ok = (body: unknown) => ({ code: 0, stdout: JSON.stringify(body), stderr: '' });
   const by = (i: RawIssue) => i.labeled_by ?? MAINTAINER;
   const run = (async (cmd: string[]) => {
@@ -37,6 +37,12 @@ export function fakeGh(issues: RawIssue[], extra: FakeExtra = {}): CommandRunner
       return ok({ data: { repository: { issue: { title: i.title ?? `t${n}`, body: i.body ?? `b${n}`, lastEditedAt: i.edited_at ?? null } } } });
     }
     const path = cmd.find(c => c.startsWith('repos/'))!;
+    const thread = /issues\/(\d+)\/comments(\?|$)/.exec(path);
+    if (thread) { // Outbox: los comentarios que publica la fab viven en `run.posts` y se leen de vuelta (marcador, reconciliación)
+      const issue = Number(thread[1]);
+      if (cmd.includes('POST')) { run.posts.push({ issue, body: cmd.find(c => c.startsWith('body='))!.slice(5) }); return ok({ created_at: extra.postedAt ?? '2026-01-10T00:00:00Z' }); }
+      return ok([run.posts.filter(p => p.issue === issue).map(p => ({ body: p.body, user: { login: extra.self ?? 'fab-bot' }, created_at: extra.postedAt ?? '2026-01-10T00:00:00Z' }))]);
+    }
     if (path.endsWith('/issues/comments')) {
       const since = cmd.find(c => c.startsWith('since='))?.slice(6);
       return ok([(extra.comments ?? []).filter(c => !since || (c.updated_at ?? c.created_at) >= since).map(c => ({ id: c.id, body: c.body ?? `c${c.id}`,
@@ -56,8 +62,8 @@ export function fakeGh(issues: RawIssue[], extra: FakeExtra = {}): CommandRunner
     }
     const since = cmd.find(c => c.startsWith('since='))?.slice(6);
     return ok([issues.filter(i => !since || i.updated_at >= since)]);
-  }) as unknown as CommandRunner & { calls: string[][] };
-  run.calls = [];
+  }) as unknown as CommandRunner & { calls: string[][]; posts: { issue: number; body: string }[] };
+  run.calls = []; run.posts = [];
   return run;
 }
 
