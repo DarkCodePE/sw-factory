@@ -3,7 +3,7 @@
 import { createHash } from 'node:crypto';
 import { runCommand, type CommandRunner } from '../connectors/github.ts';
 import type { Store } from '../store.ts';
-import { expireQuestions, reapQuestions } from './answers.ts';
+import { answerQuestion, expireQuestions, reapQuestions } from './answers.ts';
 import { AdmissionDb } from './db.ts';
 import { Effects, type CrashPoint, type EffectAlert } from './effects.ts';
 import { commentGate, gate, type GateDecision, type GateInput, type GatePolicy } from './gate.ts';
@@ -12,7 +12,7 @@ import { ThreadLinks } from './links.ts';
 import { Outbox } from './outbox.ts';
 import { ResidentLock } from './lock.ts';
 
-export type Mode = 'off' | 'observe';
+export type Mode = 'off' | 'observe' | 'auto';
 export type ResidentConfig = {
   repo: string; policy: GatePolicy; mode: Mode;
   /** Login con el que la fab publica (T23): sus eventos se descartan para no dispararse a sí misma. */
@@ -37,7 +37,7 @@ export class Resident {
   private wake?: () => void;
 
   constructor(private readonly store: Store, private readonly cfg: ResidentConfig) {
-    if ((cfg.mode as string) !== 'off' && (cfg.mode as string) !== 'observe') throw new Error(`Modo "${cfg.mode}" no admitido en la fase 1: usa off|observe`);
+    if (!['off', 'observe', 'auto'].includes(cfg.mode)) throw new Error(`Modo "${cfg.mode}" no admitido: usa off|observe|auto`);
     if (cfg.comments && !cfg.selfLogin) throw new Error('--comments exige --self <login>: sin la identidad de la fab no se puede filtrar su propio comentario');
     this.adm = new AdmissionDb(store);
     this.lock = new ResidentLock(this.adm, { ttlMs: cfg.lockTtlMs });
@@ -155,6 +155,12 @@ export class Resident {
     if (v.reason === 'role-unchecked') v = commentGate({ ...input, role: await collaboratorRole(c.repo, c.author, this.cfg.run ?? runCommand) });
     this.adm.db.query('INSERT OR IGNORE INTO adm_comment_decisions(trigger_key, accept, reason, question_id, decided_at) VALUES (?,?,?,?,?)')
       .run(triggerKey, v.accept ? 1 : 0, v.reason, v.accept ? q!.id : null, this.adm.iso());
+    // S5 (auto): una respuesta autorizada se entrega y reencola la activity en una transacción. Reejecutar tras una caída es inocuo
+    // (`ignored:not-open`): la decisión ya quedó registrada y la pregunta ya no está abierta.
+    if (v.accept && this.cfg.mode === 'auto') {
+      const body = (this.adm.db.query('SELECT body FROM adm_comments WHERE trigger_key = ?').get(triggerKey) as { body: string }).body;
+      answerQuestion(this.store, this.adm, { questionId: q!.id, answer: body, by: c.author, crash: this.cfg.crash });
+    }
   }
 
   /** Un ciclo: poll de la fuente y despacho de efectos. Exige el lock tomado. */

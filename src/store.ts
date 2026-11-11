@@ -998,15 +998,25 @@ export class Store {
   expireWaiting(nowIso = this.now()): { activityId: string; questionId: string }[] {
     return this.withRetry(() => {
       const due = this.db.query(`SELECT id, question_id FROM activities WHERE status = 'waiting_reply' AND wait_until IS NOT NULL AND wait_until <= ?`).all(nowIso) as { id: string; question_id: string }[];
-      for (const d of due) {
-        const reason = `REPLY_TIMEOUT: sin respuesta a la pregunta ${d.question_id} antes de ${nowIso}`;
-        this.db.query(`UPDATE activities SET status = 'blocked', error = ?, completed_at = ?, question_id = NULL, wait_until = NULL WHERE id = ? AND status = 'waiting_reply'`).run(reason, nowIso, d.id);
-        const a = this.getActivity(d.id);
-        this.setChangeStatus(a.changeId, 'blocked');
-        this.event(a.workstreamId, 'warning', `blocked: ${reason}`, a.changeId, a.id);
-      }
+      for (const d of due) this.blockWaiting(d.id, `REPLY_TIMEOUT: sin respuesta a la pregunta ${d.question_id} antes de ${nowIso}`, nowIso);
       return due.map(d => ({ activityId: d.id, questionId: d.question_id }));
     });
+  }
+
+  /** M2: una persona abandona la espera de una activity `waiting_reply` (no quiere esperar más): queda `blocked`, lista para `fab retry`. */
+  abandonWait(activityId: string): void {
+    this.withRetry(() => {
+      const a = this.getActivity(activityId);
+      if (a.status !== 'waiting_reply') throw new StoreError('invalid_transition', `activity ${activityId} no espera respuesta`);
+      this.blockWaiting(activityId, `REPLY_ABANDONED: espera de la pregunta ${a.questionId} abandonada por una persona`, this.now());
+    });
+  }
+
+  private blockWaiting(activityId: string, reason: string, nowIso: string): void {
+    this.db.query(`UPDATE activities SET status = 'blocked', error = ?, completed_at = ?, question_id = NULL, wait_until = NULL WHERE id = ? AND status = 'waiting_reply'`).run(reason, nowIso, activityId);
+    const a = this.getActivity(activityId);
+    this.setChangeStatus(a.changeId, 'blocked');
+    this.event(a.workstreamId, 'warning', `blocked: ${reason}`, a.changeId, a.id);
   }
 
   /** Human decision on an activity in the inbox. */

@@ -8,6 +8,7 @@ import { selfCommand } from './self.ts';
 import { activityLog, atomicEvidence, gitEvidence, isolationFor, readEgressProbe, runDirectory, writeManifest } from './manifest.ts';
 import { verifyAgentStart } from './agents-verify.ts';
 import { getAgent, runAgent, type AgentRun } from './agents.ts';
+import { expireQuestions } from './admission/answers.ts';
 import { isChannelChange } from './admission/channel.ts';
 import { AdmissionDb, hasAdmission } from './admission/db.ts';
 import { CrashInjected, Effects, type CrashPoint } from './admission/effects.ts';
@@ -477,6 +478,8 @@ export async function runPool(store: Store, opts: PoolOptions): Promise<void> {
       let recovered = 0;
       try {
         recovered = store.requeueOrphans(ws.id);
+        // M4: el plazo de una espera también lo vigila el pool (no solo el residente), para que venza aunque el residente no corra.
+        if (opts.live) expireQuestions(store, new AdmissionDb(store));
       } catch (err) {
         if (isBusyError(err)) {
           await Promise.race([Bun.sleep(50), interruptPromise]);

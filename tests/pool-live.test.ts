@@ -184,3 +184,43 @@ test('S4: un report done de un intento que falló con motivo no se aplica en el 
   expect(backend.turns).toHaveLength(1);
   expect(store.listActivities({ changeId: c.id })[0]).toMatchObject({ status: 'completed', result: 'hecho' });
 });
+
+// ---- S5: espera ----------------------------------------------------------------------------------------------------------
+import { reapQuestions } from '../src/admission/answers.ts';
+
+test('S5: el pool reanuda la MISMA sesión con la respuesta como mensaje del turno y la marca entregada', async () => {
+  const backend = fakeLive([ASK, DONE]), { ws, c, adm } = await asked(backend);
+  await pool(ws.id, { fake: backend });
+  expect(backend.turns[1]!.prompt).toBe('rojo');
+  expect(backend.turns[1]!.sessionId).toBe(backend.turns[0]!.newSessionId);
+  expect(adm.db.query('SELECT delivered_at FROM adm_questions').get()).toEqual({ delivered_at: expect.any(String) });
+  expect(store.listActivities({ changeId: c.id })[0]?.status).toBe('completed');
+});
+
+test('S5: el plazo vence a blocked aunque el residente no corra (lo comprueba el pool) y la pregunta queda expired', async () => {
+  const backend = fakeLive([ASK]), { ws, c } = setup2(), adm0 = undefined;
+  void adm0;
+  await pool(ws.id, { fake: backend });
+  store.db.query("UPDATE activities SET wait_until = '2000-01-01T00:00:00.000Z' WHERE change_id = ?").run(c.id);
+  await pool(ws.id, { fake: backend });
+  expect(store.listActivities({ changeId: c.id })[0]).toMatchObject({ status: 'blocked' });
+  expect(store.listActivities({ changeId: c.id })[0]?.error).toContain('REPLY_TIMEOUT');
+  expect(store.getChange(c.id).status).toBe('blocked');
+  expect(new AdmissionDb(store).db.query('SELECT status FROM adm_questions').all()).toEqual([{ status: 'expired' }]);
+  function setup2() { return setup(); }
+});
+
+test('M2: una persona puede abandonar la espera (queda blocked → fab retry) o cancelar el change (la pregunta se cancela)', async () => {
+  const backend = fakeLive([ASK, DONE]), { ws, c } = setup();
+  await pool(ws.id, { fake: backend });
+  const w = store.listActivities({ changeId: c.id })[0]!;
+  store.abandonWait(w.id);
+  expect(store.getActivity(w.id)).toMatchObject({ status: 'blocked' });
+  expect(store.retryChange(c.id).status).toBe('pending');
+  const second = (() => { const w2 = store.createWorkstream({ slug: 'q', goal: 'g', repo, agent: 'fake', requireChangeApproval: false }); store.setWorkstreamState(w2.id, 'active'); return { ws: w2, c: store.createChange(w2.id, 't', 'd') }; })();
+  await pool(second.ws.id, { fake: fakeLive([ASK]) });
+  store.closeChange(second.c.id, 'canceled'); // frontier 11
+  const adm = new AdmissionDb(store);
+  expect(reapQuestions(adm)).toBe(2); // la abandonada y la del change cancelado
+  expect(store.listActivities({ changeId: second.c.id }).filter(a => a.status === 'pending' || a.status === 'waiting_reply')).toEqual([]);
+});

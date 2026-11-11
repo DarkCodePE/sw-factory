@@ -131,6 +131,12 @@ function allChanges(store: Store) {
   return store.listWorkstreams().flatMap((w) => store.listChanges(w.id));
 }
 
+/** Texto de la pregunta abierta de una activity `waiting_reply` (vive en adm_questions). */
+function waitingQuestion(store: Store, activityId: string): string {
+  if (!hasAdmission(store)) return '-';
+  return (new AdmissionDb(store).db.query("SELECT text FROM adm_questions WHERE activity_id = ? AND status = 'open'").get(activityId) as { text: string } | null)?.text ?? '-';
+}
+
 async function main(argv: string[]): Promise<number> {
   if (argv[0] === 'jira' || argv[0] === 'pr') return connectorsMain(argv[0], argv.slice(1));
   if (argv[0] === 'agents') return agentsMain(argv.slice(1));
@@ -258,6 +264,11 @@ async function main(argv: string[]): Promise<number> {
         for (const a of items) {
           const c = store.getChange(a.changeId);
           console.log(`\n== ${short(a.id)}  ${a.kind}  change ${short(c.id)}: ${c.title}`);
+          if (a.status === 'waiting_reply') { // M2: la pregunta que espera la persona y qué puede hacer
+            console.log(`espera respuesta (plazo ${a.waitUntil ?? '-'}): ${waitingQuestion(store, a.id)}`);
+            console.log(`-> responde en el hilo del issue | fab retry ${short(c.id)} (abandona la espera) | fab reject ${short(c.id)} (cancela)`);
+            continue;
+          }
           if (a.status === 'blocked' || a.status === 'quarantined') {
             console.log(`${a.status}: ${a.error ?? ''}`);
             console.log(`-> fab retry ${short(c.id)} | fab reject ${short(c.id)}`);
@@ -303,6 +314,7 @@ async function main(argv: string[]): Promise<number> {
         for (const a of store.listActivities({ changeId: c.id })) {
           console.log(`\n--- ${a.kind} ${short(a.id)} ${a.status}${a.reviewStatus ? ` review=${a.reviewStatus}` : ''} retries=${a.retryCount}`);
           if (a.reviewComment) console.log(`comentario: ${a.reviewComment}`);
+          if (a.status === 'waiting_reply') console.log(`pregunta: ${waitingQuestion(store, a.id)}`);
           if (a.result) console.log(a.result.slice(0, 3000));
           if (a.error) console.log(`error: ${a.error.slice(0, 1500)}`);
         }
@@ -356,6 +368,7 @@ async function main(argv: string[]): Promise<number> {
       }
       case 'retry': {
         const c = findByPrefix(allChanges(store), sub ?? '', 'change');
+        for (const w of store.listActivities({ changeId: c.id }).filter(x => x.status === 'waiting_reply')) store.abandonWait(w.id); // M2
         const a = store.retryChange(c.id);
         if (hasAdmission(store)) resetSessionCap(store, new AdmissionDb(store), c.id); // A6: un reintento humano es una decisión nueva
         console.log(`change ${short(c.id)}: ${a.kind} re-encolada`);
