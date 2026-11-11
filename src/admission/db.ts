@@ -33,7 +33,7 @@ CREATE INDEX IF NOT EXISTS adm_reports_activity ON adm_reports(activity_id, id);
 CREATE TABLE IF NOT EXISTS adm_questions (
   id TEXT PRIMARY KEY, activity_id TEXT NOT NULL, change_id TEXT NOT NULL, text TEXT NOT NULL,
   status TEXT NOT NULL DEFAULT 'open' CHECK (status IN ('open','answered','expired','canceled')),
-  asked_at TEXT NOT NULL, answered_at TEXT, answer TEXT, answered_by TEXT);
+  asked_at TEXT NOT NULL, answered_at TEXT, answer TEXT, answered_by TEXT, delivered_at TEXT);
 -- Sesión de harness por (change, tipo de activity, generación), escrita ANTES de lanzar (T17): sobrevive a la caída del pool,
 -- a requeueOrphans y a retryChange (que crea otra activity pero no otro change).
 CREATE TABLE IF NOT EXISTS adm_sessions (
