@@ -1,13 +1,22 @@
+// fab resident report [--json]   informe de solo lectura (sin lock) de lo que ha registrado el residente
 // fab resident --repo owner/name [--mode off|observe] [--once] [--since ISO] ...  (fase 1: `auto` se rechaza)
 // --since solo fija el inicio cuando aún no hay cursor; sin él se lee el último día.
 import { parseArgs } from 'node:util';
 import { validateRepo, type CommandRunner } from '../connectors/github.ts';
 import type { Store } from '../store.ts';
 import { DEFAULT_POLICY } from './gate.ts';
+import { AdmissionDb } from './db.ts';
+import { buildReport, formatReport } from './report.ts';
 import { Resident } from './resident.ts';
 
 export async function residentMain(argv: string[], store: Store, deps: { run?: CommandRunner } = {}): Promise<number> {
   try {
+    if (argv[0] === 'report') {
+      const { values } = parseArgs({ args: argv.slice(1), options: { json: { type: 'boolean' } } });
+      const report = buildReport(new AdmissionDb(store));
+      console.log(values.json ? JSON.stringify(report, null, 2) : formatReport(report));
+      return 0;
+    }
     const { values } = parseArgs({ args: argv, options: {
       repo: { type: 'string' }, mode: { type: 'string', default: 'observe' }, once: { type: 'boolean' }, interval: { type: 'string', default: '60' }, since: { type: 'string' },
       label: { type: 'string', default: DEFAULT_POLICY.triggerLabel }, 'allow-author': { type: 'string', multiple: true }, trust: { type: 'string' } } });

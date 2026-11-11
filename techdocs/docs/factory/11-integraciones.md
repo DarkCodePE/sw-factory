@@ -73,6 +73,29 @@ flowchart TD
 - **Procesos**: `runOwnedCommand` lanza el instalador/npm como grupo propio y lo mata con `SIGTERM`+`SIGKILL` si se aborta (`src/update/process.ts`); timeout total 5 min por defecto (≤ 10 min) y cancelación por señal (`index.ts:31-35`).
 - **Rollback**: bajar de versión exige `--version` explícito (`npm.ts:65`).
 
+## Residente en observe: lanzarlo e informar (`fab resident`)
+
+`fab resident --repo O/R --mode observe` (`src/admission/`) hace poll de los issues del repo y registra en las tablas `adm_*` si los admitiría (`would_admit`); no crea changes. Solo admite con la etiqueta `fab` puesta por alguien con rol triage o superior; sin cursor lee el último día (`--since` mueve el inicio).
+
+```bash
+# Base aparte: nunca el ~/.fabrica real. Un ciclo (--once) o continuo (cada --interval s).
+FABRICA_HOME=~/fab-observe fab resident --repo O/R --mode observe
+FABRICA_HOME=~/fab-observe fab resident report          # informe legible; --json para scripts
+```
+
+`report` es de solo lectura y no toma el lock: se puede ejecutar con el residente en marcha. Muestra:
+
+- **Fuentes**: cursor y fecha del último poll (si el poll falla, la fecha no avanza).
+- **Decisiones**: recuento por `would_admit` y primera razón (`no-trigger-label`, `label-not-verified`, `trigger-label`…).
+- **label-not-verified**: issue, quién puso la etiqueta y su rol.
+- **Efectos** con `attempts > 1` o en `dead`/`unknown`, con su `last_error`.
+
+Qué mirar:
+
+- **(a) ¿Se verifica bien la etiqueta?** Compara los `label-not-verified` con lo que ves en GitHub: `label-by` debe ser quien la puso y el rol debe ser el real. Los `trigger-label` deben llevar un rol `admin|maintain|write|triage`.
+- **(b) ¿Aparece el 403?** Rol `unknown` en `label-not-verified`: el token no tiene acceso push al repo y no puede leer permisos; el gate rechaza (falla cerrado).
+- **(c) ¿`labeled` llega tarde?** Efectos `admit` con `attempts > 1` y `last_error` «no se encontró el evento labeled»: el efecto reintenta con espera creciente; si agota 5 intentos queda `dead`.
+
 ## Invariantes y modos de fallo
 
 - Ninguna integración usa shell: todo es `argv` + validación previa de entrada externa.
