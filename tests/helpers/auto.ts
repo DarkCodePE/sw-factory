@@ -25,7 +25,8 @@ export function rig(opts: { issues?: RawIssue[]; extra?: FakeExtra; verify?: str
   store.setWorkstreamState(ws.id, 'active');
   const issues = opts.issues ?? [], run = fakeGh(issues, { self: SELF, ...opts.extra });
   const adm = new AdmissionDb(store);
-  const resident = (over: Partial<ResidentConfig> = {}) => new Resident(store, { repo: REPO, policy: POLICY, mode: 'auto', workstream: 'p', selfLogin: SELF, comments: true, run, baseMs: 1,
+  // baseMs 0: el reintento de un efecto vence ya y entra en el mismo ciclo; con 1 ms dependía de la velocidad de la máquina (CI).
+  const resident = (over: Partial<ResidentConfig> = {}) => new Resident(store, { repo: REPO, policy: POLICY, mode: 'auto', workstream: 'p', selfLogin: SELF, comments: true, run, baseMs: 0,
     since: '2026-01-01T00:00:00Z', ...over });
   /** Un ciclo del residente (adquiere y suelta el lock, como un proceso que arranca). */
   const cycle = async (over: Partial<ResidentConfig> = {}) => { const r = resident(over); await r.run({ once: true }); return r; };
