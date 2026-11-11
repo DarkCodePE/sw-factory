@@ -34,7 +34,8 @@ import { parseVerdict } from './validators/verdict.ts';
 
 // Local extensions keep this task within the store ownership boundary.
 export type ActivityKind = BaseActivityKind | 'gates';
-export type ActivityStatus = BaseActivityStatus | 'blocked' | 'quarantined';
+/** `waiting_reply`: un turno vivo preguntó a una persona y espera su respuesta (no ocupa slot ni worktree activo). */
+export type ActivityStatus = BaseActivityStatus | 'blocked' | 'quarantined' | 'waiting_reply';
 export type ChangeStatus = BaseChangeStatus | 'blocked' | 'quarantined';
 
 export const LEASE_TTL_MS = process.env.FABRICA_LEASE_TTL_MS ? Number(process.env.FABRICA_LEASE_TTL_MS) : 90_000;
@@ -125,6 +126,9 @@ export interface Activity {
   /** Perfil de instrucciones y sha de fab con los que corrió; null si aún no empezó. */
   profileDigest: string | null;
   fabSha: string | null;
+  /** Pregunta abierta de un turno vivo (solo en `waiting_reply`) y su plazo. */
+  questionId: string | null;
+  waitUntil: string | null;
 }
 
 export class StoreError extends Error {
@@ -237,6 +241,8 @@ function toActivity(r: Row): Activity {
     agentPgid: (r.agent_pgid as number | null) ?? null,
     profileDigest: (r.profile_digest as string | null) ?? null,
     fabSha: (r.fab_sha as string | null) ?? null,
+    questionId: (r.question_id as string | null) ?? null,
+    waitUntil: (r.wait_until as string | null) ?? null,
   };
 }
 
@@ -320,6 +326,8 @@ export class Store {
     this.addColumn('workstreams', 'profile', 'TEXT');
     this.addColumn('activities', 'profile_digest', 'TEXT');
     this.addColumn('activities', 'fab_sha', 'TEXT');
+    this.addColumn('activities', 'question_id', 'TEXT');
+    this.addColumn('activities', 'wait_until', 'TEXT');
     this.db.exec('CREATE INDEX IF NOT EXISTS idx_activities_lease ON activities(status, lease_expires_at);');
     const migrationTtl = new Date(this.clock().getTime() + LEASE_TTL_MS).toISOString();
     this.db
@@ -557,8 +565,9 @@ export class Store {
     this.withRetry(() => {
       this.db.query('UPDATE changes SET status = ?, updated_at = ? WHERE id = ?').run(status, this.now(), changeId);
       // Claims skip terminal changes, so pending work left behind would never run and keep `--once` from going idle.
+      // A `waiting_reply` activity has no worker to notice the change closed: it is swept too (T27).
       if (isTerminalChange(status)) {
-        this.db.query(`UPDATE activities SET status = 'canceled', completed_at = ? WHERE change_id = ? AND status = 'pending'`)
+        this.db.query(`UPDATE activities SET status = 'canceled', completed_at = ?, question_id = NULL, wait_until = NULL WHERE change_id = ? AND status IN ('pending', 'waiting_reply')`)
           .run(this.now(), changeId);
         this.terminalEvidence.add(changeId);
         writeManifest(this, changeId);
@@ -620,7 +629,7 @@ export class Store {
     const acts = this.listActivities(workstream ? { workstream } : {});
     const latest = new Map<string, string>();
     for (const a of acts) if (a.status === 'blocked' || a.status === 'quarantined') latest.set(a.changeId, a.id);
-    return acts.filter(a => a.reviewStatus === 'awaiting' ||
+    return acts.filter(a => a.reviewStatus === 'awaiting' || a.status === 'waiting_reply' ||
       (latest.get(a.changeId) === a.id && (this.getChange(a.changeId).status === 'blocked' || this.getChange(a.changeId).status === 'quarantined')));
   }
 
@@ -640,7 +649,7 @@ export class Store {
                AND NOT EXISTS (
                  SELECT 1 FROM activities other
                  WHERE other.change_id = a.change_id
-                   AND other.status = 'in_progress'
+                   AND other.status IN ('in_progress', 'waiting_reply')
                )
              ORDER BY a.created_at, a.rowid LIMIT 1`
           )
@@ -655,7 +664,7 @@ export class Store {
              WHERE id = ? AND status = 'pending'
                AND NOT EXISTS (
                  SELECT 1 FROM activities other
-                 WHERE other.change_id = ? AND other.status = 'in_progress' AND other.id != ?
+                 WHERE other.change_id = ? AND other.status IN ('in_progress', 'waiting_reply') AND other.id != ?
                )`
           )
           .run(workerId, nowIso, leaseExpires, r.id, r.change_id, r.id);
@@ -945,6 +954,61 @@ export class Store {
     return this.getActivity(a.id);
   }
 
+  /**
+   * Un turno vivo pasa a esperar a una persona (T16/T27). Cercado por el worker que lo tiene y por un change no terminal;
+   * no cuenta como fallo ni consume reintentos, y libera el lease. El worktree y la rama quedan como están.
+   */
+  awaitHuman(activityId: string, workerId: string, q: { questionId: string; waitUntil: string }): Activity {
+    return this.withRetry(() => {
+      const res = this.db.query(`UPDATE activities SET status = 'waiting_reply', question_id = ?, wait_until = ?, worker_id = NULL,
+        lease_expires_at = NULL, agent_pgid = NULL WHERE id = ? AND status = 'in_progress' AND worker_id = ?
+        AND EXISTS (SELECT 1 FROM changes c WHERE c.id = activities.change_id
+          AND c.status NOT IN ('completed','failed','canceled','declined','blocked','quarantined'))`)
+        .run(q.questionId, q.waitUntil, activityId, workerId);
+      if (res.changes !== 1) throw new StoreError('conflict', `activity ${activityId} is not held by ${workerId}`);
+      const a = this.getActivity(activityId);
+      this.event(a.workstreamId, 'info', `waiting for a human reply (question ${q.questionId})`, a.changeId, a.id);
+      return a;
+    });
+  }
+
+  /**
+   * Llega la respuesta a la pregunta abierta: la activity vuelve a `pending` (T27). Condicionado al id de la pregunta, así una
+   * respuesta duplicada, tardía (a una pregunta anterior) o a un change ya cerrado no reencola nada: devuelve false.
+   * Va en la misma transacción que registra la respuesta (la llama `answerQuestion`, que la envuelve).
+   */
+  answerAwaiting(activityId: string, questionId: string): boolean {
+    return this.withRetry(() => {
+      const res = this.db.query(`UPDATE activities SET status = 'pending', question_id = NULL, wait_until = NULL
+        WHERE id = ? AND status = 'waiting_reply' AND question_id = ?
+        AND EXISTS (SELECT 1 FROM changes c WHERE c.id = activities.change_id
+          AND c.status NOT IN ('completed','failed','canceled','declined','blocked','quarantined'))`).run(activityId, questionId);
+      if (res.changes !== 1) return false;
+      const a = this.getActivity(activityId);
+      this.setChangeStatus(a.changeId, 'pending');
+      this.event(a.workstreamId, 'info', `human reply received (question ${questionId}); re-queued`, a.changeId, a.id);
+      return true;
+    });
+  }
+
+  /**
+   * Plazo de la espera (T31, H-16): las activities `waiting_reply` cuyo `wait_until` venció pasan a `blocked` con motivo y su
+   * change a `blocked` (visible en el inbox; libera el worktree y el cupo de taskLimit al cerrarse). Devuelve (activity, pregunta).
+   */
+  expireWaiting(nowIso = this.now()): { activityId: string; questionId: string }[] {
+    return this.withRetry(() => {
+      const due = this.db.query(`SELECT id, question_id FROM activities WHERE status = 'waiting_reply' AND wait_until IS NOT NULL AND wait_until <= ?`).all(nowIso) as { id: string; question_id: string }[];
+      for (const d of due) {
+        const reason = `REPLY_TIMEOUT: sin respuesta a la pregunta ${d.question_id} antes de ${nowIso}`;
+        this.db.query(`UPDATE activities SET status = 'blocked', error = ?, completed_at = ?, question_id = NULL, wait_until = NULL WHERE id = ? AND status = 'waiting_reply'`).run(reason, nowIso, d.id);
+        const a = this.getActivity(d.id);
+        this.setChangeStatus(a.changeId, 'blocked');
+        this.event(a.workstreamId, 'warning', `blocked: ${reason}`, a.changeId, a.id);
+      }
+      return due.map(d => ({ activityId: d.id, questionId: d.question_id }));
+    });
+  }
+
   /** Human decision on an activity in the inbox. */
   resolveReview(activityId: string, decision: ReviewDecision, comment = ''): Activity {
     if (decision === 'decline' && !comment.trim()) {
@@ -1178,7 +1242,7 @@ export class Store {
   }
 
   isTerminal(status: ActivityStatus): boolean {
-    return status === 'blocked' || status === 'quarantined' || TERMINAL_ACTIVITY.includes(status);
+    return status === 'blocked' || status === 'quarantined' || (TERMINAL_ACTIVITY as readonly string[]).includes(status);
   }
 
   // ---- events ------------------------------------------------------------

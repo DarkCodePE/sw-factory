@@ -4,8 +4,8 @@
 
 /** A ticket outside fab that a change came from. */
 export interface ExternalRef {
-  system: 'jira';
-  /** Issue key, e.g. KAN-12. */
+  system: 'jira' | 'github';
+  /** Issue key, e.g. KAN-12; for `github`, `owner/repo#12`. */
   key: string;
   /** Browse URL of the issue. */
   url: string;

@@ -24,7 +24,39 @@ CREATE TABLE IF NOT EXISTS adm_triggers (
   key TEXT PRIMARY KEY, thread_id TEXT NOT NULL REFERENCES adm_threads(id), event TEXT NOT NULL, observed_at TEXT NOT NULL);
 CREATE TABLE IF NOT EXISTS adm_decisions (
   trigger_key TEXT PRIMARY KEY REFERENCES adm_triggers(key), would_admit INTEGER NOT NULL, strength TEXT NOT NULL,
-  scope_max TEXT NOT NULL, reasons TEXT NOT NULL, policy TEXT NOT NULL, decided_at TEXT NOT NULL);`;
+  scope_max TEXT NOT NULL, reasons TEXT NOT NULL, policy TEXT NOT NULL, decided_at TEXT NOT NULL);
+-- Comentarios de un hilo (T21): el texto se guarda aquí (hace falta para la respuesta), nunca dentro del evento del Trigger.
+CREATE TABLE IF NOT EXISTS adm_comments (
+  trigger_key TEXT PRIMARY KEY REFERENCES adm_triggers(key), body TEXT NOT NULL, hash TEXT NOT NULL);
+CREATE TABLE IF NOT EXISTS adm_comment_decisions (
+  trigger_key TEXT PRIMARY KEY REFERENCES adm_triggers(key), accept INTEGER NOT NULL, reason TEXT NOT NULL, question_id TEXT, decided_at TEXT NOT NULL);
+-- Vínculo hilo → change (T23): N hilos (issue, PR, ...) para un mismo change; un hilo solo se admite una vez.
+CREATE TABLE IF NOT EXISTS adm_thread_changes (thread_id TEXT PRIMARY KEY REFERENCES adm_threads(id), change_id TEXT NOT NULL, linked_at TEXT NOT NULL);
+CREATE INDEX IF NOT EXISTS adm_thread_changes_change ON adm_thread_changes(change_id);
+-- Signal creado al admitir un hilo (T30): una admisión por hilo.
+CREATE TABLE IF NOT EXISTS adm_thread_signals (thread_id TEXT PRIMARY KEY REFERENCES adm_threads(id), signal_id TEXT NOT NULL, scope TEXT NOT NULL, created_at TEXT NOT NULL);
+-- Contenido admitido de un hilo (T20): la copia que vio quien etiquetó. El prompt usa solo esta copia, nunca una relectura.
+CREATE TABLE IF NOT EXISTS adm_content (
+  thread_id TEXT PRIMARY KEY REFERENCES adm_threads(id), title TEXT NOT NULL, body TEXT NOT NULL, hash TEXT NOT NULL,
+  labeled_at TEXT NOT NULL, edited_at TEXT, captured_at TEXT NOT NULL);
+-- Reports de un turno vivo, durables por intento (T16): el handler los guarda sin tocar la activity; se aplican al acabar el turno.
+CREATE TABLE IF NOT EXISTS adm_reports (
+  id INTEGER PRIMARY KEY AUTOINCREMENT, attempt_id TEXT NOT NULL, activity_id TEXT NOT NULL, state TEXT NOT NULL CHECK (state IN ('done','blocked','awaiting')),
+  summary TEXT NOT NULL, human_action TEXT, created_at TEXT NOT NULL, applied_at TEXT);
+CREATE INDEX IF NOT EXISTS adm_reports_activity ON adm_reports(activity_id, id);
+-- Preguntas a una persona: una abierta por activity.
+CREATE TABLE IF NOT EXISTS adm_questions (
+  id TEXT PRIMARY KEY, activity_id TEXT NOT NULL, change_id TEXT NOT NULL, text TEXT NOT NULL,
+  status TEXT NOT NULL DEFAULT 'open' CHECK (status IN ('open','answered','expired','canceled')),
+  asked_at TEXT NOT NULL, answered_at TEXT, answer TEXT, answered_by TEXT, delivered_at TEXT, posted_at TEXT, published_at TEXT);
+-- Sesión de harness por (change, tipo de activity, generación), escrita ANTES de lanzar (T17): sobrevive a la caída del pool,
+-- a requeueOrphans y a retryChange (que crea otra activity pero no otro change).
+CREATE TABLE IF NOT EXISTS adm_sessions (
+  id INTEGER PRIMARY KEY AUTOINCREMENT, change_id TEXT NOT NULL, kind TEXT NOT NULL, generation INTEGER NOT NULL,
+  session_id TEXT NOT NULL UNIQUE, backend TEXT NOT NULL, cwd TEXT NOT NULL, model TEXT, profile_digest TEXT,
+  status TEXT NOT NULL DEFAULT 'open' CHECK (status IN ('open','lost','closed')), launched_at TEXT, lost_reason TEXT, created_at TEXT NOT NULL,
+  UNIQUE (change_id, kind, generation));
+CREATE UNIQUE INDEX IF NOT EXISTS adm_questions_open ON adm_questions(activity_id) WHERE status = 'open';`;
 
 export class AdmissionDb {
   readonly db: Database;
