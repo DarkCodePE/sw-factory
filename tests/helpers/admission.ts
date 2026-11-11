@@ -25,7 +25,9 @@ export const issue = (n: number, updated: string, extra: Partial<RawIssue> = {})
  * `issues/N/events` devuelve un `labeled` por etiqueta, con el actor de `labeled_by` (por defecto MAINTAINER), y
  * `collaborators/L/permission` devuelve su rol.
  */
-export function fakeGh(issues: RawIssue[]): CommandRunner & { calls: string[][] } {
+export type RawComment = { id: number; issue: number; login: string; type?: 'User' | 'Bot'; association?: string; created_at: string; updated_at?: string; body?: string };
+export type FakeExtra = { comments?: RawComment[]; /** Rol por login para `collaborators/L/permission`. */ roles?: Record<string, string | 403> };
+export function fakeGh(issues: RawIssue[], extra: FakeExtra = {}): CommandRunner & { calls: string[][] } {
   const ok = (body: unknown) => ({ code: 0, stdout: JSON.stringify(body), stderr: '' });
   const by = (i: RawIssue) => i.labeled_by ?? MAINTAINER;
   const run = (async (cmd: string[]) => {
@@ -35,6 +37,12 @@ export function fakeGh(issues: RawIssue[]): CommandRunner & { calls: string[][] 
       return ok({ data: { repository: { issue: { title: i.title ?? `t${n}`, body: i.body ?? `b${n}`, lastEditedAt: i.edited_at ?? null } } } });
     }
     const path = cmd.find(c => c.startsWith('repos/'))!;
+    if (path.endsWith('/issues/comments')) {
+      const since = cmd.find(c => c.startsWith('since='))?.slice(6);
+      return ok([(extra.comments ?? []).filter(c => !since || (c.updated_at ?? c.created_at) >= since).map(c => ({ id: c.id, body: c.body ?? `c${c.id}`,
+        issue_url: `https://api.github.com/repos/${REPO}/issues/${c.issue}`, html_url: `https://github.com/${REPO}/issues/${c.issue}#issuecomment-${c.id}`,
+        user: { login: c.login, type: c.type ?? 'User' }, author_association: c.association ?? 'NONE', created_at: c.created_at, updated_at: c.updated_at ?? c.created_at }))]);
+    }
     const events = /issues\/(\d+)\/events/.exec(path);
     if (events) {
       const i = issues.find(x => x.number === Number(events[1]))!;
@@ -43,7 +51,7 @@ export function fakeGh(issues: RawIssue[]): CommandRunner & { calls: string[][] 
     }
     const perm = /collaborators\/([^/]+)\/permission/.exec(path);
     if (perm) {
-      const role = issues.map(by).find(b => b.login === perm[1])?.role ?? 'read';
+      const role = extra.roles?.[perm[1]!] ?? issues.map(by).find(b => b.login === perm[1])?.role ?? 'read';
       return role === 403 ? { code: 1, stdout: '', stderr: 'gh: Must have push access (HTTP 403)' } : ok({ role_name: role });
     }
     const since = cmd.find(c => c.startsWith('since='))?.slice(6);
@@ -61,9 +69,9 @@ export const FIXTURE: RawIssue[] = [
   issue(5, '2026-01-05T10:00:00Z', { pull_request: {} }),
 ];
 
-export function open(path: string, over: Partial<ResidentConfig> = {}, issues: RawIssue[] = FIXTURE) {
+export function open(path: string, over: Partial<ResidentConfig> = {}, issues: RawIssue[] = FIXTURE, extra: FakeExtra = {}) {
   const store = new Store(path);
-  const run = fakeGh(issues);
+  const run = fakeGh(issues, extra);
   // Los fixtures son de enero de 2026: sin `since`, el residente solo leería el último día.
   const resident = new Resident(store, { repo: REPO, policy: POLICY, mode: 'observe', run, baseMs: 10, since: '2026-01-01T00:00:00Z', ...over });
   return { store, run, resident };

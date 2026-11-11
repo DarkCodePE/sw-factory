@@ -28,7 +28,8 @@ export const DEFAULT_POLICY = { triggerLabel: 'fab', trustedAssociations: ['OWNE
 
 // Roles de GitHub que pueden etiquetar issues. Una issue form, un bot o un usuario con rol `read` también pueden dejar
 // la etiqueta puesta, pero no cuentan como señal explícita (D2).
-const LABEL_ROLES = ['admin', 'maintain', 'write', 'triage'];
+export const TRIAGE_ROLES = ['admin', 'maintain', 'write', 'triage'];
+const LABEL_ROLES = TRIAGE_ROLES;
 const lower = (values: string[]) => values.map(value => value.toLowerCase());
 
 export function gate(input: GateInput, policy: GatePolicy): GateDecision {
@@ -46,4 +47,24 @@ export function gate(input: GateInput, policy: GatePolicy): GateDecision {
   return trusted
     ? { would_admit: true, strength: 'explicit', scope_max: 'change', reasons: ['trigger-label', by, 'author-trusted'] }
     : { would_admit: true, strength: 'explicit', scope_max: 'propose', reasons: ['trigger-label', by, 'author-untrusted'] };
+}
+
+export type CommentInput = {
+  author: string; authorType: string; /** Login con el que la fab publica. */ self: string; createdAt: string;
+  /** La pregunta abierta del hilo, si la hay (`askedAt`: ISO de la fab). */ question?: { askedAt: string };
+  /** Rol del autor en el repo; sin él, un comentario que pasaría el resto devuelve `role-unchecked`. */ role?: string;
+};
+/**
+ * ¿Puede este comentario ser la respuesta a la pregunta abierta de un hilo? (T21, H-06). Solo rol triage o superior reanuda;
+ * debe ser posterior a la pregunta; el resto se registra y se ignora. `accept: false` con `role-unchecked` pide consultar el rol.
+ */
+export function commentGate(i: CommentInput): { accept: boolean; reason: string } {
+  const no = (reason: string) => ({ accept: false, reason });
+  if (i.author.toLowerCase() === i.self.toLowerCase()) return no('self');
+  if (i.authorType === 'Bot' || i.author === 'ghost') return no('bot');
+  if (!i.question) return no('no-open-question');
+  // `asked_at` lleva milisegundos y el comentario de GitHub solo segundos: se compara al segundo.
+  if (i.createdAt < i.question.askedAt.slice(0, 19) + 'Z') return no('before-question');
+  if (i.role === undefined) return no('role-unchecked');
+  return TRIAGE_ROLES.includes(i.role) ? { accept: true, reason: `role:${i.role}` } : no(`role:${i.role}`);
 }
