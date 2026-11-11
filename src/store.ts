@@ -56,7 +56,9 @@ export function isTerminalChange(status: string): boolean {
 
 export function isBusyError(err: unknown): boolean {
   if (!(err instanceof Error)) return false;
-  return (err as any).code === 'SQLITE_BUSY' || /database is locked|busy/i.test(err.message);
+  // Real bun:sqlite contention: SQLITE_BUSY[_*] ("database is locked") and SQLITE_LOCKED ("database table is locked").
+  // Never match a bare "busy": git/fs errors (EBUSY, paths) are not transient DB contention.
+  return /^SQLITE_(BUSY|LOCKED)/.test((err as any).code ?? '') || /^database (table )?is locked$/i.test(err.message);
 }
 
 export interface Workstream {

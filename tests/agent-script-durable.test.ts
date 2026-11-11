@@ -61,9 +61,10 @@ test('notify without a waiter and a completed run wake the model once, even duri
   shortForeground(); let n = 0; const requests: ModelRequest[] = [];
   const f = await fixture(async r => {
     requests.push(structuredClone(r));
-    if (!n++) return call('Script', { code: "await new Promise(r=>setTimeout(r,150)); notify('progress'); await new Promise(r=>setTimeout(r,150)); text('finished'); return 'value';" }, 'notify-run');
-    if (n === 2) { await Bun.sleep(210); return call('Read', { file_path: 'missing' }); }
-    if (n === 3) { await Bun.sleep(200); return done(); }
+    if (!n++) return call('Script', { code: "await new Promise(r=>setTimeout(r,150)); notify('progress'); await new Promise(r=>setTimeout(r,600)); text('finished'); return 'value';" }, 'notify-run');
+    // Sync on events, not wall-clock. The 600ms gap keeps the finish after request 3 starts, which is the 'final response' case under test.
+    if (n === 2) { await until(() => f.events.some(e => e.type === 'script_notified')); return call('Read', { file_path: 'missing' }); }
+    if (n === 3) { await until(() => f.events.some(e => e.type === 'script_completed')); return done(); }
     return done();
   });
   await run(f);

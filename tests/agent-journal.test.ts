@@ -55,7 +55,8 @@ test('dead PID reconciles uncertain effects, read calls are discarded, live PID 
 
 test('corrupt final record ignored and repaired; corruption before final record fails closed; 10000 records', async () => {
   const dir = await root(), path = join(dir, 'large.journal.jsonl'); let journal = await Journal.open(path);
-  await Promise.all(Array.from({ length: 10000 }, () => journal.append('turn_start'))); await journal.close();
+  // Seed the records directly: 10000 appends cost 10000 fsyncs (~20s idle, >30s under load), which measures the disk, not the journal.
+  await journal.close(); await writeFile(path, Array.from({ length: 10000 }, (_, i) => JSON.stringify({ seq: i + 1, at: 0, pid: process.pid, type: 'turn_start' }) + '\n').join(''));
   await writeFile(path, '{"seq":10001', { flag: 'a' }); journal = await Journal.open(path); expect(journal.entries.length).toBe(10000); await journal.append('turn_end', { ok: false }); await journal.close();
   journal = await Journal.open(path); expect(journal.entries.at(-1)!.seq).toBe(10001); await journal.close();
   await writeFile(join(dir, 'bad'), 'bad\n' + JSON.stringify({ seq: 1, at: 0, pid: process.pid, type: 'turn_start' }) + '\n');

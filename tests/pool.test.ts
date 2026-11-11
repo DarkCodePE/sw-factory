@@ -169,7 +169,7 @@ for (const damage of ['marker', 'foreign', 'branch', 'directory']) {
     const ws = store.createWorkstream({ slug: 'repair', goal: 'g', repo, agent: 'fake', requireChangeApproval: false });
     store.setWorkstreamState(ws.id, 'active');
     const c = store.createChange(ws.id, 'broken', 'desc');
-    const stateDir = join(dir, 'busy-state');
+    const stateDir = join(dir, 'state');
     const root = join(stateDir, 'worktrees'), path = join(root, c.id.slice(0, 8));
     mkdirSync(root, { recursive: true });
     if (damage === 'marker') writeFileSync(join(root, `.${c.id.slice(0, 8)}.preparing`), 'intent');
@@ -205,4 +205,17 @@ test('git add failure that leaves no worktree still consumes the normal retry bu
   expect(a?.error).not.toContain('WORKTREE_NEEDS_REPAIR:');
   expect(store.getChange(c.id).status).toBe('pending');
   expect(existsSync(join(dir, 'worktrees', `.${c.id.slice(0, 8)}.preparing`))).toBe(false);
+});
+
+test('a non-SQLite error mentioning "busy" in a path consumes the retry budget instead of being requeued', async () => {
+  const ws = store.createWorkstream({ slug: 'busy-path', goal: 'g', repo, agent: 'fake', requireChangeApproval: false });
+  store.setWorkstreamState(ws.id, 'active');
+  const c = store.createChange(ws.id, 'busy path', 'desc');
+  const stateDir = join(dir, 'busy-state');
+  expect(Bun.spawnSync(['git', '-C', repo, 'worktree', 'add', '-b', branchFor(c.id), join(dir, 'occupied')]).exitCode).toBe(0);
+  const claimed = store.claimActivity(ws.id, 'w')!;
+  await processActivity(store, claimed, 'w', { workstream: ws.id, stateDir, log: () => {} });
+  const [a] = store.listActivities({ changeId: c.id });
+  expect(a?.error).toContain('busy-state');
+  expect(a?.retryCount).toBe(1); // requeueActivity would have preserved it at 0
 });
