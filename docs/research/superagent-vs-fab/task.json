@@ -31,6 +31,12 @@
       "topic": "Identidad de la sesión (S2, H-02)",
       "decision": "Una sesión por (change, tipo de activity, generación), escrita antes de lanzar. Abiertos: dónde vive la tabla (hoy adm_sessions), marcarla lanzada antes de lanzar y si fab retry reinicia el tope de generaciones.",
       "date": "2026-11-11"
+    },
+    {
+      "id": "D6",
+      "topic": "Ronda 3, S3-S8 (06 §5.3)",
+      "decision": "Aprobadas tal cual: sesión perdida con generación nueva visible (S3), turno huérfano sin reejecutar (S4), waiting_reply con plazo (S5), report durable con prioridad sobre STATUS (S6), Outbox con plantilla fija (S7), autoridad y solo adaptador confinable para trabajo de canal (S8).",
+      "date": "2026-11-11"
     }
   ],
   "tasks": [
@@ -154,7 +160,7 @@
     {
       "id": "T12",
       "title": "Fase 2: integrar en el pool las piezas del #62 (sesión, report, espera, preguntas/respuestas, Outbox) y modo auto mínimo",
-      "status": "pending",
+      "status": "in_progress",
       "depends_on": [
         "T36"
       ],
@@ -505,7 +511,7 @@
     {
       "id": "T36",
       "title": "Aprobar las decisiones S3-S8 del 06 §5.3",
-      "status": "in_progress",
+      "status": "done",
       "depends_on": []
     },
     {
