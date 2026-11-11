@@ -75,6 +75,8 @@ export class Resident {
     const cursor = (this.adm.db.query('SELECT value FROM adm_cursors WHERE source = ?').get(this.source) as { value: string } | null)?.value;
     const since = cursor ?? this.cfg.since ?? new Date(this.adm.now() - 86_400_000).toISOString().replace(/\.\d{3}Z$/, 'Z');
     const events = await pollIssues(this.cfg.repo, since, this.cfg.run ?? runCommand);
+    this.adm.tx(() => this.adm.db.query('INSERT INTO adm_polls(source, polled_at, events) VALUES (?,?,?) ON CONFLICT(source) DO UPDATE SET polled_at=excluded.polled_at, events=excluded.events')
+      .run(this.source, this.adm.iso(), events.length)); // para `fab resident report`
     this.cfg.crash?.('after-read');
     const triggers = this.register(events);
     this.cfg.crash?.('after-register');
