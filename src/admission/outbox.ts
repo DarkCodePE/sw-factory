@@ -35,7 +35,7 @@ export function sanitizeQuestion(raw: string): { text: string; held: boolean } {
 /** Plantilla fija: lo único que varía es la pregunta ya saneada, citada línea a línea (ninguna línea empieza por `/` ni por `@`). */
 export function renderQuestion(q: { id: string; changeId: string; text: string }): string {
   const { text, held } = sanitizeQuestion(q.text);
-  const quoted = held ? '> _El texto de la pregunta se retuvo por política; está en el inbox de la fab._' : text.split('\n').map(l => `> ${l}`).join('\n');
+  const quoted = held ? '> _El texto de la pregunta se retuvo por política; queda registrado en la fab._' : text.split('\n').map(l => `> ${l}`).join('\n');
   return `${marker(q.id)}\n**fab** necesita una respuesta para continuar el change \`${q.changeId}\`.\n\n${quoted}\n\nResponde en este hilo. Solo cuentan las respuestas de quien tenga rol de triage o superior.`;
 }
 
