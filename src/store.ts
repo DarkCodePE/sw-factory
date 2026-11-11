@@ -34,7 +34,8 @@ import { parseVerdict } from './validators/verdict.ts';
 
 // Local extensions keep this task within the store ownership boundary.
 export type ActivityKind = BaseActivityKind | 'gates';
-export type ActivityStatus = BaseActivityStatus | 'blocked' | 'quarantined';
+/** `waiting_reply`: un turno vivo preguntó a una persona y espera su respuesta (no ocupa slot ni worktree activo). */
+export type ActivityStatus = BaseActivityStatus | 'blocked' | 'quarantined' | 'waiting_reply';
 export type ChangeStatus = BaseChangeStatus | 'blocked' | 'quarantined';
 
 export const LEASE_TTL_MS = process.env.FABRICA_LEASE_TTL_MS ? Number(process.env.FABRICA_LEASE_TTL_MS) : 90_000;
@@ -125,6 +126,9 @@ export interface Activity {
   /** Perfil de instrucciones y sha de fab con los que corrió; null si aún no empezó. */
   profileDigest: string | null;
   fabSha: string | null;
+  /** Pregunta abierta de un turno vivo (solo en `waiting_reply`) y su plazo. */
+  questionId: string | null;
+  waitUntil: string | null;
 }
 
 export class StoreError extends Error {
@@ -237,6 +241,8 @@ function toActivity(r: Row): Activity {
     agentPgid: (r.agent_pgid as number | null) ?? null,
     profileDigest: (r.profile_digest as string | null) ?? null,
     fabSha: (r.fab_sha as string | null) ?? null,
+    questionId: (r.question_id as string | null) ?? null,
+    waitUntil: (r.wait_until as string | null) ?? null,
   };
 }
 
@@ -320,6 +326,8 @@ export class Store {
     this.addColumn('workstreams', 'profile', 'TEXT');
     this.addColumn('activities', 'profile_digest', 'TEXT');
     this.addColumn('activities', 'fab_sha', 'TEXT');
+    this.addColumn('activities', 'question_id', 'TEXT');
+    this.addColumn('activities', 'wait_until', 'TEXT');
     this.db.exec('CREATE INDEX IF NOT EXISTS idx_activities_lease ON activities(status, lease_expires_at);');
     const migrationTtl = new Date(this.clock().getTime() + LEASE_TTL_MS).toISOString();
     this.db
@@ -945,6 +953,24 @@ export class Store {
     return this.getActivity(a.id);
   }
 
+  /**
+   * Un turno vivo pasa a esperar a una persona (T16/T27). Cercado por el worker que lo tiene y por un change no terminal;
+   * no cuenta como fallo ni consume reintentos, y libera el lease. El worktree y la rama quedan como están.
+   */
+  awaitHuman(activityId: string, workerId: string, q: { questionId: string; waitUntil: string }): Activity {
+    return this.withRetry(() => {
+      const res = this.db.query(`UPDATE activities SET status = 'waiting_reply', question_id = ?, wait_until = ?, worker_id = NULL,
+        lease_expires_at = NULL, agent_pgid = NULL WHERE id = ? AND status = 'in_progress' AND worker_id = ?
+        AND EXISTS (SELECT 1 FROM changes c WHERE c.id = activities.change_id
+          AND c.status NOT IN ('completed','failed','canceled','declined','blocked','quarantined'))`)
+        .run(q.questionId, q.waitUntil, activityId, workerId);
+      if (res.changes !== 1) throw new StoreError('conflict', `activity ${activityId} is not held by ${workerId}`);
+      const a = this.getActivity(activityId);
+      this.event(a.workstreamId, 'info', `waiting for a human reply (question ${q.questionId})`, a.changeId, a.id);
+      return a;
+    });
+  }
+
   /** Human decision on an activity in the inbox. */
   resolveReview(activityId: string, decision: ReviewDecision, comment = ''): Activity {
     if (decision === 'decline' && !comment.trim()) {
@@ -1178,7 +1204,7 @@ export class Store {
   }
 
   isTerminal(status: ActivityStatus): boolean {
-    return status === 'blocked' || status === 'quarantined' || TERMINAL_ACTIVITY.includes(status);
+    return status === 'blocked' || status === 'quarantined' || (TERMINAL_ACTIVITY as readonly string[]).includes(status);
   }
 
   // ---- events ------------------------------------------------------------

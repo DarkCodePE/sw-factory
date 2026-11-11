@@ -11,7 +11,8 @@ export type EffectHandler = {
   /** true: reejecutar tras una caída es inocuo (idempotente). false: el efecto queda `unknown` hasta reconciliarlo. */
   rerunnable: boolean;
 };
-export type CrashPoint = 'after-read' | 'after-register' | 'effect-claimed' | 'effect-ran';
+export type CrashPoint = 'after-read' | 'after-register' | 'effect-claimed' | 'effect-ran'
+  | 'report-recorded' | 'report-applied';
 type Row = { id: number; kind: string; key: string; payload: string; attempts: number; attempt_id: string };
 
 export class Effects {

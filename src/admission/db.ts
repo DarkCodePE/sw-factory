@@ -23,7 +23,18 @@ CREATE TABLE IF NOT EXISTS adm_triggers (
   key TEXT PRIMARY KEY, thread_id TEXT NOT NULL REFERENCES adm_threads(id), event TEXT NOT NULL, observed_at TEXT NOT NULL);
 CREATE TABLE IF NOT EXISTS adm_decisions (
   trigger_key TEXT PRIMARY KEY REFERENCES adm_triggers(key), would_admit INTEGER NOT NULL, strength TEXT NOT NULL,
-  scope_max TEXT NOT NULL, reasons TEXT NOT NULL, policy TEXT NOT NULL, decided_at TEXT NOT NULL);`;
+  scope_max TEXT NOT NULL, reasons TEXT NOT NULL, policy TEXT NOT NULL, decided_at TEXT NOT NULL);
+-- Reports de un turno vivo, durables por intento (T16): el handler los guarda sin tocar la activity; se aplican al acabar el turno.
+CREATE TABLE IF NOT EXISTS adm_reports (
+  id INTEGER PRIMARY KEY AUTOINCREMENT, attempt_id TEXT NOT NULL, activity_id TEXT NOT NULL, state TEXT NOT NULL CHECK (state IN ('done','blocked','awaiting')),
+  summary TEXT NOT NULL, human_action TEXT, created_at TEXT NOT NULL, applied_at TEXT);
+CREATE INDEX IF NOT EXISTS adm_reports_activity ON adm_reports(activity_id, id);
+-- Preguntas a una persona: una abierta por activity.
+CREATE TABLE IF NOT EXISTS adm_questions (
+  id TEXT PRIMARY KEY, activity_id TEXT NOT NULL, change_id TEXT NOT NULL, text TEXT NOT NULL,
+  status TEXT NOT NULL DEFAULT 'open' CHECK (status IN ('open','answered','expired','canceled')),
+  asked_at TEXT NOT NULL, answered_at TEXT, answer TEXT, answered_by TEXT);
+CREATE UNIQUE INDEX IF NOT EXISTS adm_questions_open ON adm_questions(activity_id) WHERE status = 'open';`;
 
 export class AdmissionDb {
   readonly db: Database;
