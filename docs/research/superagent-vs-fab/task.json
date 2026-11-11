@@ -1,0 +1,152 @@
+{
+  "updated": "2026-11-10",
+  "context": "Integración superagent → fab. Fase 0: PR #55 (feat/fase0-endurecer). Fase 1: PR #56 (feat/fase1-observe). Ambos apilados sobre PR #49 (feat/t2-corpus).",
+  "decisions": [
+    {
+      "id": "D1",
+      "topic": "Política del gate",
+      "decision": "Solo se admite con la etiqueta `fab`. Autor de confianza sin etiqueta → rechazo.",
+      "date": "2026-11-10"
+    },
+    {
+      "id": "D2",
+      "topic": "Quién pone la etiqueta",
+      "decision": "Se verifica: el actor del evento `labeled` debe tener permiso de triage o superior sobre el repo. Si no, la etiqueta no cuenta.",
+      "date": "2026-11-10"
+    },
+    {
+      "id": "D3",
+      "topic": "Primera lectura sin cursor",
+      "decision": "Sin cursor, el poller lee solo el último día (now - 24h). `--since` permite ir más atrás de forma explícita.",
+      "date": "2026-11-10"
+    }
+  ],
+  "tasks": [
+    {
+      "id": "T1",
+      "title": "Resolver conflictos de PR #49 (feat/t2-corpus -> release/0.1.0-rc.12)",
+      "why": "#49 (feat/t2-corpus -> release/0.1.0-rc.12) en conflicto: solo src/agents.ts (opción confine de #44 vs promptStdin de fase 0).",
+      "status": "done",
+      "depends_on": [],
+      "note": "Merge 322de7f publicado; #49 fusionado en release."
+    },
+    {
+      "id": "T2",
+      "title": "Revisar y fusionar PR #55 (fase 0)",
+      "status": "done",
+      "depends_on": [
+        "T1"
+      ],
+      "note": "#55 fusionado en feat/t2-corpus."
+    },
+    {
+      "id": "T3",
+      "title": "Gate: exigir la etiqueta `fab` (D1)",
+      "where": "src/admission/gate.ts:31 — la rama `trusted` sin etiqueta pasa a deny('no-trigger-label'); actualizar tests/admission-gate.test.ts",
+      "branch": "feat/fase1-gate-etiqueta",
+      "status": "done",
+      "depends_on": [],
+      "pr": 57
+    },
+    {
+      "id": "T4",
+      "title": "Verificar quién puso la etiqueta `fab` (D2)",
+      "where": "src/admission/github.ts: para issues con la etiqueta, leer `gh api repos/O/R/issues/N/events`, tomar el último `labeled` de `fab` y comprobar el permiso del actor (`gh api repos/O/R/collaborators/ACTOR/permission`). El gate recibe `labelVerified` como metadato.",
+      "acceptance": "Etiqueta puesta por issue form, bot o usuario sin triage → no cuenta. Tests con runner `gh` falso para cada caso.",
+      "branch": "feat/fase1-gate-etiqueta",
+      "status": "done",
+      "depends_on": [
+        "T3"
+      ],
+      "pr": 57
+    },
+    {
+      "id": "T5",
+      "title": "Primera lectura limitada al último día (D3)",
+      "where": "src/admission/resident.ts / github.ts: sin cursor, since = now - 24h; `--since` lo sobrescribe.",
+      "acceptance": "Test: base vacía → la primera llamada a `gh` lleva since de hace 24h.",
+      "branch": "feat/fase1-gate-etiqueta",
+      "status": "done",
+      "depends_on": [],
+      "pr": 57
+    },
+    {
+      "id": "T6",
+      "title": "Fusionar PR #57 (T3-T5) en feat/t2-corpus",
+      "status": "done",
+      "depends_on": [
+        "T3",
+        "T4",
+        "T5"
+      ],
+      "note": "#57 fusionado en feat/t2-corpus (be21cce), aún no en release."
+    },
+    {
+      "id": "T14",
+      "title": "Llevar a release/0.1.0-rc.12 lo fusionado en feat/t2-corpus después de #49: #50, #52, #53, #54 y #57",
+      "why": "Se fusionaron en feat/t2-corpus cuando #49 ya estaba cerrado; no hay PR abierto que los lleve a release. git merge-tree: merge limpio.",
+      "status": "done",
+      "depends_on": [],
+      "pr": 58,
+      "note": "#58 fusionado en release (9dbb175)."
+    },
+    {
+      "id": "T7",
+      "title": "Guardar lo que no está en ningún PR: commit local ce84fc4 (doc Inspiración) y docs/research/superagent-vs-fab/",
+      "status": "in_review",
+      "depends_on": [],
+      "branch": "docs/integracion-superagent"
+    },
+    {
+      "id": "T8",
+      "title": "Arreglar el test inestable de journal (10000 registros, timeout 30s)",
+      "where": "tests/agent-journal.test.ts",
+      "status": "pending",
+      "depends_on": []
+    },
+    {
+      "id": "T9",
+      "title": "Riesgo fase 0: ruta del worktree truncada a 8 caracteres",
+      "why": "Dos changes con el mismo prefijo colisionan. Hoy verifyWorktree falla en vez de reutilizar el equivocado, pero el change queda bloqueado.",
+      "where": "src/worktrees.ts — usar el id completo (o más caracteres) solo para worktrees nuevos, sin romper los existentes.",
+      "status": "pending",
+      "depends_on": []
+    },
+    {
+      "id": "T10",
+      "title": "Riesgo fase 0: la marca `.preparing` de una creación a medias se borra a mano",
+      "why": "Si git deja un checkout parcial, la marca queda y ensureWorktree falla hasta que alguien la borre. Sin supervisión, el change se queda atascado.",
+      "where": "src/worktrees.ts — p. ej. comando `fab worktree repair <change>` o recuperación cuando el checkout parcial es reconocible; como mínimo, un evento visible.",
+      "status": "in_progress",
+      "depends_on": [],
+      "owner": "codex",
+      "reviewer": "agy"
+    },
+    {
+      "id": "T11",
+      "title": "Ejecutar `fab resident --mode observe` contra un repo real unos días y revisar los registros de would_admit",
+      "status": "in_progress",
+      "depends_on": [
+        "T6"
+      ],
+      "owner": "sonnet",
+      "reviewer": "agy"
+    },
+    {
+      "id": "T12",
+      "title": "Fase 2: contrato en vivo (estado awaiting, Outbox, efectos launch/deliver/stop, paso de observe a crear changes)",
+      "status": "pending",
+      "depends_on": [
+        "T11"
+      ]
+    },
+    {
+      "id": "T13",
+      "title": "Fase 3: router",
+      "status": "pending",
+      "depends_on": [
+        "T12"
+      ]
+    }
+  ]
+}

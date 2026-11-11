@@ -27,6 +27,7 @@ Documentación técnica del **harness delgado de ideación**: el proceso que con
 | Lectura de repositorios grandes (ADR-0008 aceptado, búsqueda agéntica y T1–T5) | **Implementado** fase A (núcleo y adaptador) | [05](05-lectura-de-repos-grandes.md) |
 | Selección de contexto y presupuesto (sistemas de referencia, paquete e independencia) | **Implementado** fase A (núcleo independiente) | [06](06-seleccion-de-contexto.md) |
 | ripgrep (`rg`) y límites de tree-sitter (por qué el grafo no basta, evidencia A0 vs A2) | **Documentado** (evaluación en opencode y deer-flow) | [07](07-rg-y-limites-de-tree-sitter.md) |
+| Inspiración: repos de referencia externos (DSH, dsh-superagent, dsh-herdr) | **Documentado** (evaluación y síntesis de 3 análisis) | [Inspiración](inspiracion/index.md) |
 
 ## Mapa de lectura (de arriba abajo)
 
