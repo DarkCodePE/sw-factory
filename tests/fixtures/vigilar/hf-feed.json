@@ -1,0 +1,18 @@
+[
+  {
+    "paper": {
+      "id": "2611.02001",
+      "title": "Scaling Workflow Orchestration with Temporal Agents",
+      "summary": "We study reliable distributed workflows with temporal execution and state machines.",
+      "publishedAt": "2026-11-08T12:00:00.000Z"
+    }
+  },
+  {
+    "paper": {
+      "id": "2611.02002",
+      "title": "Adversarial Reviewing: Human-in-the-Loop Critique",
+      "summary": "Comparing independent critique mechanisms and review signals in agentic architectures.",
+      "publishedAt": "2026-11-09T08:30:00.000Z"
+    }
+  }
+]

@@ -2,7 +2,9 @@ import { afterEach, beforeAll, expect, test } from 'bun:test';
 import { hostname } from 'node:os';
 import type { CrashPoint } from '../src/admission/effects.ts';
 import { residentMain } from '../src/admission/cli.ts';
-import { dbPath, fakeGh, FIXTURE, issue, open, REPO, snapshot } from './helpers/admission.ts';
+import { Resident } from '../src/admission/resident.ts';
+import { Store } from '../src/store.ts';
+import { dbPath, fakeGh, FIXTURE, issue, open, POLICY, REPO, snapshot } from './helpers/admission.ts';
 
 let deadPid = 0;
 beforeAll(async () => { const child = Bun.spawn(['true']); await child.exited; deadPid = child.pid; });
@@ -90,7 +92,9 @@ test('CLI: auto se rechaza, y una segunda instancia sobre la misma base se niega
     expect(await residentMain(['--repo', REPO, '--once'], store, { run: fakeGh([]) })).toBe(1);
     expect(errors.at(-1)).toMatch(/Ya hay un residente activo/);
     resident.lock.release();
-    expect(await residentMain(['--repo', REPO, '--once'], store, { run: fakeGh(FIXTURE) })).toBe(0);
+    expect(await residentMain(['--repo', REPO, '--once', '--since', 'ayer'], store, { run: fakeGh(FIXTURE) })).toBe(1);
+    expect(errors.at(-1)).toMatch(/--since debe ser ISO/);
+    expect(await residentMain(['--repo', REPO, '--once', '--since', '2026-01-01T00:00:00Z'], store, { run: fakeGh(FIXTURE) })).toBe(0);
   } finally { console.error = orig; }
   expect(store.db.query('SELECT COUNT(*) n FROM adm_decisions').get()).toEqual({ n: 4 });
 });
@@ -100,4 +104,36 @@ test('modo off no consulta nada', async () => {
   await resident.run({ once: true });
   expect(run.calls).toEqual([]);
   expect(snapshot(store).triggers).toEqual([]);
+});
+
+test('la etiqueta solo cuenta si la puso alguien con triage o más (D2)', async () => {
+  const issues = [
+    issue(10, '2026-01-01T10:00:00Z', { labels: ['fab'] }), // MAINTAINER (write): verificada
+    issue(11, '2026-01-01T11:00:00Z', { labels: ['fab'], author_association: 'NONE', user: { login: 'eve' }, labeled_by: { login: 'eve', role: 'read' } }), // issue form
+    issue(12, '2026-01-01T12:00:00Z', { labels: ['fab'], labeled_by: { login: 'github-actions[bot]', type: 'Bot' } }),
+    issue(13, '2026-01-01T13:00:00Z', { labels: ['fab'], labeled_by: { login: 'carol', role: 403 } }), // token sin acceso push
+    issue(14, '2026-01-01T14:00:00Z', { labels: ['bug'] }), // sin etiqueta: no se consulta nada
+  ];
+  const { store, run, resident } = track(open(dbPath(), {}, issues));
+  await resident.run({ once: true });
+  const rows = store.db.query('SELECT trigger_key, would_admit, reasons FROM adm_decisions ORDER BY trigger_key').all() as any[];
+  expect(rows.map(r => [r.trigger_key.split('#')[1]!.split('@')[0], r.would_admit, JSON.parse(r.reasons)])).toEqual([
+    ['10', 1, ['trigger-label', 'label-by:maint(write)', 'author-trusted']],
+    ['11', 0, ['label-not-verified', 'label-by:eve(read)']],
+    ['12', 0, ['label-not-verified', 'label-by:github-actions[bot](bot)']],
+    ['13', 0, ['label-not-verified', 'label-by:carol(unknown)']],
+    ['14', 0, ['no-trigger-label']],
+  ]);
+  expect(run.calls.some(c => c.some(a => a.includes('issues/14/events')))).toBe(false);
+  expect(run.calls.some(c => c.some(a => a.includes('github-actions')))).toBe(false); // a un bot no se le piden permisos
+});
+
+test('sin cursor ni --since, la primera lectura pide solo el último día (D3)', async () => {
+  const store = new Store(dbPath(), { clock: () => new Date('2026-03-10T12:00:00.500Z') });
+  open_.add(store);
+  const run = fakeGh([issue(1, '2026-01-01T10:00:00Z'), issue(2, '2026-03-10T08:00:00Z')]);
+  const resident = new Resident(store, { repo: REPO, policy: POLICY, mode: 'observe', run });
+  await resident.run({ once: true });
+  expect(run.calls[0]).toContain('since=2026-03-09T12:00:00Z');
+  expect(snapshot(store).triggers.map((t: any) => t.thread_id)).toEqual([`github:${REPO}#2`]);
 });

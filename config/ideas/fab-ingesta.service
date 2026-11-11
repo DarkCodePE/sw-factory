@@ -1,0 +1,10 @@
+[Unit]
+Description=FAB: ingesta nocturna de clips (clasifica, mueve a raw/sources/clips y pide rescan)
+
+[Service]
+Type=oneshot
+WorkingDirectory=%h/Desktop/factory/sw-factory
+# LLM_WIKI_PROJECT_ID y LLM_WIKI_API_TOKEN van en este archivo (modo 600), fuera del repo.
+EnvironmentFile=%h/.config/fab/ingesta.env
+Environment=PATH=%h/.nvm/versions/node/v22.22.1/bin:%h/.local/bin:/usr/local/bin:/usr/bin
+ExecStart=/usr/bin/env bun scripts/ideas/ingesta-nocturna.ts
