@@ -3,6 +3,8 @@
 // reads the store and records human decisions.
 import type { Activity, Change, Store } from './store.ts';
 import { chatMain } from './chat.ts';
+import { AdmissionDb, hasAdmission } from './admission/db.ts';
+import { resetSessionCap } from './admission/sessions.ts';
 
 const ESC = '\x1b[';
 const c = {
@@ -216,6 +218,7 @@ export function handleKey(store: Store, workstream: string, state: TuiState, key
       if (!['failed', 'blocked', 'implemented'].includes(row.change.status)) state.flash = 'solo se reintentan changes fallidos, bloqueados o con validador agotado';
       else {
         store.retryChange(row.change.id);
+        if (hasAdmission(store)) resetSessionCap(store, new AdmissionDb(store), row.change.id); // A6
         state.flash = 'change re-encolado';
       }
     }

@@ -83,7 +83,9 @@ export function supersede(store: Store, adm: AdmissionDb, activity: Activity, re
   const result = adm.tx(() => {
     const cur = sessions.current(activity.changeId, activity.kind);
     if (!cur) throw new Error(`no hay sesión que reemplazar para ${activity.changeId}/${activity.kind}`);
-    if (cur.generation >= MAX_ACTIVITY_RETRIES) return cur.generation; // el evento se escribe fuera: un throw desharía la transacción
+    // A6: el tope cuenta desde la última vez que una persona reintentó (`resetSessionCap`), no para siempre.
+    const base = (adm.db.query('SELECT MAX(cap_from) AS base FROM adm_sessions WHERE change_id = ? AND kind = ?').get(activity.changeId, activity.kind) as { base: number | null }).base ?? 1;
+    if (cur.generation - base + 1 >= MAX_ACTIVITY_RETRIES) return cur.generation - base + 1; // el evento se escribe fuera: un throw desharía la transacción
     adm.db.query("UPDATE adm_sessions SET status = 'lost', lost_reason = ? WHERE session_id = ? AND status = 'open'").run(reason.slice(0, 500), cur.sessionId);
     adm.db.query('INSERT INTO adm_sessions(change_id, kind, generation, session_id, backend, cwd, model, profile_digest, created_at) VALUES (?,?,?,?,?,?,?,?,?)')
       .run(activity.changeId, activity.kind, cur.generation + 1, randomUUID(), meta.backend, meta.cwd, meta.model ?? null, meta.profileDigest ?? null, adm.iso());
@@ -113,4 +115,14 @@ export function reconstructPrompt(store: Store, adm: AdmissionDb, activityId: st
   const prompt = buildWorkerPrompt({ workstream: store.getWorkstream(activity.workstreamId), change, activity, history, worktree: ctx.worktree, branch: ctx.branch,
     untrusted: isChannelChange(adm, change.id) }, { factoryCommits: ctx.factoryCommits }, ctx.templates);
   return `${prompt}${questionsBlock(adm, change.id)}\n\n# Resumed work\nA previous session for this activity was lost. Inspect the working tree (git status, git log) to see what is already done and continue from there; do not start over.`;
+}
+
+/**
+ * A6: `fab retry` es una decisión humana nueva, así que reinicia el tope de generaciones perdidas del change (la sesión sigue
+ * siendo la misma y se reanuda). Deja un evento. Devuelve cuántos tipos de activity se reiniciaron.
+ */
+export function resetSessionCap(store: Store, adm: AdmissionDb, changeId: string): number {
+  const n = adm.tx(() => adm.db.query('UPDATE adm_sessions SET cap_from = generation WHERE id IN (SELECT MAX(id) FROM adm_sessions WHERE change_id = ? GROUP BY kind)').run(changeId).changes);
+  if (n) { const c = store.getChange(changeId); store.event(c.workstreamId, 'info', 'reintento humano: tope de generaciones de sesión reiniciado', changeId); }
+  return n;
 }

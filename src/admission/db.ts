@@ -55,6 +55,7 @@ CREATE TABLE IF NOT EXISTS adm_sessions (
   id INTEGER PRIMARY KEY AUTOINCREMENT, change_id TEXT NOT NULL, kind TEXT NOT NULL, generation INTEGER NOT NULL,
   session_id TEXT NOT NULL UNIQUE, backend TEXT NOT NULL, cwd TEXT NOT NULL, model TEXT, profile_digest TEXT,
   status TEXT NOT NULL DEFAULT 'open' CHECK (status IN ('open','lost','closed')), launched_at TEXT, lost_reason TEXT, created_at TEXT NOT NULL,
+  cap_from INTEGER, -- generación desde la que cuenta el tope (A6): un reintento humano lo reinicia
   UNIQUE (change_id, kind, generation));
 CREATE UNIQUE INDEX IF NOT EXISTS adm_questions_open ON adm_questions(activity_id) WHERE status = 'open';`;
 
@@ -63,6 +64,8 @@ export class AdmissionDb {
   constructor(private readonly store: Store) {
     this.db = store.db;
     this.db.exec(SCHEMA);
+    // Bases creadas antes de A6: `CREATE TABLE IF NOT EXISTS` no añade la columna.
+    if (!(this.db.query('PRAGMA table_info(adm_sessions)').all() as { name: string }[]).some(c => c.name === 'cap_from')) this.db.exec('ALTER TABLE adm_sessions ADD COLUMN cap_from INTEGER');
   }
   /** Reloj de la fab (inyectable en tests), en ms. */
   now(): number { return this.store.clock().getTime(); }

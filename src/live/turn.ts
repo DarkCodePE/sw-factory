@@ -8,7 +8,7 @@ import type { AdmissionDb } from '../admission/db.ts';
 import type { CrashPoint } from '../admission/effects.ts';
 import { markAnswerDelivered, planTurn } from '../admission/recovery.ts';
 import { liveOutcome, ReportStore, type LiveOutcome } from '../admission/reports.ts';
-import { SessionStore } from '../admission/sessions.ts';
+import { isSessionLoss, reconstructPrompt, SessionStore, supersede } from '../admission/sessions.ts';
 import type { WorkerTemplates } from '../prompts.ts';
 import type { Activity, Store } from '../store.ts';
 import { claudeLive } from './claude.ts';
@@ -56,20 +56,29 @@ export async function runLiveActivity(store: Store, adm: AdmissionDb, a: Activit
   const plan = planTurn(adm, a);
   if (plan.action === 'apply-report') throw new Error('report pendiente: recuperación de turno huérfano sin implementar');
   const meta = { backend: ctx.backend.name, cwd: ctx.cwd, model: null, profileDigest: ctx.profileDigest };
-  const prompt = plan.action === 'fresh' ? ctx.prompt + LIVE_RULES : plan.prompt;
+  let prompt = plan.action === 'fresh' ? ctx.prompt + LIVE_RULES : plan.prompt;
   const questionId = plan.action === 'resume' ? plan.questionId : undefined;
   reports.markApplied(a.id); // lo que quede pendiente es de un intento anterior ya resuelto; este turno produce el suyo
-  const { session, turn } = sessions.begin(a.changeId, a.kind, meta);
-  ctx.crash?.('session-written');
-  sessions.markLaunched(session.sessionId); // A8: antes de lanzar, no en onSpawn
-  ctx.crash?.('session-launched');
-  const attemptId = randomUUID();
-  const result = await runLiveTurn(adm, ctx.backend, a.changeId, {
-    ...turn, prompt, cwd: ctx.cwd, attemptId, timeoutMs: ctx.timeoutMs, signal: ctx.signal, confine: ctx.confine, capturePath: ctx.capturePath,
-    onSpawn: pgid => { ctx.onSpawn(pgid); if (questionId) markAnswerDelivered(adm, questionId); },
-    onReport: reports.recorder(a.id, attemptId, ctx.crash),
-  });
-  ctx.crash?.('turn-ended');
-  const outcome = liveOutcome(result.reports);
-  return { run: asRun(result, outcome), outcome };
+  for (;;) {
+    try {
+      const { session, turn } = sessions.begin(a.changeId, a.kind, meta);
+      ctx.crash?.('session-written');
+      sessions.markLaunched(session.sessionId); // A8: antes de lanzar, no en onSpawn
+      ctx.crash?.('session-launched');
+      const attemptId = randomUUID();
+      const result = await runLiveTurn(adm, ctx.backend, a.changeId, {
+        ...turn, prompt, cwd: ctx.cwd, attemptId, timeoutMs: ctx.timeoutMs, signal: ctx.signal, confine: ctx.confine, capturePath: ctx.capturePath,
+        onSpawn: pgid => { ctx.onSpawn(pgid); if (questionId) markAnswerDelivered(adm, questionId); },
+        onReport: reports.recorder(a.id, attemptId, ctx.crash),
+      });
+      ctx.crash?.('turn-ended');
+      const outcome = liveOutcome(result.reports);
+      return { run: asRun(result, outcome), outcome };
+    } catch (error) {
+      // S3: solo «sesión inexistente» o «backend/cwd/modelo/perfil distintos» cuentan como pérdida; el resto (red, límite, timeout) sube tal cual.
+      if (!isSessionLoss(error)) throw error;
+      supersede(store, adm, a, (error as Error).message, meta); // evento + tope; agotado lanza SessionLostExhaustedError
+      prompt = reconstructPrompt(store, adm, a.id, { worktree: ctx.cwd, branch: ctx.branch, factoryCommits: ctx.factoryCommits, templates: ctx.templates }) + LIVE_RULES;
+    }
+  }
 }

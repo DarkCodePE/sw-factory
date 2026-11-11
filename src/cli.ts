@@ -31,6 +31,8 @@ import { createGhGateway } from './connectors/github.ts';
 import { ChangeLinkStore } from './connectors/links.ts';
 import { validateMain } from './validators/cli.ts';
 import { residentMain } from './admission/cli.ts';
+import { AdmissionDb, hasAdmission } from './admission/db.ts';
+import { resetSessionCap } from './admission/sessions.ts';
 import { protectedIntegrity, purgeRegenerableCaches } from './validators/integrity.ts';
 import { mergeRecoverably } from './validators/publish.ts';
 
@@ -355,6 +357,7 @@ async function main(argv: string[]): Promise<number> {
       case 'retry': {
         const c = findByPrefix(allChanges(store), sub ?? '', 'change');
         const a = store.retryChange(c.id);
+        if (hasAdmission(store)) resetSessionCap(store, new AdmissionDb(store), c.id); // A6: un reintento humano es una decisión nueva
         console.log(`change ${short(c.id)}: ${a.kind} re-encolada`);
         return 0;
       }

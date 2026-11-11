@@ -79,3 +79,57 @@ test('A5: un worker ajeno no consume el report done: nada se cierra ni se marca 
   expect(new AdmissionDb(store).db.query('SELECT applied_at FROM adm_reports').all()).toEqual([{ applied_at: null }]);
   expect(store.listActivities({ changeId: c.id })[0]?.status).not.toBe('completed');
 });
+
+// ---- S3: sesión perdida ------------------------------------------------------------------------------------------------
+import { answerQuestion } from '../src/admission/answers.ts';
+import { resetSessionCap } from '../src/admission/sessions.ts';
+
+/** Primer turno pregunta y la persona responde: la activity queda pending con la respuesta por entregar. */
+async function asked(backend: ReturnType<typeof fakeLive>) {
+  const { ws, c } = setup();
+  await pool(ws.id, { fake: backend });
+  const adm = new AdmissionDb(store), q = adm.db.query('SELECT id FROM adm_questions').get() as { id: string };
+  expect(answerQuestion(store, adm, { questionId: q.id, answer: 'rojo', by: 'maint' })).toBe('answered');
+  return { ws, c, adm };
+}
+const ASK = { reports: [{ state: 'awaiting' as const, summary: 's', human_action: '¿color?' }] };
+const DONE = { reports: [{ state: 'done' as const, summary: 'listo' }], output: 'hecho' };
+
+test('S3: la sesión no existe al reanudar → nueva generación con el prompt reconstruido, con evento y sin sesión nueva en silencio', async () => {
+  const backend = fakeLive([ASK, DONE, DONE]), { ws, c, adm } = await asked(backend);
+  backend.known.clear(); // el harness olvidó la sesión
+  await pool(ws.id, { fake: backend });
+  expect(backend.turns).toHaveLength(3);
+  expect(backend.turns[1]!.sessionId).toBeDefined(); // se intentó reanudar primero
+  expect(backend.turns[2]!.sessionId).toBeUndefined(); // y solo entonces, sesión nueva con id fijado por la fab
+  expect(backend.turns[2]!.newSessionId).not.toBe(backend.turns[1]!.sessionId);
+  expect(backend.turns[2]!.prompt).toContain('Answer (maint): rojo'); // la respuesta ya dada viaja en el prompt reconstruido
+  expect(backend.turns[2]!.prompt).toContain('previous session for this activity was lost');
+  expect(adm.db.query('SELECT generation, status FROM adm_sessions ORDER BY generation').all()).toEqual([{ generation: 1, status: 'lost' }, { generation: 2, status: 'open' }]);
+  expect(store.listEvents('p').some(e => e.severity === 'warning' && /perdida.*generación 2/.test(String(e.message)))).toBe(true);
+  expect(store.listActivities({ changeId: c.id })[0]?.status).toBe('completed');
+});
+
+test('S3: un error transitorio no abre sesión nueva: la activity reintenta con la misma', async () => {
+  const backend = fakeLive([ASK, { error: new Error('429 rate limit') }, DONE]), { ws } = await asked(backend);
+  await pool(ws.id, { fake: backend });
+  const adm = new AdmissionDb(store);
+  expect(adm.db.query('SELECT generation, status FROM adm_sessions').all()).toEqual([{ generation: 1, status: 'open' }]);
+  expect(backend.turns[2]!.sessionId).toBe(backend.turns[0]!.newSessionId); // el reintento reanuda la misma sesión
+});
+
+test('S3 + A6: agotado el tope la activity falla; fab retry lo reinicia y deja un evento', async () => {
+  const backend = fakeLive([ASK, { error: new SessionNotFoundErrorLike() }]), { ws, c, adm } = await asked(backend);
+  for (let i = 0; i < 3; i++) await pool(ws.id, { fake: backend });
+  expect(store.getChange(c.id).status).toBe('failed');
+  expect(store.listActivities({ changeId: c.id })[0]?.error).toMatch(/tope/);
+  const before = adm.db.query('SELECT MAX(generation) g FROM adm_sessions').get() as { g: number };
+  store.retryChange(c.id);
+  expect(resetSessionCap(store, adm, c.id)).toBe(1);
+  expect(store.listEvents('p').some(e => /tope de generaciones de sesión reiniciado/.test(String(e.message)))).toBe(true);
+  backend.steps.splice(0, backend.steps.length, DONE); backend.known.clear();
+  await pool(ws.id, { fake: backend });
+  expect(store.getChange(c.id).status).not.toBe('failed'); // el reintento humano pudo abrir una generación más
+  expect((adm.db.query('SELECT MAX(generation) g FROM adm_sessions').get() as { g: number }).g).toBeGreaterThan(before.g - 1);
+});
+class SessionNotFoundErrorLike extends (await import('../src/live/contract.ts')).SessionNotFoundError { constructor() { super('s', 'gone'); } }
