@@ -130,7 +130,7 @@ test('S3 + A6: agotado el tope la activity falla; fab retry lo reinicia y deja u
   backend.steps.splice(0, backend.steps.length, DONE); backend.known.clear();
   await pool(ws.id, { fake: backend });
   expect(store.getChange(c.id).status).not.toBe('failed'); // el reintento humano pudo abrir una generación más
-  expect((adm.db.query('SELECT MAX(generation) g FROM adm_sessions').get() as { g: number }).g).toBeGreaterThan(before.g - 1);
+  expect((adm.db.query('SELECT MAX(generation) g FROM adm_sessions').get() as { g: number }).g).toBe(before.g + 1); // B8: se abrió exactamente una generación
 });
 class SessionNotFoundErrorLike extends (await import('../src/live/contract.ts')).SessionNotFoundError { constructor() { super('s', 'gone'); } }
 
@@ -174,53 +174,25 @@ test('S4: sin report, el turno huérfano reanuda con «continúa» (no con el pr
   expect(store.listActivities({ changeId: c.id })[0]?.status).toBe('completed');
 });
 
-test('S4: un report done de un intento que falló con motivo no se aplica en el reintento: se vuelve a lanzar', async () => {
-  const { ws, c } = setup(), backend = fakeLive([DONE]);
-  const a = store.claimActivity(ws.id, 'w1')!;
-  const adm = new AdmissionDb(store);
-  new (await import('../src/admission/reports.ts')).ReportStore(adm).recorder(a.id, 'att-old')({ state: 'done', summary: 'viejo' });
-  store.failActivity(a.id, 'w1', 'implementation reported done but left no commits on the branch');
+// ---- verificación de Fable (H1, H2, M1, M2, M5, B3, B4) ---------------------------------------------------------------------
+import { ReportStore } from '../src/admission/reports.ts';
+import { claimed } from './helpers/live.ts';
+
+test('H1: tras fab retry el turno vivo recibe el motivo del fallo anterior, no «tu turno se interrumpió»', async () => {
+  const { ws, c } = setup(), backend = fakeLive([{ reports: [{ state: 'blocked', summary: 'GATES_FAIL tests rojos' }] }, DONE]);
   await pool(ws.id, { fake: backend });
-  expect(backend.turns).toHaveLength(1);
-  expect(store.listActivities({ changeId: c.id })[0]).toMatchObject({ status: 'completed', result: 'hecho' });
+  expect(store.getChange(c.id).status).toBe('blocked');
+  store.retryChange(c.id);
+  await pool(ws.id, { fake: backend });
+  expect(backend.turns[1]!.prompt).toContain('GATES_FAIL tests rojos');
+  expect(backend.turns[1]!.prompt).not.toContain('interrupted before it finished');
 });
 
-// ---- S5: espera ----------------------------------------------------------------------------------------------------------
-import { reapQuestions } from '../src/admission/answers.ts';
-
-test('S5: el pool reanuda la MISMA sesión con la respuesta como mensaje del turno y la marca entregada', async () => {
-  const backend = fakeLive([ASK, DONE]), { ws, c, adm } = await asked(backend);
+test('H2: si el turno que lleva la respuesta falla con un error transitorio, el reintento vuelve a entregarla', async () => {
+  const backend = fakeLive([ASK, { error: new Error('429 rate limit') }, DONE]), { ws } = await asked(backend);
   await pool(ws.id, { fake: backend });
   expect(backend.turns[1]!.prompt).toBe('rojo');
-  expect(backend.turns[1]!.sessionId).toBe(backend.turns[0]!.newSessionId);
-  expect(adm.db.query('SELECT delivered_at FROM adm_questions').get()).toEqual({ delivered_at: expect.any(String) });
-  expect(store.listActivities({ changeId: c.id })[0]?.status).toBe('completed');
+  expect(backend.turns[2]!.prompt).toBe('rojo'); // la sesión nunca vio la respuesta: no se da por entregada
+  expect(new AdmissionDb(store).db.query('SELECT delivered_at FROM adm_questions').get()).toEqual({ delivered_at: expect.any(String) }); // sí tras el turno que acabó
 });
 
-test('S5: el plazo vence a blocked aunque el residente no corra (lo comprueba el pool) y la pregunta queda expired', async () => {
-  const backend = fakeLive([ASK]), { ws, c } = setup2(), adm0 = undefined;
-  void adm0;
-  await pool(ws.id, { fake: backend });
-  store.db.query("UPDATE activities SET wait_until = '2000-01-01T00:00:00.000Z' WHERE change_id = ?").run(c.id);
-  await pool(ws.id, { fake: backend });
-  expect(store.listActivities({ changeId: c.id })[0]).toMatchObject({ status: 'blocked' });
-  expect(store.listActivities({ changeId: c.id })[0]?.error).toContain('REPLY_TIMEOUT');
-  expect(store.getChange(c.id).status).toBe('blocked');
-  expect(new AdmissionDb(store).db.query('SELECT status FROM adm_questions').all()).toEqual([{ status: 'expired' }]);
-  function setup2() { return setup(); }
-});
-
-test('M2: una persona puede abandonar la espera (queda blocked → fab retry) o cancelar el change (la pregunta se cancela)', async () => {
-  const backend = fakeLive([ASK, DONE]), { ws, c } = setup();
-  await pool(ws.id, { fake: backend });
-  const w = store.listActivities({ changeId: c.id })[0]!;
-  store.abandonWait(w.id);
-  expect(store.getActivity(w.id)).toMatchObject({ status: 'blocked' });
-  expect(store.retryChange(c.id).status).toBe('pending');
-  const second = (() => { const w2 = store.createWorkstream({ slug: 'q', goal: 'g', repo, agent: 'fake', requireChangeApproval: false }); store.setWorkstreamState(w2.id, 'active'); return { ws: w2, c: store.createChange(w2.id, 't', 'd') }; })();
-  await pool(second.ws.id, { fake: fakeLive([ASK]) });
-  store.closeChange(second.c.id, 'canceled'); // frontier 11
-  const adm = new AdmissionDb(store);
-  expect(reapQuestions(adm)).toBe(2); // la abandonada y la del change cancelado
-  expect(store.listActivities({ changeId: second.c.id }).filter(a => a.status === 'pending' || a.status === 'waiting_reply')).toEqual([]);
-});

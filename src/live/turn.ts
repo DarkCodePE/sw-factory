@@ -22,9 +22,13 @@ export const LIVE_BACKENDS: Record<string, LiveBackend> = { claude: claudeLive }
  * vivo y la activity es de trabajo (investigación o implementación). Validadores y gates siguen en un disparo. Nunca por defecto.
  */
 export function liveBackendFor(opts: { live?: boolean; liveBackends?: Record<string, LiveBackend> }, agentName: string, a: Activity): LiveBackend | undefined {
-  if (!opts.live || a.validator || a.kind === 'gates') return undefined;
+  return a.validator || a.kind === 'gates' ? undefined : backendOf(opts, agentName);
+}
+
+/** El backend vivo del adaptador si el pool es vivo (B4: lo usa también el aviso de arranque). */
+export function backendOf(opts: { live?: boolean; liveBackends?: Record<string, LiveBackend> }, agentName: string): LiveBackend | undefined {
   const registry = opts.liveBackends ?? LIVE_BACKENDS;
-  return Object.hasOwn(registry, agentName) ? registry[agentName] : undefined;
+  return opts.live && Object.hasOwn(registry, agentName) ? registry[agentName] : undefined;
 }
 
 /** Lo que el agente necesita saber para hablar con la fab: sin esto nunca preguntaría ni informaría por la tool. */
@@ -53,7 +57,8 @@ function asRun(run: AgentRun, outcome: LiveOutcome | undefined): AgentRun {
 /** Un turno: sesión escrita antes de lanzar (S2), `onReport` durable (S6) y resultado por precedencia del report (T26). */
 export async function runLiveActivity(store: Store, adm: AdmissionDb, a: Activity, ctx: LiveActivityCtx): Promise<{ run: AgentRun; outcome?: LiveOutcome }> {
   const sessions = new SessionStore(adm), reports = new ReportStore(adm);
-  const plan = planTurn(adm, a);
+  const all = store.listActivities({ changeId: a.changeId });
+  const plan = planTurn(adm, a, { history: all.slice(0, all.findIndex(x => x.id === a.id)) });
   if (plan.action === 'apply-report') { // S4: el turno huérfano ya había informado: se aplica el report, no se reejecuta ni se lanza nada
     const outcome = liveOutcome([plan.report]);
     return { run: asRun({ ok: true, output: '', exitCode: 0, durationMs: 0, status: { kind: 'missing', reason: 'recuperado de un report guardado' } }, outcome), outcome };
@@ -71,9 +76,10 @@ export async function runLiveActivity(store: Store, adm: AdmissionDb, a: Activit
       const attemptId = randomUUID();
       const result = await runLiveTurn(adm, ctx.backend, a.changeId, {
         ...turn, prompt, cwd: ctx.cwd, attemptId, timeoutMs: ctx.timeoutMs, signal: ctx.signal, confine: ctx.confine, capturePath: ctx.capturePath,
-        onSpawn: pgid => { ctx.onSpawn(pgid); if (questionId) markAnswerDelivered(adm, questionId); },
+        onSpawn: ctx.onSpawn,
         onReport: reports.recorder(a.id, attemptId, ctx.crash),
       });
+      if (questionId) markAnswerDelivered(adm, questionId); // H2: entregada solo cuando el turno que la lleva terminó con resultado; un fallo transitorio la reenvía
       ctx.crash?.('turn-ended');
       const outcome = liveOutcome(result.reports);
       return { run: asRun(result, outcome), outcome };
