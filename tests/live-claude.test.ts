@@ -58,9 +58,13 @@ describe('T34: flags repetidos y token fuera de argv', () => {
     const { confineAgent } = await import('../src/sandbox/confine.ts');
     const dir = mkdtempSync(join(tmpdir(), 'live-conf-')); Bun.spawnSync(['git', 'init', '-q', dir]);
     if (!Bun.which('bwrap')) return; // sin bubblewrap no hay nada que comprobar
-    const c = confineAgent('claude', ['claude', ...liveClaudeArgv(base, {}, 'abc', join(dir, '.git/fab-live/m.json'))], dir) as { argv?: string[]; command?: string[] };
-    const all = JSON.stringify(c);
-    expect((all.match(/--mcp-config/g) ?? []).length).toBe(1);
+    // confine exige el ejecutable; en CI no hay `claude` real. Ruta absoluta: Bun.which no ve cambios de PATH en caliente.
+    const f = fakeClaude('exit 0');
+    try {
+      const c = confineAgent('claude', [join(f.dir, 'claude'), ...liveClaudeArgv(base, {}, 'abc', join(dir, '.git/fab-live/m.json'))], dir) as { argv?: string[]; command?: string[] };
+      const all = JSON.stringify(c);
+      expect((all.match(/--mcp-config/g) ?? []).length).toBe(1);
+    } finally { f.restore(); }
   });
 });
 
