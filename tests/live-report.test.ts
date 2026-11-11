@@ -81,7 +81,8 @@ test('el backend claude persiste cada report vía turn.onReport antes de contest
   const { tmpdir } = await import('node:os'), { join } = await import('node:path');
   const dir = mkdtempSync(join(tmpdir(), 'live-rep-'));
   writeFileSync(join(dir, 'claude'), `#!/bin/sh
-cfg=$(printf '%s\\n' "$@" | grep mcpServers)
+for a in "$@"; do [ "$p" = 1 ] && cfgf=$a; p=0; [ "$a" = --mcp-config ] && p=1; done
+cfg=$(cat "$cfgf")
 url=$(printf '%s' "$cfg" | sed 's/.*"url":"\\([^"]*\\)".*/\\1/')
 auth=$(printf '%s' "$cfg" | sed 's/.*"Authorization":"\\([^"]*\\)".*/\\1/')
 curl -s -H "Authorization: $auth" -d '{"jsonrpc":"2.0","id":2,"method":"tools/call","params":{"name":"report","arguments":{"state":"awaiting","summary":"s","human_action":"¿color?"}}}' "$url" >/dev/null

@@ -1,6 +1,9 @@
 // Live backend over Claude Code CLI: one `claude -p` per turn, resumable by session id.
 // Design: techdocs/docs/investigacion/inspiracion/06-integracion-superagent-fab.md §5.2.
 import { randomUUID } from 'node:crypto';
+import { mkdirSync, rmSync, writeFileSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 import { getAgent, runAgent, type AgentAdapter } from '../agents.ts';
 import { createSdkMcpServer } from '../sdk/mcp-server.ts';
 import { REPORT_SCHEMA, REPORT_TOOL, SessionNotFoundError, type LiveBackend, type LiveReport, type LiveTurn } from './contract.ts';
@@ -8,12 +11,22 @@ import { REPORT_SCHEMA, REPORT_TOOL, SessionNotFoundError, type LiveBackend, typ
 const SERVER = 'fab';
 const NOT_FOUND = /No conversation found/;
 
-/** The argv of one turn: the stock claude adapter plus session flags and the per-turn `report` MCP. */
-export function liveClaudeArgv(base: string[], turn: { sessionId?: string }, sessionId: string, mcp: unknown): string[] {
-  return [...base,
-    turn.sessionId ? '--resume' : '--session-id', sessionId,
-    '--strict-mcp-config', '--mcp-config', JSON.stringify({ mcpServers: { [SERVER]: mcp } }),
-    '--allowedTools', `mcp__${SERVER}__${REPORT_TOOL}`];
+/**
+ * The argv of one turn: the stock claude adapter plus session flags and the per-turn `report` MCP (T34, H-19).
+ * The MCP config (it carries the per-turn token) goes by FILE, never inline: argv is visible in the process list.
+ * `--allowedTools` is merged into the adapter's single flag and `--mcp-config` appears once, so the result does not depend
+ * on how a given `claude` version treats repeated flags (pinned by tests/live-claude.test.ts).
+ */
+export function liveClaudeArgv(base: string[], turn: { sessionId?: string }, sessionId: string, mcpConfigPath: string): string[] {
+  const argv = [...base], tool = `mcp__${SERVER}__${REPORT_TOOL}`, at = argv.indexOf('--allowedTools');
+  if (at >= 0) argv[at + 1] = `${argv[at + 1]},${tool}`; else argv.push('--allowedTools', tool);
+  return [...argv, turn.sessionId ? '--resume' : '--session-id', sessionId, '--strict-mcp-config', '--mcp-config', mcpConfigPath];
+}
+
+/** Where the config file can live: inside the git dir, which `--confine` binds (the sandbox's /tmp is a tmpfs) and `git status` ignores. */
+function configDir(cwd: string): string {
+  const r = Bun.spawnSync(['git', '-C', cwd, 'rev-parse', '--absolute-git-dir']);
+  return r.exitCode === 0 ? join(r.stdout.toString().trim(), 'fab-live') : join(tmpdir(), 'fab-live');
 }
 
 /** Returns the error text for an invalid report, or the parsed report. Schema shape is checked by the MCP server. */
@@ -39,10 +52,15 @@ export const claudeLive: LiveBackend = {
         return 'report recorded';
       },
     }] });
+    let configPath: string | undefined;
     try {
       const mcp = await server.start();
-      const base = getAgent('claude');
-      const adapter: AgentAdapter = { ...base, command: (prompt, options) => liveClaudeArgv(base.command(prompt, options), turn, sessionId, mcp) };
+      const dir = configDir(turn.cwd);
+      mkdirSync(dir, { recursive: true, mode: 0o700 });
+      configPath = join(dir, `mcp-${randomUUID()}.json`);
+      writeFileSync(configPath, JSON.stringify({ mcpServers: { [SERVER]: mcp } }), { mode: 0o600 });
+      const path = configPath, base = getAgent('claude');
+      const adapter: AgentAdapter = { ...base, command: (prompt, options) => liveClaudeArgv(base.command(prompt, options), turn, sessionId, path) };
       let run;
       try {
         run = await runAgent(adapter, turn.prompt, turn.cwd, turn.timeoutMs, {
@@ -55,6 +73,7 @@ export const claudeLive: LiveBackend = {
       if (turn.sessionId && run.exitCode !== 0 && NOT_FOUND.test(`${run.stderr}${run.stdout}`)) throw new SessionNotFoundError(sessionId, run.stderr?.trim());
       return { ...run, sessionId, attemptId: turn.attemptId, reports };
     } finally {
+      if (configPath) rmSync(configPath, { force: true });
       await server.close();
     }
   },

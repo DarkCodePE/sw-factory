@@ -61,7 +61,9 @@ export function confineAgent(name: string, argv: string[], cwd: string, extra: R
       const credentials = join(hostHome, '.claude', '.credentials.json');
       if (existsSync(credentials)) args.push('--ro-bind', credentials, '/home/agent/.claude/.credentials.json');
       // No user/project hooks, plugins, MCP servers or host config.
-      command.push('--setting-sources', '', '--strict-mcp-config', '--mcp-config', '{"mcpServers":{}}');
+      command.push('--setting-sources', '');
+      // A live turn already brings its own `--mcp-config` (the `report` tool): a second, empty one appended last could win and drop it.
+      if (!command.includes('--mcp-config')) command.push('--strict-mcp-config', '--mcp-config', '{"mcpServers":{}}');
     } else if (name === 'codex') {
       mkdirSync(join(home, '.codex'));
       const auth = join(hostHome, '.codex/auth.json');
