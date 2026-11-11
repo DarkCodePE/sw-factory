@@ -66,6 +66,8 @@ export interface PoolOptions {
   pollMs?: number;
   heartbeatMs?: number;
   leaseTtlMs?: number;
+  /** Tope de un turno en ms (T28). Sin él, FAB_TURN_TIMEOUT_MS o los 20 min de runAgent. */
+  turnTimeoutMs?: number;
   log?: (msg: string) => void;
 }
 
@@ -93,6 +95,21 @@ function ensureSetup(store: Store, ws: Workstream, cwd: string, deps: string, si
   return job;
 }
 
+/**
+ * T28 (H-13): un bloqueo pasajero de la base (SQLITE_BUSY agotado, p. ej. con un residente escribiendo) no debe matar un turno
+ * sano. Se tolera mientras quede al menos un latido antes de que venza el lease (`sinceLastOk` + un intervalo < ttl); un error
+ * que no es de bloqueo (la activity ya no es nuestra, el change es terminal) aborta de inmediato, como siempre.
+ */
+export function heartbeatVerdict(err: unknown, sinceLastOkMs: number, ttlMs: number, intervalMs: number): 'tolerate' | 'abort' {
+  return isBusyError(err) && sinceLastOkMs + intervalMs < ttlMs ? 'tolerate' : 'abort';
+}
+
+/** Tope de un turno: `opts.turnTimeoutMs`, si no `FAB_TURN_TIMEOUT_MS`, si no el de `runAgent` (20 min). Un valor no positivo se ignora. */
+export function turnTimeoutMs(opts: { turnTimeoutMs?: number }): number | undefined {
+  const value = opts.turnTimeoutMs ?? Number(process.env.FAB_TURN_TIMEOUT_MS);
+  return Number.isFinite(value) && value > 0 ? value : undefined;
+}
+
 export async function processActivity(
   store: Store,
   activity: Activity,
@@ -105,10 +122,16 @@ export async function processActivity(
   const agent = getAgent(opts.agentOverride ?? ws.agent);
   const heartbeatIntervalMs = opts.heartbeatMs ?? HEARTBEAT_INTERVAL_MS;
 
+  let lastBeat = Date.now();
   const heartbeatTimer = setInterval(() => {
     try {
       store.heartbeat(activity.id, workerId, opts.leaseTtlMs);
+      lastBeat = Date.now();
     } catch (err) {
+      if (heartbeatVerdict(err, Date.now() - lastBeat, opts.leaseTtlMs ?? LEASE_TTL_MS, heartbeatIntervalMs) === 'tolerate') {
+        log(`[${workerId}] heartbeat busy (${(err as Error).message}); retrying next tick`);
+        return;
+      }
       log(`[${workerId}] heartbeat failed: ${err instanceof Error ? err.message : String(err)}; aborting`);
       abortController.abort();
       clearInterval(heartbeatTimer);
@@ -226,7 +249,7 @@ export async function processActivity(
     // From launch onward the cost is unknown until the agent reports it.
     attemptCosts[attemptCosts.length - 1] = null;
     atomicEvidence(meta, JSON.stringify(pendingEvidence));
-    const run = await runAgent(opts.confine ? agent : captureAgent, prompt, path, undefined, {
+    const run = await runAgent(opts.confine ? agent : captureAgent, prompt, path, turnTimeoutMs(opts), {
       confine: opts.confine,
       capturePath: opts.confine ? activityLog(opts.stateDir, change.id, a.id) : undefined,
       readOnly,
