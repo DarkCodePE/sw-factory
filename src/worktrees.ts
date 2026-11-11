@@ -1,5 +1,5 @@
 // One git worktree per change, on branch fab/<short-change-id>, under <state>/worktrees/.
-import { existsSync, mkdirSync } from 'node:fs';
+import { existsSync, lstatSync, mkdirSync, realpathSync, unlinkSync, writeFileSync } from 'node:fs';
 import { join, resolve } from 'node:path';
 
 export const GIT_SAFE_FLAGS = ['-c', 'core.fsmonitor=false', '-c', 'core.hooksPath=/dev/null', '-c', 'diff.external='];
@@ -33,18 +33,60 @@ async function baseSha(repoPath: string, branch: string, existed: boolean): Prom
   return await git(repoPath, 'rev-parse', 'HEAD');
 }
 
+/** Inspired by copilot-superagent/vscode/src/worktree.ts ticketAt/prepare (MIT).
+ * Worktrees created before the `.preparing` marker existed are reused if they pass these checks.
+ */
+async function verifyWorktree(repoPath: string, path: string, branch: string): Promise<void> {
+  try {
+    if (!lstatSync(join(path, '.git')).isFile()) throw new Error('path is not a linked worktree');
+    if (realpathSync(await git(path, 'rev-parse', '--show-toplevel')) !== realpathSync(path)) {
+      throw new Error('path is not the worktree root');
+    }
+    const common = (cwd: string) => git(cwd, 'rev-parse', '--path-format=absolute', '--git-common-dir');
+    if (realpathSync(await common(path)) !== realpathSync(await common(repoPath))) {
+      throw new Error('worktree belongs to another repository');
+    }
+    if (await git(path, 'symbolic-ref', '--quiet', '--short', 'HEAD') !== branch) {
+      throw new Error(`worktree branch changed; expected ${branch}`);
+    }
+    const admin = await git(path, 'rev-parse', '--absolute-git-dir');
+    if (!existsSync(join(admin, 'index')) || existsSync(join(admin, 'index.lock')) || existsSync(join(admin, 'locked'))) {
+      throw new Error('worktree preparation is incomplete or locked');
+    }
+    await git(path, 'rev-parse', '--verify', 'HEAD^{commit}');
+  } catch (error) {
+    throw new Error(`Cannot reuse worktree ${path}: ${(error as Error).message}; inspect it manually`, { cause: error });
+  }
+}
+
 /** Create (or reuse) the worktree for a change. Investigation and implementation share it. */
 export async function ensureWorktree(repo: string, stateDir: string, changeId: string): Promise<{ path: string; branch: string; baseSha: string }> {
   const repoPath = resolve(repo);
   if (!existsSync(join(repoPath, '.git'))) throw new Error(`${repoPath} is not a git repository`);
   const branch = branchFor(changeId);
   const path = resolve(stateDir, 'worktrees', changeId.slice(0, 8));
-  if (existsSync(path)) return { path, branch, baseSha: await baseSha(repoPath, branch, (await git(repoPath, 'branch', '--list', branch)) !== '') };
+  // Persist intent before Git starts: a crash (even after checkout) must fail closed on reuse.
+  const preparing = resolve(stateDir, 'worktrees', `.${changeId.slice(0, 8)}.preparing`);
+  if (existsSync(preparing)) throw new Error(`Worktree preparation is incomplete at ${path}; inspect it, then delete ${preparing}`);
+  if (existsSync(path)) {
+    await verifyWorktree(repoPath, path, branch);
+    return { path, branch, baseSha: await baseSha(repoPath, branch, true) };
+  }
   mkdirSync(resolve(stateDir, 'worktrees'), { recursive: true });
   const branches = await git(repoPath, 'branch', '--list', branch);
-  if (branches) await git(repoPath, 'worktree', 'add', path, branch);
-  else await git(repoPath, 'worktree', 'add', '-b', branch, path, 'HEAD');
-  return { path, branch, baseSha: await baseSha(repoPath, branch, !!branches) };
+  writeFileSync(preparing, `${branch}\n`, { flag: 'wx', mode: 0o600 });
+  try {
+    if (branches) await git(repoPath, 'worktree', 'add', path, branch);
+    else await git(repoPath, 'worktree', 'add', '-b', branch, path, 'HEAD');
+  } catch (error) {
+    // Nothing was created: drop the marker so a later attempt can retry. A partial checkout keeps it (fail closed).
+    if (!existsSync(path)) unlinkSync(preparing);
+    throw error;
+  }
+  await verifyWorktree(repoPath, path, branch);
+  const base = await baseSha(repoPath, branch, !!branches);
+  unlinkSync(preparing);
+  return { path, branch, baseSha: base };
 }
 
 /**

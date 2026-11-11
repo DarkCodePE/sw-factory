@@ -31,7 +31,9 @@ export interface AgentRun {
 
 export interface AgentAdapter {
   name: string;
-  command(prompt: string, options?: { readOnly?: boolean; confine?: boolean }): string[];
+  command(prompt: string, options?: { readOnly?: boolean; confine?: boolean; promptStdin?: boolean }): string[];
+  /** runAgent sends the prompt on stdin; command() keeps argv input by default. */
+  promptStdin?: boolean;
   env?(): Record<string, string>;
   /** Extracts the report text and usage from structured stdout; null means stdout is plain text. */
   parse?(stdout: string): { text: string; usage?: AgentUsage } | null;
@@ -41,10 +43,11 @@ export interface AgentAdapter {
 
 const claude: AgentAdapter = {
   name: 'claude',
+  promptStdin: true,
   command: (prompt, options) => [
     'claude',
     '-p',
-    prompt,
+    ...(options?.promptStdin ? [] : [prompt]),
     '--permission-mode',
     'acceptEdits',
     '--allowedTools',
@@ -83,14 +86,15 @@ export function parseClaudeJson(stdout: string): { text: string; usage?: AgentUs
 
 const codex: AgentAdapter = {
   name: 'codex',
+  promptStdin: true,
   // codex-cli's workspace-write sandbox always mounts .git read-only, even with --add-dir.
   factoryCommits: true,
   // `--full-auto` was removed in codex-cli 0.160; workspace-write keeps writes inside the worktree.
   // A linked worktree keeps its index and objects in the main repository's .git, which must also be
   // writable or `git commit` fails; read-only activities keep the default read-only sandbox.
   command: (prompt, options) => options?.readOnly
-    ? ['codex', 'exec', '--sandbox', 'read-only', '--skip-git-repo-check', prompt]
-    : ['codex', 'exec', '--sandbox', 'workspace-write', '--skip-git-repo-check', prompt],
+    ? ['codex', 'exec', '--sandbox', 'read-only', '--skip-git-repo-check', options?.promptStdin ? '-' : prompt]
+    : ['codex', 'exec', '--sandbox', 'workspace-write', '--skip-git-repo-check', options?.promptStdin ? '-' : prompt],
 };
 
 /** Antigravity CLI in print mode; uses the signed-in Google AI subscription. */
@@ -106,7 +110,9 @@ const agy: AgentAdapter = {
  */
 const droid: AgentAdapter = {
   name: 'droid',
-  command: (prompt) => [
+  // `droid exec --help` documents --file; /dev/stdin avoids a positional prompt.
+  promptStdin: true,
+  command: (prompt, options) => [
     'droid',
     'exec',
     '-m',
@@ -115,7 +121,7 @@ const droid: AgentAdapter = {
     'medium',
     '--output-format',
     'text',
-    prompt,
+    ...(options?.promptStdin ? ['--file', '/dev/stdin'] : [prompt]),
   ],
   env: () => {
     const env: Record<string, string> = { FACTORY_AIRGAP_ENABLED: '1' };
@@ -138,13 +144,14 @@ const fake: AgentAdapter = {
 
 const native: AgentAdapter = {
   name: 'native',
+  promptStdin: true,
   command: (prompt, options) => [...selfCommand('exec', new URL('./agent/exec.ts', import.meta.url)),
     '--require-status',
     '--auto', process.env.FABRICA_AGENT_AUTONOMY ?? 'medium',
     ...(process.env.FABRICA_AGENT_SETTINGS ? ['--settings', process.env.FABRICA_AGENT_SETTINGS] : []),
     ...(process.env.FABRICA_AGENT_TIMEOUT_MS ? ['--timeout-ms', process.env.FABRICA_AGENT_TIMEOUT_MS] : []),
     ...(process.env.FABRICA_AGENT_MAX_TURNS ? ['--max-turns', process.env.FABRICA_AGENT_MAX_TURNS] : []),
-    ...(options?.readOnly ? ['--use-spec'] : []), prompt],
+    ...(options?.readOnly ? ['--use-spec'] : []), ...(options?.promptStdin ? [] : [prompt])],
 };
 
 const ADAPTERS: Record<string, AgentAdapter> = { claude, codex, agy, droid, native, fake };
@@ -175,13 +182,14 @@ export async function runAgent(
   options: { readOnly?: boolean; confine?: boolean; capturePath?: string; signal?: AbortSignal; onSpawn?: (pgid: number) => void } = {}
 ): Promise<AgentRun> {
   const start = Date.now();
-  const confined = options.confine ? confineAgent(agent.name, agent.command(prompt, options), cwd, agent.env?.()) : undefined;
+  const argv = agent.command(prompt, { ...options, promptStdin: agent.promptStdin === true });
+  const confined = options.confine ? confineAgent(agent.name, argv, cwd, agent.env?.()) : undefined;
   let proc;
   try {
-    proc = Bun.spawn(confined?.argv ?? agent.command(prompt, options), {
+    proc = Bun.spawn(confined?.argv ?? argv, {
       cwd,
       env: confined?.env ?? { ...process.env, ...(agent.env?.() ?? {}) },
-      stdin: 'ignore', stdout: 'pipe', stderr: 'pipe', detached: true,
+      stdin: agent.promptStdin ? new TextEncoder().encode(prompt) : 'ignore', stdout: 'pipe', stderr: 'pipe', detached: true,
     });
   } catch (e) {
     confined?.cleanup();

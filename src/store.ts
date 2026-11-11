@@ -909,35 +909,40 @@ export class Store {
   failActivity(activityId: string, workerId: string, error: string): Activity {
     return this.withRetry(() => {
       return this.db.transaction(() => {
-        const a = this.getActivity(activityId);
-        const c = this.getChange(a.changeId);
-        if (isTerminalChange(c.status)) {
-          throw new StoreError('invalid_transition', `change ${c.id} is terminal (${c.status}); failActivity rejected`);
-        }
-        const retryCount = a.retryCount + 1;
-        const retry = retryCount < MAX_ACTIVITY_RETRIES;
-        const res = this.db
-          .query(
-            `UPDATE activities SET status = ?, error = ?, retry_count = ?, worker_id = NULL,
-             started_at = NULL, completed_at = ?, lease_expires_at = NULL, agent_pgid = NULL WHERE id = ? AND status = 'in_progress' AND worker_id = ?
-             AND EXISTS (SELECT 1 FROM changes c WHERE c.id = activities.change_id
-               AND c.status NOT IN ('completed','failed','canceled','declined','blocked','quarantined'))`
-          )
-          .run(retry ? 'pending' : 'failed', error, retryCount, retry ? null : this.now(), activityId, workerId);
-        if (res.changes !== 1) throw new StoreError('conflict', `activity ${activityId} is not held by ${workerId}`);
-        if (!a.validator) {
-          this.setChangeStatus(a.changeId, retry ? 'pending' : 'failed');
-        }
-        this.event(
-          a.workstreamId,
-          retry ? 'warning' : 'error',
-          `${a.kind} ${retry ? `failed (retry ${retryCount}/${MAX_ACTIVITY_RETRIES})` : 'failed permanently'}: ${error.slice(0, 300)}`,
-          a.changeId,
-          a.id
-        );
-        return this.getActivity(activityId);
+        return this.recordActivityFailure(this.getActivity(activityId), workerId, error);
       }).immediate();
     });
+  }
+
+  /** Shared failure policy; callers hold an IMMEDIATE transaction (including orphan recovery). */
+  private recordActivityFailure(a: Activity, workerId: string | null, error: string): Activity {
+    const c = this.getChange(a.changeId);
+    if (isTerminalChange(c.status)) {
+      throw new StoreError('invalid_transition', `change ${c.id} is terminal (${c.status}); failActivity rejected`);
+    }
+    const retryCount = a.retryCount + 1;
+    const retry = retryCount < MAX_ACTIVITY_RETRIES;
+    const res = this.db
+      .query(
+        `UPDATE activities SET status = ?, error = ?, retry_count = ?, worker_id = NULL,
+         started_at = NULL, completed_at = ?, lease_expires_at = NULL, agent_pgid = NULL WHERE id = ? AND status = 'in_progress' AND worker_id IS ?
+         AND EXISTS (SELECT 1 FROM changes c WHERE c.id = activities.change_id
+           AND c.status NOT IN ('completed','failed','canceled','declined','blocked','quarantined'))`
+      )
+      .run(retry ? 'pending' : 'failed', error, retryCount, retry ? null : this.now(), a.id, workerId);
+    if (res.changes !== 1) throw new StoreError('conflict', `activity ${a.id} is not held by ${workerId}`);
+    // Only an in-progress change goes back to pending: `gates` runs on an `implemented` change, which must stay closable.
+    if (!a.validator && (!retry || c.status === 'in_progress')) {
+      this.setChangeStatus(a.changeId, retry ? 'pending' : 'failed');
+    }
+    this.event(
+      a.workstreamId,
+      retry ? 'warning' : 'error',
+      `${a.kind} ${retry ? `failed (retry ${retryCount}/${MAX_ACTIVITY_RETRIES})` : 'failed permanently'}: ${error.slice(0, 300)}`,
+      a.changeId,
+      a.id
+    );
+    return this.getActivity(a.id);
   }
 
   /** Human decision on an activity in the inbox. */
@@ -1044,7 +1049,7 @@ export class Store {
     });
   }
 
-  /** Put activities held by dead workers back in the queue (lease expired). */
+  /** Recover activities held by dead workers (lease expired): requeued, or failed once retries run out. Returns how many. */
   requeueOrphans(workstream: string, nowIso = this.now()): number {
     const ws = this.getWorkstream(workstream);
     return this.withRetry(() => {
@@ -1086,7 +1091,7 @@ export class Store {
             }
           }
 
-          if (isTerminalChange(act.change_status)) {
+          if (isTerminalChange(this.getChange(act.change_id).status)) {
             this.db
               .query(
                 `UPDATE activities SET status = 'canceled', worker_id = NULL, lease_expires_at = NULL, agent_pgid = NULL
@@ -1094,26 +1099,9 @@ export class Store {
               )
               .run(act.id);
           } else {
-            const res = this.db
-              .query(
-                `UPDATE activities
-                 SET status = 'pending', worker_id = NULL, started_at = NULL, lease_expires_at = NULL, agent_pgid = NULL
-                 WHERE id = ? AND status = 'in_progress'`
-              )
-              .run(act.id);
-            if (res.changes === 1) {
-              count++;
-              if (!act.validator && act.change_status === 'in_progress') {
-                this.setChangeStatus(act.change_id, 'pending');
-              }
-              this.event(
-                ws.id,
-                'warning',
-                `orphaned activity ${act.id} (${act.kind}) requeued (lease expired)`,
-                act.change_id,
-                act.id
-              );
-            }
+            const claimed = this.getActivity(act.id);
+            this.recordActivityFailure(claimed, claimed.workerId, 'lease expired (orphaned activity)');
+            count++;
           }
         }
         return count;

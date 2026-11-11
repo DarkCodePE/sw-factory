@@ -9,7 +9,8 @@ export async function captureMain(args: string[]): Promise<number> {
   const onSignal = () => {};
   process.on('SIGTERM', onSignal);
   process.on('SIGINT', onSignal);
-  const proc = Bun.spawn(command, { stdin: 'ignore', stdout: 'pipe', stderr: 'pipe' });
+  // runAgent may send the prompt on stdin; the wrapper must pass it through to the CLI.
+  const proc = Bun.spawn(command, { stdin: 'inherit', stdout: 'pipe', stderr: 'pipe' });
   const [stdout, stderr, code] = await Promise.all([
     new Response(proc.stdout).text(), new Response(proc.stderr).text(), proc.exited,
   ]);

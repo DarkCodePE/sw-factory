@@ -227,3 +227,74 @@ test('F2: baseSha es el merge-base cuando la rama fab/<id> ya existe con commits
   expect(reattached.baseSha).toBe(first.baseSha);
   expect(reattached.baseSha).not.toBe(agentHead);
 });
+
+
+test('ensureWorktree rejects a worktree from another repository without deleting it', async () => {
+  const other = join(dir, 'other');
+  git(dir, 'clone', '-q', repo, other);
+  const id = 'wrongrep01234567';
+  const wt = await ensureWorktree(other, stateDir, id);
+  await expect(ensureWorktree(repo, stateDir, id)).rejects.toThrow('another repository');
+  expect(existsSync(join(wt.path, 'init.txt'))).toBe(true);
+});
+
+test('ensureWorktree rejects a changed or detached branch without deleting files', async () => {
+  const id = 'wrongbra01234567';
+  const wt = await ensureWorktree(repo, stateDir, id);
+  git(wt.path, 'checkout', '-qb', 'elsewhere');
+  await expect(ensureWorktree(repo, stateDir, id)).rejects.toThrow('branch changed');
+  git(wt.path, 'checkout', '--detach', '-q');
+  await expect(ensureWorktree(repo, stateDir, id)).rejects.toThrow('inspect it manually');
+  expect(existsSync(join(wt.path, 'init.txt'))).toBe(true);
+});
+
+test('ensureWorktree rejects a plain directory and an independent repository', async () => {
+  const id = 'plainxxx01234567';
+  const path = join(stateDir, 'worktrees', id.slice(0, 8));
+  mkdirSync(path, { recursive: true });
+  writeFileSync(join(path, 'keep.txt'), 'keep');
+  await expect(ensureWorktree(repo, stateDir, id)).rejects.toThrow('Cannot reuse worktree');
+  git(path, 'init', '-q');
+  await expect(ensureWorktree(repo, stateDir, id)).rejects.toThrow('not a linked worktree');
+  expect(existsSync(join(path, 'keep.txt'))).toBe(true);
+});
+
+test('ensureWorktree reuses a valid legacy worktree with its dirty files intact', async () => {
+  const id = 'legacyxx01234567';
+  const path = join(stateDir, 'worktrees', id.slice(0, 8));
+  mkdirSync(join(stateDir, 'worktrees'), { recursive: true });
+  git(repo, 'worktree', 'add', '-b', branchFor(id), path, 'HEAD');
+  writeFileSync(join(path, 'uncommitted.txt'), 'keep');
+  const wt = await ensureWorktree(repo, stateDir, id);
+  expect(wt.path).toBe(path);
+  expect(wt.branch).toBe(branchFor(id));
+  expect(existsSync(join(path, 'uncommitted.txt'))).toBe(true);
+});
+
+test('ensureWorktree rejects incomplete checkout and a persisted preparation marker', async () => {
+  const id = 'partialx01234567';
+  const path = join(stateDir, 'worktrees', id.slice(0, 8));
+  mkdirSync(join(stateDir, 'worktrees'), { recursive: true });
+  git(repo, 'worktree', 'add', '--no-checkout', '-b', branchFor(id), path, 'HEAD');
+  await expect(ensureWorktree(repo, stateDir, id)).rejects.toThrow('incomplete or locked');
+  git(path, 'reset', '--hard', 'HEAD');
+  const marker = join(stateDir, 'worktrees', `.${id.slice(0, 8)}.preparing`);
+  writeFileSync(marker, branchFor(id));
+  await expect(ensureWorktree(repo, stateDir, id)).rejects.toThrow('preparation is incomplete');
+  expect(existsSync(marker)).toBe(true);
+  expect(existsSync(join(path, 'init.txt'))).toBe(true);
+});
+
+test('ensureWorktree drops its marker when git creates nothing, so a later attempt succeeds', async () => {
+  const id = 'busybr01234567ab';
+  const other = join(dir, 'other');
+  git(repo, 'worktree', 'add', '-q', '-b', branchFor(id), other, 'HEAD'); // the branch is checked out elsewhere
+  const marker = join(stateDir, 'worktrees', `.${id.slice(0, 8)}.preparing`);
+  await expect(ensureWorktree(repo, stateDir, id)).rejects.toThrow();
+  expect(existsSync(marker)).toBe(false);
+  expect(existsSync(join(stateDir, 'worktrees', id.slice(0, 8)))).toBe(false);
+  git(repo, 'worktree', 'remove', other);
+  const wt = await ensureWorktree(repo, stateDir, id);
+  expect(git(wt.path, 'symbolic-ref', '--short', 'HEAD')).toBe(branchFor(id));
+  expect(existsSync(marker)).toBe(false);
+});

@@ -1,7 +1,7 @@
 // Worker pool: claims pending activities FIFO, runs one headless agent per activity
 // in the change's worktree, and records the result back in the store.
 import { runGates, runSetupAt, type GateStep } from './gates.ts';
-import { createHash } from 'node:crypto';
+import { createHash, randomUUID } from 'node:crypto';
 import { existsSync, readFileSync, rmSync } from 'node:fs';
 import { join, resolve } from 'node:path';
 import { selfCommand } from './self.ts';
@@ -219,7 +219,7 @@ export async function processActivity(
     const probeFile = `${runDirectory(opts.stateDir, change.id)}/${a.id}.egress.json`;
     // A retry keeps the activity id: drop the previous attempt's probe so it is never reported as this one's.
     rmSync(probeFile, { force: true });
-    const captureAgent = { ...agent, env: () => ({ ...agent.env?.(), FABRICA_EGRESS_PROBE_FILE: probeFile }), command: (text: string, options?: { readOnly?: boolean }) => [
+    const captureAgent = { ...agent, env: () => ({ ...agent.env?.(), FABRICA_EGRESS_PROBE_FILE: probeFile }), command: (text: string, options?: { readOnly?: boolean; promptStdin?: boolean }) => [
       ...selfCommand('__capture', new URL('./manifest-capture.ts', import.meta.url)),
       activityLog(opts.stateDir, change.id, a.id), ...agent.command(text, options),
     ] };
@@ -414,7 +414,7 @@ export async function runPool(store: Store, opts: PoolOptions): Promise<void> {
         }
         throw err;
       }
-      if (recovered) log(`requeued ${recovered} orphaned activities`);
+      if (recovered) log(`recovered ${recovered} orphaned activities`);
 
       let current: Workstream;
       try {
@@ -427,7 +427,7 @@ export async function runPool(store: Store, opts: PoolOptions): Promise<void> {
         throw err;
       }
       while (!interrupted && current.state === 'active' && running.size < current.workerConcurrency) {
-        const workerId = `w${(slot++ % current.workerConcurrency) + 1}-${process.pid}`;
+        const workerId = `w${(slot++ % current.workerConcurrency) + 1}-${process.pid}-${randomUUID()}`;
         let claimed: Activity | null = null;
         try {
           claimed = store.claimActivity(ws.id, workerId, opts.leaseTtlMs);

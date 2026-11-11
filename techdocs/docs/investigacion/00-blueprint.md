@@ -2,8 +2,8 @@
 
 Resuelve el **flujo B (ideación)**: ¿qué papers, repos y artículos pueden mejorar fab y cómo se convierte una idea en una mejora con evidencia? (`ARQUITECTURA.md` §1). La decisión principal es un **harness propio pero delgado**: un orquestador CLI **fuera de la máquina de estados de fab** que compone piezas existentes y adopta, con pin, piezas MIT de las referencias (ADR-0001, `docs/research/arquitectura-ideacion/adr/ADR-0001-componer-no-construir.md`).
 
-!!! info "Propuesto (v0.2)"
-    Todo lo descrito como ciclo, vigilancia, backlog, gate y crítico es **propuesta** (ARQUITECTURA §2-§5, ADR-0001/0003). El orquestador viviría en `scripts/ideas/`, que **no existe** hoy. Lo que sí existe se marca como *Implementado* en la tabla de componentes y en [02](02-integracion-factory.md).
+!!! info "Propuesto e implementado (v0.2)"
+    El orquestador **sí existe** en `scripts/ideas/`: `ciclo.ts` (783 líneas) implementa los pasos 3–8 (prerregistro, gate, probe, medir, crítico goldfish y veredicto con ledger). Los pasos 0–2 (vigilancia semanal y backlog) siguen como **propuesta** (ADR-0003), excluidos del ciclo mínimo. El paso 9 (reflejar en la bóveda tras revisión/PR) está implementado en `scripts/ideas/reflejar.ts` en la rama `feat/t7-paso9` (sin mergear). Lo que ya está en el repo se marca como *Implementado* en la tabla de componentes y en [02](02-integracion-factory.md).
 
 ## 1. Contexto del sistema
 
@@ -16,8 +16,8 @@ flowchart LR
         EXT["repos ext/ (graft)"]
         OPF["fuentes manuales"]
     end
-    VAULT[("llm_wiki: proyecto fab-research<br/>raw/sources/, wiki/*.md")]
-    subgraph CICLO["Ciclo de ideación (scripts/ideas/, PROPUESTO)"]
+    VAULT[("llm_wiki: proyecto FAB<br/>raw/sources/, wiki/*.md")]
+    subgraph CICLO["Ciclo de ideación (scripts/ideas/, pasos 3–8 implementados)"]
         ORQ["orquestador CLI"]
     end
     EXEC["fab exec (agente nativo)<br/>roles: lector, implementador, crítico"]
@@ -28,7 +28,7 @@ flowchart LR
     FUENTES --> VAULT
     OP --> VAULT
     OP -->|"gate experimento_autorizado"| ORQ
-    ORQ <-->|"leer wiki/ RO, escribir raw/sources/agentes/"| VAULT
+    ORQ <-->|"leer wiki/ RO, escribir raw/sources/agentes/ (tras PR)"| VAULT
     ORQ -->|"lanza roles"| EXEC
     EXEC --> LLM
     ORQ -->|"mide con improve.ts"| FAC
@@ -43,15 +43,16 @@ El requisito del operador es tomar papers, repos, artículos, PDF, imágenes y v
 
 | Capa | Componente | Estado | Referencia |
 |---|---|---|---|
-| Ingesta | llm_wiki, proyecto **fab-research** (MinerU, caption de imágenes, grafo, UI) | Externo y existente (`~/Desktop/llm_wiki_v2`) | [03](03-boveda-llm-wiki.md) |
-| Lectura de agentes | `wiki/*.md` montado solo-lectura, buscado con `rg`, envuelto como no confiable | **Propuesto** | ADR-0002, [11](11-fuentes-no-confiables.md) |
-| Escritura de agentes | `raw/sources/agentes/` con `trust: agent` | **Propuesto** | ADR-0002 |
+| Ingesta | llm_wiki, proyecto **FAB** (decisión D2: antes llamado fab-research; ruta configurable; MinerU, caption de imágenes, grafo, UI) | Externo y existente (`~/Desktop/llm_wiki_v2`) | [03](03-boveda-llm-wiki.md) |
+| Lectura de agentes | `wiki/*.md` montado solo-lectura, buscado con `rg`, envuelto como no confiable | **Parcial / en rama sin mergear** (`ciclo.ts:264,300-305`; `graft-lector.ts` lee repos; montaje `--ro-bind` en curso en rama `feat/t6-lector-boveda`) | ADR-0002, [11](11-fuentes-no-confiables.md) |
+| Escritura en la bóveda | `raw/sources/agentes/` con `trust: agent`: solo el orquestador escribe tras revisión humana/PR (D1) | **En rama sin mergear** (`feat/t7-paso9`, `reflejar.ts` @`686efe4`) | ADR-0002, [03](03-boveda-llm-wiki.md), [09](09-flujo-de-conocimiento.md) |
 | Vigilancia | `watch_sources` + barrido semanal | **Propuesto** (`registry.json` no tiene `watch_sources`: claves `schema_version`, `note`, `repos`) | ADR-0003 |
 | Backlog | `docs/research/backlog.json` | **Propuesto** (el archivo no existe) | ADR-0003 |
-| Ledger | 10 columnas, `verifyLedger`, señales | **Implementado** (`third_party/dream-machine/ledger/index.ts`); `docs/research/ledger.md` sin filas | [01](01-ciclo-y-ledger.md) |
-| Medición | `improve.ts`, coste por brazo | **Implementado** fase 1; extensiones **pendientes** | [02](02-integracion-factory.md) |
+| Pasos 3–8 del ciclo | Hipótesis/prerregistro, gate, probe, medir con `improve.ts`, crítico goldfish, veredicto + ledger | **Implementado** (`scripts/ideas/ciclo.ts`: init `:198-235`, gate `:236-247`, probe `:248-328`, medir `:351-628`, crítico `:629-680`, cerrar `:681-748`) | [01](01-ciclo-y-ledger.md) |
+| Ledger | 10 columnas, `verifyLedger`, señales | **Implementado** (`third_party/dream-machine/ledger/index.ts`; `ciclo.ts:71-80` escribe en `docs/research/ledger.md`) | [01](01-ciclo-y-ledger.md) |
+| Medición | `improve.ts`, coste por brazo, tiers T0/T1/T2 | **Implementado** fase 1 en fab y evaluado en `ciclo.ts:351-628` | [02](02-integracion-factory.md) |
 | Integración | pin, registro de cualificación, lint | **Implementado** | [02](02-integracion-factory.md) |
-| Roles con `fab exec` | lector, implementador, crítico | **Propuesto** | [10](10-integracion-exec.md) |
+| Roles con `fab exec` | lector, implementador, crítico | **Parcial** (briefs y runners en `ciclo.ts`; lector confinado con `--ro-bind` de bóveda en rama `feat/t6-lector-boveda`) | [10](10-integracion-exec.md) |
 | Probe de paper con código | Paper2Agent, manual, VM desechable | Manual, fuera del flujo | ADR-0006 |
 | Cadencia | timer de `systemd --user` (no hay `fab daemon`: `src/cli.ts:127`) | **Propuesto** | ADR-0003 |
 
@@ -75,13 +76,13 @@ flowchart TD
     S6["6 Medir: IMPLEMENTADOR en sesión limpia<br/>flag apagado en fab/ideas-id; improve.ts por tier"] --> S7
     S7["7 Crítico goldfish<br/>otro modelo; receta + resultado"] --> S8
     S8["8 Veredicto ACCEPT / REJECT / INCONCLUSIVE<br/>+ fila de ledger SIEMPRE"] --> S9
-    S9["9 Reflejar: página trust:agent en llm_wiki<br/>registry y backlog actualizados"]
+    S9["9 Reflejar: página trust:agent en llm_wiki<br/>(escrita por orquestador tras PR)"]
     S9 -->|"algo que integrar"| CH["change normal de fab + registro de cualificación"]
     CH --> G3{{"Gate 3 (merge)"}}
     S1 -->|"hipótesis rechazada sin evidencia nueva"| S8
 ```
 
-El paso 4 sólo aparece una vez por ciclo y cuesta "una línea en el inbox" (`ARQUITECTURA.md` §5). Si en el paso 3 falta cualquier requisito (limitación con receipt, mecanismo causal, predicción numérica, métrica) el ciclo termina en `INCONCLUSIVE(hipótesis incompleta)` sin gastar más.
+El paso 4 sólo aparece una vez por ciclo y cuesta "una línea en el inbox" (`ARQUITECTURA.md` §5). Si en el paso 3 falta cualquier requisito (limitación con receipt, mecanismo causal, predicción numérica, métrica) el ciclo termina en `INCONCLUSIVE(hipótesis incompleta)` sin gastar más. Los pasos 3–8 están implementados en `scripts/ideas/ciclo.ts` (init, gate, probe, medir, crítico goldfish y cerrar). El paso 9 (reflejar) está implementado en `scripts/ideas/reflejar.ts` (en rama `feat/t7-paso9`, sin mergear), y exige aprobación/PR humana previa (decisión D1).
 
 ### Secuencia
 
@@ -114,7 +115,7 @@ sequenceDiagram
     O->>C: 7 receta y resultado (paquete goldfish)
     C-->>O: observaciones
     O->>L: 8 fila de ledger siempre (ev:sha8)
-    O->>V: 9 página trust:agent en raw/sources/agentes/
+    O->>V: 9 página trust:agent en raw/sources/agentes/ (tras PR)
     O->>F: si hay algo que integrar: signal + triage → change
     Op->>F: Gate 3
 ```
@@ -148,4 +149,4 @@ sequenceDiagram
 | `third_party/dream-machine/ledger/index.ts` | Ledger (implementado). |
 | `src/improve.ts` | Medidor (implementado, fase 1). |
 | `src/cli.ts` | Prueba de que no hay `fab daemon` (`:127`). |
-| `scripts/ideas/` | **No existe**: ubicación propuesta del orquestador. |
+| `scripts/ideas/` | **Implementado** (pasos 3–8 en `ciclo.ts:783`; `graft-lector.ts`, `lector-fab.ts`; paso 9 `reflejar.ts` en rama `feat/t7-paso9`, sin mergear). |
