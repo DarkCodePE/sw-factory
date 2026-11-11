@@ -2,6 +2,10 @@
 // La clave NO es la activity: retryChange crea otra activity y la sesión no debe perderse. Cambiar de backend, de cwd o
 // de modelo no reanuda: es una sesión perdida (T18), nunca una sesión nueva en silencio.
 import { randomUUID } from 'node:crypto';
+import { MAX_ACTIVITY_RETRIES } from '../enums.ts';
+import { SessionNotFoundError } from '../live/contract.ts';
+import { buildWorkerPrompt } from '../prompts.ts';
+import type { Activity, Store } from '../store.ts';
 import type { AdmissionDb } from './db.ts';
 
 export type SessionMeta = { backend: string; cwd: string; model?: string | null; profileDigest?: string | null };
@@ -53,4 +57,52 @@ export class SessionStore {
   markLaunched(sessionId: string): void {
     this.adm.tx(() => this.adm.db.query('UPDATE adm_sessions SET launched_at = COALESCE(launched_at, ?) WHERE session_id = ?').run(this.adm.iso(), sessionId));
   }
+}
+
+/** Solo estas dos causas son «sesión perdida». Un fallo transitorio (red, límite de uso, timeout) NUNCA abre una sesión nueva. */
+export const isSessionLoss = (error: unknown): boolean => error instanceof SessionNotFoundError || error instanceof SessionMismatchError;
+
+/** Agotado el tope de generaciones: la activity falla de forma permanente (cuenta como los reintentos de la fab). */
+export class SessionLostExhaustedError extends Error {
+  constructor(readonly generations: number) { super(`sesión perdida ${generations} veces: tope de ${MAX_ACTIVITY_RETRIES} generaciones`); this.name = 'SessionLostExhaustedError'; }
+}
+
+/**
+ * La sesión actual se perdió (T18, H-03). Se marca `lost` y se abre la generación siguiente, con evento visible y contando
+ * para el tope. El siguiente turno parte de un prompt reconstruido (`reconstructPrompt`), no de la memoria del harness.
+ * Si ya se agotó el tope lanza SessionLostExhaustedError y no abre nada.
+ */
+export function supersede(store: Store, adm: AdmissionDb, activity: Activity, reason: string, meta: SessionMeta): SessionRow {
+  const sessions = new SessionStore(adm);
+  const result = adm.tx(() => {
+    const cur = sessions.current(activity.changeId, activity.kind);
+    if (!cur) throw new Error(`no hay sesión que reemplazar para ${activity.changeId}/${activity.kind}`);
+    if (cur.generation >= MAX_ACTIVITY_RETRIES) return cur.generation; // el evento se escribe fuera: un throw desharía la transacción
+    adm.db.query("UPDATE adm_sessions SET status = 'lost', lost_reason = ? WHERE session_id = ? AND status = 'open'").run(reason.slice(0, 500), cur.sessionId);
+    adm.db.query('INSERT INTO adm_sessions(change_id, kind, generation, session_id, backend, cwd, model, profile_digest, created_at) VALUES (?,?,?,?,?,?,?,?,?)')
+      .run(activity.changeId, activity.kind, cur.generation + 1, randomUUID(), meta.backend, meta.cwd, meta.model ?? null, meta.profileDigest ?? null, adm.iso());
+    store.event(activity.workstreamId, 'warning', `sesión ${cur.sessionId} perdida (${reason.slice(0, 200)}); nueva generación ${cur.generation + 1}`, activity.changeId, activity.id);
+    return sessions.current(activity.changeId, activity.kind)!;
+  });
+  if (typeof result === 'number') {
+    store.event(activity.workstreamId, 'error', `sesión perdida (${reason.slice(0, 200)}); tope de ${MAX_ACTIVITY_RETRIES} generaciones agotado`, activity.changeId, activity.id);
+    throw new SessionLostExhaustedError(result);
+  }
+  return result;
+}
+
+/** Preguntas hechas y respuestas recibidas en el change, en orden (estado durable de la fab, no del harness). */
+export function questionsBlock(adm: AdmissionDb, changeId: string): string {
+  const rows = adm.db.query('SELECT text, status, answer, answered_by FROM adm_questions WHERE change_id = ? ORDER BY asked_at, rowid').all(changeId) as
+    { text: string; status: string; answer: string | null; answered_by: string | null }[];
+  if (!rows.length) return '';
+  return '\n\n# Questions asked to a human and their answers\n' + rows.map(r =>
+    `- Question: ${r.text}\n  ${r.status === 'answered' ? `Answer (${r.answered_by ?? 'human'}): ${r.answer ?? ''}` : `(${r.status}, no answer)`}`).join('\n');
+}
+
+/** Prompt completo para una sesión nueva que sustituye a una perdida: el de la activity + preguntas y respuestas ya dadas. */
+export function reconstructPrompt(store: Store, adm: AdmissionDb, activityId: string, ctx: { worktree: string; branch: string; factoryCommits?: boolean }): string {
+  const { activity, change, history } = store.activityContext(activityId);
+  const prompt = buildWorkerPrompt({ workstream: store.getWorkstream(activity.workstreamId), change, activity, history, worktree: ctx.worktree, branch: ctx.branch }, { factoryCommits: ctx.factoryCommits });
+  return `${prompt}${questionsBlock(adm, change.id)}\n\n# Resumed work\nA previous session for this activity was lost. Inspect the working tree (git status, git log) to see what is already done and continue from there; do not start over.`;
 }
