@@ -5,7 +5,7 @@ import { runCommand, type CommandRunner } from '../connectors/github.ts';
 import type { Store } from '../store.ts';
 import { reapQuestions } from './answers.ts';
 import { AdmissionDb } from './db.ts';
-import { Effects, type CrashPoint } from './effects.ts';
+import { Effects, type CrashPoint, type EffectAlert } from './effects.ts';
 import { commentGate, gate, type GateDecision, type GateInput, type GatePolicy } from './gate.ts';
 import { collaboratorRole, issueContent, labeler, pollComments, pollIssues, type CommentEvent, type IssueEvent } from './github.ts';
 import { ThreadLinks } from './links.ts';
@@ -31,10 +31,12 @@ export class Resident {
   readonly lock: ResidentLock;
   readonly effects: Effects;
   private readonly source: string;
+  /** Avisos de efectos `dead`/`unknown` aún sin mostrar (T29); `run` los saca al log. */
+  readonly alerts: string[] = [];
   private stopped = false;
   private wake?: () => void;
 
-  constructor(store: Store, private readonly cfg: ResidentConfig) {
+  constructor(private readonly store: Store, private readonly cfg: ResidentConfig) {
     if ((cfg.mode as string) !== 'off' && (cfg.mode as string) !== 'observe') throw new Error(`Modo "${cfg.mode}" no admitido en la fase 1: usa off|observe`);
     if (cfg.comments && !cfg.selfLogin) throw new Error('--comments exige --self <login>: sin la identidad de la fab no se puede filtrar su propio comentario');
     this.adm = new AdmissionDb(store);
@@ -45,7 +47,7 @@ export class Resident {
     this.effects = new Effects(this.adm, { admit: { run: payload => this.admit(payload.triggerKey), rerunnable: true },
       inbound: { run: payload => this.inbound(payload.triggerKey), rerunnable: true },
       ...(cfg.outbox ? { reply: new Outbox(this.adm, { selfLogin: cfg.selfLogin!, run: cfg.run }).handler() } : {}) },
-      { maxAttempts: cfg.maxAttempts, baseMs: cfg.baseMs, fence: () => this.lock.assertOwned(), crash: cfg.crash });
+      { maxAttempts: cfg.maxAttempts, baseMs: cfg.baseMs, fence: () => this.lock.assertOwned(), crash: cfg.crash, onAlert: a => this.alert(a) });
   }
 
   /** Un trigger por (issue, updated_at): repetir el poll o caerse entre leer y registrar no duplica nada. */
@@ -111,6 +113,14 @@ export class Resident {
     return d;
   }
 
+  /** T29: un efecto `dead` o `unknown` deja aviso en el log y, si es de una pregunta, un evento visible en la activity que espera. */
+  private alert(a: EffectAlert): void {
+    const message = `efecto ${a.kind} ${a.status}: ${a.error}`;
+    this.alerts.push(message);
+    const q = a.payload?.questionId ? this.adm.db.query('SELECT activity_id FROM adm_questions WHERE id = ?').get(a.payload.questionId) as { activity_id: string } | null : null;
+    if (q) { const act = this.store.getActivity(q.activity_id); this.store.event(act.workstreamId, 'error', message, act.changeId, act.id); }
+  }
+
   /** Un Trigger por comentario: la identidad es su id, y editarlo no crea otro (el texto queda fijado al registrarlo). */
   private registerComments(events: CommentEvent[]): number {
     let added = 0;
@@ -163,6 +173,7 @@ export class Resident {
       const ccursor = (this.adm.db.query('SELECT value FROM adm_cursors WHERE source = ?').get(`${this.source}/comments`) as { value: string } | null)?.value;
       comments = this.registerComments(await pollComments(this.cfg.repo, ccursor ?? since, this.cfg.run ?? runCommand));
     }
+    await this.effects.reconcile(); // T29: los `unknown` con `reconcile` salen aquí, antes de despachar
     return { triggers: triggers + comments, effects: await this.effects.dispatch() };
   }
 
@@ -175,8 +186,9 @@ export class Resident {
     const beat = setInterval(() => { try { this.lock.assertOwned(); } catch (error) { log(String(error)); this.stop(); } }, 10_000);
     try {
       log(`recuperados ${this.effects.recover()} efectos interrumpidos`);
+      this.alerts.splice(0).forEach(m => log(`AVISO ${m}`));
       do {
-        try { log(`ciclo: ${JSON.stringify(await this.cycle())}`); }
+        try { log(`ciclo: ${JSON.stringify(await this.cycle())}`); this.alerts.splice(0).forEach(m => log(`AVISO ${m}`)); }
         catch (error) { if (opts.once) throw error; log(`ciclo fallido: ${(error as Error).message}`); }
         if (opts.once || this.stopped) break;
         await new Promise<void>(resolve => { this.wake = resolve; setTimeout(resolve, this.cfg.intervalMs ?? 60_000); });
