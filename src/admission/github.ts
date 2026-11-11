@@ -61,13 +61,32 @@ export async function labeler(repo: string, issue: number, label: string, run: C
   // La etiqueta está puesta pero su evento aún no aparece: la API de eventos puede ir con retraso, reintentar.
   if (!last) throw new Error(`issue ${issue}: no se encontró el evento labeled de «${label}»`);
   const login = typeof last.actor?.login === 'string' ? last.actor.login : 'ghost';
-  if (last.actor?.type === 'Bot' || login === 'ghost') return { login, role: last.actor?.type === 'Bot' ? 'bot' : 'none' };
+  const at = typeof last.created_at === 'string' && ISO.test(last.created_at) ? last.created_at : undefined;
+  if (last.actor?.type === 'Bot' || login === 'ghost') return { login, role: last.actor?.type === 'Bot' ? 'bot' : 'none', at };
   if (!/^[A-Za-z0-9-]+$/.test(login)) throw bad(`actor ${login}`);
   const perm = await ghJson(['gh', 'api', `repos/${repo}/collaborators/${login}/permission`], run);
-  if (perm.status === 403) return { login, role: 'unknown' };
-  if (perm.status === 404) return { login, role: 'none' };
+  if (perm.status === 403) return { login, role: 'unknown', at };
+  if (perm.status === 404) return { login, role: 'none', at };
   if (perm.status !== 200) throw new Error(`gh api falló al leer el permiso de ${login} (HTTP ${perm.status})`);
   const role = (perm.body as { role_name?: unknown })?.role_name;
   if (typeof role !== 'string') throw bad(`permiso de ${login}`);
-  return { login, role };
+  return { login, role, at };
+}
+
+export type IssueContent = { title: string; body: string; /** `lastEditedAt` de GraphQL: null si nunca se editó. */ lastEditedAt: string | null };
+
+/**
+ * Título, cuerpo y última edición del issue (T20). La API REST no expone cuándo se editó el cuerpo, GraphQL sí
+ * (`lastEditedAt`); `gh api graphql` es el único camino sin token adicional. [I: que `lastEditedAt` cubra también el
+ * título no está comprobado; por eso la admisión compara además el hash del contenido, ver Resident.admit.]
+ */
+export async function issueContent(repo: string, issue: number, run: CommandRunner = runCommand): Promise<IssueContent> {
+  validateRepo(repo);
+  const [owner, name] = repo.split('/');
+  const r = await ghJson(['gh', 'api', 'graphql', '-f', 'query=query($o:String!,$r:String!,$n:Int!){repository(owner:$o,name:$r){issue(number:$n){title body lastEditedAt}}}',
+    '-f', `o=${owner}`, '-f', `r=${name}`, '-F', `n=${issue}`], run);
+  if (r.status !== 200) throw new Error(`gh api graphql falló al leer el issue ${issue} (HTTP ${r.status})`);
+  const i = (r.body as { data?: { repository?: { issue?: Record<string, unknown> } } })?.data?.repository?.issue;
+  if (!i || typeof i.title !== 'string' || typeof i.body !== 'string' || (i.lastEditedAt !== null && (typeof i.lastEditedAt !== 'string' || !ISO.test(i.lastEditedAt)))) throw bad(`contenido del issue ${issue}`);
+  return { title: i.title, body: i.body, lastEditedAt: i.lastEditedAt as string | null };
 }

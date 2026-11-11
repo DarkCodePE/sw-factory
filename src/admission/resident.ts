@@ -1,11 +1,12 @@
 // Residente en modo observe: poll de GitHub → Trigger/Thread → efecto `admit` → gate → registro de would_admit.
 // No crea signals ni changes ni lanza agentes, y no lee ni escribe tablas de la fab.
+import { createHash } from 'node:crypto';
 import { runCommand, type CommandRunner } from '../connectors/github.ts';
 import type { Store } from '../store.ts';
 import { AdmissionDb } from './db.ts';
 import { Effects, type CrashPoint } from './effects.ts';
 import { gate, type GateInput, type GatePolicy } from './gate.ts';
-import { labeler, pollIssues, type IssueEvent } from './github.ts';
+import { issueContent, labeler, pollIssues, type IssueEvent } from './github.ts';
 import { ResidentLock } from './lock.ts';
 
 export type Mode = 'off' | 'observe';
@@ -62,10 +63,30 @@ export class Resident {
     const label = this.cfg.policy.triggerLabel.toLowerCase();
     if (event.state === 'open' && event.labels.some(l => l.toLowerCase() === label) && this.cfg.policy.repos.some(r => r.toLowerCase() === event.repo.toLowerCase()))
       input.labeler = await labeler(event.repo, event.number, this.cfg.policy.triggerLabel, this.cfg.run ?? runCommand);
-    const d = gate(input, this.cfg.policy);
+    let d = gate(input, this.cfg.policy);
+    if (d.would_admit) d = await this.bindContent(triggerKey, event, input);
     // INSERT OR IGNORE: reejecutar tras una caída no cambia el registro (el efecto es `rerunnable`).
     this.adm.db.query('INSERT OR IGNORE INTO adm_decisions(trigger_key, would_admit, strength, scope_max, reasons, policy, decided_at) VALUES (?,?,?,?,?,?,?)')
       .run(triggerKey, d.would_admit ? 1 : 0, d.strength, d.scope_max, JSON.stringify(d.reasons), JSON.stringify(this.cfg.policy), this.adm.iso());
+  }
+
+  /**
+   * T20: la etiqueta prueba quién autorizó, no qué. Se lee el contenido (título + cuerpo) solo cuando el gate ya admitiría;
+   * si se editó después de etiquetar, o difiere de la copia admitida bajo esa misma etiqueta, se deniega (`edited-after-label`)
+   * y hay que volver a etiquetar. La copia admitida (texto + hash) queda en `adm_content`; el prompt usará solo esa.
+   */
+  private async bindContent(triggerKey: string, event: IssueEvent, input: GateInput) {
+    const thread = triggerKey.slice(0, triggerKey.lastIndexOf('@')), labeledAt = input.labeler!.at;
+    const content = await issueContent(event.repo, event.number, this.cfg.run ?? runCommand);
+    const hash = createHash('sha256').update(`${content.title}\0${content.body}`).digest('hex');
+    const prior = this.adm.db.query('SELECT hash, labeled_at FROM adm_content WHERE thread_id = ?').get(thread) as { hash: string; labeled_at: string } | null;
+    const d = gate({ ...input, contentEditedAt: content.lastEditedAt, contentChanged: !!prior && prior.labeled_at === labeledAt && prior.hash !== hash }, this.cfg.policy);
+    // Una etiqueta más reciente que la copia guardada la reemplaza (se volvió a etiquetar tras editar).
+    if (d.would_admit && labeledAt && (!prior || prior.labeled_at < labeledAt))
+      this.adm.db.query(`INSERT INTO adm_content(thread_id, title, body, hash, labeled_at, edited_at, captured_at) VALUES (?,?,?,?,?,?,?)
+        ON CONFLICT(thread_id) DO UPDATE SET title=excluded.title, body=excluded.body, hash=excluded.hash, labeled_at=excluded.labeled_at, edited_at=excluded.edited_at, captured_at=excluded.captured_at`)
+        .run(thread, content.title, content.body, hash, labeledAt, content.lastEditedAt, this.adm.iso());
+    return d;
   }
 
   /** Un ciclo: poll de la fuente y despacho de efectos. Exige el lock tomado. */

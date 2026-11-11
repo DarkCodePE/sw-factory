@@ -9,9 +9,13 @@ export type GatePolicy = {
   allowAuthors: string[];
 };
 /** Quién puso la etiqueta de disparo y su rol en el repo (`role_name` de la API, o 'bot' / 'unknown' si no se pudo comprobar). */
-export type Labeler = { login: string; role: string };
+export type Labeler = { login: string; role: string; /** Cuándo se puso la etiqueta (`created_at` del evento `labeled`). */ at?: string };
 export type GateInput = {
   repo: string; labels: string[]; author: string; authorAssociation: string; state: 'open' | 'closed'; labeler?: Labeler;
+  /** Última edición de título/cuerpo (null: nunca editado). Solo se consulta cuando el resto del gate admitiría (T20). */
+  contentEditedAt?: string | null;
+  /** El contenido actual difiere del que se admitió bajo esa misma etiqueta. */
+  contentChanged?: boolean;
 };
 export type GateDecision = {
   would_admit: boolean;
@@ -34,6 +38,9 @@ export function gate(input: GateInput, policy: GatePolicy): GateDecision {
   if (!lower(input.labels).includes(policy.triggerLabel.toLowerCase())) return deny('no-trigger-label');
   const by = input.labeler ? `label-by:${input.labeler.login}(${input.labeler.role})` : 'label-by:?';
   if (!input.labeler || !LABEL_ROLES.includes(input.labeler.role)) return { ...deny('label-not-verified'), reasons: ['label-not-verified', by] };
+  // La etiqueta prueba quién autorizó, no qué: si el contenido cambió después de etiquetar, hay que volver a etiquetar (T20, H-05).
+  if (input.contentEditedAt !== undefined && !input.labeler.at) return { ...deny('label-time-unknown'), reasons: ['label-time-unknown', by] }; // no se puede probar el orden: se cierra
+  if (input.labeler.at && ((input.contentEditedAt ?? '') > input.labeler.at || input.contentChanged)) return { ...deny('edited-after-label'), reasons: ['edited-after-label', by] };
   const trusted = lower(policy.allowAuthors).includes(input.author.toLowerCase()) ||
     policy.trustedAssociations.includes(input.authorAssociation);
   return trusted
