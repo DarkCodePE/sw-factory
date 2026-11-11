@@ -524,7 +524,9 @@ test('un intento que falla antes de lanzar el agente descarta la evidencia anter
   // Only this test's disposable repo is removed; setup fails before an agent can emit a new report.
   rmSync(repo, { recursive: true, force: true });
   await processActivity(store, activity, 'worker', { workstream: ws.id, stateDir: dir, log: () => {} });
-  expect(store.getActivity(activity.id).retryCount).toBe(1);
+  expect(store.getActivity(activity.id).retryCount).toBe(0);
+  expect(store.getActivity(activity.id).status).toBe('blocked');
+  expect(store.getActivity(activity.id).error).toContain('WORKTREE_NEEDS_REPAIR:');
   expect(armWorkerReport(store, dir, change.id)).toBeNull();
   expect(JSON.parse(readFileSync(join(run, `${activity.id}.json`), 'utf8')).attemptCosts).toEqual([0.25, 0]);
   expect(armCost(store, dir, change.id)).toBe(0.25);

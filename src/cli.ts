@@ -18,7 +18,7 @@ import { sandboxReport } from './sandbox/index.ts';
 import { runScript } from './script-runtime/index.ts';
 import { openSearch } from './search/index.ts';
 import { runTui } from './tui.ts';
-import { commitProtectedPaths, removeWorktree } from './worktrees.ts';
+import { commitProtectedPaths, removeWorktree, repairWorktree } from './worktrees.ts';
 import { execMain } from './agent/exec.ts';
 import { chatMain } from './chat.ts';
 import { localCommandMain } from './chat/cli.ts';
@@ -97,6 +97,7 @@ const HELP = `fab — agente de código y fábrica de software local
   fab status <slug>
   fab show <changeId>
   fab merge <changeId> [--force] fusiona la rama fab/<id> y cierra el change; --force ignora validadores pendientes o en fail
+  fab worktree repair <changeId> [--discard]  repara preparación; conserva la rama
   fab retry <changeId>          re-encola un bloqueo, fallo o validador agotado
   fab reject <changeId>         cancela el change y borra su worktree
   fab events <slug>
@@ -177,6 +178,7 @@ async function main(argv: string[]): Promise<number> {
       all: { type: 'boolean' },
       once: { type: 'boolean' },
       force: { type: 'boolean' },
+      discard: { type: 'boolean' },
       'accept-agent-binaries': { type: 'boolean' },
       protect: { type: 'string', multiple: true },
       verify: { type: 'string', multiple: true },
@@ -335,6 +337,19 @@ async function main(argv: string[]): Promise<number> {
         console.log(`change ${short(c.id)}: gate allow registrado; actividad re-encolada`);
         return 0;
       }
+      case 'worktree': {
+        if (sub !== 'repair' || rest.length !== 1 || !rest[0]) {
+          throw new StoreError('invalid_input', 'usage: fab worktree repair <changeId> [--discard]');
+        }
+        const c = findByPrefix(allChanges(store), rest[0], 'change');
+        if (store.listActivities({ changeId: c.id }).some(a => a.status === 'in_progress')) {
+          throw new StoreError('conflict', 'change tiene workers en curso');
+        }
+        const result = await repairWorktree(store.getWorkstream(c.workstreamId).repo, STATE_DIR, c.id, values.discard);
+        console.log(result.message);
+        if (result.ok && c.status === 'blocked') console.log(`Para continuar: fab retry ${c.id}`);
+        return result.ok ? 0 : 1;
+      }
       case 'retry': {
         const c = findByPrefix(allChanges(store), sub ?? '', 'change');
         const a = store.retryChange(c.id);
@@ -375,7 +390,7 @@ async function main(argv: string[]): Promise<number> {
   }
 }
 
-const COMMANDS = new Set(['ws', 'signal', 'triage', 'inbox', 'review', 'run', 'status', 'show', 'merge', 'retry', 'gate', 'reject', 'events', 'tui', 'doctor', 'agents', 'profile', 'improve', 'resident', 'help']);
+const COMMANDS = new Set(['worktree', 'ws', 'signal', 'triage', 'inbox', 'review', 'run', 'status', 'show', 'merge', 'retry', 'gate', 'reject', 'events', 'tui', 'doctor', 'agents', 'profile', 'improve', 'resident', 'help']);
 
 // A forced exit is still needed for handles left by dependencies, but pipe
 // writes are asynchronous: wait for both write queues before terminating.

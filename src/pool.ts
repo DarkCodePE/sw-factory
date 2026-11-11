@@ -14,7 +14,7 @@ import { HEARTBEAT_INTERVAL_MS, isBusyError, LEASE_TTL_MS, type Activity, type S
 import { buildValidatorPrompt } from './validators/prompts.ts';
 import { protectedIntegrity, purgeRegenerableCaches } from './validators/integrity.ts';
 import { parseVerdict } from './validators/verdict.ts';
-import { branchCommits, commitWorktree, ensureWorktree, GIT_SAFE_FLAGS } from './worktrees.ts';
+import { branchCommits, commitWorktree, ensureWorktree, GIT_SAFE_FLAGS, WorktreeNeedsRepair } from './worktrees.ts';
 import { defaultRules, ThreatMonitor } from './threatmon/index.ts';
 
 async function getWorktreeDiff(worktreePath: string, baseSha?: string): Promise<string> {
@@ -345,7 +345,7 @@ export async function processActivity(
     store.completeActivity(a.id, workerId, run.output);
     log(`[${workerId}] ${a.kind} done in ${Math.round(run.durationMs / 1000)}s`);
   } catch (err) {
-    if (isBusyError(err)) {
+    if (!(err instanceof WorktreeNeedsRepair) && isBusyError(err)) {
       log(`[${workerId}] database locked during activity processing, preserving activity without failing`);
       try {
         store.requeueActivity(activity.id, workerId);
@@ -356,7 +356,8 @@ export async function processActivity(
     try {
       const currentChange = store.getChange(activity.changeId);
       if (!store.isTerminalChange(currentChange.status) && !abortController.signal.aborted) {
-        if (activity.kind === 'gates') store.blockActivity(activity.id, workerId, `GATES_FAIL: ${msg}`);
+        if (err instanceof WorktreeNeedsRepair) store.blockActivity(activity.id, workerId, msg);
+        else if (activity.kind === 'gates') store.blockActivity(activity.id, workerId, `GATES_FAIL: ${msg}`);
         else store.failActivity(activity.id, workerId, msg);
       } else {
         store.releaseActivity(activity.id, workerId);
