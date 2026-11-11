@@ -78,3 +78,22 @@ test('reapQuestions cancela las preguntas que su activity ya no espera', () => {
   expect(reapQuestions(t.adm)).toBe(1);
   expect(t.adm.db.query('SELECT status FROM adm_questions').get()).toEqual({ status: 'canceled' });
 });
+
+test('T31: pasado el plazo, la espera pasa a blocked con motivo, el change a blocked y la pregunta a expired; una respuesta tardía no reencola', async () => {
+  const { expireQuestions } = await import('../src/admission/answers.ts');
+  let now = Date.parse('2026-01-01T00:00:00Z');
+  const t = claimed({}, { clock: () => new Date(now) }), a = t.claim();
+  new ReportStore(t.adm).recorder(a.id, 'att-1')({ state: 'awaiting', summary: 's', human_action: '¿?' });
+  applyReport(t.store, t.adm, t.effects, { activityId: a.id, workerId: 'w1', waitMs: 3_600_000 });
+  now += 3_599_000;
+  expect(expireQuestions(t.store, t.adm)).toBe(0);
+  now += 1_000;
+  expect(expireQuestions(t.store, t.adm)).toBe(1);
+  expect(t.store.getActivity(a.id)).toMatchObject({ status: 'blocked', questionId: null });
+  expect(t.store.getActivity(a.id).error).toMatch(/^REPLY_TIMEOUT/);
+  expect(t.store.getChange(t.change.id).status).toBe('blocked');
+  expect(t.adm.db.query('SELECT status FROM adm_questions').get()).toEqual({ status: 'expired' });
+  expect(answerQuestion(t.store, t.adm, { questionId: 'q-att-1', answer: 'tarde', by: 'maint' })).toBe('ignored:not-open');
+  expect(t.store.claimActivity('ws', 'w2')).toBeNull();
+  expect(expireQuestions(t.store, t.adm)).toBe(0);
+});

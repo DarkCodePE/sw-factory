@@ -30,3 +30,12 @@ export function reapQuestions(adm: AdmissionDb): number {
   return adm.tx(() => adm.db.query(`UPDATE adm_questions SET status = 'canceled' WHERE status = 'open' AND NOT EXISTS (
     SELECT 1 FROM activities a WHERE a.id = adm_questions.activity_id AND a.status = 'waiting_reply' AND a.question_id = adm_questions.id)`).run().changes);
 }
+
+/** Vence las esperas sin respuesta (T31): el Store bloquea activity y change con motivo; aquí se marcan las preguntas `expired`. */
+export function expireQuestions(store: Store, adm: AdmissionDb): number {
+  return adm.tx(() => {
+    const due = store.expireWaiting(new Date(adm.now()).toISOString());
+    for (const d of due) adm.db.query("UPDATE adm_questions SET status = 'expired' WHERE id = ? AND status = 'open'").run(d.questionId);
+    return due.length;
+  });
+}

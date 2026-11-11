@@ -395,6 +395,7 @@ export async function processActivity(
 }
 
 /** Run the pool. Returns when idle (untilIdle) or never (daemon mode). */
+/** Nota (T31): `workerConcurrency` se aplica por proceso de pool, no global; para no duplicarlo, un pool por workstream. */
 export async function runPool(store: Store, opts: PoolOptions): Promise<void> {
   const log = opts.log ?? console.log;
   const ws = store.getWorkstream(opts.workstream);

@@ -991,6 +991,24 @@ export class Store {
     });
   }
 
+  /**
+   * Plazo de la espera (T31, H-16): las activities `waiting_reply` cuyo `wait_until` venció pasan a `blocked` con motivo y su
+   * change a `blocked` (visible en el inbox; libera el worktree y el cupo de taskLimit al cerrarse). Devuelve (activity, pregunta).
+   */
+  expireWaiting(nowIso = this.now()): { activityId: string; questionId: string }[] {
+    return this.withRetry(() => {
+      const due = this.db.query(`SELECT id, question_id FROM activities WHERE status = 'waiting_reply' AND wait_until IS NOT NULL AND wait_until <= ?`).all(nowIso) as { id: string; question_id: string }[];
+      for (const d of due) {
+        const reason = `REPLY_TIMEOUT: sin respuesta a la pregunta ${d.question_id} antes de ${nowIso}`;
+        this.db.query(`UPDATE activities SET status = 'blocked', error = ?, completed_at = ?, question_id = NULL, wait_until = NULL WHERE id = ? AND status = 'waiting_reply'`).run(reason, nowIso, d.id);
+        const a = this.getActivity(d.id);
+        this.setChangeStatus(a.changeId, 'blocked');
+        this.event(a.workstreamId, 'warning', `blocked: ${reason}`, a.changeId, a.id);
+      }
+      return due.map(d => ({ activityId: d.id, questionId: d.question_id }));
+    });
+  }
+
   /** Human decision on an activity in the inbox. */
   resolveReview(activityId: string, decision: ReviewDecision, comment = ''): Activity {
     if (decision === 'decline' && !comment.trim()) {
