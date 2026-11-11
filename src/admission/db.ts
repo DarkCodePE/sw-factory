@@ -70,3 +70,7 @@ export class AdmissionDb {
   /** Transacción IMMEDIATE con reintento, como el resto de escrituras de la base (Store.withRetry). */
   tx<T>(fn: () => T): T { return this.store.withRetry(fn); }
 }
+
+
+/** ¿Alguna vez se usó la admisión en esta base? Sin tablas `adm_*` no hay changes de canal y el pool no las crea. */
+export const hasAdmission = (store: Store): boolean => store.db.query("SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'adm_thread_changes'").get() !== null;

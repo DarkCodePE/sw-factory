@@ -7,7 +7,15 @@ import { join, resolve } from 'node:path';
 import { selfCommand } from './self.ts';
 import { activityLog, atomicEvidence, gitEvidence, isolationFor, readEgressProbe, runDirectory, writeManifest } from './manifest.ts';
 import { verifyAgentStart } from './agents-verify.ts';
-import { getAgent, runAgent } from './agents.ts';
+import { getAgent, runAgent, type AgentRun } from './agents.ts';
+import { isChannelChange } from './admission/channel.ts';
+import { AdmissionDb, hasAdmission } from './admission/db.ts';
+import { CrashInjected, Effects, type CrashPoint } from './admission/effects.ts';
+import { applyReport, closeWithReport } from './admission/reports.ts';
+import { assertConfinement } from './sandbox/confine.ts';
+import { liveBackendFor, runLiveActivity } from './live/turn.ts';
+import type { LiveOutcome } from './admission/reports.ts';
+import type { LiveBackend } from './live/contract.ts';
 import { buildWorkerPrompt } from './prompts.ts';
 import { fabSha, resolveProfile } from './profile.ts';
 import { HEARTBEAT_INTERVAL_MS, isBusyError, LEASE_TTL_MS, type Activity, type Store, type Workstream } from './store.ts';
@@ -63,6 +71,12 @@ export interface PoolOptions {
   untilIdle?: boolean;
   /** Start even when the workstream agent's pinned sha256 does not match the binary on PATH. */
   acceptAgentBinaries?: boolean;
+  /** Rama viva (S1): las activities de trabajo cuyo adaptador tiene backend vivo corren con sesión reanudable y `report`. Por defecto, no. */
+  live?: boolean;
+  /** Backends vivos por adaptador; por defecto los de `src/live/turn.ts`. Para tests. */
+  liveBackends?: Record<string, LiveBackend>;
+  /** Caída inyectada por un test en un punto del turno vivo; un `CrashInjected` sale del pool sin tocar la activity. */
+  crash?: (point: CrashPoint) => void;
   pollMs?: number;
   heartbeatMs?: number;
   leaseTtlMs?: number;
@@ -234,9 +248,21 @@ export async function processActivity(
         diffStat = '';
       }
     }
+    const live = liveBackendFor(opts, agent.name, a);
+    const adm = live || hasAdmission(store) ? new AdmissionDb(store) : undefined;
+    // T32/B1: el trabajo que entra por un canal es texto no confiable: va delimitado en el prompt y solo corre confinado.
+    const channel = !!adm && isChannelChange(adm, change.id);
+    const confine = !!opts.confine || channel;
+    if (channel && !opts.confine) {
+      try { assertConfinement(agent.name); } catch (err) {
+        store.blockActivity(a.id, workerId, `CHANNEL_NOT_CONFINABLE: ${(err as Error).message}`);
+        log(`[${workerId}] ${a.kind} blocked: change de canal sin adaptador confinable (${agent.name})`);
+        return;
+      }
+    }
     const prompt = a.validator
       ? buildValidatorPrompt(a.validator, { change, diffStat, base: 'main', branch, worktree: path, history }, profile.validators)
-      : buildWorkerPrompt({ workstream: ws, change, activity: a, history, worktree: path, branch }, { factoryCommits: agent.factoryCommits }, profile.worker);
+      : buildWorkerPrompt({ workstream: ws, change, activity: a, history, worktree: path, branch, untrusted: channel || undefined }, { factoryCommits: agent.factoryCommits }, profile.worker);
     log(`[${workerId}] ${a.validator ?? a.kind} "${change.title}" -> ${agent.name} in ${path}`);
     const readOnly = a.validator ? (a.validator !== 'qa') : (a.kind === 'investigation');
     const probeFile = `${runDirectory(opts.stateDir, change.id)}/${a.id}.egress.json`;
@@ -249,9 +275,20 @@ export async function processActivity(
     // From launch onward the cost is unknown until the agent reports it.
     attemptCosts[attemptCosts.length - 1] = null;
     atomicEvidence(meta, JSON.stringify(pendingEvidence));
-    const run = await runAgent(opts.confine ? agent : captureAgent, prompt, path, turnTimeoutMs(opts), {
-      confine: opts.confine,
-      capturePath: opts.confine ? activityLog(opts.stateDir, change.id, a.id) : undefined,
+    const crash = (point: CrashPoint) => opts.crash?.(point);
+    let outcome: LiveOutcome | undefined;
+    let run: AgentRun;
+    if (live) {
+      ({ run, outcome } = await runLiveActivity(store, adm!, a, {
+        backend: live, cwd: path, profileDigest, prompt, timeoutMs: turnTimeoutMs(opts), signal: abortController.signal, confine,
+        capturePath: confine ? activityLog(opts.stateDir, change.id, a.id) : undefined,
+        onSpawn: pgid => store.setActivityAgentPgid(a.id, pgid), crash,
+        templates: profile.worker, branch, factoryCommits: agent.factoryCommits,
+      }));
+      if (!confine) atomicEvidence(activityLog(opts.stateDir, change.id, a.id), `${run.stdout ?? ''}${run.stderr ?? ''}`);
+    } else run = await runAgent(confine ? agent : captureAgent, prompt, path, turnTimeoutMs(opts), {
+      confine,
+      capturePath: confine ? activityLog(opts.stateDir, change.id, a.id) : undefined,
       readOnly,
       signal: abortController.signal,
       onSpawn: (pgid) => {
@@ -261,7 +298,7 @@ export async function processActivity(
 
     attemptCosts[attemptCosts.length - 1] = run.usage?.costUsd ?? null;
     atomicEvidence(meta, JSON.stringify({
-      isolation: opts.confine ? 'bwrap-allowlist' : isolationFor(agent.name), durationMs: run.durationMs, exitCode: run.exitCode, usage: run.usage ?? null,
+      isolation: confine ? 'bwrap-allowlist' : isolationFor(agent.name), durationMs: run.durationMs, exitCode: run.exitCode, usage: run.usage ?? null,
       attemptCosts,
       egressProbe: agent.name === 'native' ? readEgressProbe(probeFile) : null,
       // Keep only a declared final worker report, independently of later block/failure decisions; never diagnostics or an earlier attempt.
@@ -315,8 +352,15 @@ export async function processActivity(
         return;
       }
     }
+    if (outcome?.kind === 'awaiting') {
+      const r = applyReport(store, adm!, new Effects(adm!, {}), { activityId: a.id, workerId, crash });
+      log(`[${workerId}] ${a.kind} waiting for a human reply${r.state === 'awaiting' ? ` (${r.questionId})` : ''}`);
+      return;
+    }
+    // A5: con un turno vivo, el cierre y la marca del report como aplicado van en una sola transacción.
+    const close = <T>(fn: () => T): T => outcome ? closeWithReport(store, adm!, { activityId: a.id, workerId }, fn) : fn();
     if (run.status.kind === 'blocked') {
-      store.blockActivity(a.id, workerId, run.status.reason);
+      close(() => store.blockActivity(a.id, workerId, run.status.reason));
       log(`[${workerId}] ${a.validator ?? a.kind} blocked: ${run.status.reason}`);
       return;
     }
@@ -365,9 +409,10 @@ export async function processActivity(
         return;
       }
     }
-    store.completeActivity(a.id, workerId, run.output);
+    close(() => store.completeActivity(a.id, workerId, run.output));
     log(`[${workerId}] ${a.kind} done in ${Math.round(run.durationMs / 1000)}s`);
   } catch (err) {
+    if (err instanceof CrashInjected) throw err;
     if (!(err instanceof WorktreeNeedsRepair) && isBusyError(err)) {
       log(`[${workerId}] database locked during activity processing, preserving activity without failing`);
       try {

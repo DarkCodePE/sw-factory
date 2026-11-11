@@ -26,6 +26,11 @@ export class ReportStore {
     };
   }
 
+  /** Marca aplicados los reports pendientes de la activity (el turno que los produjo ya no es el vigente). */
+  markApplied(activityId: string): void {
+    this.adm.tx(() => this.adm.db.query('UPDATE adm_reports SET applied_at = ? WHERE activity_id = ? AND applied_at IS NULL').run(this.adm.iso(), activityId));
+  }
+
   /** El último report válido aún sin aplicar de la activity (de cualquier intento: lo usa la recuperación). */
   pending(activityId: string): (LiveReport & { attemptId: string; id: number }) | undefined {
     const row = this.adm.db.query('SELECT * FROM adm_reports WHERE activity_id = ? AND applied_at IS NULL ORDER BY id DESC LIMIT 1').get(activityId) as ReportRow | null;
@@ -38,14 +43,13 @@ export type AppliedReport = { state: 'none' } | { state: 'done' | 'blocked'; rep
 /**
  * Aplica el último report pendiente de la activity (la tiene `workerId`). `awaiting`: en UNA transacción pregunta
  * abierta + activity a `waiting_reply` + efecto `reply` + report aplicado; una caída deja todo o nada.
- * `done` y `blocked` solo se marcan aplicados: el pool sigue con completeActivity / blockActivity como hoy.
+ * `done` y `blocked` NO se marcan aquí (A5): el pool cierra la activity con `closeWithReport`, que los marca en la misma transacción.
  */
 export function applyReport(store: Store, adm: AdmissionDb, effects: Effects, p: { activityId: string; workerId: string; waitMs?: number; crash?: (point: CrashPoint) => void }): AppliedReport {
   const reports = new ReportStore(adm), pending = reports.pending(p.activityId);
   if (!pending) return { state: 'none' };
   const done = (): void => { adm.db.query('UPDATE adm_reports SET applied_at = ? WHERE activity_id = ? AND applied_at IS NULL').run(adm.iso(), p.activityId); };
   if (pending.state !== 'awaiting') {
-    adm.tx(done);
     return { state: pending.state, report: { state: pending.state, summary: pending.summary, ...(pending.human_action ? { human_action: pending.human_action } : {}) } };
   }
   // Id determinista por intento: aplicar dos veces el mismo report no abre dos preguntas.
@@ -62,6 +66,21 @@ export function applyReport(store: Store, adm: AdmissionDb, effects: Effects, p:
   });
   p.crash?.('report-applied');
   return { state: 'awaiting', questionId: result };
+}
+
+/**
+ * A5: cierre de una activity con report `done`/`blocked`. Cierra (`close`: completeActivity / blockActivity) y marca el report
+ * aplicado en UNA transacción, y solo si `workerId` sigue teniendo la activity: un worker ajeno no consume el report, y una
+ * caída entre el cierre y la marca no deja la activity cerrada con un report «pendiente» ni al revés.
+ */
+export function closeWithReport<T>(store: Store, adm: AdmissionDb, p: { activityId: string; workerId: string }, close: () => T): T {
+  return adm.tx(() => {
+    const a = store.getActivity(p.activityId);
+    if (a.status !== 'in_progress' || a.workerId !== p.workerId) throw new Error(`activity ${p.activityId} is not held by ${p.workerId}`);
+    const result = close();
+    new ReportStore(adm).markApplied(p.activityId);
+    return result;
+  });
 }
 
 export type LiveOutcome = { kind: LiveReport['state']; report: LiveReport };

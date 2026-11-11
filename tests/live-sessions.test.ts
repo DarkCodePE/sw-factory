@@ -68,3 +68,10 @@ test('el backend claude arranca la sesión nueva con el id que escribió la fab'
     expect(argv[argv.indexOf('--session-id') + 1]).toBe(session.sessionId);
   } finally { process.env.PATH = saved; }
 });
+
+test('A8: cambiar el perfil tras lanzar es otra sesión (profile_digest se compara, no solo se guarda)', () => {
+  const { adm, change } = claimed(), s = new SessionStore(adm);
+  s.markLaunched(s.begin(change.id, 'implementation', meta).session.sessionId);
+  expect(() => s.begin(change.id, 'implementation', { ...meta, profileDigest: 'p2' })).toThrow(SessionMismatchError);
+  expect(s.begin(change.id, 'implementation', meta).turn).toHaveProperty('sessionId'); // el mismo perfil reanuda
+});

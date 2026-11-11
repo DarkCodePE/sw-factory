@@ -93,7 +93,7 @@ const HELP = `fab — agente de código y fábrica de software local
                                 residente en modo observe: registra would_admit de issues sin crear changes
   fab inbox [slug]
   fab review <activityId> <approve|comment|decline> [--comment <text>]
-  fab run <slug> [--once] [--agent <name>] [--accept-agent-binaries]
+  fab run <slug> [--once] [--agent <name>] [--accept-agent-binaries] [--live]
   fab tui <slug>                panel interactivo: changes, bandeja y eventos
   fab status <slug>
   fab show <changeId>
@@ -181,6 +181,7 @@ async function main(argv: string[]): Promise<number> {
       force: { type: 'boolean' },
       discard: { type: 'boolean' },
       'accept-agent-binaries': { type: 'boolean' },
+      live: { type: 'boolean' },
       protect: { type: 'string', multiple: true },
       verify: { type: 'string', multiple: true },
       'verify-setup': { type: 'string', multiple: true },
@@ -274,7 +275,7 @@ async function main(argv: string[]): Promise<number> {
         return 0;
       }
       case 'run': {
-        await runPool(store, { workstream: sub ?? '', stateDir: STATE_DIR, agentOverride: values.agent, untilIdle: !!values.once, acceptAgentBinaries: !!values['accept-agent-binaries'] });
+        await runPool(store, { workstream: sub ?? '', stateDir: STATE_DIR, agentOverride: values.agent, untilIdle: !!values.once, acceptAgentBinaries: !!values['accept-agent-binaries'], live: !!values.live });
         return 0;
       }
       case 'tui': {

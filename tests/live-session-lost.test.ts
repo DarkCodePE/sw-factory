@@ -43,3 +43,14 @@ test('el prompt se reconstruye desde estado durable: change, historial y pregunt
   expect(prompt).toContain('do not start over');
   expect(questionsBlock(adm, 'otro-change')).toBe('');
 });
+
+test('B1: el prompt reconstruido de un change de canal delimita el texto no confiable y usa las plantillas del perfil', () => {
+  const { store, adm, change, claim } = claimed(), a = claim();
+  const plain = reconstructPrompt(store, adm, a.id, { worktree: '/w/a', branch: 'fab/x' });
+  expect(plain).not.toContain('UNTRUSTED'); // un change manual sale como siempre
+  adm.db.query('INSERT INTO adm_threads(id, source, first_seen) VALUES (?,?,?)').run('github:o/r#1', 'github:o/r', 'x');
+  new (require('../src/admission/links.ts').ThreadLinks)(adm).link('github:o/r#1', change.id);
+  const prompt = reconstructPrompt(store, adm, a.id, { worktree: '/w/a', branch: 'fab/x', templates: { rules: 'REGLAS-DEL-PERFIL', investigate: 'INV', implement: 'IMP' } });
+  expect(prompt).toMatch(/<<<UNTRUSTED [0-9a-f-]{12}\n[\s\S]*descripción[\s\S]*UNTRUSTED [0-9a-f-]{12}>>>/);
+  expect(prompt).toContain('REGLAS-DEL-PERFIL');
+});
