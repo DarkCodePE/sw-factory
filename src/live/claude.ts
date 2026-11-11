@@ -25,7 +25,7 @@ export const claudeLive: LiveBackend = {
   name: 'claude',
   confinable: true,
   async run(turn: LiveTurn) {
-    const sessionId = turn.sessionId ?? randomUUID();
+    const sessionId = turn.sessionId ?? turn.newSessionId ?? randomUUID();
     const reports: LiveReport[] = [];
     const server = createSdkMcpServer({ name: SERVER, tools: [{
       name: REPORT_TOOL,

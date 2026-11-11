@@ -14,6 +14,8 @@ export interface LiveReport {
 export interface LiveTurn {
   /** Absent: start a new session. Present: resume exactly that session; never silently start another. */
   sessionId?: string;
+  /** Id to give a NEW session (T17): the fab writes it durably before launching. Ignored when `sessionId` is set. */
+  newSessionId?: string;
   prompt: string;
   cwd: string;
   /** Identifies this attempt; every report of the turn is bound to it (D4). */

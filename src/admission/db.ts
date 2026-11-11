@@ -34,6 +34,13 @@ CREATE TABLE IF NOT EXISTS adm_questions (
   id TEXT PRIMARY KEY, activity_id TEXT NOT NULL, change_id TEXT NOT NULL, text TEXT NOT NULL,
   status TEXT NOT NULL DEFAULT 'open' CHECK (status IN ('open','answered','expired','canceled')),
   asked_at TEXT NOT NULL, answered_at TEXT, answer TEXT, answered_by TEXT);
+-- Sesión de harness por (change, tipo de activity, generación), escrita ANTES de lanzar (T17): sobrevive a la caída del pool,
+-- a requeueOrphans y a retryChange (que crea otra activity pero no otro change).
+CREATE TABLE IF NOT EXISTS adm_sessions (
+  id INTEGER PRIMARY KEY AUTOINCREMENT, change_id TEXT NOT NULL, kind TEXT NOT NULL, generation INTEGER NOT NULL,
+  session_id TEXT NOT NULL UNIQUE, backend TEXT NOT NULL, cwd TEXT NOT NULL, model TEXT, profile_digest TEXT,
+  status TEXT NOT NULL DEFAULT 'open' CHECK (status IN ('open','lost','closed')), launched_at TEXT, lost_reason TEXT, created_at TEXT NOT NULL,
+  UNIQUE (change_id, kind, generation));
 CREATE UNIQUE INDEX IF NOT EXISTS adm_questions_open ON adm_questions(activity_id) WHERE status = 'open';`;
 
 export class AdmissionDb {
