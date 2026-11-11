@@ -20,7 +20,7 @@ Cada repositorio evaluado se analiza bajo un principio de rigor técnico:
 
 ## Índice de la serie DSH
 
-El ecosistema DeepSeek Harness (DSH), su prototipo de superagente y su monitorización en Herdr se desglosan en cinco entregas estructuradas:
+El ecosistema DeepSeek Harness (DSH), su prototipo de superagente y su monitorización en Herdr se desglosan en seis entregas estructuradas:
 
 1. **[01 · DSH: panorama general y ecosistema](01-dsh-panorama.md)**:  
    Visión de conjunto de DeepSeek Harness visto desde fuera, arquitectura de bundles Cordis y mapa de relaciones entre el host web, el superagente y el monitor.
@@ -36,3 +36,6 @@ El ecosistema DeepSeek Harness (DSH), su prototipo de superagente y su monitoriz
 
 5. **[05 · Qué tomar de DSH y dsh-herdr para la fab](05-dsh-que-tomar-para-fab.md)**:  
    Matriz de decisión consolidada (tomar vs no tomar) y propuesta concreta de emisión nativa de OSC 7501 con registros hijos `id=<ticketId>` para la flota de agentes de la fab.
+
+6. **[06 · Integración del superagent en la fab](06-integracion-superagent-fab.md)**:  
+   Diseño revisado en dos rondas EGM: robustez de lo que la fab ya tiene, estrategia de mitkox (copilot-superagent, ESF, dsh-herdr), cola de efectos, contrato vivo tipo `AgentBackend` y fases.
