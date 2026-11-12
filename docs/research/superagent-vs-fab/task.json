@@ -534,11 +534,30 @@
     {
       "id": "T39",
       "title": "Prueba manual de la rama viva con claude real y confinado (B2 de T12)",
-      "status": "pending",
+      "status": "done",
       "depends_on": [
         "T12"
       ],
-      "note": "Pasos: (1) fab run --live sobre un change de canal con bwrap; (2) claude lee el --mcp-config del git dir (.git/worktrees/<n>/fab-live) dentro del sandbox; (3) --allowedTools unido por comas funciona; (4) provocar awaiting real y reanudar con --resume."
+      "note": "Ver result. Lo que falla está en T40.",
+      "result": {
+        "date": "2026-11-12",
+        "how": "Script con la API de la fab (patrón de tests/auto-e2e) y claude 2.1.322 real, repo y base desechables; change de canal (hilo unido a mano) → confinamiento forzado; fab run --live dos veces con answerQuestion entre medias.",
+        "1_bwrap": "OK: los turnos corren bajo bwrap (cmdline del proceso) con confine=true.",
+        "2_mcp_config": "OK: claude lee el --mcp-config del git dir dentro del sandbox y llama a la tool report (awaiting con human_action).",
+        "3_allowedTools": "OK: la tool mcp__fab__report entra en la lista unida por comas y el agente la usa.",
+        "4_resume": "FALLA: --resume da «No conversation found with session ID». El HOME del sandbox (/home/agent) es un mkdtemp nuevo en cada confineAgent y se borra al acabar, así que el transcript de la sesión no sobrevive al turno. S3 lo recupera: sesión marcada lost, generación 2 con prompt reconstruido que incluye la respuesta; el change terminó (investigación, implementación con commit «rojo», gates pass, 3 revisiones). Coste: cada respuesta gasta una generación del tope (3) y se pierde el contexto de la sesión."
+      }
+    },
+    {
+      "id": "T40",
+      "title": "claude --resume no funciona confinado: el transcript de la sesión vive en el HOME efímero del sandbox",
+      "status": "pending",
+      "depends_on": [
+        "T39"
+      ],
+      "where": "src/sandbox/confine.ts (confineAgent: scratch/home por llamada) y src/live/claude.ts",
+      "why": "En la prueba B2, cada reanudación de un change de canal falla y cae a S3: se pierde la sesión y se gasta una generación; tras 3 preguntas la activity se bloquea.",
+      "fix_idea": "Persistir ~/.claude/projects del sandbox por worktree (p. ej. en el git dir, junto a fab-live, que ya se monta) y montarlo en /home/agent/.claude/projects; solo para turnos vivos. Test: dos turnos confinados con el mismo sessionId reanudan sin SessionNotFound."
     }
   ]
 }
