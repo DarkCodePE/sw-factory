@@ -1,5 +1,5 @@
 {
-  "updated": "2026-11-11",
+  "updated": "2026-11-12",
   "context": "Integración superagent → fab. Fase 0: PR #55 (feat/fase0-endurecer). Fase 1: PR #56 (feat/fase1-observe). Ambos apilados sobre PR #49 (feat/t2-corpus).",
   "decisions": [
     {
@@ -120,8 +120,9 @@
       "id": "T8",
       "title": "Arreglar el test inestable de journal (10000 registros, timeout 30s)",
       "where": "tests/agent-journal.test.ts",
-      "status": "pending",
-      "depends_on": []
+      "status": "done",
+      "depends_on": [],
+      "pr": 66
     },
     {
       "id": "T9",
@@ -160,22 +161,22 @@
     {
       "id": "T12",
       "title": "Fase 2: integrar en el pool las piezas del #62 (sesión, report, espera, preguntas/respuestas, Outbox) y modo auto mínimo",
-      "status": "in_progress",
+      "status": "done",
       "depends_on": [
         "T36"
       ],
-      "note": "Ronda 3 (review3/fable.md): veredicto «sí con cambios». Los hallazgos de severidad alta (T16-T23) bloquean la fase 2; los de severidad media (T24-T32) se resuelven dentro de ella.",
-      "open_items": [
-        "Marcar la sesión lanzada antes de lanzar y comparar profile_digest (A8)",
-        "¿fab retry reinicia el tope de generaciones? (A6, detalle de S2)",
-        "Dónde vive la tabla de sesiones (adm_sessions vs Store)",
-        "Delimitar el texto no confiable en reconstructPrompt y activar untrusted (B1)",
-        "Unir hilo y change cuando un signal propose se triaja a mano (M1)",
-        "report done/blocked marcado aplicado junto al cierre de la activity (A5)",
-        "question-not-published no definitiva si el residente murió entre publicar y guardar (A4)",
-        "Prueba manual de T34 con claude real confinado (B2)",
-        "Qué puede hacer la persona con una activity waiting_reply en el inbox (M2)",
-        "El plazo de espera solo vence si el residente corre (M4)"
+      "note": "Fusionado (#67). Rama viva detrás de `fab run --live` (solo adaptador con backend vivo, hoy claude; validadores y gates de un disparo). Los open_items de la ronda 3 (A4, A5, A6, A8, B1, M1, M2, M4, tabla de sesiones) quedaron cerrados; la verificación de Fable (t12/verif-fable.md) dio «listo con cambios» y se corrigieron H1, H2, M1-M5, B1, B3, B4 y B8 (t12/impl-sonnet.md).",
+      "pr": 67,
+      "branch": "feat/t12-fase2-integracion",
+      "owner": "sonnet",
+      "reviewer": "fable",
+      "followups": [
+        "B2: prueba manual con claude real confinado (bwrap, --mcp-config en el sandbox, --allowedTools, awaiting y --resume) → T39",
+        "B5: el cambio de modelo no se detecta como pérdida de sesión (SessionMeta.model siempre null)",
+        "B6: marcar la sesión lanzada antes de lanzar (A8) hace que un fallo de arranque transitorio gaste una generación del tope",
+        "H2: la respuesta se entrega al menos una vez (si el pool muere con el agente ya servido, se reenvía)",
+        "Fronteras 5 y 9 cubiertas en parte; el test de la 7 no provoca la caída",
+        "native no tiene backend vivo; steer y los efectos launch/deliver/stop (S1) fuera"
       ]
     },
     {
@@ -191,8 +192,9 @@
       "title": "isBusyError trata como bloqueo de la base cualquier mensaje con «busy», incluidas rutas",
       "why": "Hallado por codex en T10. Un error cuyo mensaje contenga una ruta con 'busy' se reencola en lugar de fallar o bloquear.",
       "where": "src/store.ts (isBusyError) y sus llamadores en src/pool.ts",
-      "status": "pending",
-      "depends_on": []
+      "status": "done",
+      "depends_on": [],
+      "pr": 65
     },
     {
       "id": "T16",
@@ -512,19 +514,31 @@
       "id": "T36",
       "title": "Aprobar las decisiones S3-S8 del 06 §5.3",
       "status": "done",
-      "depends_on": []
+      "depends_on": [],
+      "pr": 64
     },
     {
       "id": "T37",
       "title": "Test inestable notify … wake the model once (falló en el CI de #59)",
-      "status": "pending",
-      "depends_on": []
+      "status": "done",
+      "depends_on": [],
+      "pr": 66
     },
     {
       "id": "T38",
       "title": "Limpieza: worktrees de ramas fusionadas y archivos 06/07 sin seguimiento en el repo principal",
+      "status": "in_progress",
+      "depends_on": [],
+      "note": "2026-11-11: borrados 20 worktrees fusionados y limpios y cerradas las pestañas de Herdr de agentes terminados. Quedan: worktrees con cambios (t2, t2b, tui, ollama) para revisar a mano; fase0, fase1, docsint y r3 ya fusionados; los 06/07 sin seguimiento en el repo principal."
+    },
+    {
+      "id": "T39",
+      "title": "Prueba manual de la rama viva con claude real y confinado (B2 de T12)",
       "status": "pending",
-      "depends_on": []
+      "depends_on": [
+        "T12"
+      ],
+      "note": "Pasos: (1) fab run --live sobre un change de canal con bwrap; (2) claude lee el --mcp-config del git dir (.git/worktrees/<n>/fab-live) dentro del sandbox; (3) --allowedTools unido por comas funciona; (4) provocar awaiting real y reanudar con --resume."
     }
   ]
 }
