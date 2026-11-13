@@ -12,7 +12,7 @@ export function assertConfinement(agent: string): void {
   if (p.exitCode !== 0) throw new Error(`--confine: bubblewrap no funciona: ${p.stderr.toString().trim()}`);
 }
 
-export function confineAgent(name: string, argv: string[], cwd: string, extra: Record<string, string> = {}) {
+export function confineAgent(name: string, argv: string[], cwd: string, extra: Record<string, string> = {}, claudeProjects?: string) {
   assertConfinement(name);
   const scratch = mkdtempSync(join(tmpdir(), 'fab-confine-'));
   try {
@@ -60,6 +60,8 @@ export function confineAgent(name: string, argv: string[], cwd: string, extra: R
       writeFileSync(join(home, '.claude.json'), JSON.stringify({ hasCompletedOnboarding: true }));
       const credentials = join(hostHome, '.claude', '.credentials.json');
       if (existsSync(credentials)) args.push('--ro-bind', credentials, '/home/agent/.claude/.credentials.json');
+      // Live turns resume by session id, so the transcript must outlive this ephemeral HOME. Only this per-worktree dir persists.
+      if (claudeProjects) { mkdirSync(claudeProjects, { recursive: true, mode: 0o700 }); args.push('--bind', claudeProjects, '/home/agent/.claude/projects'); }
       // No user/project hooks, plugins, MCP servers or host config.
       command.push('--setting-sources', '');
       // A live turn already brings its own `--mcp-config` (the `report` tool): a second, empty one appended last could win and drop it.

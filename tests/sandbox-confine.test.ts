@@ -110,3 +110,32 @@ test('confinement fails closed when bwrap is missing or broken', async () => {
     await expect(runAgent(fake, '', join(root, 'repo'), 10_000, { confine: true })).rejects.toThrow(/--confine:.*mount-denied/);
   } finally { process.env.PATH = original; rmSync(root, { recursive: true, force: true }); }
 });
+
+// T40: `claude --resume` needs the transcript to outlive the ephemeral sandbox HOME.
+function inSandbox(script: string, cwd: string, claudeProjects?: string) {
+  const c = confineAgent('claude', ['sh', '-c', script], cwd, {}, claudeProjects);
+  try { return Bun.spawnSync(c.argv, { env: c.env }); } finally { c.cleanup(); }
+}
+
+test.skipIf(!canConfine)('claudeProjects persists /home/agent/.claude/projects across confined calls of one worktree', () => {
+  const root = mkdtempSync('/tmp/fab-proj-');
+  try {
+    expect(Bun.spawnSync(['git', 'init', '-q', root]).exitCode).toBe(0);
+    const projects = join(root, '.git', 'fab-live', 'claude-projects');
+    const w = inSandbox('echo transcript > /home/agent/.claude/projects/s.jsonl', root, projects);
+    expect(w.exitCode).toBe(0);
+    const r = inSandbox('cat /home/agent/.claude/projects/s.jsonl', root, projects);
+    expect(r.stdout.toString().trim()).toBe('transcript');
+  } finally { rmSync(root, { recursive: true, force: true }); }
+});
+
+test.skipIf(!canConfine)('without claudeProjects nothing persists: each confined call gets a fresh HOME', () => {
+  const root = mkdtempSync('/tmp/fab-noproj-');
+  try {
+    expect(Bun.spawnSync(['git', 'init', '-q', root]).exitCode).toBe(0);
+    inSandbox('mkdir -p /home/agent/.claude/projects && echo transcript > /home/agent/.claude/projects/s.jsonl', root);
+    const r = inSandbox('test -e /home/agent/.claude/projects/s.jsonl', root);
+    expect(r.exitCode).not.toBe(0);
+    expect(existsSync(join(root, '.git', 'fab-live'))).toBe(false);
+  } finally { rmSync(root, { recursive: true, force: true }); }
+});
