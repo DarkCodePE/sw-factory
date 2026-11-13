@@ -14,6 +14,10 @@ export async function residentMain(argv: string[], store: Store, deps: { run?: C
   try {
     if (argv[0] === 'report') {
       const { values } = parseArgs({ args: argv.slice(1), options: { json: { type: 'boolean' } } });
+      if (!store.db.query("SELECT 1 FROM sqlite_master WHERE type = 'table' AND name GLOB 'adm_*' LIMIT 1").get()) {
+        console.log(values.json ? '{}' : '(el residente nunca se ha ejecutado en esta base)');
+        return 0;
+      }
       const report = buildReport(new AdmissionDb(store));
       console.log(values.json ? JSON.stringify(report, null, 2) : formatReport(report));
       return 0;
