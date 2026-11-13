@@ -1,5 +1,5 @@
 import { describe, expect, test } from 'bun:test';
-import { chmodSync, existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, writeFileSync } from 'node:fs';
+import { chmodSync, existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { getAgent } from '../src/agents.ts';
@@ -124,7 +124,7 @@ echo '{"type":"result","result":"ok","session_id":"x"}'`);
       expect(readFileSync(join(claudeProjects, 's'), 'utf8').trim()).toBe('t1');
       await claudeLive.run({ prompt: 'x', cwd: f.dir, attemptId: 'b', confine: true, claudeProjects });
       expect(readFileSync(join(f.dir, 'seen'), 'utf8').trim()).toBe('t1');
-    } finally { f.restore(); }
+    } finally { f.restore(); rmSync(state, { recursive: true, force: true }); }
   });
 });
 

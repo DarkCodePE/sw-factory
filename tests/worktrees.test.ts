@@ -103,8 +103,11 @@ test('removeWorktree: rejects change, removes worktree and force deletes branch 
   writeFileSync(join(wtPath, 'discard.txt'), 'will be discarded\n');
   await commitWorktree(wtPath, 'discarded commit');
 
+  mkdirSync(join(stateDir, 'live', changeId.slice(0, 8), 'claude-projects'), { recursive: true }); // T40
+
   // Remove worktree
   await removeWorktree(repo, stateDir, changeId);
+  expect(existsSync(join(stateDir, 'live', changeId.slice(0, 8)))).toBe(false);
 
   // Verify worktree is deleted
   expect(existsSync(wtPath)).toBe(false);
