@@ -2,13 +2,14 @@
 // Sirve para responder con datos: (a) ¿se verifica bien la etiqueta?, (b) ¿sale el 403 (rol `unknown`)?, (c) ¿llega tarde `labeled`?
 import type { AdmissionDb } from './db.ts';
 import { DEFAULT_POLICY } from './gate.ts';
+import { isTerminalChange, type ChangeStatus } from '../store.ts';
 
 export type Report = {
   sources: { source: string; cursor: string | null; lastPoll: string | null; lastPollEvents: number | null }[];
   decisions: { wouldAdmit: boolean; reason: string; count: number }[];
   labelNotVerified: { trigger: string; labelBy: string; role: string; decidedAt: string }[];
   followupsLost: { trigger: string; url: string; author: string; association: string; decidedAt: string }[];
-  stopsLost: { thread: string; url: string; state: 'open' | 'closed'; labelPresent: boolean; decidedAt: string }[];
+  stopsLost: { thread: string; url: string; state: 'open' | 'closed'; labelPresent: boolean; decidedAt: string; changeStatus: ChangeStatus }[];
   unlabeledTrusted: { thread: string; url: string; firstSeen: string; admittedAt: string | null }[];
   effects: { key: string; status: string; attempts: number; lastError: string | null }[];
 };
@@ -18,7 +19,7 @@ export function buildReport(adm: AdmissionDb): Report {
   const reasons = q(`SELECT d.*, t.thread_id, t.event FROM adm_decisions d
     JOIN adm_triggers t ON t.key = d.trigger_key ORDER BY d.decided_at, d.trigger_key`)
     .map(d => ({ ...d, reasons: JSON.parse(d.reasons) as string[], event: JSON.parse(d.event) as {
-      url: string; author: string; authorAssociation: string; state: 'open' | 'closed'; labels: string[];
+      url: string; author: string; authorAssociation: string; state: 'open' | 'closed'; labels?: string[];
     } }));
   // Observe no crea vínculos: would_admit también cuenta como admisión para medir seguimientos.
   const admitted = new Set(q(`SELECT thread_id FROM adm_thread_changes UNION SELECT thread_id FROM adm_thread_signals`)
@@ -37,16 +38,20 @@ export function buildReport(adm: AdmissionDb): Report {
       trigger: c.trigger_key, url: event.url, author: event.author, association: event.authorAssociation, decidedAt: c.decided_at,
     });
   }
+  const liveChanges = new Map((q(`SELECT l.thread_id, c.status FROM adm_thread_changes l
+    JOIN changes c ON c.id = l.change_id`) as { thread_id: string; status: ChangeStatus }[])
+    .filter(c => !isTerminalChange(c.status)).map(c => [c.thread_id, c.status]));
   const stopsLost = new Map<string, Report['stopsLost'][number]>();
   const unlabeledTrusted = new Map<string, Report['unlabeledTrusted'][number]>();
   // Las decisiones están ordenadas: conservar la primera fila fija también la URL de esa observación.
   for (const d of reasons) {
     const e = d.event;
-    if (d.reasons[0] === 'thread-already-admitted' && !stopsLost.has(d.thread_id)) {
-      const policy = JSON.parse(d.policy) as { triggerLabel: string };
-      const labelPresent = e.labels.some((label: string) => label.toLowerCase() === policy.triggerLabel.toLowerCase());
+    const changeStatus = liveChanges.get(d.thread_id);
+    if (changeStatus && d.reasons[0] === 'thread-already-admitted' && !stopsLost.has(d.thread_id)) {
+      const policy = JSON.parse(d.policy) as { triggerLabel?: string };
+      const labelPresent = (e.labels ?? []).some((label: string) => label.toLowerCase() === policy.triggerLabel?.toLowerCase());
       if (e.state === 'closed' || !labelPresent) stopsLost.set(d.thread_id, {
-        thread: d.thread_id, url: e.url, state: e.state, labelPresent, decidedAt: d.decided_at,
+        thread: d.thread_id, url: e.url, state: e.state, labelPresent, decidedAt: d.decided_at, changeStatus,
       });
     }
     if (d.reasons[0] === 'no-trigger-label' && e.state === 'open' && trusted(e.authorAssociation) && !unlabeledTrusted.has(d.thread_id)) {
@@ -92,10 +97,10 @@ export function formatReport(r: Report): string {
   for (const f of r.followupsLost) lines.push(`${f.url}  ${f.trigger}  autor=${f.author}  asociación=${f.association}  ${f.decidedAt}`);
   if (!r.followupsLost.length) lines.push('(ninguno)');
   lines.push('', '== Paradas perdidas (stopsLost) ==');
-  for (const s of r.stopsLost) lines.push(`${s.url}  ${s.thread}  estado=${s.state}  etiqueta=${s.labelPresent ? 'presente' : 'ausente'}  ${s.decidedAt}`);
+  for (const s of r.stopsLost) lines.push(`${s.url}  ${s.thread}  estado=${s.state}  change=${s.changeStatus}  etiqueta=${s.labelPresent ? 'presente' : 'ausente'}  ${s.decidedAt}`);
   if (!r.stopsLost.length) lines.push('(ninguno)');
   lines.push('', '== Issues de confianza sin etiqueta (unlabeledTrusted) ==');
   for (const u of r.unlabeledTrusted) lines.push(`${u.url}  ${u.thread}  primera vez=${u.firstSeen}  admitido=${u.admittedAt ?? '-'}`);
   if (!r.unlabeledTrusted.length) lines.push('(ninguno)');
-  return lines.join('\n');
+  return lines.map(line => line.replace(/[\x00-\x1f\x7f-\x9f]/g, '')).join('\n');
 }

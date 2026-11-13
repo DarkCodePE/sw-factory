@@ -2,7 +2,7 @@ import { afterEach, expect, spyOn, test } from 'bun:test';
 import { residentMain } from '../src/admission/cli.ts';
 import { AdmissionDb, hasAdmission } from '../src/admission/db.ts';
 import { buildReport, formatReport } from '../src/admission/report.ts';
-import { Store } from '../src/store.ts';
+import { Store, type ChangeStatus } from '../src/store.ts';
 import { dbPath, fakeGh, FIXTURE, issue, open, REPO } from './helpers/admission.ts';
 
 const stores = new Set<{ close(): void }>();
@@ -96,7 +96,14 @@ const seeded = () => {
     trigger(key, thread, { authorAssociation: association });
     adm.db.query('INSERT INTO adm_comment_decisions VALUES (?,?,?,?,?)').run(key, 0, reason, null, time);
   };
-  return { store, adm, at, trigger, decision, comment };
+  let workstream: string | undefined;
+  const link = (thread: string, status: ChangeStatus = 'in_progress') => {
+    workstream ??= store.createWorkstream({ slug: 'report', goal: 'medir', repo: '/tmp/report', agent: 'fake' }).id;
+    adm.db.query('INSERT INTO changes(id, workstream_id, title, description, status, created_at, updated_at) VALUES (?,?,?,?,?,?,?)')
+      .run(`change-${thread}`, workstream, thread, '', status, at, at);
+    adm.db.query('INSERT INTO adm_thread_changes VALUES (?,?,?)').run(thread, `change-${thread}`, at);
+  };
+  return { store, adm, at, trigger, decision, comment, link };
 };
 
 test('un seguimiento de confianza sin pregunta abierta en un hilo admitido sale en followupsLost, con su URL', () => {
@@ -123,15 +130,16 @@ test('en observe cuenta como admitido el hilo con una decisión would_admit', ()
 });
 
 test('la etiqueta retirada o el cierre sobre un hilo ya admitido sale en stopsLost, una vez por hilo', () => {
-  const { adm, at, decision } = seeded();
+  const { adm, at, decision, link } = seeded();
   decision('later', 'removed', 'thread-already-admitted', '2026-01-02T10:00:00Z');
   decision('first', 'removed', 'thread-already-admitted');
   decision('closed', 'closed', 'thread-already-admitted', at, { state: 'closed', labels: ['SPECIAL'] }, 'special');
   decision('open', 'open', 'thread-already-admitted', at, { labels: ['SPECIAL'] }, 'special');
   decision('other', 'other', 'issue-not-open', at, { state: 'closed' });
+  link('closed'); link('removed'); link('open');
   expect(buildReport(adm).stopsLost).toEqual([
-    { thread: 'closed', url: 'https://github.com/test/repo/issues/closed', state: 'closed', labelPresent: true, decidedAt: at },
-    { thread: 'removed', url: 'https://github.com/test/repo/issues/first', state: 'open', labelPresent: false, decidedAt: at },
+    { thread: 'closed', url: 'https://github.com/test/repo/issues/closed', state: 'closed', labelPresent: true, decidedAt: at, changeStatus: 'in_progress' },
+    { thread: 'removed', url: 'https://github.com/test/repo/issues/first', state: 'open', labelPresent: false, decidedAt: at, changeStatus: 'in_progress' },
   ]);
 });
 
@@ -152,13 +160,14 @@ test('un issue de confianza sin etiqueta sale en unlabeledTrusted, con admittedA
 });
 
 test('formatReport no imprime el cuerpo del comentario', () => {
-  const { adm, at, decision, comment } = seeded();
+  const { adm, at, decision, comment, link } = seeded();
   const empty = formatReport(buildReport(adm));
   decision('admit', 'trusted', 'trigger-label', at, {}, 'fab', true);
   comment('comment', 'trusted');
   const body = '\x1b[2JNO IMPRIMIR TEXTO NO CONFIABLE';
   adm.db.query('INSERT INTO adm_comments VALUES (?,?,?)').run('comment', body, 'hash');
   decision('stop', 'trusted', 'thread-already-admitted');
+  link('trusted');
   decision('unlabeled', 'pending', 'no-trigger-label');
   const output = formatReport(buildReport(adm));
   expect(output).toContain('https://github.com/test/repo/issues/comment');
@@ -182,4 +191,74 @@ test('report sobre una base sin admisión no crea tablas adm_*', async () => {
     }
   } finally { log.mockRestore(); }
   expect(out).toEqual(['(el residente nunca se ha ejecutado en esta base)', '{}']);
+});
+
+
+test('stopsLost excluye changes terminados y exige un change vinculado existente', () => {
+  const { adm, at, decision, link } = seeded();
+  for (const status of ['completed', 'failed', 'canceled', 'declined', 'blocked', 'quarantined'] as const) {
+    decision(status, status, 'thread-already-admitted', at, { state: 'closed' });
+    link(status, status);
+  }
+  decision('unlinked', 'unlinked', 'thread-already-admitted');
+  decision('signaled', 'signaled', 'thread-already-admitted', at, {}, 'fab', true);
+  adm.db.query('INSERT INTO adm_thread_signals VALUES (?,?,?,?)').run('signaled', 'signal', 'change', at);
+  decision('missing', 'missing', 'thread-already-admitted');
+  adm.db.query('INSERT INTO adm_thread_changes VALUES (?,?,?)').run('missing', 'nonexistent', at);
+  expect(buildReport(adm).stopsLost).toEqual([]);
+});
+
+test('stopsLost conserva la segunda fila si la primera no cumple', () => {
+  const { adm, at, decision, link } = seeded();
+  decision('innocent', 'thread', 'thread-already-admitted', at, { labels: ['FAB'] });
+  decision('removed', 'thread', 'thread-already-admitted', '2026-01-02T10:00:00Z');
+  link('thread', 'in_review');
+  expect(buildReport(adm).stopsLost).toEqual([{
+    thread: 'thread', url: 'https://github.com/test/repo/issues/removed', state: 'open', labelPresent: false,
+    decidedAt: '2026-01-02T10:00:00Z', changeStatus: 'in_review',
+  }]);
+});
+
+test('report reconoce tablas adm_* antiguas sin adm_thread_changes y conserva sus decisiones', async () => {
+  for (const args of [['report'], ['report', '--json']]) {
+    const { store, adm, decision } = seeded();
+    decision('saved', 'thread', 'no-trigger-label');
+    adm.db.exec('DROP TABLE adm_thread_changes');
+    expect(hasAdmission(store)).toBe(false);
+    const out: string[] = [], log = spyOn(console, 'log').mockImplementation((s: string) => { out.push(s); });
+    try { expect(await residentMain(args, store)).toBe(0); } finally { log.mockRestore(); }
+    if (args.includes('--json')) expect(JSON.parse(out[0]!).decisions).toEqual([{ wouldAdmit: false, reason: 'no-trigger-label', count: 1 }]);
+    else expect(out[0]).toContain('no-trigger-label: 1');
+  }
+});
+
+for (const missing of ['labels', 'triggerLabel'] as const) test(`stopsLost tolera la ausencia de ${missing}`, () => {
+  const { adm, at, decision, link } = seeded();
+  decision('stop', 'thread', 'thread-already-admitted', at, { labels: ['fab'] });
+  link('thread');
+  if (missing === 'labels') adm.db.query("UPDATE adm_triggers SET event = json_remove(event, '$.labels') WHERE key = 'stop'").run();
+  else adm.db.query("UPDATE adm_decisions SET policy = '{}' WHERE trigger_key = 'stop'").run();
+  expect(buildReport(adm).stopsLost).toMatchObject([{ thread: 'thread', labelPresent: false }]);
+});
+
+test('formatReport quita controles de cada línea sin permitir líneas falsas', () => {
+  const { adm, at, decision, comment, link } = seeded();
+  decision('admit', 'thread', 'trigger-label', at, {}, 'fab', true);
+  comment('comment', 'thread');
+  decision('stop', 'thread', 'thread-already-admitted'); link('thread');
+  decision('unlabeled', 'pending', 'no-trigger-label');
+  const report = buildReport(adm);
+  const dirty = 'valor\x00\x1b[2J\nFALSA\r\t\x7f\x85';
+  report.sources.push({ source: dirty, cursor: dirty, lastPoll: dirty, lastPollEvents: 1 });
+  report.decisions[0]!.reason = dirty;
+  report.labelNotVerified.push({ trigger: dirty, labelBy: dirty, role: dirty, decidedAt: dirty });
+  report.effects.push({ key: dirty, status: dirty, attempts: 2, lastError: dirty });
+  Object.assign(report.followupsLost[0]!, { url: dirty, author: dirty, trigger: dirty, association: dirty, decidedAt: dirty });
+  Object.assign(report.stopsLost[0]!, { url: dirty, thread: dirty, decidedAt: dirty });
+  Object.assign(report.unlabeledTrusted[0]!, { url: dirty, thread: dirty, firstSeen: dirty, admittedAt: dirty });
+  const output = formatReport(report);
+  expect(output).not.toMatch(/[\x00-\x09\x0b-\x1f\x7f-\x9f]/);
+  expect(output.split('\n')).toHaveLength(22); // 7 cabeceras, 6 separadores y 9 filas, sin saltos procedentes de datos
+  expect(output).toContain('valor[2JFALSA');
+  expect(output).not.toContain('\nFALSA');
 });
