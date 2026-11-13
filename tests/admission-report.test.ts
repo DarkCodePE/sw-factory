@@ -76,3 +76,95 @@ test('report funciona con un residente activo (no toma el lock)', async () => {
   expect(other.db.query('SELECT COUNT(*) n FROM adm_lock').get()).toEqual({ n: 1 }); // sigue siendo del residente
   resident.lock.release();
 });
+
+// Estas mediciones son una función de las tablas: no necesitan un canal GitHub.
+const seeded = () => {
+  const store = new Store(dbPath()); stores.add(store);
+  const adm = new AdmissionDb(store), at = '2026-01-01T10:00:00Z';
+  const trigger = (key: string, thread: string, event = {}) => {
+    adm.db.query('INSERT OR IGNORE INTO adm_threads VALUES (?,?,?)').run(thread, 'github:test/repo', at);
+    adm.db.query('INSERT INTO adm_triggers VALUES (?,?,?,?)').run(key, thread, JSON.stringify({
+      url: `https://github.com/test/repo/issues/${key}`, author: 'ana', authorAssociation: 'MEMBER', state: 'open', labels: [], ...event,
+    }), at);
+  };
+  const decision = (key: string, thread: string, reason: string, time = at, event = {}, label = 'fab', admit = false) => {
+    trigger(key, thread, event);
+    adm.db.query('INSERT INTO adm_decisions VALUES (?,?,?,?,?,?,?)')
+      .run(key, Number(admit), 'explicit', admit ? 'change' : 'none', JSON.stringify([reason]), JSON.stringify({ triggerLabel: label }), time);
+  };
+  const comment = (key: string, thread: string, association = 'MEMBER', time = at, reason = 'no-open-question') => {
+    trigger(key, thread, { authorAssociation: association });
+    adm.db.query('INSERT INTO adm_comment_decisions VALUES (?,?,?,?,?)').run(key, 0, reason, null, time);
+  };
+  return { store, adm, at, trigger, decision, comment };
+};
+
+test('un seguimiento de confianza sin pregunta abierta en un hilo admitido sale en followupsLost, con su URL', () => {
+  const { adm, at, trigger, comment } = seeded();
+  trigger('issue', 'linked');
+  adm.db.query('INSERT INTO adm_thread_changes VALUES (?,?,?)').run('linked', 'change-1', at);
+  comment('member', 'linked'); comment('outsider', 'linked', 'NONE'); comment('unadmitted', 'other');
+  comment('answered', 'linked', 'MEMBER', at, 'before-question');
+  trigger('signal', 'signaled');
+  adm.db.query('INSERT INTO adm_thread_signals VALUES (?,?,?,?)').run('signaled', 'signal-1', 'change', at);
+  comment('owner', 'signaled', 'OWNER');
+  expect(buildReport(adm).followupsLost).toEqual(['member', 'owner'].map(trigger => ({
+    trigger, url: `https://github.com/test/repo/issues/${trigger}`, author: 'ana', association: trigger === 'owner' ? 'OWNER' : 'MEMBER', decidedAt: at,
+  })));
+});
+
+test('en observe cuenta como admitido el hilo con una decisión would_admit', () => {
+  const { adm, at, decision, comment } = seeded();
+  decision('admission', 'observe', 'trigger-label', at, {}, 'fab', true);
+  comment('z', 'observe'); comment('a', 'observe'); comment('early', 'observe', 'COLLABORATOR', '2026-01-01T09:00:00Z');
+  expect(buildReport(adm).followupsLost.map(f => f.trigger)).toEqual(['early', 'a', 'z']);
+  expect(adm.db.query('SELECT * FROM adm_thread_changes').all()).toEqual([]);
+  expect(adm.db.query('SELECT * FROM adm_thread_signals').all()).toEqual([]);
+});
+
+test('la etiqueta retirada o el cierre sobre un hilo ya admitido sale en stopsLost, una vez por hilo', () => {
+  const { adm, at, decision } = seeded();
+  decision('later', 'removed', 'thread-already-admitted', '2026-01-02T10:00:00Z');
+  decision('first', 'removed', 'thread-already-admitted');
+  decision('closed', 'closed', 'thread-already-admitted', at, { state: 'closed', labels: ['SPECIAL'] }, 'special');
+  decision('open', 'open', 'thread-already-admitted', at, { labels: ['SPECIAL'] }, 'special');
+  decision('other', 'other', 'issue-not-open', at, { state: 'closed' });
+  expect(buildReport(adm).stopsLost).toEqual([
+    { thread: 'closed', url: 'https://github.com/test/repo/issues/closed', state: 'closed', labelPresent: true, decidedAt: at },
+    { thread: 'removed', url: 'https://github.com/test/repo/issues/first', state: 'open', labelPresent: false, decidedAt: at },
+  ]);
+});
+
+test('un issue de confianza sin etiqueta sale en unlabeledTrusted, con admittedAt si se etiquetó después', () => {
+  const { adm, at, decision } = seeded();
+  decision('later', 'trusted', 'no-trigger-label', '2026-01-02T10:00:00Z');
+  decision('first', 'trusted', 'no-trigger-label');
+  decision('admit-later', 'trusted', 'trigger-label', '2026-01-04T10:00:00Z', {}, 'fab', true);
+  decision('admit-first', 'trusted', 'trigger-label', '2026-01-03T10:00:00Z', {}, 'fab', true);
+  decision('pending', 'pending', 'no-trigger-label');
+  decision('outsider', 'outsider', 'no-trigger-label', at, { authorAssociation: 'NONE' });
+  decision('closed', 'closed', 'no-trigger-label', at, { state: 'closed' });
+  decision('other', 'other', 'repo-not-allowed');
+  expect(buildReport(adm).unlabeledTrusted).toEqual([
+    { thread: 'trusted', url: 'https://github.com/test/repo/issues/first', firstSeen: at, admittedAt: '2026-01-03T10:00:00Z' },
+    { thread: 'pending', url: 'https://github.com/test/repo/issues/pending', firstSeen: at, admittedAt: null },
+  ]);
+});
+
+test('formatReport no imprime el cuerpo del comentario', () => {
+  const { adm, at, decision, comment } = seeded();
+  const empty = formatReport(buildReport(adm));
+  decision('admit', 'trusted', 'trigger-label', at, {}, 'fab', true);
+  comment('comment', 'trusted');
+  const body = '\x1b[2JNO IMPRIMIR TEXTO NO CONFIABLE';
+  adm.db.query('INSERT INTO adm_comments VALUES (?,?,?)').run('comment', body, 'hash');
+  decision('stop', 'trusted', 'thread-already-admitted');
+  decision('unlabeled', 'pending', 'no-trigger-label');
+  const output = formatReport(buildReport(adm));
+  expect(output).toContain('https://github.com/test/repo/issues/comment');
+  expect(output).toContain('https://github.com/test/repo/issues/stop');
+  expect(output).toContain('https://github.com/test/repo/issues/unlabeled');
+  expect(output).not.toContain(body);
+  expect(JSON.stringify(buildReport(adm))).not.toContain('NO IMPRIMIR');
+  expect(empty.match(/\(ninguno\)/g)).toHaveLength(4);
+});
