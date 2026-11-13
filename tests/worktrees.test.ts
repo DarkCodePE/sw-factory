@@ -48,9 +48,13 @@ test('mergeAndCleanup: merges change, deletes worktree and deletes branch fab/<i
   const committed = await commitWorktree(wtPath, 'implement feature');
   expect(committed).toBe(true);
 
+  // T40: los transcripts de claude viven fuera del worktree y se borran con él
+  mkdirSync(join(stateDir, 'live', '12345678', 'claude-projects'), { recursive: true });
+
   // Merge and cleanup
   const out = await mergeAndCleanup(repo, stateDir, changeId);
   expect(out).toBeDefined();
+  expect(existsSync(join(stateDir, 'live', '12345678'))).toBe(false);
 
   // Verify commit is on main
   expect(existsSync(join(repo, 'feature.txt'))).toBe(true);

@@ -41,7 +41,7 @@ export type LiveActivityCtx = {
   backend: LiveBackend; cwd: string; branch: string; profileDigest: string; factoryCommits?: boolean; templates?: WorkerTemplates;
   /** Prompt completo del primer turno (el que construye el pool). */
   prompt: string;
-  timeoutMs?: number; signal: AbortSignal; confine?: boolean; capturePath?: string;
+  timeoutMs?: number; signal: AbortSignal; confine?: boolean; capturePath?: string; claudeProjects?: string;
   onSpawn: (pgid: number) => void; crash?: (point: CrashPoint) => void;
 };
 
@@ -75,7 +75,7 @@ export async function runLiveActivity(store: Store, adm: AdmissionDb, a: Activit
       ctx.crash?.('session-launched');
       const attemptId = randomUUID();
       const result = await runLiveTurn(adm, ctx.backend, a.changeId, {
-        ...turn, prompt, cwd: ctx.cwd, attemptId, timeoutMs: ctx.timeoutMs, signal: ctx.signal, confine: ctx.confine, capturePath: ctx.capturePath,
+        ...turn, prompt, cwd: ctx.cwd, attemptId, timeoutMs: ctx.timeoutMs, signal: ctx.signal, confine: ctx.confine, capturePath: ctx.capturePath, claudeProjects: ctx.claudeProjects,
         onSpawn: ctx.onSpawn,
         onReport: reports.recorder(a.id, attemptId, ctx.crash),
       });

@@ -166,6 +166,7 @@ export async function mergeAndCleanup(repo: string, stateDir: string, changeId: 
   const out = await git(repoPath, 'merge', '--no-edit', branch);
   const shortId = typeof changeId === 'string' ? changeId.slice(0, 8) : '';
   const path = resolve(stateDir, 'worktrees', shortId);
+  if (shortId) rmSync(resolve(stateDir, 'live', shortId), { recursive: true, force: true }); // transcripts de claude (T40)
   if (shortId && existsSync(path)) {
     await git(repoPath, 'worktree', 'remove', '--force', path);
   } else {
@@ -187,6 +188,7 @@ export async function removeWorktree(repo: string, stateDir: string, changeId: s
   const shortId = typeof changeId === 'string' ? changeId.slice(0, 8) : '';
   if (!shortId) return;
   const path = resolve(stateDir, 'worktrees', shortId);
+  rmSync(resolve(stateDir, 'live', shortId), { recursive: true, force: true }); // transcripts de claude (T40)
   if (existsSync(path)) {
     await git(repoPath, 'worktree', 'remove', '--force', path);
   } else {

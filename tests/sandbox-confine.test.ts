@@ -118,15 +118,28 @@ function inSandbox(script: string, cwd: string, claudeProjects?: string) {
 }
 
 test.skipIf(!canConfine)('claudeProjects persists /home/agent/.claude/projects across confined calls of one worktree', () => {
-  const root = mkdtempSync('/tmp/fab-proj-');
+  const root = mkdtempSync('/tmp/fab-proj-'), state = mkdtempSync('/tmp/fab-proj-state-');
   try {
     expect(Bun.spawnSync(['git', 'init', '-q', root]).exitCode).toBe(0);
-    const projects = join(root, '.git', 'fab-live', 'claude-projects');
+    const projects = join(state, 'live', 'abc', 'claude-projects');
     const w = inSandbox('echo transcript > /home/agent/.claude/projects/s.jsonl', root, projects);
     expect(w.exitCode).toBe(0);
     const r = inSandbox('cat /home/agent/.claude/projects/s.jsonl', root, projects);
     expect(r.stdout.toString().trim()).toBe('transcript');
-  } finally { rmSync(root, { recursive: true, force: true }); }
+  } finally { rmSync(root, { recursive: true, force: true }); rmSync(state, { recursive: true, force: true }); }
+});
+
+test.skipIf(!canConfine)('claudeProjects inside a writable mount (git dir, or a symlink into it) fails closed', () => {
+  const root = mkdtempSync('/tmp/fab-proj-esc-'), state = mkdtempSync('/tmp/fab-proj-esc-state-');
+  try {
+    expect(Bun.spawnSync(['git', 'init', '-q', root]).exitCode).toBe(0);
+    expect(() => inSandbox('true', root, join(root, '.git', 'fab-live', 'claude-projects'))).toThrow(/escribible/);
+    // The agent swaps the dir for a symlink; the host would otherwise mount the target.
+    mkdirSync(join(root, '.git', 'fab-live'), { recursive: true });
+    const link = join(state, 'link');
+    symlinkSync(join(root, '.git', 'fab-live'), link);
+    expect(() => inSandbox('true', root, link)).toThrow(/escribible/);
+  } finally { rmSync(root, { recursive: true, force: true }); rmSync(state, { recursive: true, force: true }); }
 });
 
 test.skipIf(!canConfine)('without claudeProjects nothing persists: each confined call gets a fresh HOME', () => {

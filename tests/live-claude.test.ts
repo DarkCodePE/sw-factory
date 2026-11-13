@@ -1,5 +1,5 @@
 import { describe, expect, test } from 'bun:test';
-import { chmodSync, existsSync, mkdtempSync, readdirSync, readFileSync, writeFileSync } from 'node:fs';
+import { chmodSync, existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { getAgent } from '../src/agents.ts';
@@ -108,6 +108,23 @@ echo '{"type":"result","result":"ok","session_id":"x"}'`);
   test('checkReport requires human_action for awaiting', () => {
     expect(checkReport({ state: 'awaiting', summary: 's' })).not.toBeNull();
     expect(checkReport({ state: 'done', summary: 's' })).toBeNull();
+  });
+});
+
+describe('T40: cableado de claudeProjects', () => {
+  test.skipIf(!Bun.which('bwrap'))('dos claudeLive.run confinados seguidos comparten ~/.claude/projects; sin claudeProjects no', async () => {
+    const f = fakeClaude(`if [ -f "$HOME/.claude/projects/s" ]; then cat "$HOME/.claude/projects/s" > "$PWD/seen"; else echo t1 > "$HOME/.claude/projects/s"; fi
+echo '{"type":"result","result":"ok","session_id":"x"}'`);
+    const state = mkdtempSync(join(tmpdir(), 'live-state-'));
+    try {
+      Bun.spawnSync(['git', 'init', '-q', f.dir]);
+      const claudeProjects = join(state, 'live', 'abc', 'claude-projects');
+      mkdirSync(claudeProjects, { recursive: true });
+      await claudeLive.run({ prompt: 'x', cwd: f.dir, attemptId: 'a', confine: true, claudeProjects });
+      expect(readFileSync(join(claudeProjects, 's'), 'utf8').trim()).toBe('t1');
+      await claudeLive.run({ prompt: 'x', cwd: f.dir, attemptId: 'b', confine: true, claudeProjects });
+      expect(readFileSync(join(f.dir, 'seen'), 'utf8').trim()).toBe('t1');
+    } finally { f.restore(); }
   });
 });
 

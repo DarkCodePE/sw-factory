@@ -25,15 +25,16 @@ export function confineAgent(name: string, argv: string[], cwd: string, extra: R
       if (existsSync(path)) args.push('--ro-bind', path, path);
     const worktree = realpathSync(cwd);
     args.push('--bind', worktree, worktree);
+    const writable = [worktree];
     // Linked worktrees point outside cwd. Only their Git metadata is needed;
     // neither the source checkout nor the sibling state directory is exposed.
     for (const flag of ['--absolute-git-dir', '--git-common-dir']) {
       const p = Bun.spawnSync(['git', '-C', worktree, 'rev-parse', flag]);
       if (p.exitCode !== 0) throw new Error('--confine: no se pudo resolver .git');
       const path = realpathSync(resolve(worktree, p.stdout.toString().trim()));
-      if (!path.startsWith(worktree + '/')) args.push('--bind', path, path);
+      if (!path.startsWith(worktree + '/')) { args.push('--bind', path, path); writable.push(path); }
     }
-    const binary = Bun.which(argv[0]!);
+    const binary = Bun.which(argv[0]!, { PATH: process.env.PATH });
     if (!binary) throw new Error(`--confine: ejecutable ausente: ${argv[0]}`);
     const command = [...argv];
     if (!realpathSync(binary).startsWith('/usr/')) {
@@ -61,7 +62,13 @@ export function confineAgent(name: string, argv: string[], cwd: string, extra: R
       const credentials = join(hostHome, '.claude', '.credentials.json');
       if (existsSync(credentials)) args.push('--ro-bind', credentials, '/home/agent/.claude/.credentials.json');
       // Live turns resume by session id, so the transcript must outlive this ephemeral HOME. Only this per-worktree dir persists.
-      if (claudeProjects) { mkdirSync(claudeProjects, { recursive: true, mode: 0o700 }); args.push('--bind', claudeProjects, '/home/agent/.claude/projects'); }
+      if (claudeProjects) {
+        // Fail closed: if it lay under a path the agent can write (worktree, git dirs), it could swap it for a symlink and make the host mount any path.
+        mkdirSync(claudeProjects, { recursive: true, mode: 0o700 });
+        const real = realpathSync(claudeProjects);
+        if (writable.some(w => real === w || real.startsWith(w + '/'))) throw new Error('claude-projects cae dentro de un montaje escribible del sandbox');
+        args.push('--bind', real, '/home/agent/.claude/projects');
+      }
       // No user/project hooks, plugins, MCP servers or host config.
       command.push('--setting-sources', '');
       // A live turn already brings its own `--mcp-config` (the `report` tool): a second, empty one appended last could win and drop it.
