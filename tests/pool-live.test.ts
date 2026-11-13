@@ -39,6 +39,12 @@ test('rama viva: la sesión se escribe antes de lanzar, el report manda y la act
   expect(adm.db.query('SELECT applied_at FROM adm_reports').all()).toEqual([{ applied_at: expect.any(String) }]);
 });
 
+test('T40: el turno vivo recibe claudeProjects = <stateDir>/live/<id-corto>/claude-projects', async () => {
+  const { ws, c } = setup(), backend = fakeLive([{ reports: [{ state: 'done', summary: 'ok' }] }]);
+  await pool(ws.id, { fake: backend });
+  expect(backend.turns[0]!.claudeProjects).toBe(join(dir, 'live', c.id.slice(0, 8), 'claude-projects'));
+});
+
 test('sin --live (o con un adaptador sin backend vivo) el camino de un disparo sigue intacto', async () => {
   const { ws, c } = setup(), backend = fakeLive([{ reports: [{ state: 'blocked', summary: 'no' }] }]);
   await runPool(store, { workstream: ws.id, stateDir: dir, untilIdle: true, log: () => {}, liveBackends: { fake: backend } }); // live: undefined

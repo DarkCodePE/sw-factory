@@ -25,6 +25,8 @@ export interface LiveTurn {
   /** Run under the fab sandbox. A backend that cannot must throw, not run unconfined. */
   confine?: boolean;
   capturePath?: string;
+  /** Host dir for claude's `~/.claude/projects` (T40). Must lie outside everything the sandbox mounts; only claude uses it. */
+  claudeProjects?: string;
   onSpawn?: (pgid: number) => void;
   /**
    * Called synchronously for each valid report before the tool answers the agent (T16). It persists the report
