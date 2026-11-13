@@ -1,6 +1,6 @@
 import { afterEach, expect, spyOn, test } from 'bun:test';
 import { residentMain } from '../src/admission/cli.ts';
-import { AdmissionDb } from '../src/admission/db.ts';
+import { AdmissionDb, hasAdmission } from '../src/admission/db.ts';
 import { buildReport, formatReport } from '../src/admission/report.ts';
 import { Store } from '../src/store.ts';
 import { dbPath, fakeGh, FIXTURE, issue, open, REPO } from './helpers/admission.ts';
@@ -167,4 +167,19 @@ test('formatReport no imprime el cuerpo del comentario', () => {
   expect(output).not.toContain(body);
   expect(JSON.stringify(buildReport(adm))).not.toContain('NO IMPRIMIR');
   expect(empty.match(/\(ninguno\)/g)).toHaveLength(4);
+});
+
+
+test('report sobre una base sin admisión no crea tablas adm_*', async () => {
+  const out: string[] = [], log = spyOn(console, 'log').mockImplementation((s: string) => { out.push(s); });
+  try {
+    for (const args of [['report'], ['report', '--json']]) {
+      const store = new Store(dbPath()); stores.add(store);
+      expect(hasAdmission(store)).toBe(false);
+      expect(await residentMain(args, store)).toBe(0);
+      expect(hasAdmission(store)).toBe(false);
+      expect(store.db.query("SELECT name FROM sqlite_master WHERE type = 'table' AND name GLOB 'adm_*'").all()).toEqual([]);
+    }
+  } finally { log.mockRestore(); }
+  expect(out).toEqual(['(el residente nunca se ha ejecutado en esta base)', '{}']);
 });

@@ -6,7 +6,7 @@ import { parseArgs } from 'node:util';
 import { validateRepo, type CommandRunner } from '../connectors/github.ts';
 import type { Store } from '../store.ts';
 import { DEFAULT_POLICY } from './gate.ts';
-import { AdmissionDb } from './db.ts';
+import { AdmissionDb, hasAdmission } from './db.ts';
 import { buildReport, formatReport } from './report.ts';
 import { Resident } from './resident.ts';
 
@@ -14,6 +14,10 @@ export async function residentMain(argv: string[], store: Store, deps: { run?: C
   try {
     if (argv[0] === 'report') {
       const { values } = parseArgs({ args: argv.slice(1), options: { json: { type: 'boolean' } } });
+      if (!hasAdmission(store)) {
+        console.log(values.json ? '{}' : '(el residente nunca se ha ejecutado en esta base)');
+        return 0;
+      }
       const report = buildReport(new AdmissionDb(store));
       console.log(values.json ? JSON.stringify(report, null, 2) : formatReport(report));
       return 0;
