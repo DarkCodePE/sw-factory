@@ -38,15 +38,16 @@ export function buildReport(adm: AdmissionDb): Report {
       trigger: c.trigger_key, url: event.url, author: event.author, association: event.authorAssociation, decidedAt: c.decided_at,
     });
   }
-  const liveChanges = new Map((q(`SELECT l.thread_id, c.status FROM adm_thread_changes l
-    JOIN changes c ON c.id = l.change_id`) as { thread_id: string; status: ChangeStatus }[])
-    .filter(c => !isTerminalChange(c.status)).map(c => [c.thread_id, c.status]));
+  // `updated_at` de un change terminado es cuándo terminó: la parada cuenta si el change seguía vivo al decidirse, aunque luego acabara.
+  const changes = new Map((q(`SELECT l.thread_id, c.status, c.updated_at FROM adm_thread_changes l
+    JOIN changes c ON c.id = l.change_id`) as { thread_id: string; status: ChangeStatus; updated_at: string }[]).map(c => [c.thread_id, c]));
   const stopsLost = new Map<string, Report['stopsLost'][number]>();
   const unlabeledTrusted = new Map<string, Report['unlabeledTrusted'][number]>();
   // Las decisiones están ordenadas: conservar la primera fila fija también la URL de esa observación.
   for (const d of reasons) {
     const e = d.event;
-    const changeStatus = liveChanges.get(d.thread_id);
+    const change = changes.get(d.thread_id);
+    const changeStatus = change && (!isTerminalChange(change.status) || d.decided_at < change.updated_at) ? change.status : undefined;
     if (changeStatus && d.reasons[0] === 'thread-already-admitted' && !stopsLost.has(d.thread_id)) {
       const policy = JSON.parse(d.policy) as { triggerLabel?: string };
       const labelPresent = (e.labels ?? []).some((label: string) => label.toLowerCase() === policy.triggerLabel?.toLowerCase());

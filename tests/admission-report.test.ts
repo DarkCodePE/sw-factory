@@ -208,6 +208,16 @@ test('stopsLost excluye changes terminados y exige un change vinculado existente
   expect(buildReport(adm).stopsLost).toEqual([]);
 });
 
+test('stopsLost conserva la parada ocurrida antes de que el change terminara', () => {
+  const { adm, at, decision, link } = seeded();
+  decision('stop', 'stopped', 'thread-already-admitted'); // etiqueta retirada con el change vivo...
+  link('stopped', 'completed');
+  adm.db.query("UPDATE changes SET updated_at = '2026-01-05T10:00:00Z' WHERE id = 'change-stopped'").run(); // ...que terminó días después
+  expect(buildReport(adm).stopsLost).toEqual([{
+    thread: 'stopped', url: 'https://github.com/test/repo/issues/stop', state: 'open', labelPresent: false, decidedAt: at, changeStatus: 'completed',
+  }]);
+});
+
 test('stopsLost conserva la segunda fila si la primera no cumple', () => {
   const { adm, at, decision, link } = seeded();
   decision('innocent', 'thread', 'thread-already-admitted', at, { labels: ['FAB'] });
