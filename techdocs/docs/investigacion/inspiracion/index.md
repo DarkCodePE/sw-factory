@@ -42,3 +42,6 @@ El ecosistema DeepSeek Harness (DSH), su prototipo de superagente y su monitoriz
 
 7. **[07 · Ronda 3: hallazgos antes de la fase 2](07-ronda3-hallazgos-fase2.md)**:  
    Doble check arquitectónico del 06 con el código de rc.12 delante: veredicto «sí con cambios», veinte hallazgos por severidad con su tarea, decisiones previas y fronteras donde inyectar fallos.
+
+8. **[08 · T13: verificación de la medición en `fab resident report`](08-t13-verificacion-medicion.md)**:  
+   Verificación independiente de T13-a y T13-b antes del PR: veredicto «listo con cambios», siete hallazgos y las mutaciones que los tests no detectan.
