@@ -95,3 +95,18 @@ Coincide en los archivos tocados, las definiciones, los tests que fallaban antes
 - `--mode auto` sin `--self` (parte de H6).
 - Si la API de GitHub puede devolver caracteres de control en `html_url` o `login`.
 - El rendimiento del informe con muchas decisiones.
+
+## 6. Seguimiento (2026-11-14)
+
+!!! success "H1 a H5 cerrados en la rama"
+    El commit `1afa42e` exige un change vinculado en `stopsLost` y muestra su estado, reconoce bases de fase 1, añade el test de la segunda fila, tolera filas mal formadas y quita los caracteres de control de la salida de texto.
+
+Ese arreglo trajo un fallo nuevo, ya corregido en el commit siguiente:
+
+- **H9 · La parada desaparecía al terminar el change (media, corregido).** `stopsLost` miraba el estado actual del change, así que una etiqueta retirada con el change vivo dejaba de salir en cuanto el change terminaba. Ahora cuenta si la decisión es anterior al momento en que el change terminó.
+
+Siguen abiertos:
+
+- `stopsLost` queda vacía en `observe`: sin vínculos entre hilo y change no hay nada que medir.
+- Si el issue se cierra por la fusión del PR antes de que la fab marque el change como terminado, ese cierre cuenta como parada. Se reconoce porque el estado del change sale terminado.
+- H6 y H7, sin cambios. La suite completa no se volvió a ejecutar tras estos commits.
