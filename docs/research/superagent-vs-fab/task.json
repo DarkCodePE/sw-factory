@@ -1,5 +1,5 @@
 {
-  "updated": "2026-11-12",
+  "updated": "2026-11-13",
   "context": "Integración superagent → fab. Fase 0: PR #55 (feat/fase0-endurecer). Fase 1: PR #56 (feat/fase1-observe). Ambos apilados sobre PR #49 (feat/t2-corpus).",
   "decisions": [
     {
@@ -181,11 +181,15 @@
     },
     {
       "id": "T13",
-      "title": "Fase 3: router",
-      "status": "pending",
+      "title": "Fase 3: medir antes del router (T13-a informe cuenta seguimientos perdidos, paradas perdidas e issues de confianza sin etiqueta; T13-b el informe no crea el esquema adm_*)",
+      "status": "in_progress",
       "depends_on": [
         "T12"
-      ]
+      ],
+      "owner": "codex",
+      "reviewer": "fable",
+      "branch": "feat/t13-router",
+      "note": "Análisis de Fable 5.2 (t13/analisis-fable.md): esperar evidencia; aceptado por el humano el 2026-11-13. El router, Mandate y Subscriptions pasan a T43, bloqueada por T11."
     },
     {
       "id": "T15",
@@ -551,13 +555,49 @@
     {
       "id": "T40",
       "title": "claude --resume no funciona confinado: el transcript de la sesión vive en el HOME efímero del sandbox",
-      "status": "pending",
+      "status": "done",
       "depends_on": [
         "T39"
       ],
       "where": "src/sandbox/confine.ts (confineAgent: scratch/home por llamada) y src/live/claude.ts",
       "why": "En la prueba B2, cada reanudación de un change de canal falla y cae a S3: se pierde la sesión y se gasta una generación; tras 3 preguntas la activity se bloquea.",
-      "fix_idea": "Persistir ~/.claude/projects del sandbox por worktree (p. ej. en el git dir, junto a fab-live, que ya se monta) y montarlo en /home/agent/.claude/projects; solo para turnos vivos. Test: dos turnos confinados con el mismo sessionId reanudan sin SessionNotFound."
+      "fix_idea": "Persistir ~/.claude/projects del sandbox por worktree (p. ej. en el git dir, junto a fab-live, que ya se monta) y montarlo en /home/agent/.claude/projects; solo para turnos vivos. Test: dos turnos confinados con el mismo sessionId reanudan sin SessionNotFound.",
+      "pr": 71,
+      "owner": "sonnet",
+      "reviewer": "fable",
+      "branch": "fix/t40-resume-confinado",
+      "note": "claude-projects en <stateDir>/live/<id-corto>/claude-projects, fuera de todo montaje del sandbox; realpath y fallo cerrado si cae en un montaje escribible; borrado en mergeAndCleanup y removeWorktree. Primera verificación de Fable: no listo (escape por symlink y lectura entre worktrees con la ruta en el git dir); segunda: listo. b2.ts con claude real reanuda sin pérdida de sesión. Informes en t40/.",
+      "followups": [
+        "H5: todo lo que claude guarde en ~/.claude/projects persiste dentro del change (no probado qué más lee)",
+        "H8 → T41",
+        "Test inestable agent.test.ts:103 → T42",
+        "Id corto de 8 caracteres compartido con el worktree (ver T9)"
+      ]
+    },
+    {
+      "id": "T41",
+      "title": "El agente confinado puede cambiar fab-live por un symlink y el host escribe ahí mcp-<uuid>.json con el token del turno",
+      "status": "pending",
+      "depends_on": [],
+      "where": "src/live/claude.ts:58-61",
+      "note": "H8 de la verificación de T40; ya existía antes. Idea: sacar la config MCP del git dir, como claude-projects (<stateDir>/live/<id>)."
+    },
+    {
+      "id": "T42",
+      "title": "Test inestable tests/agent.test.ts:103-108 (timeoutMs: 40)",
+      "status": "pending",
+      "depends_on": [],
+      "note": "Falló una vez en la suite completa («Unexpected extra model call»); pasa a solas."
+    },
+    {
+      "id": "T43",
+      "title": "Fase 3: router, Mandate (revocación por etiqueta) y Subscriptions (enlace del PR, contexto)",
+      "status": "blocked",
+      "depends_on": [
+        "T11",
+        "T13"
+      ],
+      "note": "Diseño de referencia en t13/analisis-fable.md §3.2-3.4. Se abre según los umbrales de §1.3 con datos del informe de T13. Decisiones pendientes: C (umbrales y duración), D (solo retirar etiqueta para), E (D1), F (comentario crea turno), G (readmitir). Decisión B: repo para T11."
     }
   ]
 }
