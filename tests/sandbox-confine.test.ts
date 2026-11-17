@@ -1,5 +1,5 @@
 import { expect, test } from 'bun:test';
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { getAgent, runAgent } from '../src/agents.ts';
 import { assertConfinement, confineAgent } from '../src/sandbox/confine.ts';
@@ -138,8 +138,20 @@ test.skipIf(!canConfine)('claudeProjects inside a writable mount (git dir, or a 
     mkdirSync(join(root, '.git', 'fab-live'), { recursive: true });
     const link = join(state, 'link');
     symlinkSync(join(root, '.git', 'fab-live'), link);
-    expect(() => inSandbox('true', root, link)).toThrow(/escribible/);
+    expect(() => inSandbox('true', root, link)).toThrow(/symlink|escribible/);
   } finally { rmSync(root, { recursive: true, force: true }); rmSync(state, { recursive: true, force: true }); }
+});
+
+test.skipIf(!canConfine)('T41: claude-projects dentro del git dir y cambiado por un symlink a una víctima falla cerrado y no escribe en ella', () => {
+  const root = mkdtempSync('/tmp/fab-proj-sym-'), victim = mkdtempSync('/tmp/fab-proj-victim-');
+  try {
+    expect(Bun.spawnSync(['git', 'init', '-q', root]).exitCode).toBe(0);
+    const live = join(root, '.git', 'state', 'live', 'abc');
+    mkdirSync(live, { recursive: true });
+    symlinkSync(victim, join(live, 'claude-projects'));
+    expect(() => inSandbox('echo PWNED > /home/agent/.claude/projects/x', root, join(live, 'claude-projects'))).toThrow(/symlink/);
+    expect(existsSync(join(victim, 'x'))).toBe(false);
+  } finally { rmSync(root, { recursive: true, force: true }); rmSync(victim, { recursive: true, force: true }); }
 });
 
 test.skipIf(!canConfine)('without claudeProjects nothing persists: each confined call gets a fresh HOME', () => {
@@ -153,18 +165,25 @@ test.skipIf(!canConfine)('without claudeProjects nothing persists: each confined
   } finally { rmSync(root, { recursive: true, force: true }); }
 });
 
-test.skipIf(!canConfine)('T41: mcpConfig se monta en solo lectura en una ruta fija y sustituye la ruta del argv; dentro de un montaje escribible falla cerrado', () => {
-  const root = mkdtempSync('/tmp/fab-mcp-'), state = mkdtempSync('/tmp/fab-mcp-state-');
+test.skipIf(!canConfine)('T41: mcpConfig se monta en solo lectura en una ruta fija y sustituye todas las apariciones en el argv; falla cerrado si falta, hay symlink o cae en un montaje escribible', () => {
+  const root = mkdtempSync('/tmp/fab-mcp-'), state = mkdtempSync('/tmp/fab-mcp-state-'), victim = mkdtempSync('/tmp/fab-mcp-victim-');
   try {
     expect(Bun.spawnSync(['git', 'init', '-q', root]).exitCode).toBe(0);
     const cfg = join(state, 'mcp.json');
     writeFileSync(cfg, '{"t":1}');
-    const run = (file: string) => { const c = confineAgent('claude', ['sh', '-c', 'cat /opt/fab-mcp/mcp.json && ! (echo x >> /opt/fab-mcp/mcp.json) && test "$0" = /opt/fab-mcp/mcp.json', file], root, {}, undefined, file); try { return Bun.spawnSync(c.argv, { env: c.env }); } finally { c.cleanup(); } };
-    const ok = run(cfg);
+    const run = (file: string, argv: string[], mcp = file) => {
+      const c = confineAgent('claude', argv, root, {}, undefined, mcp); try { return Bun.spawnSync(c.argv, { env: c.env }); } finally { c.cleanup(); }
+    };
+    const ok = run(cfg, ['sh', '-c', 'cat /opt/fab-mcp/mcp.json && ! (echo x >> /opt/fab-mcp/mcp.json) && test "$0" = /opt/fab-mcp/mcp.json && test "$1" = /opt/fab-mcp/mcp.json', cfg, cfg]);
+    expect(ok.exitCode).toBe(0);
     expect(ok.stdout.toString()).toBe('{"t":1}');
-    mkdirSync(join(root, '.git', 'fab-live'), { recursive: true });
-    const inGit = join(root, '.git', 'fab-live', 'mcp.json');
-    writeFileSync(inGit, '{}');
-    expect(() => run(inGit)).toThrow(/escribible/);
-  } finally { rmSync(root, { recursive: true, force: true }); rmSync(state, { recursive: true, force: true }); }
+    expect(() => run(cfg, ['sh', '-c', 'true'])).toThrow(/argv/); // ruta ausente del argv
+    const live = join(root, '.git', 'state', 'live', 'abc');
+    mkdirSync(join(live, 'mcp'), { recursive: true });
+    writeFileSync(join(live, 'mcp', 'm.json'), '{}');
+    expect(() => run(join(live, 'mcp', 'm.json'), ['sh', '-c', 'true', join(live, 'mcp', 'm.json')])).toThrow(/escribible/);
+    symlinkSync(victim, join(state, 'link'));
+    expect(() => run(join(state, 'link', 'm.json'), ['sh', '-c', 'true', join(state, 'link', 'm.json')])).toThrow(/symlink/);
+    expect(readdirSync(victim)).toEqual([]);
+  } finally { for (const d of [root, state, victim]) rmSync(d, { recursive: true, force: true }); }
 });

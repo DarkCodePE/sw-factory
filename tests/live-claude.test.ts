@@ -7,6 +7,8 @@ import { checkReport, claudeLive, liveClaudeArgv } from '../src/live/claude.ts';
 import { SessionNotFoundError } from '../src/live/contract.ts';
 
 const base = getAgent('claude').command('hola');
+// Config dir del turno: siempre fuera del repo (T41).
+const mcpDir = () => join(mkdtempSync(join(tmpdir(), 'live-mcp-')), 'mcp');
 
 // A stand-in `claude` on PATH: prints its argv to a file, then acts per FAKE_MODE.
 function fakeClaude(script: string) {
@@ -46,12 +48,13 @@ describe('T34: flags repetidos y token fuera de argv', () => {
     const f = fakeClaude(`echo '{"type":"result","result":"ok","session_id":"x"}'`);
     try {
       Bun.spawnSync(['git', 'init', '-q', f.dir]);
-      await claudeLive.run({ prompt: 'x', cwd: f.dir, attemptId: 'a' });
+      const dir = mcpDir();
+      await claudeLive.run({ prompt: 'x', cwd: f.dir, attemptId: 'a', mcpConfigDir: dir });
       const argv = readFileSync(join(f.dir, 'argv'), 'utf8');
       expect(argv).not.toMatch(/Bearer|Authorization|127\.0\.0\.1/);
-      expect(argv).toMatch(/--mcp-config\n.*\/fab-live\/mcp-[0-9a-f-]+\.json\n/);
-      expect(existsSync(join(f.dir, '.git', 'fab-live'))).toBe(true);
-      expect(readdirSync(join(f.dir, '.git', 'fab-live'))).toEqual([]); // se borra al terminar el turno
+      expect(argv).toMatch(/--mcp-config\n.*\/mcp\/mcp-[0-9a-f-]+\.json\n/);
+      expect(existsSync(join(f.dir, '.git', 'fab-live'))).toBe(false); // T41: nada en el git dir
+      expect(readdirSync(dir)).toEqual([]); // se borra al terminar el turno
     } finally { f.restore(); }
   });
   test('confine no añade un segundo --mcp-config vacío que pueda ganar al del turno', async () => {
@@ -71,8 +74,9 @@ describe('T34: flags repetidos y token fuera de argv', () => {
 describe('live claude run', () => {
   test('unknown session id raises SessionNotFoundError', async () => {
     const f = fakeClaude(`echo "No conversation found with session ID: $2" >&2; exit 1`);
+    Bun.spawnSync(['git', 'init', '-q', f.dir]); // hostDir resuelve el git dir
     try {
-      await expect(claudeLive.run({ sessionId: 'nope', prompt: 'x', cwd: f.dir, attemptId: 'a' })).rejects.toBeInstanceOf(SessionNotFoundError);
+      await expect(claudeLive.run({ sessionId: 'nope', prompt: 'x', cwd: f.dir, attemptId: 'a', mcpConfigDir: mcpDir() })).rejects.toBeInstanceOf(SessionNotFoundError);
     } finally { f.restore(); }
   });
   test('valid and invalid reports reach the agent through the MCP tool', async () => {
@@ -87,8 +91,9 @@ call '{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"report","a
 call '{"jsonrpc":"2.0","id":2,"method":"tools/call","params":{"name":"report","arguments":{"state":"awaiting","summary":"s","human_action":"color?"}}}'
 call '{"jsonrpc":"2.0","id":3,"method":"tools/call","params":{"name":"report","arguments":{"state":"nope","summary":"s"}}}' > "${'$'}{0%/*}/bad2"
 echo '{"type":"result","result":"ok","session_id":"x"}'`);
+    Bun.spawnSync(['git', 'init', '-q', f.dir]);
     try {
-      const r = await claudeLive.run({ prompt: 'x', cwd: f.dir, attemptId: 'a1' });
+      const r = await claudeLive.run({ prompt: 'x', cwd: f.dir, attemptId: 'a1', mcpConfigDir: mcpDir() });
       expect(r.reports).toEqual([{ state: 'awaiting', summary: 's', human_action: 'color?' }]);
       expect(r.attemptId).toBe('a1');
       expect(await Bun.file(join(f.dir, 'bad')).text()).toContain('"isError":true');
@@ -97,10 +102,11 @@ echo '{"type":"result","result":"ok","session_id":"x"}'`);
   });
   test('abort kills the turn', async () => {
     const f = fakeClaude('sleep 30');
+    Bun.spawnSync(['git', 'init', '-q', f.dir]); // hostDir resuelve el git dir
     try {
       const ac = new AbortController();
       setTimeout(() => ac.abort(), 200);
-      const r = await claudeLive.run({ prompt: 'x', cwd: f.dir, attemptId: 'a', signal: ac.signal });
+      const r = await claudeLive.run({ prompt: 'x', cwd: f.dir, attemptId: 'a', signal: ac.signal, mcpConfigDir: mcpDir() });
       expect(r.ok).toBe(false);
       expect(r.durationMs).toBeLessThan(10_000);
     } finally { f.restore(); }
@@ -146,13 +152,26 @@ echo '{"type":"result","result":"ok","session_id":"x"}'`);
       expect(readdirSync(mcpConfigDir)).toEqual([]); // se borra al terminar el turno
     } finally { f.restore(); rmSync(state, { recursive: true, force: true }); rmSync(victim, { recursive: true, force: true }); }
   });
-  test('confinado y sin mcpConfigDir falla cerrado, sin lanzar nada', async () => {
+  test('sin mcpConfigDir (confinado o no) falla cerrado, sin lanzar nada', async () => {
     const f = fakeClaude(`echo '{"type":"result","result":"ok","session_id":"x"}'`);
     try {
       Bun.spawnSync(['git', 'init', '-q', f.dir]);
-      await expect(claudeLive.run({ prompt: 'x', cwd: f.dir, attemptId: 'a', confine: true })).rejects.toThrow(/mcpConfigDir/);
+      for (const confine of [true, false]) await expect(claudeLive.run({ prompt: 'x', cwd: f.dir, attemptId: 'a', confine })).rejects.toThrow(/mcpConfigDir/);
       expect(existsSync(join(f.dir, 'argv'))).toBe(false);
+      expect(existsSync(join(f.dir, '.git', 'fab-live'))).toBe(false);
     } finally { f.restore(); }
+  });
+  test('stateDir dentro del git dir y mcp/ cambiado por un symlink a una víctima: el turno falla y la víctima queda intacta', async () => {
+    const f = fakeClaude(`echo '{"type":"result","result":"ok","session_id":"x"}'`), victim = mkdtempSync(join(tmpdir(), 'live-victim-'));
+    try {
+      Bun.spawnSync(['git', 'init', '-q', f.dir]);
+      const live = join(f.dir, '.git', 'state', 'live', 'abc');
+      mkdirSync(live, { recursive: true });
+      symlinkSync(victim, join(live, 'mcp'));
+      for (const confine of [true, false]) await expect(claudeLive.run({ prompt: 'x', cwd: f.dir, attemptId: 'a', confine, mcpConfigDir: join(live, 'mcp') })).rejects.toThrow(/symlink/);
+      expect(readdirSync(victim)).toEqual([]);
+      expect(existsSync(join(f.dir, 'argv'))).toBe(false);
+    } finally { f.restore(); rmSync(victim, { recursive: true, force: true }); }
   });
 });
 

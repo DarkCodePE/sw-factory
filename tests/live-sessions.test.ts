@@ -56,13 +56,13 @@ test('el backend claude arranca la sesión nueva con el id que escribió la fab'
   const { mkdtempSync, writeFileSync, chmodSync, readFileSync } = await import('node:fs');
   const { tmpdir } = await import('node:os'), { join } = await import('node:path');
   const { claudeLive } = await import('../src/live/claude.ts');
-  const dir = mkdtempSync(join(tmpdir(), 'live-sid-'));
+  const dir = mkdtempSync(join(tmpdir(), 'live-sid-')); Bun.spawnSync(['git', 'init', '-q', dir]);
   writeFileSync(join(dir, 'claude'), `#!/bin/sh\nprintf '%s\\n' "$@" > "${dir}/argv"\necho '{"type":"result","result":"ok","session_id":"x"}'`);
   chmodSync(join(dir, 'claude'), 0o755);
   const saved = process.env.PATH; process.env.PATH = `${dir}:${saved}`;
   try {
     const { adm, change } = claimed(), { session, turn } = new SessionStore(adm).begin(change.id, 'implementation', meta);
-    const r = await claudeLive.run({ ...turn, prompt: 'x', cwd: dir, attemptId: 'a' });
+    const r = await claudeLive.run({ ...turn, prompt: 'x', cwd: dir, mcpConfigDir: mkdtempSync(join(tmpdir(), 'live-sid-mcp-')) + '/mcp', attemptId: 'a' });
     expect(r.sessionId).toBe(session.sessionId);
     const argv = readFileSync(join(dir, 'argv'), 'utf8').split('\n');
     expect(argv[argv.indexOf('--session-id') + 1]).toBe(session.sessionId);
