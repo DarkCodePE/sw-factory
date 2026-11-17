@@ -101,11 +101,25 @@ test('resume extends history without replaying completed tools', async () => {
 
 test('interrupted tool snapshots are refused instead of replayed', async () => {
   const cwd = await workspace(), sessionDir = join(cwd, '.sessions');
-  const provider = model([turn('', [call('Hang', {})])]);
-  const hang = tool('Hang', 'write', {}, [], async (_, c) => new Promise((_, reject) => c.signal.addEventListener('abort', () => reject(c.signal.reason), { once: true })), 'fixture');
-  const first = await runCodingAgent({ prompt: 'start', cwd, provider, autonomy: 'low', sessionDir, timeoutMs: 40, tools: [hang] });
+  const controller = new AbortController(), interrupted = call('Hang', {});
+  const provider = model([turn('', [interrupted])]);
+  let executions = 0;
+  const hang = tool('Hang', 'write', {}, [], async (_, c) => new Promise((_, reject) => {
+    executions++;
+    c.signal.addEventListener('abort', () => reject(c.signal.reason), { once: true });
+    // Interrupt only after the pending call is saved and the tool is listening.
+    controller.abort(new Error('Test interrupted tool'));
+  }), 'fixture');
+  const first = await runCodingAgent({ prompt: 'start', cwd, provider, autonomy: 'low', sessionDir, signal: controller.signal, tools: [hang] });
+  expect(first).toMatchObject({ ok: false, turns: 1, toolCalls: 1, error: { type: 'aborted', message: 'Test interrupted tool' } });
+  const snapshot = JSON.parse(await readFile(join(sessionDir, first.sessionId + '.json'), 'utf8'));
+  expect(snapshot).toMatchObject({ status: 'failed', pending: [interrupted.id] });
+  expect(snapshot.messages.find((m: Message) => m.role === 'assistant')?.tool_calls).toEqual([interrupted]);
+  expect(snapshot.messages.some((m: Message) => m.role === 'tool')).toBe(false);
   const resumed = await runCodingAgent({ prompt: 'continue', cwd, provider, sessionDir, sessionId: first.sessionId });
-  expect(resumed.ok).toBe(false); expect(resumed.error?.message).toMatch(/reconciliation|Unresolved/);
+  expect(resumed).toMatchObject({ ok: false, turns: 0, toolCalls: 0, error: { type: 'session' } });
+  expect(resumed.error?.message).toMatch(/reconciliation|Unresolved/);
+  expect(provider.requests).toHaveLength(1); expect(executions).toBe(1);
 });
 
 test('SSE splits UTF-8 and interleaved tool arguments without partial execution', async () => {
