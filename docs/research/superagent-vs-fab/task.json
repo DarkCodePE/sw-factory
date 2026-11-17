@@ -1,5 +1,5 @@
 {
-  "updated": "2026-11-13",
+  "updated": "2026-11-16",
   "context": "Integración superagent → fab. Fase 0: PR #55 (feat/fase0-endurecer). Fase 1: PR #56 (feat/fase1-observe). Ambos apilados sobre PR #49 (feat/t2-corpus).",
   "decisions": [
     {
@@ -182,14 +182,21 @@
     {
       "id": "T13",
       "title": "Fase 3: medir antes del router (T13-a informe cuenta seguimientos perdidos, paradas perdidas e issues de confianza sin etiqueta; T13-b el informe no crea el esquema adm_*)",
-      "status": "in_progress",
+      "status": "done",
       "depends_on": [
         "T12"
       ],
+      "pr": 73,
       "owner": "codex",
       "reviewer": "fable",
       "branch": "feat/t13-router",
-      "note": "Análisis de Fable 5.2 (t13/analisis-fable.md): esperar evidencia; aceptado por el humano el 2026-11-13. El router, Mandate y Subscriptions pasan a T43, bloqueada por T11."
+      "note": "Análisis de Fable 5.2 (t13/analisis-fable.md): esperar evidencia; aceptado por el humano el 2026-11-13. El router, Mandate y Subscriptions pasan a T43, bloqueada por T11. Fusionada el 2026-11-16 (PR #73). Verificación de Fable: listo con cambios; H1 a H5 cerrados en 1afa42e y H9 (la parada desaparecía al terminar el change) en d09cc3b. Informes en t13/ y techdocs inspiracion/08.",
+      "followups": [
+        "stopsLost queda vacía en observe: sin vínculo hilo → change no hay nada que medir",
+        "Si el issue se cierra por la fusión del PR antes de que la fab marque el change como terminado, ese cierre cuenta como parada (changeStatus sale terminado)",
+        "H6: fab resident --mode off crea el esquema adm_* (sin tarea propia)",
+        "H7: followupsLost incluye comentarios anteriores a la admisión; en observe, admittedAt < firstSeen en unlabeledTrusted significa etiqueta retirada"
+      ]
     },
     {
       "id": "T15",
