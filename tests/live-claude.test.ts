@@ -1,5 +1,5 @@
 import { describe, expect, test } from 'bun:test';
-import { chmodSync, existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { chmodSync, existsSync, symlinkSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { getAgent } from '../src/agents.ts';
@@ -120,11 +120,39 @@ echo '{"type":"result","result":"ok","session_id":"x"}'`);
       Bun.spawnSync(['git', 'init', '-q', f.dir]);
       const claudeProjects = join(state, 'live', 'abc', 'claude-projects');
       mkdirSync(claudeProjects, { recursive: true });
-      await claudeLive.run({ prompt: 'x', cwd: f.dir, attemptId: 'a', confine: true, claudeProjects });
+      await claudeLive.run({ prompt: 'x', cwd: f.dir, attemptId: 'a', confine: true, claudeProjects, mcpConfigDir: join(state, 'live', 'abc', 'mcp') });
       expect(readFileSync(join(claudeProjects, 's'), 'utf8').trim()).toBe('t1');
-      await claudeLive.run({ prompt: 'x', cwd: f.dir, attemptId: 'b', confine: true, claudeProjects });
+      await claudeLive.run({ prompt: 'x', cwd: f.dir, attemptId: 'b', confine: true, claudeProjects, mcpConfigDir: join(state, 'live', 'abc', 'mcp') });
       expect(readFileSync(join(f.dir, 'seen'), 'utf8').trim()).toBe('t1');
     } finally { f.restore(); rmSync(state, { recursive: true, force: true }); }
+  });
+});
+
+describe('T41: la config MCP (con el token) no vive donde el sandbox escribe', () => {
+  test.skipIf(!Bun.which('bwrap'))('fab-live cambiado por un symlink no hace que el host escriba en la víctima; el agente ve la config en solo lectura', async () => {
+    // El agente confinado ve la config en la ruta fija y no puede escribirla.
+    const f = fakeClaude(`cat /opt/fab-mcp/mcp.json > "$PWD/seen"; if echo x >> /opt/fab-mcp/mcp.json 2>/dev/null; then echo rw > "$PWD/rw"; fi
+echo '{"type":"result","result":"ok","session_id":"x"}'`);
+    const state = mkdtempSync(join(tmpdir(), 'live-state-')), victim = mkdtempSync(join(tmpdir(), 'live-victim-'));
+    try {
+      Bun.spawnSync(['git', 'init', '-q', f.dir]);
+      symlinkSync(victim, join(f.dir, '.git', 'fab-live')); // lo que el agente dejó en el turno anterior
+      const mcpConfigDir = join(state, 'live', 'abc', 'mcp');
+      await claudeLive.run({ prompt: 'x', cwd: f.dir, attemptId: 'a', confine: true, mcpConfigDir });
+      expect(readdirSync(victim)).toEqual([]);
+      expect(readFileSync(join(f.dir, 'argv'), 'utf8')).toContain('/opt/fab-mcp/mcp.json');
+      expect(JSON.parse(readFileSync(join(f.dir, 'seen'), 'utf8')).mcpServers.fab).toBeDefined();
+      expect(existsSync(join(f.dir, 'rw'))).toBe(false);
+      expect(readdirSync(mcpConfigDir)).toEqual([]); // se borra al terminar el turno
+    } finally { f.restore(); rmSync(state, { recursive: true, force: true }); rmSync(victim, { recursive: true, force: true }); }
+  });
+  test('confinado y sin mcpConfigDir falla cerrado, sin lanzar nada', async () => {
+    const f = fakeClaude(`echo '{"type":"result","result":"ok","session_id":"x"}'`);
+    try {
+      Bun.spawnSync(['git', 'init', '-q', f.dir]);
+      await expect(claudeLive.run({ prompt: 'x', cwd: f.dir, attemptId: 'a', confine: true })).rejects.toThrow(/mcpConfigDir/);
+      expect(existsSync(join(f.dir, 'argv'))).toBe(false);
+    } finally { f.restore(); }
   });
 });
 

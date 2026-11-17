@@ -152,3 +152,19 @@ test.skipIf(!canConfine)('without claudeProjects nothing persists: each confined
     expect(existsSync(join(root, '.git', 'fab-live'))).toBe(false);
   } finally { rmSync(root, { recursive: true, force: true }); }
 });
+
+test.skipIf(!canConfine)('T41: mcpConfig se monta en solo lectura en una ruta fija y sustituye la ruta del argv; dentro de un montaje escribible falla cerrado', () => {
+  const root = mkdtempSync('/tmp/fab-mcp-'), state = mkdtempSync('/tmp/fab-mcp-state-');
+  try {
+    expect(Bun.spawnSync(['git', 'init', '-q', root]).exitCode).toBe(0);
+    const cfg = join(state, 'mcp.json');
+    writeFileSync(cfg, '{"t":1}');
+    const run = (file: string) => { const c = confineAgent('claude', ['sh', '-c', 'cat /opt/fab-mcp/mcp.json && ! (echo x >> /opt/fab-mcp/mcp.json) && test "$0" = /opt/fab-mcp/mcp.json', file], root, {}, undefined, file); try { return Bun.spawnSync(c.argv, { env: c.env }); } finally { c.cleanup(); } };
+    const ok = run(cfg);
+    expect(ok.stdout.toString()).toBe('{"t":1}');
+    mkdirSync(join(root, '.git', 'fab-live'), { recursive: true });
+    const inGit = join(root, '.git', 'fab-live', 'mcp.json');
+    writeFileSync(inGit, '{}');
+    expect(() => run(inGit)).toThrow(/escribible/);
+  } finally { rmSync(root, { recursive: true, force: true }); rmSync(state, { recursive: true, force: true }); }
+});

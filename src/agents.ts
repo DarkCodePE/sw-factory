@@ -179,11 +179,11 @@ export async function runAgent(
   prompt: string,
   cwd: string,
   timeoutMs = 20 * 60_000,
-  options: { readOnly?: boolean; confine?: boolean; capturePath?: string; signal?: AbortSignal; onSpawn?: (pgid: number) => void; claudeProjects?: string } = {}
+  options: { readOnly?: boolean; confine?: boolean; capturePath?: string; signal?: AbortSignal; onSpawn?: (pgid: number) => void; claudeProjects?: string; mcpConfig?: string } = {}
 ): Promise<AgentRun> {
   const start = Date.now();
   const argv = agent.command(prompt, { ...options, promptStdin: agent.promptStdin === true });
-  const confined = options.confine ? confineAgent(agent.name, argv, cwd, agent.env?.(), options.claudeProjects) : undefined;
+  const confined = options.confine ? confineAgent(agent.name, argv, cwd, agent.env?.(), options.claudeProjects, options.mcpConfig) : undefined;
   let proc;
   try {
     proc = Bun.spawn(confined?.argv ?? argv, {

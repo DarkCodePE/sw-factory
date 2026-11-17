@@ -12,7 +12,9 @@ export function assertConfinement(agent: string): void {
   if (p.exitCode !== 0) throw new Error(`--confine: bubblewrap no funciona: ${p.stderr.toString().trim()}`);
 }
 
-export function confineAgent(name: string, argv: string[], cwd: string, extra: Record<string, string> = {}, claudeProjects?: string) {
+const MCP_CONFIG_IN_SANDBOX = '/opt/fab-mcp/mcp.json';
+
+export function confineAgent(name: string, argv: string[], cwd: string, extra: Record<string, string> = {}, claudeProjects?: string, mcpConfig?: string) {
   assertConfinement(name);
   const scratch = mkdtempSync(join(tmpdir(), 'fab-confine-'));
   try {
@@ -68,6 +70,13 @@ export function confineAgent(name: string, argv: string[], cwd: string, extra: R
         const real = realpathSync(claudeProjects);
         if (writable.some(w => real === w || real.startsWith(w + '/'))) throw new Error('claude-projects cae dentro de un montaje escribible del sandbox');
         args.push('--bind', real, '/home/agent/.claude/projects');
+      }
+      // The per-turn MCP config carries the turn token: read-only at a fixed path, and fail closed for the same reason as above (T41).
+      if (mcpConfig && command.includes(mcpConfig)) {
+        const real = realpathSync(mcpConfig);
+        if (writable.some(w => real === w || real.startsWith(w + '/'))) throw new Error('la config MCP cae dentro de un montaje escribible del sandbox');
+        args.push('--ro-bind', real, MCP_CONFIG_IN_SANDBOX);
+        command[command.indexOf(mcpConfig)] = MCP_CONFIG_IN_SANDBOX;
       }
       // No user/project hooks, plugins, MCP servers or host config.
       command.push('--setting-sources', '');

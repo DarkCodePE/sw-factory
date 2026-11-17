@@ -23,8 +23,15 @@ export function liveClaudeArgv(base: string[], turn: { sessionId?: string }, ses
   return [...argv, turn.sessionId ? '--resume' : '--session-id', sessionId, '--strict-mcp-config', '--mcp-config', mcpConfigPath];
 }
 
-/** Where the config file can live: inside the git dir, which `--confine` binds (the sandbox's /tmp is a tmpfs) and `git status` ignores. */
-function configDir(cwd: string): string {
+/**
+ * Where the config file lives. Confined: only `turn.mcpConfigDir`, outside every writable mount (T41: the git dir is writable by the agent,
+ * which could swap `fab-live` for a symlink and make the host write the token anywhere); no dir, fail closed.
+ * Unconfined there is no sandbox to attack: the git dir, which `git status` ignores.
+ */
+function configDir(turn: LiveTurn): string {
+  if (turn.mcpConfigDir) return turn.mcpConfigDir;
+  if (turn.confine) throw new Error('--confine: el turno vivo necesita mcpConfigDir fuera de los montajes escribibles');
+  const cwd = turn.cwd;
   const r = Bun.spawnSync(['git', '-C', cwd, 'rev-parse', '--absolute-git-dir']);
   return r.exitCode === 0 ? join(r.stdout.toString().trim(), 'fab-live') : join(tmpdir(), 'fab-live');
 }
@@ -55,7 +62,7 @@ export const claudeLive: LiveBackend = {
     let configPath: string | undefined;
     try {
       const mcp = await server.start();
-      const dir = configDir(turn.cwd);
+      const dir = configDir(turn);
       mkdirSync(dir, { recursive: true, mode: 0o700 });
       configPath = join(dir, `mcp-${randomUUID()}.json`);
       writeFileSync(configPath, JSON.stringify({ mcpServers: { [SERVER]: mcp } }), { mode: 0o600 });
@@ -64,7 +71,7 @@ export const claudeLive: LiveBackend = {
       let run;
       try {
         run = await runAgent(adapter, turn.prompt, turn.cwd, turn.timeoutMs, {
-          confine: turn.confine, claudeProjects: turn.claudeProjects, capturePath: turn.capturePath, signal: turn.signal, onSpawn: turn.onSpawn,
+          confine: turn.confine, claudeProjects: turn.claudeProjects, mcpConfig: path, capturePath: turn.capturePath, signal: turn.signal, onSpawn: turn.onSpawn,
         });
       } catch (e) {
         if (turn.sessionId && NOT_FOUND.test((e as Error).message)) throw new SessionNotFoundError(sessionId, (e as Error).message);

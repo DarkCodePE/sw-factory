@@ -27,6 +27,8 @@ export interface LiveTurn {
   capturePath?: string;
   /** Host dir for claude's `~/.claude/projects` (T40). Must lie outside everything the sandbox mounts; only claude uses it. */
   claudeProjects?: string;
+  /** Host dir for the per-turn MCP config, which carries the turn token (T41). Must lie outside everything the sandbox mounts writable; required when `confine`. */
+  mcpConfigDir?: string;
   onSpawn?: (pgid: number) => void;
   /**
    * Called synchronously for each valid report before the tool answers the agent (T16). It persists the report
