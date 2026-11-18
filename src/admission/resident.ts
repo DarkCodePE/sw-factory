@@ -10,6 +10,7 @@ import { Effects, type CrashPoint, type EffectAlert } from './effects.ts';
 import { commentGate, gate, type GateDecision, type GateInput, type GatePolicy } from './gate.ts';
 import { collaboratorRole, issueContent, labeler, pollComments, pollIssues, type CommentEvent, type IssueEvent } from './github.ts';
 import { ThreadLinks } from './links.ts';
+import { isTerminalForMandate } from './mandate.ts';
 import { Outbox } from './outbox.ts';
 import { ResidentLock } from './lock.ts';
 
@@ -125,7 +126,7 @@ export class Resident {
       const record = (reason: string) => this.record(triggerKey, { would_admit: false, strength: 'inferred', scope_max: 'none', reasons: [reason] });
       if (prior.revoked_at) { record('thread-revoked'); return true; }
       const changeId = new ThreadLinks(this.adm).changeOf(thread);
-      if (!changeId || ['completed', 'canceled', 'declined'].includes(this.store.getChange(changeId).status)) return false;
+      if (!changeId || isTerminalForMandate(this.store.getChange(changeId).status)) return false;
       // Bases anteriores a T43: última admisión decidida antes de crear el signal; observe puede tener otra política.
       const origin = db.query(`SELECT d.trigger_key, d.policy FROM adm_decisions d JOIN adm_triggers t ON t.key=d.trigger_key
         WHERE t.thread_id=? AND d.would_admit=1 AND (d.trigger_key=? OR (? IS NULL AND d.decided_at<=?))

@@ -196,7 +196,7 @@ test('report sobre una base sin admisión no crea tablas adm_*', async () => {
 
 test('stopsLost excluye changes terminados y exige un change vinculado existente', () => {
   const { adm, at, decision, link } = seeded();
-  for (const status of ['completed', 'failed', 'canceled', 'declined', 'blocked', 'quarantined'] as const) {
+  for (const status of ['completed', 'canceled', 'declined'] as const) {
     decision(status, status, 'thread-already-admitted', at, { state: 'closed' });
     link(status, status);
   }
@@ -271,4 +271,12 @@ test('formatReport quita controles de cada línea sin permitir líneas falsas', 
   expect(output.split('\n')).toHaveLength(22); // 7 cabeceras, 6 separadores y 9 filas, sin saltos procedentes de datos
   expect(output).toContain('valor[2JFALSA');
   expect(output).not.toContain('\nFALSA');
+});
+
+
+for (const status of ['blocked', 'failed', 'quarantined'] as const) test(`N3: stopsLost cuenta would_revoke sobre ${status}`, () => {
+  const { adm, decision, link } = seeded();
+  decision('removed', status, 'would_revoke');
+  link(status, status);
+  expect(buildReport(adm).stopsLost).toMatchObject([{ thread: status, changeStatus: status, labelPresent: false }]);
 });
