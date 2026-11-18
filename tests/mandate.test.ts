@@ -83,3 +83,56 @@ test('base anterior: ALTER idempotente y revocación de una admisión sin trigge
   expect(t.store.getChange(c.id).status).toBe('canceled');
   expect(mandate().revoked_at).not.toBeNull();
 });
+
+test('H1/E1: un efecto atrasado sin etiqueta no revoca una admisión posterior', async () => {
+  const c = await admitted(), r = t.resident();
+  const thread = `github:${REPO}#7`, key = `${thread}@2026-01-06T00:00:00Z`;
+  r.adm.tx(() => {
+    r.adm.db.query('INSERT INTO adm_triggers(key, thread_id, event, observed_at) VALUES (?,?,?,?)').run(key, thread,
+      JSON.stringify({ repo: REPO, number: 7, author: 'alice', state: 'open', labels: [], updatedAt: '2026-01-06T00:00:00Z' }), r.adm.iso());
+    r.effects.enqueue('admit', `admit:${key}`, { triggerKey: key });
+  });
+  await t.cycle();
+  expect(t.store.getChange(c.id).status).toBe('pending');
+  expect(mandate().revoked_at).toBeNull();
+  update([]); await t.cycle();
+  expect(t.store.getChange(c.id).status).toBe('canceled');
+});
+
+for (const status of ['blocked', 'failed', 'quarantined'] as const) test(`H2: retirar la etiqueta cancela ${status} e impide retryChange`, async () => {
+  const c = await admitted();
+  const a = t.store.claimActivity(t.ws.id, 'worker')!;
+  if (status === 'blocked') t.store.blockActivity(a.id, 'worker', 'bloqueado');
+  else if (status === 'quarantined') t.store.quarantineActivity(a.id, 'worker', 'cuarentena');
+  else {
+    t.store.failActivity(a.id, 'worker', 'fallo');
+    for (let i = 0; i < 2; i++) {
+      const retry = t.store.claimActivity(t.ws.id, 'worker')!;
+      t.store.failActivity(retry.id, 'worker', 'fallo');
+    }
+  }
+  expect(t.store.getChange(c.id).status).toBe(status);
+  update([]); await t.cycle();
+  expect(t.store.getChange(c.id).status).toBe('canceled');
+  expect(mandate().revoked_at).not.toBeNull();
+  expect(() => t.store.retryChange(c.id)).toThrow();
+  expect(t.store.getChange(c.id).status).toBe('canceled');
+});
+
+test('H4: sin trigger_key usa la última admisión anterior a created_at, no observe antiguo ni una decisión futura', async () => {
+  const c = await admitted(), db = t.adm.db, thread = `github:${REPO}#7`;
+  db.query('UPDATE adm_thread_signals SET trigger_key=NULL, created_at=?').run('2026-01-10T12:00:00Z');
+  db.query('UPDATE adm_decisions SET decided_at=?').run('2026-01-10T00:00:00Z');
+  for (const [day, label] of [['09', 'antigua'], ['11', 'futura']]) {
+    const key = `${thread}@2026-01-${day}T00:00:00Z`;
+    db.query('INSERT INTO adm_triggers(key, thread_id, event, observed_at) VALUES (?,?,?,?)').run(key, thread, '{}', 'x');
+    db.query('INSERT INTO adm_decisions VALUES (?,?,?,?,?,?,?)').run(key, 1, 'explicit', 'change', '["trigger-label"]',
+      JSON.stringify({ ...POLICY, triggerLabel: label }), `2026-01-${day}T00:00:00Z`);
+  }
+  update(['fab'], 'open', '12'); await t.cycle();
+  expect(t.store.getChange(c.id).status).toBe('pending');
+  expect(mandate().revoked_at).toBeNull();
+  update([], 'open', '13'); await t.cycle();
+  expect(t.store.getChange(c.id).status).toBe('canceled');
+  expect(mandate().trigger_key).toBe(`${thread}@2026-01-07T00:00:00Z`);
+});

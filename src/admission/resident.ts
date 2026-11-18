@@ -2,7 +2,7 @@
 // en `auto` (T12) aplica la decisión (`applyAdmission`), entrega respuestas y publica preguntas. Nunca lanza agentes (los lanza el pool), y no escribe tablas de la fab (solo lee `activities`/`signals` para vencer o cancelar preguntas y decidir si un change es de canal; los cambios van por comandos del Store).
 import { createHash } from 'node:crypto';
 import { runCommand, type CommandRunner } from '../connectors/github.ts';
-import { isTerminalChange, type Store } from '../store.ts';
+import type { Store } from '../store.ts';
 import { answerQuestion, expireQuestions, reapQuestions } from './answers.ts';
 import { applyAdmission } from './apply.ts';
 import { AdmissionDb } from './db.ts';
@@ -119,17 +119,21 @@ export class Resident {
   private mandate(thread: string, triggerKey: string, event: IssueEvent): boolean {
     return this.adm.tx(() => {
       const db = this.adm.db;
-      const prior = db.query('SELECT trigger_key, revoked_at FROM adm_thread_signals WHERE thread_id = ?').get(thread) as
-        { trigger_key: string | null; revoked_at: string | null } | null;
+      const prior = db.query('SELECT trigger_key, created_at, revoked_at FROM adm_thread_signals WHERE thread_id = ?').get(thread) as
+        { trigger_key: string | null; created_at: string; revoked_at: string | null } | null;
       if (!prior) return false;
       const record = (reason: string) => this.record(triggerKey, { would_admit: false, strength: 'inferred', scope_max: 'none', reasons: [reason] });
       if (prior.revoked_at) { record('thread-revoked'); return true; }
       const changeId = new ThreadLinks(this.adm).changeOf(thread);
-      if (!changeId || isTerminalChange(this.store.getChange(changeId).status)) return false;
-      // Bases anteriores a T43: recuperar la política de la primera decisión que admitió el hilo.
+      if (!changeId || ['completed', 'canceled', 'declined'].includes(this.store.getChange(changeId).status)) return false;
+      // Bases anteriores a T43: última admisión decidida antes de crear el signal; observe puede tener otra política.
       const origin = db.query(`SELECT d.trigger_key, d.policy FROM adm_decisions d JOIN adm_triggers t ON t.key=d.trigger_key
-        WHERE t.thread_id=? AND d.would_admit=1 AND (? IS NULL OR d.trigger_key=?) ORDER BY d.decided_at, d.trigger_key LIMIT 1`)
-        .get(thread, prior.trigger_key, prior.trigger_key) as { trigger_key: string; policy: string } | null;
+        WHERE t.thread_id=? AND d.would_admit=1 AND (d.trigger_key=? OR (? IS NULL AND d.decided_at<=?))
+        ORDER BY d.decided_at DESC, d.trigger_key DESC LIMIT 1`)
+        .get(thread, prior.trigger_key, prior.trigger_key, prior.created_at) as { trigger_key: string; policy: string } | null;
+      const originKey = prior.trigger_key ?? origin?.trigger_key;
+      // Un efecto atrasado (o la repetición del propio trigger de admisión) no retira una autorización posterior.
+      if (originKey && event.updatedAt <= originKey.slice(originKey.lastIndexOf('@') + 1)) return false;
       const label = origin ? (JSON.parse(origin.policy) as GatePolicy).triggerLabel : this.cfg.policy.triggerLabel;
       if (event.labels.some(l => l.toLowerCase() === label.toLowerCase())) return false;
       if (this.cfg.mode === 'auto') {
