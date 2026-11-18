@@ -166,6 +166,76 @@ test('14: revocar con pregunta pendiente de publicar cancela la pregunta antes d
   expect(n("SELECT COUNT(*) n FROM adm_effects WHERE kind='reply' AND status='done'")).toBe(1);
 });
 
+async function openChannelPr(crash?: (p: import('../src/admission/effects.ts').CrashPoint) => void) {
+  const { connectorsMain } = await import('../src/connectors/cli.ts');
+  const { createGhGateway } = await import('../src/connectors/github.ts');
+  const c = t.store.listChanges(t.ws.id)[0]!;
+  const commands: string[][] = [];
+  let created = false;
+  const run: import('../src/connectors/github.ts').CommandRunner = async cmd => {
+    commands.push(cmd);
+    if (cmd[0] === 'git') return { code: 0, stdout: cmd[1] === 'rev-list' ? '1' : '', stderr: '' };
+    if (cmd.includes('create')) { created = true; return { code: 0, stdout: 'https://github.com/owner/project/pull/12', stderr: '' }; }
+    if (cmd.includes('view')) return created
+      ? { code: 0, stdout: JSON.stringify({ number: 12, url: 'https://github.com/owner/project/pull/12', headRefName: c.branch, baseRefName: 'main', state: 'OPEN' }), stderr: '' }
+      : { code: 1, stdout: '', stderr: 'no pull requests found' };
+    throw new Error('Comando no esperado');
+  };
+  const errors: string[] = [];
+  const open = (fail = crash) => connectorsMain('pr', ['open', c.id, '--repo', 'owner/project'], {
+    store: t.store, prs: createGhGateway({ run }), run, env: {}, crash: fail, log: () => {}, error: s => errors.push(s),
+  });
+  return { open, commands, errors };
+}
+function implementChannel() {
+  for (let i = 0; i < 2; i++) {
+    const a = t.store.claimActivity(t.ws.id, 'impl')!;
+    t.store.completeActivity(a.id, 'impl', 'STATUS: done');
+  }
+  const c = t.store.listChanges(t.ws.id)[0]!;
+  t.store.setChangeBranch(c.id, 'fab/test');
+  return t.store.getChange(c.id);
+}
+
+test('15: caída después de gh pr create: repetir fab pr repara el enlace sin crear otro PR', async () => {
+  await admittedChange(); const c = implementChannel();
+  const { open, commands } = await openChannelPr(once('pr-created'));
+  expect(await open()).toBe(1);
+  expect(commands.filter(cmd => cmd.includes('create'))).toHaveLength(1);
+  const { ThreadLinks } = await import('../src/admission/links.ts');
+  const links = new ThreadLinks(t.adm);
+  expect(links.changeOf('github:owner/project#12')).toBeUndefined();
+  expect(await open(() => {})).toBe(0);
+  expect(commands.filter(cmd => cmd.includes('create'))).toHaveLength(1);
+  expect(links.changeOf('github:owner/project#12')).toBe(c.id);
+  expect(await open(() => {})).toBe(0);
+  expect(links.threadsOf(c.id)).toHaveLength(2);
+});
+
+test('respuesta triage en el PR creado por fab contesta y reanuda la pregunta del issue', async () => {
+  await admittedChange(['true']); const c = implementChannel();
+  const { open, errors } = await openChannelPr();
+  expect(await open()).toBe(0);
+  expect(errors).toEqual([]);
+  t.store.requestValidation(c.id, ['qa']);
+  const gate = t.store.claimActivity(t.ws.id, 'review')!;
+  t.store.blockActivity(gate.id, 'review', 'revisar implementación');
+  t.store.retryChange(c.id);
+  const backend = fakeLive([ASK, DONE]);
+  await t.pool(backend); await t.cycle();
+  expect(t.run.posts[0]?.issue).toBe(7);
+  const comments: RawComment[] = [
+    { id: 21, issue: 12, login: 'outsider', created_at: '2026-01-11T00:00:00Z', body: 'no' },
+    { id: 22, issue: 12, login: 'maint', created_at: '2026-01-11T01:00:00Z', body: 'verde en el PR' },
+  ];
+  const { fakeGh } = await import('./helpers/admission.ts');
+  await t.cycle({ run: fakeGh(t.issues, { comments, roles: { maint: 'triage', outsider: 'read' }, self: 'fab-bot' }) });
+  expect(t.adm.db.query('SELECT status, answer, answered_by FROM adm_questions').get()).toEqual({ status: 'answered', answer: 'verde en el PR', answered_by: 'maint' });
+  await t.pool(backend);
+  expect(backend.turns[1]!.prompt).toBe('verde en el PR');
+});
+
+
 test('revocar durante un turno vivo: el siguiente latido aborta y no se aplica su pregunta tardía', async () => {
   const c = await admittedChange();
   const interval = globalThis.setInterval;
