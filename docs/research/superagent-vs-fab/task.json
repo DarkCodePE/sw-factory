@@ -590,10 +590,10 @@
     {
       "id": "T41",
       "title": "El agente confinado puede cambiar fab-live por un symlink y el host escribe ahí mcp-<uuid>.json con el token del turno",
-      "status": "in_progress",
+      "status": "done",
       "depends_on": [],
       "where": "src/live/claude.ts:58-61",
-      "note": "H8 de la verificación de T40; ya existía antes. Idea: sacar la config MCP del git dir, como claude-projects (<stateDir>/live/<id>). PR #76 abierto sobre 57d4b6b. Verificación de Fable en dos pasadas (t41/verif-fable.md): la segunda da «listo para PR»; cerrados H1-H4 y H7; H5 y H6 abiertos a propósito. N1 y N2 pasan a T44 (decisión D7).",
+      "note": "H8 de la verificación de T40; ya existía antes. Idea: sacar la config MCP del git dir, como claude-projects (<stateDir>/live/<id>). PR #76 fusionado (merge aa2142b) sobre 57d4b6b. Verificación de Fable en dos pasadas (t41/verif-fable.md): la segunda da «listo para PR»; cerrados H1-H4 y H7; H5 y H6 abiertos a propósito. N1 y N2 pasan a T44 (decisión D7).",
       "pr": 76,
       "owner": "sonnet",
       "reviewer": "fable",
