@@ -17,7 +17,7 @@ export type EffectHandler = {
 export type EffectAlert = { kind: string; key: string; status: 'dead' | 'unknown'; error: string; payload: any };
 export type CrashPoint = 'after-read' | 'after-register' | 'effect-claimed' | 'effect-ran'
   | 'report-recorded' | 'report-applied' | 'answer-applied' | 'signal-created'
-  | 'session-written' | 'session-launched' | 'turn-ended' | 'decision-recorded';
+  | 'mandate-revoked' | 'session-written' | 'session-launched' | 'turn-ended' | 'decision-recorded';
 
 /** Caída inyectada por un test en un `CrashPoint`: el pool no la convierte en un fallo de la activity (una caída real no deja rastro). */
 export class CrashInjected extends Error {
@@ -93,7 +93,8 @@ export class Effects {
   private claim(): Row | undefined {
     return this.adm.tx(() => {
       this.opts.fence?.();
-      const row = this.adm.db.query("SELECT id, kind, key, payload, attempts FROM adm_effects WHERE status = 'pending' AND due_at <= ? ORDER BY id LIMIT 1")
+      // Evaluar las retiradas de autorización leídas en este ciclo antes de publicar preguntas ya encoladas.
+      const row = this.adm.db.query("SELECT id, kind, key, payload, attempts FROM adm_effects WHERE status = 'pending' AND due_at <= ? ORDER BY CASE WHEN kind = 'admit' THEN 0 ELSE 1 END, id LIMIT 1")
         .get(this.adm.now()) as Row | null;
       if (!row) return undefined;
       const attemptId = randomUUID();

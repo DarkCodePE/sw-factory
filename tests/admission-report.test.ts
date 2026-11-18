@@ -113,7 +113,7 @@ test('un seguimiento de confianza sin pregunta abierta en un hilo admitido sale 
   comment('member', 'linked'); comment('outsider', 'linked', 'NONE'); comment('unadmitted', 'other');
   comment('answered', 'linked', 'MEMBER', at, 'before-question');
   trigger('signal', 'signaled');
-  adm.db.query('INSERT INTO adm_thread_signals VALUES (?,?,?,?)').run('signaled', 'signal-1', 'change', at);
+  adm.db.query('INSERT INTO adm_thread_signals(thread_id, signal_id, scope, created_at) VALUES (?,?,?,?)').run('signaled', 'signal-1', 'change', at);
   comment('owner', 'signaled', 'OWNER');
   expect(buildReport(adm).followupsLost).toEqual(['member', 'owner'].map(trigger => ({
     trigger, url: `https://github.com/test/repo/issues/${trigger}`, author: 'ana', association: trigger === 'owner' ? 'OWNER' : 'MEMBER', decidedAt: at,
@@ -202,7 +202,7 @@ test('stopsLost excluye changes terminados y exige un change vinculado existente
   }
   decision('unlinked', 'unlinked', 'thread-already-admitted');
   decision('signaled', 'signaled', 'thread-already-admitted', at, {}, 'fab', true);
-  adm.db.query('INSERT INTO adm_thread_signals VALUES (?,?,?,?)').run('signaled', 'signal', 'change', at);
+  adm.db.query('INSERT INTO adm_thread_signals(thread_id, signal_id, scope, created_at) VALUES (?,?,?,?)').run('signaled', 'signal', 'change', at);
   decision('missing', 'missing', 'thread-already-admitted');
   adm.db.query('INSERT INTO adm_thread_changes VALUES (?,?,?)').run('missing', 'nonexistent', at);
   expect(buildReport(adm).stopsLost).toEqual([]);

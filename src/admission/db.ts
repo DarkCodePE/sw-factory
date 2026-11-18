@@ -64,6 +64,10 @@ export class AdmissionDb {
   constructor(private readonly store: Store) {
     this.db = store.db;
     this.db.exec(SCHEMA);
+    // T43: ampliar también las bases anteriores sin sustituir sus admisiones.
+    const columns = this.db.query('PRAGMA table_info(adm_thread_signals)').all() as { name: string }[];
+    for (const name of ['trigger_key', 'revoked_at', 'revoked_reason'])
+      if (!columns.some(c => c.name === name)) this.db.exec(`ALTER TABLE adm_thread_signals ADD COLUMN ${name} TEXT`);
     // Bases creadas antes de A6: `CREATE TABLE IF NOT EXISTS` no añade la columna.
     if (!(this.db.query('PRAGMA table_info(adm_sessions)').all() as { name: string }[]).some(c => c.name === 'cap_from')) this.db.exec('ALTER TABLE adm_sessions ADD COLUMN cap_from INTEGER');
   }

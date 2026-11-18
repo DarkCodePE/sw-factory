@@ -1,6 +1,6 @@
 // Condición de salida de la fase 2 (06 §7): la costura completa con un fallo inyectado en cada una de las 12 fronteras del 07 §6.
 // Las fronteras 3, 7, 8, 10 y parte de la 4 y la 11 viven junto a la pieza que las cruza (se citan en el informe); aquí van el resto.
-import { afterEach, expect, test } from 'bun:test';
+import { afterEach, expect, spyOn, test } from 'bun:test';
 import { CrashInjected } from '../src/admission/effects.ts';
 import type { RawComment } from './helpers/admission.ts';
 import { future, once, rig } from './helpers/auto.ts';
@@ -120,4 +120,74 @@ test('12: respuesta de alguien sin rol, anterior a la pregunta, de un bot o de l
   comments.push({ id: 5, issue: 7, login: 'alice', created_at: '2026-01-11T02:00:00Z', body: 'verde' });
   await t.cycle(); await t.pool(backend);
   expect(backend.turns[1]!.prompt).toBe('verde');
+});
+
+async function admittedChange(verify?: string[]) {
+  t = rig({ verify }); t.issues.push(labeled()); await t.cycle();
+  return t.store.listChanges(t.ws.id)[0]!;
+}
+function removeLabel() {
+  Object.assign(t.issues[0]!, { labels: [], updated_at: '2026-01-08T00:00:00Z' });
+}
+
+test('13: mandate-revoked cae dentro de la transacción: revocación y cierre se recuperan juntos', async () => {
+  const c = await admittedChange();
+  removeLabel();
+  let injected = false;
+  await t.cycle({ crash: p => {
+    if (p !== 'mandate-revoked' || injected) return;
+    injected = true;
+    expect(t.adm.db.inTransaction).toBe(true);
+    expect(t.adm.db.query('SELECT revoked_at FROM adm_thread_signals').get()).not.toEqual({ revoked_at: null });
+    expect(t.store.getChange(c.id).status).toBe('pending');
+    throw new CrashInjected(p);
+  }, maxAttempts: 1 });
+  expect(injected).toBe(true);
+  expect(t.store.getChange(c.id).status).toBe('pending');
+  expect(t.adm.db.query('SELECT revoked_at FROM adm_thread_signals').get()).toEqual({ revoked_at: null });
+  // Recuperación del efecto tras la caída, sin fabricar un trigger nuevo.
+  t.adm.db.query("UPDATE adm_effects SET status='pending', attempts=0 WHERE status='dead'").run();
+  await t.cycle();
+  expect(t.store.getChange(c.id).status).toBe('canceled');
+  expect(t.adm.db.query('SELECT revoked_at FROM adm_thread_signals').get()).not.toEqual({ revoked_at: null });
+  expect(n("SELECT COUNT(*) n FROM events WHERE message='change canceled'")).toBe(1);
+});
+
+test('14: revocar con pregunta pendiente de publicar cancela la pregunta antes del Outbox', async () => {
+  const c = await admittedChange();
+  await t.pool(fakeLive([ASK]));
+  expect(act().status).toBe('waiting_reply');
+  expect(n("SELECT COUNT(*) n FROM adm_effects WHERE kind='reply' AND status='pending'")).toBe(1);
+  removeLabel(); await t.cycle();
+  expect(t.store.getChange(c.id).status).toBe('canceled');
+  expect(act().status).toBe('canceled');
+  expect(n("SELECT COUNT(*) n FROM adm_questions WHERE status='canceled'")).toBe(1);
+  expect(t.run.posts).toEqual([]);
+  expect(n("SELECT COUNT(*) n FROM adm_effects WHERE kind='reply' AND status='done'")).toBe(1);
+});
+
+test('revocar durante un turno vivo: el siguiente latido aborta y no se aplica su pregunta tardía', async () => {
+  const c = await admittedChange();
+  const interval = globalThis.setInterval;
+  let beat: (() => void) | undefined;
+  const timer = spyOn(globalThis, 'setInterval').mockImplementation(((fn: () => void, ms: number, ...args: unknown[]) => {
+    if (ms === 123456) beat = fn;
+    return interval(fn, ms, ...args);
+  }) as typeof setInterval);
+  let aborted = false;
+  try {
+    const backend = fakeLive([{ ...ASK, before: async turn => {
+      expect(turn.signal?.aborted).toBe(false);
+      removeLabel(); await t.cycle();
+      expect(t.store.getChange(c.id).status).toBe('canceled');
+      expect(beat).toBeDefined();
+      beat!();
+      aborted = turn.signal!.aborted;
+    } }]);
+    await t.pool(backend, { heartbeatMs: 123456 });
+    expect(aborted).toBe(true);
+    expect(t.store.listActivities({ changeId: c.id }).every(a => a.status === 'canceled')).toBe(true);
+    expect(n("SELECT COUNT(*) n FROM adm_questions WHERE status='open'")).toBe(0);
+    await t.cycle(); expect(t.run.posts).toEqual([]);
+  } finally { timer.mockRestore(); }
 });

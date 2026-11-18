@@ -2,7 +2,7 @@
 // en `auto` (T12) aplica la decisión (`applyAdmission`), entrega respuestas y publica preguntas. Nunca lanza agentes (los lanza el pool), y no escribe tablas de la fab (solo lee `activities`/`signals` para vencer o cancelar preguntas y decidir si un change es de canal; los cambios van por comandos del Store).
 import { createHash } from 'node:crypto';
 import { runCommand, type CommandRunner } from '../connectors/github.ts';
-import type { Store } from '../store.ts';
+import { isTerminalChange, type Store } from '../store.ts';
 import { answerQuestion, expireQuestions, reapQuestions } from './answers.ts';
 import { applyAdmission } from './apply.ts';
 import { AdmissionDb } from './db.ts';
@@ -85,7 +85,9 @@ export class Resident {
     const row = this.adm.db.query('SELECT event FROM adm_triggers WHERE key = ?').get(triggerKey) as { event: string } | null;
     if (!row) throw new Error(`Trigger ${triggerKey} inexistente`);
     const event = JSON.parse(row.event) as IssueEvent;
-    const link = new ThreadLinks(this.adm).changeOf(triggerKey.slice(0, triggerKey.lastIndexOf('@')));
+    const thread = triggerKey.slice(0, triggerKey.lastIndexOf('@'));
+    if (this.mandate(thread, triggerKey, event)) return;
+    const link = new ThreadLinks(this.adm).changeOf(thread);
     const skip = link ? ['thread-already-admitted', `change:${link}`]
       : this.cfg.selfLogin && event.author.toLowerCase() === this.cfg.selfLogin.toLowerCase() ? ['self-authored'] : undefined;
     if (skip) { this.record(triggerKey, { would_admit: false, strength: 'inferred', scope_max: 'none', reasons: skip }); return; }
@@ -110,7 +112,36 @@ export class Resident {
       d = registered()!;
     }
     // S8 (auto): la decisión se aplica con comandos del Store, en una transacción y una vez por hilo (`applyAdmission`); `observe` solo registra.
-    if (this.cfg.mode === 'auto') applyAdmission(this.store, this.adm, { thread: triggerKey.slice(0, triggerKey.lastIndexOf('@')), workstream: this.cfg.workstream!, decision: d, crash: this.cfg.crash });
+    if (this.cfg.mode === 'auto') applyAdmission(this.store, this.adm, { thread: triggerKey.slice(0, triggerKey.lastIndexOf('@')), workstream: this.cfg.workstream!, triggerKey, decision: d, crash: this.cfg.crash });
+  }
+
+  /** Solo el hilo que originó la admisión puede retirarla; los PR unidos no llevan su etiqueta. */
+  private mandate(thread: string, triggerKey: string, event: IssueEvent): boolean {
+    return this.adm.tx(() => {
+      const db = this.adm.db;
+      const prior = db.query('SELECT trigger_key, revoked_at FROM adm_thread_signals WHERE thread_id = ?').get(thread) as
+        { trigger_key: string | null; revoked_at: string | null } | null;
+      if (!prior) return false;
+      const record = (reason: string) => this.record(triggerKey, { would_admit: false, strength: 'inferred', scope_max: 'none', reasons: [reason] });
+      if (prior.revoked_at) { record('thread-revoked'); return true; }
+      const changeId = new ThreadLinks(this.adm).changeOf(thread);
+      if (!changeId || isTerminalChange(this.store.getChange(changeId).status)) return false;
+      // Bases anteriores a T43: recuperar la política de la primera decisión que admitió el hilo.
+      const origin = db.query(`SELECT d.trigger_key, d.policy FROM adm_decisions d JOIN adm_triggers t ON t.key=d.trigger_key
+        WHERE t.thread_id=? AND d.would_admit=1 AND (? IS NULL OR d.trigger_key=?) ORDER BY d.decided_at, d.trigger_key LIMIT 1`)
+        .get(thread, prior.trigger_key, prior.trigger_key) as { trigger_key: string; policy: string } | null;
+      const label = origin ? (JSON.parse(origin.policy) as GatePolicy).triggerLabel : this.cfg.policy.triggerLabel;
+      if (event.labels.some(l => l.toLowerCase() === label.toLowerCase())) return false;
+      if (this.cfg.mode === 'auto') {
+        db.query(`UPDATE adm_thread_signals SET trigger_key=COALESCE(trigger_key, ?), revoked_at=?, revoked_reason='trigger-label-removed'
+          WHERE thread_id=?`).run(origin?.trigger_key ?? null, this.adm.iso(), thread);
+        this.cfg.crash?.('mandate-revoked');
+        this.store.closeChange(changeId, 'canceled');
+        reapQuestions(this.adm);
+        record('mandate-revoked');
+      } else record('would_revoke');
+      return true;
+    });
   }
 
   /** INSERT OR IGNORE: reejecutar tras una caída no cambia el registro (el efecto es `rerunnable`). */

@@ -48,7 +48,7 @@ export function buildReport(adm: AdmissionDb): Report {
     const e = d.event;
     const change = changes.get(d.thread_id);
     const changeStatus = change && (!isTerminalChange(change.status) || d.decided_at < change.updated_at) ? change.status : undefined;
-    if (changeStatus && d.reasons[0] === 'thread-already-admitted' && !stopsLost.has(d.thread_id)) {
+    if (changeStatus && ['thread-already-admitted', 'would_revoke'].includes(d.reasons[0]) && !stopsLost.has(d.thread_id)) {
       const policy = JSON.parse(d.policy) as { triggerLabel?: string };
       const labelPresent = (e.labels ?? []).some((label: string) => label.toLowerCase() === policy.triggerLabel?.toLowerCase());
       if (e.state === 'closed' || !labelPresent) stopsLost.set(d.thread_id, {
