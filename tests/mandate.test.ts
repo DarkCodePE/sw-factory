@@ -136,3 +136,9 @@ test('H4: sin trigger_key usa la última admisión anterior a created_at, no obs
   expect(t.store.getChange(c.id).status).toBe('canceled');
   expect(mandate().trigger_key).toBe(`${thread}@2026-01-07T00:00:00Z`);
 });
+
+
+test('H8/M12: la admisión guarda trigger_key antes de cualquier revocación', async () => {
+  await admitted();
+  expect(mandate()).toEqual({ trigger_key: `github:${REPO}#7@2026-01-07T00:00:00Z`, revoked_at: null, revoked_reason: null });
+});

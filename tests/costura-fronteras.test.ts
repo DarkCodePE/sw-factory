@@ -134,15 +134,19 @@ test('13: mandate-revoked cae dentro de la transacción: revocación y cierre se
   const c = await admittedChange();
   removeLabel();
   let injected = false;
+  let observed: { inTransaction: boolean; revokedAt: string | null; changeStatus: string } | undefined;
   await t.cycle({ crash: p => {
     if (p !== 'mandate-revoked' || injected) return;
     injected = true;
-    expect(t.adm.db.inTransaction).toBe(true);
-    expect(t.adm.db.query('SELECT revoked_at FROM adm_thread_signals').get()).not.toEqual({ revoked_at: null });
-    expect(t.store.getChange(c.id).status).toBe('pending');
+    observed = {
+      inTransaction: t.adm.db.inTransaction,
+      revokedAt: (t.adm.db.query('SELECT revoked_at FROM adm_thread_signals').get() as { revoked_at: string | null }).revoked_at,
+      changeStatus: t.store.getChange(c.id).status,
+    };
     throw new CrashInjected(p);
   }, maxAttempts: 1 });
   expect(injected).toBe(true);
+  expect(observed).toEqual({ inTransaction: true, revokedAt: expect.any(String), changeStatus: 'pending' });
   expect(t.store.getChange(c.id).status).toBe('pending');
   expect(t.adm.db.query('SELECT revoked_at FROM adm_thread_signals').get()).toEqual({ revoked_at: null });
   // Recuperación del efecto tras la caída, sin fabricar un trigger nuevo.
