@@ -135,10 +135,12 @@
       "title": "Riesgo fase 0: ruta del worktree truncada a 8 caracteres",
       "why": "Dos changes con el mismo prefijo colisionan. Hoy verifyWorktree falla en vez de reutilizar el equivocado, pero el change queda bloqueado.",
       "where": "src/worktrees.ts — usar el id completo (o más caracteres) solo para worktrees nuevos, sin romper los existentes.",
-      "status": "in_progress",
-      "depends_on": [],
+      "status": "blocked",
+      "depends_on": [
+        "T44"
+      ],
       "owner": "codex",
-      "note": "2026-11-17: en análisis (fase 1) por Codex, solo lectura; brief en t9/BRIEF-T9-codex.md. No se implementa hasta que el dueño acepte el análisis."
+      "note": "2026-11-17: análisis de Codex en t9/analisis-codex.md. Corrige esta entrada: en el mismo repo, dos changes con el mismo prefijo reutilizan en silencio el mismo worktree y la misma rama, y limpiar uno borra lo del otro (confirmado leyendo src/worktrees.ts:46-78). Riesgo acumulado modelado: 0,1 % a los ~2 900 changes. Bloqueada por tres decisiones del dueño ([DECIDIR] A prioridad, B longitud, C compatibilidad; §7 del análisis) y por T44, que toca las mismas líneas de src/pool.ts."
     },
     {
       "id": "T10",
@@ -223,13 +225,13 @@
       "why": "Hoy vive en memoria del pool: si el pool muere tras un awaiting, la pregunta se pierde y el turno se reejecuta. Aplicarlo a mitad de turno haría fallar el latido y abortar al agente.",
       "where": "src/live/{claude,native}.ts (handler MCP), src/pool.ts:108-115, src/store.ts:685-689",
       "proposal": "El handler persiste el report por attemptId sin cambiar el estado; el pool lo aplica al final en una transacción con el efecto reply; la recuperación lo aplica en vez de reejecutar.",
-      "status": "partial",
+      "status": "done",
       "depends_on": [],
       "pr": 62,
       "branch": "feat/ronda3-hallazgos",
       "owner": "sonnet",
       "reviewer": "fable",
-      "note": "Fusionado (#62). Falta integrar en el pool (T12)."
+      "note": "Fusionado (#62) e integrado en el pool con T12 (#67). Auditoría de agy del 2026-11-17 (auditoria-parciales/informe-agy.md): hecha, con test que la fija."
     },
     {
       "id": "T17",
@@ -239,13 +241,13 @@
       "why": "activities no tiene columna de sesión y las espigas lo devuelven solo en memoria. No sobrevive a la caída del pool ni a requeueOrphans; retryChange crea otra activity.",
       "where": "src/store.ts:152-158,307-322,1030; src/live/claude.ts:55",
       "proposal": "Fila por (change, tipo de activity, generación) escrita antes de lanzar, con backend, cwd, modelo y huella de perfil.",
-      "status": "partial",
+      "status": "done",
       "depends_on": [],
       "pr": 62,
       "branch": "feat/ronda3-hallazgos",
       "owner": "sonnet",
       "reviewer": "fable",
-      "note": "Fusionado (#62). Falta integrar en el pool (T12)."
+      "note": "Fusionado (#62) e integrado en el pool con T12 (#67). Auditoría de agy del 2026-11-17 (auditoria-parciales/informe-agy.md): hecha, con test que la fija."
     },
     {
       "id": "T18",
@@ -255,13 +257,13 @@
       "why": "El contrato define SessionNotFoundError pero ninguna transición lo usa. Bajo confine sin directorio persistente o tras recrear el worktree, la activity falla 3 veces con una respuesta humana ya dada.",
       "where": "06 §5.1 y §6; src/live/contract.ts:48",
       "proposal": "Generación nueva con prompt reconstruido desde estado durable (change, historial, preguntas y respuestas), con evento y contando para el tope. Nunca sesión nueva por un error transitorio.",
-      "status": "partial",
+      "status": "done",
       "depends_on": [],
       "pr": 62,
       "branch": "feat/ronda3-hallazgos",
       "owner": "sonnet",
       "reviewer": "fable",
-      "note": "Fusionado (#62). Falta integrar en el pool (T12)."
+      "note": "Fusionado (#62) e integrado en el pool con T12 (#67). Auditoría de agy del 2026-11-17 (auditoria-parciales/informe-agy.md): hecha, con test que la fija."
     },
     {
       "id": "T19",
@@ -271,13 +273,13 @@
       "why": "Un fallo u orfandad devuelve la activity a pending y el agente se reejecuta solo; no existe «resultado desconocido» en activities. El prompt inicial se reenviaría a una sesión que ya hizo el trabajo.",
       "where": "src/store.ts:923-932,1102-1103",
       "proposal": "Para activities vivas: reconciliar (report persistido, estado del worktree) y reanudar con un mensaje «continúa», no con el prompt inicial.",
-      "status": "partial",
+      "status": "done",
       "depends_on": [],
       "pr": 62,
       "branch": "feat/ronda3-hallazgos",
       "owner": "sonnet",
       "reviewer": "fable",
-      "note": "Fusionado (#62). Falta integrar en el pool (T12)."
+      "note": "Fusionado (#62) e integrado en el pool con T12 (#67). Auditoría de agy del 2026-11-17 (auditoria-parciales/informe-agy.md): hecha, con test que la fija."
     },
     {
       "id": "T20",
@@ -303,13 +305,13 @@
       "why": "No se leen comentarios, el evento no tiene actor y no se define quién puede responder. En un repo público, un tercero podría meter texto en una sesión con permisos de escritura.",
       "where": "src/admission/github.ts:18, resident.ts:44-46; 06 §5.1",
       "proposal": "Trigger por comentario con actor e id del comentario; permiso con la consulta existente (github.ts:66-71), solo triage o superior; posterior al recibo de la pregunta; el resto se registra y se ignora.",
-      "status": "partial",
+      "status": "done",
       "depends_on": [],
       "pr": 62,
       "branch": "feat/ronda3-hallazgos",
       "owner": "sonnet",
       "reviewer": "fable",
-      "note": "Fusionado (#62). Falta integrar en el pool (T12)."
+      "note": "Fusionado (#62) e integrado en el pool con T12 (#67). Auditoría de agy del 2026-11-17 (auditoria-parciales/informe-agy.md): hecha, con test que la fija. Citas comprobadas por muestreo por Fable."
     },
     {
       "id": "T22",
@@ -335,13 +337,13 @@
       "why": "Nada une adm_threads con un change y ExternalRef solo admite jira. En modo auto, el comentario de la propia fab crearía un trigger que admite otra vez.",
       "where": "src/admission/db.ts:21, resident.ts:42-47; src/connectors/types.ts:7, links.ts:48",
       "proposal": "Relación N hilos → 1 change, ExternalRef con github, una admisión por hilo, y descartar los eventos del actor de la fab.",
-      "status": "partial",
+      "status": "done",
       "depends_on": [],
       "pr": 62,
       "branch": "feat/ronda3-hallazgos",
       "owner": "sonnet",
       "reviewer": "fable",
-      "note": "Fusionado (#62). Falta integrar en el pool (T12)."
+      "note": "Fusionado (#62) e integrado en el pool con T12 (#67). Auditoría de agy del 2026-11-17 (auditoria-parciales/informe-agy.md): hecha, con test que la fija. Citas comprobadas por muestreo por Fable."
     },
     {
       "id": "T24",
@@ -380,13 +382,13 @@
       "why": "Un turno vivo con report válido y sin STATUS da status missing, y el pool falla esa activity. Tampoco hay regla para varios reports en un turno.",
       "where": "src/pool.ts:305-309; live/native.md",
       "proposal": "En modo vivo manda el report; gana el último válido; sin report, falla como hoy.",
-      "status": "partial",
+      "status": "done",
       "depends_on": [],
       "pr": 62,
       "branch": "feat/ronda3-hallazgos",
       "owner": "sonnet",
       "reviewer": "fable",
-      "note": "Fusionado (#62). Falta integrar en el pool (T12)."
+      "note": "Fusionado (#62) e integrado en el pool con T12 (#67). Auditoría de agy del 2026-11-17 (auditoria-parciales/informe-agy.md): hecha, con test que la fija."
     },
     {
       "id": "T27",
@@ -444,13 +446,13 @@
       "why": "El gate lo calcula y lo guarda, pero nadie lo lee fuera de src/admission.",
       "where": "src/admission/resident.ts:67-68",
       "proposal": "propose → solo addSignal (triage humano); change → triageSignal.",
-      "status": "partial",
+      "status": "done",
       "depends_on": [],
       "pr": 62,
       "branch": "feat/ronda3-hallazgos",
       "owner": "sonnet",
       "reviewer": "fable",
-      "note": "Fusionado (#62). Falta integrar en el pool (T12)."
+      "note": "Fusionado (#62) e integrado en el pool con T12 (#67). Auditoría de agy del 2026-11-17 (auditoria-parciales/informe-agy.md): hecha, con test que la fija. Citas comprobadas por muestreo por Fable."
     },
     {
       "id": "T31",
@@ -476,13 +478,13 @@
       "why": "native lanza si se le pide confine, y el 06 decide los dos adaptadores en paralelo para texto no confiable (ADR-0007).",
       "where": "06:L193; src/live/native.ts:35-37",
       "proposal": "La salida de la fase 2 exige claude confinado; native sigue en paralelo solo para changes creados a mano.",
-      "status": "partial",
+      "status": "done",
       "depends_on": [],
       "pr": 62,
       "branch": "feat/ronda3-hallazgos",
       "owner": "sonnet",
       "reviewer": "fable",
-      "note": "Fusionado (#62). Falta integrar en el pool (T12)."
+      "note": "Fusionado (#62) e integrado en el pool con T12 (#67). Auditoría de agy del 2026-11-17 (auditoria-parciales/informe-agy.md): hecha, con test que la fija."
     },
     {
       "id": "T33",
@@ -492,13 +494,13 @@
       "why": "change.description entra literal bajo # Change y puede imitar secciones del prompt.",
       "where": "src/prompts.ts:57-60",
       "proposal": "Delimitador con nonce y aviso. No sustituye al sandbox.",
-      "status": "partial",
+      "status": "done",
       "depends_on": [],
       "pr": 62,
       "branch": "feat/ronda3-hallazgos",
       "owner": "sonnet",
       "reviewer": "fable",
-      "note": "Fusionado (#62). Falta integrar en el pool (T12)."
+      "note": "Fusionado (#62) e integrado en el pool con T12 (#67). Auditoría de agy del 2026-11-17 (auditoria-parciales/informe-agy.md): hecha, con test que la fija."
     },
     {
       "id": "T34",
@@ -508,13 +510,13 @@
       "why": "El token va dentro de --mcp-config y se ve en la lista de procesos. Que dos --allowedTools y dos --mcp-config se fusionen es solo empírico.",
       "where": "src/live/claude.ts:13-17; src/sandbox/confine.ts:64",
       "proposal": "Pasar la config por archivo y añadir un test que fije el comportamiento.",
-      "status": "partial",
+      "status": "done",
       "depends_on": [],
       "pr": 62,
       "branch": "feat/ronda3-hallazgos",
       "owner": "sonnet",
       "reviewer": "fable",
-      "note": "Fusionado (#62). Falta integrar en el pool (T12)."
+      "note": "Fusionado (#62) e integrado en el pool con T12 (#67). Auditoría de agy del 2026-11-17 (auditoria-parciales/informe-agy.md): hecha, con test que la fija. Citas comprobadas por muestreo por Fable."
     },
     {
       "id": "T35",
@@ -607,10 +609,15 @@
     {
       "id": "T42",
       "title": "Test inestable tests/agent.test.ts:103-108 (timeoutMs: 40)",
-      "status": "pending",
+      "status": "in_progress",
       "depends_on": [],
-      "note": "Falló una vez en la suite completa («Unexpected extra model call»); pasa a solas. PR #75 abierto (Codex); revisión independiente de agy en curso (auditoria-parciales/BRIEF-agy.md).",
-      "pr": 75
+      "note": "Falló una vez en la suite completa («Unexpected extra model call»); pasa a solas. PR #75 abierto (Codex); revisión independiente de agy: listo para fusionar, sin hallazgos (auditoria-parciales/informe-agy.md, parte B). Falta que el dueño fusione.",
+      "pr": 75,
+      "owner": "codex",
+      "reviewer": "agy",
+      "followups": [
+        "T45"
+      ]
     },
     {
       "id": "T43",
@@ -638,6 +645,16 @@
       "owner": "sonnet",
       "reviewer": "fable",
       "branch": "fix/t44-statedir-raiz"
+    },
+    {
+      "id": "T45",
+      "title": "Sanear los otros tests que dependen del tiempo",
+      "severity": "baja",
+      "source": "t42/impl-codex.md (inventario de 18 tests) y auditoria-parciales/informe-agy.md parte B",
+      "status": "pending",
+      "depends_on": [],
+      "why": "Codex inventarió 18 tests con plazos o esperas cortas del mismo tipo que el de T42; pueden fallar según la carga de la máquina.",
+      "note": "Sin analizar todavía: primero comprobar el inventario y cuáles fallan de verdad."
     }
   ]
 }
