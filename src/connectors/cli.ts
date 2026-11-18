@@ -2,7 +2,7 @@ import { existsSync, mkdirSync } from 'node:fs';
 import { resolve } from 'node:path';
 import { parseArgs } from 'node:util';
 import { AdmissionDb, hasAdmission } from '../admission/db.ts';
-import { ThreadLinks } from '../admission/links.ts';
+import { ThreadLinks, parseThread } from '../admission/links.ts';
 import type { CrashPoint } from '../admission/effects.ts';
 import { Store, StoreError, type Change } from '../store.ts';
 import { createGhGateway, repoSlugFromRemote, runCommand, validateBranch, validateRepo, type CommandRunner } from './github.ts';
@@ -139,7 +139,7 @@ export async function connectorsMain(cmd: 'jira' | 'pr', argv: string[], deps: C
       log(`DRY-RUN · ${JSON.stringify(['git', 'push', '-u', 'origin', change.branch])}`);
       log(`DRY-RUN · ${JSON.stringify(['gh', 'pr', 'view', change.branch, '--repo', repo, '--json', 'number,url,headRefName,baseRefName,state'])}`);
       log(`DRY-RUN · si no existe: ${JSON.stringify(['gh', 'pr', 'create', '--repo', repo, '--head', change.branch, '--base', base, '--title', change.title, '--body-file', '<archivo temporal>', ...(values.draft ? ['--draft'] : [])])}\n${body}`);
-      if (linked?.source) log(`DRY-RUN · comentario en ${linked.source.key}: enlace al PR resultante\n${ticketComment('pr_opened', change, linked, 'PR: <URL resultante>')}`);
+      if (linked?.source?.system === 'jira') log(`DRY-RUN · comentario en ${linked.source.key}: enlace al PR resultante\n${ticketComment('pr_opened', change, linked, 'PR: <URL resultante>')}`);
       if (values.validate) log(`DRY-RUN · encolaría validadores: ${VALIDATOR_KINDS.join(', ')}`);
       return 0;
     }
@@ -151,7 +151,8 @@ export async function connectorsMain(cmd: 'jira' | 'pr', argv: string[], deps: C
     getLinks(true)!.setPullRequest(change.id, pr);
     if (hasAdmission(getStore())) {
       const adm = new AdmissionDb(getStore()), threads = new ThreadLinks(adm);
-      if (threads.threadsOf(change.id).length) adm.tx(() => {
+      const first = threads.threadsOf(change.id)[0];
+      if (first && parseThread(first).repo.toLowerCase() === pr.repo.toLowerCase()) adm.tx(() => {
         const thread = `github:${pr.repo}#${pr.number}`;
         adm.db.query('INSERT OR IGNORE INTO adm_threads(id, source, first_seen) VALUES (?,?,?)').run(thread, `github:${pr.repo}`, adm.iso());
         threads.link(thread, change.id);
