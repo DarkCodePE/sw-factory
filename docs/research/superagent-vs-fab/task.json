@@ -135,8 +135,10 @@
       "title": "Riesgo fase 0: ruta del worktree truncada a 8 caracteres",
       "why": "Dos changes con el mismo prefijo colisionan. Hoy verifyWorktree falla en vez de reutilizar el equivocado, pero el change queda bloqueado.",
       "where": "src/worktrees.ts — usar el id completo (o más caracteres) solo para worktrees nuevos, sin romper los existentes.",
-      "status": "pending",
-      "depends_on": []
+      "status": "in_progress",
+      "depends_on": [],
+      "owner": "codex",
+      "note": "2026-11-17: en análisis (fase 1) por Codex, solo lectura; brief en t9/BRIEF-T9-codex.md. No se implementa hasta que el dueño acepte el análisis."
     },
     {
       "id": "T10",
@@ -607,7 +609,8 @@
       "title": "Test inestable tests/agent.test.ts:103-108 (timeoutMs: 40)",
       "status": "pending",
       "depends_on": [],
-      "note": "Falló una vez en la suite completa («Unexpected extra model call»); pasa a solas."
+      "note": "Falló una vez en la suite completa («Unexpected extra model call»); pasa a solas. PR #75 abierto (Codex); revisión independiente de agy en curso (auditoria-parciales/BRIEF-agy.md).",
+      "pr": 75
     },
     {
       "id": "T43",
@@ -624,14 +627,17 @@
       "title": "hostDir rechaza cualquier symlink en la ruta de stateDir: los turnos vivos fallan si el estado vive bajo un enlace legítimo",
       "severity": "media",
       "source": "t41/verif-fable.md N1 (y N2)",
-      "status": "pending",
+      "status": "in_progress",
       "depends_on": [
         "T41"
       ],
       "where": "src/sandbox/confine.ts:33-39 y src/pool.ts:299-300 (en 57d4b6b)",
       "why": "Con HOME enlazado o FABRICA_HOME vía enlace, todo turno vivo falla con «la ruta contiene un symlink». Falla cerrado; es disponibilidad, no seguridad. Antes de 57d4b6b funcionaba.",
       "fix_idea": "Resolver stateDir una vez como raíz de confianza; rechazarlo si su ruta escrita o su ruta real caen en un montaje escribible; exigir «sin symlinks» solo de la raíz hacia abajo. De paso N2: comprobar antes del mkdir. Toca la pieza que cierra H1 y H7: necesita verificación completa con /verificar-cambio.",
-      "note": "Mientras tanto, el afectado apunta FABRICA_HOME a la ruta real. Decisión D7."
+      "note": "Mientras tanto, el afectado apunta FABRICA_HOME a la ruta real. Decisión D7.",
+      "owner": "sonnet",
+      "reviewer": "fable",
+      "branch": "fix/t44-statedir-raiz"
     }
   ]
 }
