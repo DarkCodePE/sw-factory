@@ -641,7 +641,7 @@
       "where": "src/sandbox/confine.ts:33-39 y src/pool.ts:299-300 (en 57d4b6b)",
       "why": "Con HOME enlazado o FABRICA_HOME vía enlace, todo turno vivo falla con «la ruta contiene un symlink». Falla cerrado; es disponibilidad, no seguridad. Antes de 57d4b6b funcionaba.",
       "fix_idea": "Resolver stateDir una vez como raíz de confianza; rechazarlo si su ruta escrita o su ruta real caen en un montaje escribible; exigir «sin symlinks» solo de la raíz hacia abajo. De paso N2: comprobar antes del mkdir. Toca la pieza que cierra H1 y H7: necesita verificación completa con /verificar-cambio.",
-      "note": "Mientras tanto, el afectado apunta FABRICA_HOME a la ruta real. Decisión D7.",
+      "note": "Implementada por Sonnet en fix/t44-statedir-raiz (ad4330e, 4 commits sobre aa2142b): hostDir(dir, cwd, root) con stateDir como raíz de confianza; N1 y N2 cerrados. Verificación de Fable en dos pasadas (t44/verif-fable.md): la primera halló V1-V3, la segunda da «listo para PR». Suite 1422/2/0. Sin push: falta que el dueño abra y fusione el PR. Quien verificó escribió también los briefs. Mientras tanto, el afectado apunta FABRICA_HOME a la ruta real. Decisión D7.",
       "owner": "sonnet",
       "reviewer": "fable",
       "branch": "fix/t44-statedir-raiz"
