@@ -199,10 +199,12 @@ test('H5: el PR de otro repo no se une al change de canal', async () => {
   expect(f.adm.db.query('SELECT id FROM adm_threads').all()).toEqual([{ id: f.origin }]);
 });
 
-test('H5: el repo del primer hilo se compara sin distinguir mayúsculas', async () => {
+test('N1: el PR conserva la grafía del primer hilo aunque --repo use mayúsculas', async () => {
   const f = channelFixture();
   expect(await connectorsMain('pr', ['open', f.change.id, '--repo', 'Owner/Project'], f.deps)).toBe(0);
-  expect(f.threads.changeOf('github:Owner/Project#3')).toBe(f.change.id);
+  expect(f.threads.changeOf('github:owner/project#3')).toBe(f.change.id);
+  expect(f.threads.changeOf('github:Owner/Project#3')).toBeUndefined();
+  expect(f.adm.db.query('SELECT source FROM adm_threads WHERE id=?').get('github:owner/project#3')).toEqual({ source: 'github:owner/project' });
 });
 
 test('H9: dry-run de origen GitHub no anuncia comentario Jira ni escribe', async () => {

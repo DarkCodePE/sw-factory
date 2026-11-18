@@ -152,9 +152,10 @@ export async function connectorsMain(cmd: 'jira' | 'pr', argv: string[], deps: C
     if (hasAdmission(getStore())) {
       const adm = new AdmissionDb(getStore()), threads = new ThreadLinks(adm);
       const first = threads.threadsOf(change.id)[0];
-      if (first && parseThread(first).repo.toLowerCase() === pr.repo.toLowerCase()) adm.tx(() => {
-        const thread = `github:${pr.repo}#${pr.number}`;
-        adm.db.query('INSERT OR IGNORE INTO adm_threads(id, source, first_seen) VALUES (?,?,?)').run(thread, `github:${pr.repo}`, adm.iso());
+      const originRepo = first ? parseThread(first).repo : undefined;
+      if (originRepo && originRepo.toLowerCase() === pr.repo.toLowerCase()) adm.tx(() => {
+        const thread = `github:${originRepo}#${pr.number}`;
+        adm.db.query('INSERT OR IGNORE INTO adm_threads(id, source, first_seen) VALUES (?,?,?)').run(thread, `github:${originRepo}`, adm.iso());
         threads.link(thread, change.id);
       });
     }
