@@ -1,10 +1,10 @@
 // Live backend over Claude Code CLI: one `claude -p` per turn, resumable by session id.
 // Design: techdocs/docs/investigacion/inspiracion/06-integracion-superagent-fab.md §5.2.
 import { randomUUID } from 'node:crypto';
-import { mkdirSync, rmSync, writeFileSync } from 'node:fs';
-import { tmpdir } from 'node:os';
+import { rmSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { getAgent, runAgent, type AgentAdapter } from '../agents.ts';
+import { hostDir } from '../sandbox/confine.ts';
 import { createSdkMcpServer } from '../sdk/mcp-server.ts';
 import { REPORT_SCHEMA, REPORT_TOOL, SessionNotFoundError, type LiveBackend, type LiveReport, type LiveTurn } from './contract.ts';
 
@@ -21,12 +21,6 @@ export function liveClaudeArgv(base: string[], turn: { sessionId?: string }, ses
   const argv = [...base], tool = `mcp__${SERVER}__${REPORT_TOOL}`, at = argv.indexOf('--allowedTools');
   if (at >= 0) argv[at + 1] = `${argv[at + 1]},${tool}`; else argv.push('--allowedTools', tool);
   return [...argv, turn.sessionId ? '--resume' : '--session-id', sessionId, '--strict-mcp-config', '--mcp-config', mcpConfigPath];
-}
-
-/** Where the config file can live: inside the git dir, which `--confine` binds (the sandbox's /tmp is a tmpfs) and `git status` ignores. */
-function configDir(cwd: string): string {
-  const r = Bun.spawnSync(['git', '-C', cwd, 'rev-parse', '--absolute-git-dir']);
-  return r.exitCode === 0 ? join(r.stdout.toString().trim(), 'fab-live') : join(tmpdir(), 'fab-live');
 }
 
 /** Returns the error text for an invalid report, or the parsed report. Schema shape is checked by the MCP server. */
@@ -55,8 +49,8 @@ export const claudeLive: LiveBackend = {
     let configPath: string | undefined;
     try {
       const mcp = await server.start();
-      const dir = configDir(turn.cwd);
-      mkdirSync(dir, { recursive: true, mode: 0o700 });
+      if (!turn.mcpConfigDir) throw new Error('el turno vivo necesita mcpConfigDir, fuera de los montajes escribibles del sandbox'); // T41
+      const dir = hostDir(turn.mcpConfigDir, turn.cwd);
       configPath = join(dir, `mcp-${randomUUID()}.json`);
       writeFileSync(configPath, JSON.stringify({ mcpServers: { [SERVER]: mcp } }), { mode: 0o600 });
       const path = configPath, base = getAgent('claude');
@@ -64,7 +58,7 @@ export const claudeLive: LiveBackend = {
       let run;
       try {
         run = await runAgent(adapter, turn.prompt, turn.cwd, turn.timeoutMs, {
-          confine: turn.confine, claudeProjects: turn.claudeProjects, capturePath: turn.capturePath, signal: turn.signal, onSpawn: turn.onSpawn,
+          confine: turn.confine, claudeProjects: turn.claudeProjects, mcpConfig: path, capturePath: turn.capturePath, signal: turn.signal, onSpawn: turn.onSpawn,
         });
       } catch (e) {
         if (turn.sessionId && NOT_FOUND.test((e as Error).message)) throw new SessionNotFoundError(sessionId, (e as Error).message);

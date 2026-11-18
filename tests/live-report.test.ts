@@ -79,7 +79,7 @@ test('done y blocked solo se marcan aplicados: la activity la cierra el pool', (
 test('el backend claude persiste cada report vía turn.onReport antes de contestar al agente', async () => {
   const { mkdtempSync, writeFileSync, chmodSync } = await import('node:fs');
   const { tmpdir } = await import('node:os'), { join } = await import('node:path');
-  const dir = mkdtempSync(join(tmpdir(), 'live-rep-'));
+  const dir = mkdtempSync(join(tmpdir(), 'live-rep-')); Bun.spawnSync(['git', 'init', '-q', dir]);
   writeFileSync(join(dir, 'claude'), `#!/bin/sh
 for a in "$@"; do [ "$p" = 1 ] && cfgf=$a; p=0; [ "$a" = --mcp-config ] && p=1; done
 cfg=$(cat "$cfgf")
@@ -91,7 +91,7 @@ echo '{"type":"result","result":"ok","session_id":"x"}'`);
   const saved = process.env.PATH; process.env.PATH = `${dir}:${saved}`;
   try {
     const { adm, claim } = claimed(), a = claim();
-    const r = await claudeLive.run({ prompt: 'x', cwd: dir, attemptId: 'att-9', onReport: new ReportStore(adm).recorder(a.id, 'att-9') });
+    const r = await claudeLive.run({ prompt: 'x', cwd: dir, mcpConfigDir: mkdtempSync(join(tmpdir(), 'live-rep-mcp-')) + '/mcp', attemptId: 'att-9', onReport: new ReportStore(adm).recorder(a.id, 'att-9') });
     expect(r.reports.length).toBe(1);
     expect(new ReportStore(adm).pending(a.id)).toMatchObject({ attemptId: 'att-9', state: 'awaiting' });
   } finally { process.env.PATH = saved; }

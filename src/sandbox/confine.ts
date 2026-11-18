@@ -2,7 +2,7 @@
 // general write sandbox: no host root, home, factory code or state is mounted.
 import { existsSync, mkdirSync, mkdtempSync, realpathSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
-import { join, resolve } from 'node:path';
+import { dirname, join, resolve } from 'node:path';
 
 export function assertConfinement(agent: string): void {
   if (!['claude', 'codex', 'fake', 'simulated'].includes(agent)) throw new Error(`--confine: adaptador ${agent} no soportado`);
@@ -12,7 +12,33 @@ export function assertConfinement(agent: string): void {
   if (p.exitCode !== 0) throw new Error(`--confine: bubblewrap no funciona: ${p.stderr.toString().trim()}`);
 }
 
-export function confineAgent(name: string, argv: string[], cwd: string, extra: Record<string, string> = {}, claudeProjects?: string) {
+const MCP_CONFIG_IN_SANDBOX = '/opt/fab-mcp/mcp.json';
+
+/** What the sandbox mounts writable: the worktree plus its Git metadata when that lives outside it (linked worktrees; no source checkout or state dir). */
+function writableMounts(worktree: string): string[] {
+  const writable = [worktree];
+  for (const flag of ['--absolute-git-dir', '--git-common-dir']) {
+    const p = Bun.spawnSync(['git', '-C', worktree, 'rev-parse', flag]);
+    if (p.exitCode !== 0) throw new Error('--confine: no se pudo resolver .git');
+    const path = realpathSync(resolve(worktree, p.stdout.toString().trim()));
+    if (!path.startsWith(worktree + '/')) writable.push(path);
+  }
+  return writable;
+}
+
+/**
+ * Creates a host-owned dir (it will hold the turn token or be mounted) and fails closed unless no component of its path is a symlink
+ * and it lies outside every writable mount. Else an agent could swap the dir (or an ancestor) for a symlink and make the host write/mount anywhere (T40, T41).
+ */
+export function hostDir(dir: string, cwd: string): string {
+  mkdirSync(dir, { recursive: true, mode: 0o700 });
+  const real = realpathSync(dir);
+  if (real !== resolve(dir)) throw new Error(`${dir}: la ruta contiene un symlink`);
+  if (writableMounts(realpathSync(cwd)).some(w => real === w || real.startsWith(w + '/'))) throw new Error(`${dir} cae dentro de un montaje escribible del sandbox`);
+  return real;
+}
+
+export function confineAgent(name: string, argv: string[], cwd: string, extra: Record<string, string> = {}, claudeProjects?: string, mcpConfig?: string) {
   assertConfinement(name);
   const scratch = mkdtempSync(join(tmpdir(), 'fab-confine-'));
   try {
@@ -24,16 +50,8 @@ export function confineAgent(name: string, argv: string[], cwd: string, extra: R
     for (const path of ['/etc/resolv.conf', '/etc/hosts', '/etc/nsswitch.conf', '/etc/ssl/certs', '/etc/ca-certificates', '/etc/passwd', '/etc/group'])
       if (existsSync(path)) args.push('--ro-bind', path, path);
     const worktree = realpathSync(cwd);
-    args.push('--bind', worktree, worktree);
-    const writable = [worktree];
-    // Linked worktrees point outside cwd. Only their Git metadata is needed;
-    // neither the source checkout nor the sibling state directory is exposed.
-    for (const flag of ['--absolute-git-dir', '--git-common-dir']) {
-      const p = Bun.spawnSync(['git', '-C', worktree, 'rev-parse', flag]);
-      if (p.exitCode !== 0) throw new Error('--confine: no se pudo resolver .git');
-      const path = realpathSync(resolve(worktree, p.stdout.toString().trim()));
-      if (!path.startsWith(worktree + '/')) { args.push('--bind', path, path); writable.push(path); }
-    }
+    const writable = writableMounts(worktree);
+    for (const path of writable) args.push('--bind', path, path);
     const binary = Bun.which(argv[0]!, { PATH: process.env.PATH });
     if (!binary) throw new Error(`--confine: ejecutable ausente: ${argv[0]}`);
     const command = [...argv];
@@ -63,11 +81,14 @@ export function confineAgent(name: string, argv: string[], cwd: string, extra: R
       if (existsSync(credentials)) args.push('--ro-bind', credentials, '/home/agent/.claude/.credentials.json');
       // Live turns resume by session id, so the transcript must outlive this ephemeral HOME. Only this per-worktree dir persists.
       if (claudeProjects) {
-        // Fail closed: if it lay under a path the agent can write (worktree, git dirs), it could swap it for a symlink and make the host mount any path.
-        mkdirSync(claudeProjects, { recursive: true, mode: 0o700 });
-        const real = realpathSync(claudeProjects);
-        if (writable.some(w => real === w || real.startsWith(w + '/'))) throw new Error('claude-projects cae dentro de un montaje escribible del sandbox');
-        args.push('--bind', real, '/home/agent/.claude/projects');
+        args.push('--bind', hostDir(claudeProjects, worktree), '/home/agent/.claude/projects');
+      }
+      // The per-turn MCP config carries the turn token: read-only at a fixed path, and fail closed for the same reason as above (T41).
+      if (mcpConfig) {
+        if (!command.includes(mcpConfig)) throw new Error('la ruta de la config MCP no está en el argv');
+        hostDir(dirname(mcpConfig), worktree);
+        args.push('--ro-bind', mcpConfig, MCP_CONFIG_IN_SANDBOX);
+        for (let i = 0; i < command.length; i++) if (command[i] === mcpConfig) command[i] = MCP_CONFIG_IN_SANDBOX;
       }
       // No user/project hooks, plugins, MCP servers or host config.
       command.push('--setting-sources', '');
