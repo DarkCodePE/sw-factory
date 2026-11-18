@@ -44,12 +44,14 @@ test('G e idempotencia: repetir revocación o volver a etiquetar no readmite ni 
   expect(JSON.stringify(buildReport(t.adm).decisions)).toContain('thread-revoked');
 });
 
-test('D: un change terminal no se cancela ni marca revocado al retirar la etiqueta', async () => {
+for (const status of ['completed', 'canceled', 'declined'] as const) test(`N2: Mandate conserva el change ${status} al retirar la etiqueta`, async () => {
   const c = await admitted();
-  t.store.closeChange(c.id, 'canceled');
+  // Sembrar el estado final aísla la guarda de Mandate de las transiciones que lo producen.
+  t.store.db.query('UPDATE changes SET status=? WHERE id=?').run(status, c.id);
   update([]); await t.cycle();
+  expect(t.store.getChange(c.id).status).toBe(status);
   expect(mandate().revoked_at).toBeNull();
-  expect(t.store.db.query("SELECT COUNT(*) n FROM events WHERE change_id=? AND message='change canceled'").get(c.id)).toEqual({ n: 1 });
+  expect(t.store.db.query("SELECT COUNT(*) n FROM events WHERE change_id=? AND message='change canceled'").get(c.id)).toEqual({ n: 0 });
 });
 
 test('observe registra would_revoke en stopsLost sin cambiar el change ni la autorización', async () => {
