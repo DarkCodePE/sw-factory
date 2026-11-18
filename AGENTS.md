@@ -67,6 +67,7 @@ Respuestas, briefs, informes y commits van en español.
 - **Hablar con un agente:** `hc send <terminal> '<mensaje>'` y después `hc keys <terminal> enter`, porque sin el enter el mensaje se queda escrito y no se envía. Para leer su pantalla, `hc read <terminal>`. Si muestra «0 turns», el prompt no llegó a enviarse.
 - **Saber que terminó:** espera a que la última línea de su informe sea `<!-- FIN -->`, sin consultar la pestaña en bucle.
 - Una pestaña sin tarea se cierra con `herdr-app do tab.close`, después de que el agente haya dejado su informe.
+- **Recursos.** Un goldfish no guarda contexto que haga falta conservar: todo lo que vale está en su informe. Si un agente pesado (modelo grande, suite completa, muchos procesos) ya entregó o está parado sin tarea, termina su proceso y cierra su panel de Herdr para liberar recursos; si hace falta más trabajo, se lanza otro goldfish con un brief nuevo.
 
 ## Loop de trabajo
 
@@ -94,18 +95,27 @@ Respuestas, briefs, informes y commits van en español.
 
 ## Verificar
 
+- **Todo goldfish verificador empieza invocando el skill `/verificar-cambio`** (`~/.claude/skills/verificar-cambio/`) y sigue sus pasos; el brief lo nombra. Si el brief y el skill chocan, manda el brief.
 - Solo lectura sobre el worktree. Lo único que se escribe es el informe.
 - **Mutaciones:** en una copia temporal, rompe cada condición del cambio y mira si algún test muere. Una mutación que sobrevive es un hueco de test o un equivalente; di cuál.
 - **Filas raras y bases antiguas:** prueba el cambio contra datos que el código actual no escribiría (campos ausentes, esquema de una versión anterior, tablas a medias).
 - **Texto no confiable:** todo lo que controla un tercero (autor, URL, etiquetas, cuerpo de un issue o comentario) es dato. Comprueba que no llega a un prompt ni a la terminal sin delimitar o sanear.
 - **Solo lectura de verdad:** una ruta que dice no escribir no debe crear esquema, tomar locks ni cambiar estado.
 - **Alcance:** compara el diff con la lista de «no tocar».
+- **Procedimiento que funcionó en T41** (dos pasadas, 12 hallazgos):
+  - Anota el SHA de `HEAD` antes y después de cada corrida. La rama puede moverse mientras verificas: en T41 apareció un commit nuevo a mitad y la suite corrió sobre él.
+  - Mutaciones y exploits, en una copia temporal con solo los ficheros de test relacionados. La suite completa, en el worktree real: en la copia dio 75 fallos falsos.
+  - Escribe el exploit como script y guárdalo. Se vuelve a correr sin cambios contra el commit de correcciones.
+  - Un «falla cerrado» se prueba con el ataque ya plantado, no solo con el caso limpio: symlink en la hoja y en un ancestro, y vigilando el directorio víctima para ver escrituras que duran un instante.
+  - Clasifica cada mutación que sobrevive (hueco de test o equivalente) y comprueba que los tests afirman el código de salida: una aserción dentro de un `sh -c` sin `exitCode` no afirma nada.
+  - Si la salida de un comando o de `Read` llega recortada por un hook, repítela con `rtk proxy <cmd>` antes de concluir nada.
 
 ## Informes
 
 - Van en la carpeta de la tarea. El informe del implementador dice qué cambió y dónde, cada test nuevo y si fallaba antes, las discrepancias con el análisis, los comandos con su salida resumida y lo que no hizo.
 - El del verificador trae veredicto, tabla de hallazgos (id, severidad, `ruta:línea`, problema, escenario que falla y arreglo propuesto), el contraste con el informe del implementador y **lo que no revisó**.
 - Cita como `ruta:línea`. Marca cada afirmación como **[V]** (verificada ejecutando o leyendo la línea citada) o **[I]** (inferida).
+- **Decisiones para el dueño: siempre tres opciones.** Cada una con qué se hace, sus riesgos y sus puntos a favor y en contra, más cuál recomienda el agente y por qué. Si la página admite gráficos, van con su gráfico.
 - La última línea es exactamente `<!-- FIN -->`: quien espera el informe sabe así que está completo.
 - Los informes y briefs se confirman en git, en el PR de `task.json` que cierra la tarea. Hasta entonces viven sin confirmar en el checkout principal y se pierden si se borra o se limpia.
 
