@@ -12,6 +12,7 @@ import { configPage } from './web-config.ts';
 import { INBOX_JS, changesView, inboxView, parseQuery, type Ui } from './web-changes.ts';
 import { metricsPage, METRICS_STYLE } from './web-metrics.ts';
 import { WebAuth } from './web-auth.ts';
+import { workstreamsBody, wizardPage } from './web-ws.ts';
 import { actionForms, actionNotice, webAction } from './web-actions.ts';
 import { WEB_ACTION_STYLE } from './web-actions-style.ts';
 
@@ -66,7 +67,8 @@ function page(store: Store, stateDir: string, url: URL, csrf?: string): { title:
     const items = inbox.map(a => ({ a, title: store.getChange(a.changeId).title, slug: slugs.get(a.workstreamId) ?? '' }));
     return { title: 'Bandeja', body: `<p class="intro">Lo que necesita tu atención en la fábrica.</p><div class="counts">${counts.size ? [...counts].map(([s,n]) => `<span>${badge(s)} <strong>${n}</strong></span>`).join('') : '<span>0 pendientes de atención</span>'}</div>${inboxView(ui, items, url.searchParams.get('q') ?? '')}<p>Para decidir, abre el detalle de la activity; la escritura requiere fab web --write y el enlace de acceso de la terminal.</p>` };
   }
-  if (url.pathname === '/workstreams') return { title: 'Workstreams', body: `<p class="intro">Frentes de trabajo y su objetivo.</p><ul class="workstreams">${store.listWorkstreams().map(w => `<li><h2><a href="/changes?ws=${enc(w.slug)}">${escape(w.slug)}</a> ${badge(w.state)}</h2><p>${escape(w.goal)}</p><p class="muted">Agente: ${escape(w.agent)} · ${escape(w.repo)}</p></li>`).join('')}</ul>${!store.listWorkstreams().length ? empty('No hay workstreams. Crea uno desde fab ws create.') : ''}` };
+  if (url.pathname === '/workstreams') return { title: 'Workstreams', body: workstreamsBody(store, ui, csrf) };
+  if (url.pathname === '/workstreams/nuevo') return wizardPage(store, stateDir, url, csrf);
   if (url.pathname === '/changes') {
     const f = parseQuery(url.searchParams);
     const all = store.changeIndex(ws);

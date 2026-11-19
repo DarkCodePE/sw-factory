@@ -8,6 +8,7 @@ import { AdmissionDb, hasAdmission } from './admission/db.ts';
 import { answerQuestion } from './admission/answers.ts';
 import { resetSessionCap } from './admission/sessions.ts';
 import type { WebAuth } from './web-auth.ts';
+import { workstreamMutation } from './web-ws.ts';
 
 const escape = (s: string) => redact(s).replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[c]!);
 const messages: Record<string, string> = {
@@ -75,6 +76,16 @@ export async function webAction(req: Request, stateDir: string, port: number, au
   try {
     const form = await readForm(req);
     if (!auth.validCsrf(req, form.get('csrf') ?? '')) return new Response('CSRF rechazado.', { status: 403 });
+    const path = new URL(req.url).pathname;
+    if (path.startsWith('/workstreams/')) {
+      store = new Store(join(stateDir, 'fabrica.db'));
+      const writer = store;
+      const previous = process.env.FAB_ACTOR; process.env.FAB_ACTOR = 'web';
+      try { const done = workstreamMutation(writer, stateDir, path, form); if (!done) return new Response('Acción no encontrada.', { status: 404 }); destination = done.destination; result = done.result; }
+      finally { if (previous === undefined) delete process.env.FAB_ACTOR; else process.env.FAB_ACTOR = previous; }
+      auth.rememberNotice(req, destination, result);
+      return new Response(null, { status: 303, headers: { Location: destination } });
+    }
     const match = /^\/(activities|changes|questions)\/([^/]+)\/(review|retry|answer)$/.exec(new URL(req.url).pathname);
     if (!match || !['activities/review', 'changes/retry', 'questions/answer'].includes(`${match[1]}/${match[3]}`)) return new Response('Acción no encontrada.', { status: 404 });
     const id = decodeURIComponent(match[2]!);
