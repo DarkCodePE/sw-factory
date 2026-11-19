@@ -31,10 +31,10 @@ test('la tarea generada pasa parseSuite y copia repo, base y descripción del ch
 });
 
 test('un argv con espacios o comillas se reconstruye y vuelve al mismo argv', () => {
-  const id = change({ verify: [`bun test "tests/un fichero.test.ts" -t 'it''s'`] });
+  const id = change({ verify: [`bun test "tests/un fichero.test.ts" -t "it's"`] });
   const t = suiteTaskFromChange(store, id, spec);
   const { verifierArgv } = require('../src/agent/mission-evidence.ts');
-  expect(verifierArgv(t.verify)).toEqual(store.getWorkstream(store.getChange(id).workstreamId).verify[0]!);
+  expect(verifierArgv(t.verify)).toEqual(['bun', 'test', 'tests/un fichero.test.ts', '-t', "it's"]);
 });
 
 test('varios comandos de verificación, o ninguno, sin --verify: error que lo pide; con --verify se usa', () => {
@@ -42,6 +42,13 @@ test('varios comandos de verificación, o ninguno, sin --verify: error que lo pi
   expect(() => suiteTaskFromChange(store, change(), spec)).toThrow(/--verify/);
   expect(suiteTaskFromChange(store, change(), { ...spec, verify: 'bun test c' }).verify).toBe('bun test c');
   expect(() => suiteTaskFromChange(store, change(), { ...spec, verify: 'a && b' })).toThrow(/verify/);
+});
+
+test('un argv que no vuelve igual tras reconstruirlo (saltos de línea, fila rara) pide --verify', () => {
+  const id = change();
+  const ws = store.getChange(id).workstreamId;
+  store.db.query('UPDATE workstreams SET verify = ? WHERE id = ?').run(JSON.stringify([['bun', 'a\nb']]), ws);
+  expect(() => suiteTaskFromChange(store, id, spec)).toThrow(/--verify/);
 });
 
 test('change no completed o sin baseSha: error', () => {

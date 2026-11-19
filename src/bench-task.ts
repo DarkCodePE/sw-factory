@@ -22,7 +22,7 @@ export function suiteTaskFromChange(store: Store, changeId: string, i: TaskSpec)
   const ws = store.getWorkstream(change.workstreamId);
   let verify = i.verify;
   if (verify === undefined) {
-    const argv = ws.verify.length === 1 ? ws.verify[0]! : undefined;
+    const argv = ws.verify?.length === 1 ? ws.verify[0] : undefined;
     const rebuilt = argv?.map(quote).join(' ');
     // Solo se acepta la reconstrucción si vuelve exactamente al mismo argv.
     const same = (() => { try { return JSON.stringify(verifierArgv(rebuilt!)) === JSON.stringify(argv); } catch { return false; } })();
