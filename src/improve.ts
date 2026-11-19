@@ -1,4 +1,3 @@
-import { changeCost, activityMetadata } from './evidence.ts';
 // Experimentos de mejora de perfiles, fase 1: suite congelada con splits, corridas pareadas e informe.
 // Sin cualificación estadística, rollout ni rollback (fase 2). Idea: ext/esf/internal/harnessprofile/qualification.go@d901657 (MIT).
 import { assertConfinement } from './sandbox/confine.ts';
@@ -152,8 +151,11 @@ export function armWorkerReport(store: Store, stateDir: string, changeId: string
   const workerActs = acts.filter(a => a.kind === 'implementation' || a.kind === 'investigation');
   const act = workerActs.at(-1);
   if (!act) return null;
-  const evidence = activityMetadata(stateDir, act);
-  if (evidence && 'workerReport' in evidence) return typeof evidence.workerReport === 'string' ? evidence.workerReport : null;
+  const meta = join(runDirectory(stateDir, changeId), `${act.id}.json`);
+  if (existsSync(meta)) {
+    const evidence = JSON.parse(readFileSync(meta, 'utf8'));
+    if ('workerReport' in evidence) return typeof evidence.workerReport === 'string' ? evidence.workerReport : null;
+  }
   return act.result || null;
 }
 
@@ -162,7 +164,23 @@ export function armWorkerReport(store: Store, stateDir: string, changeId: string
  * Evidencia antigua sin reintentos conserva la lectura de `usage.costUsd`.
  */
 export function armCost(store: Store, stateDir: string, changeId: string): number | null {
-  return changeCost(store, stateDir, changeId);
+  const acts = store.listActivities({ changeId });
+  if (!acts.length) return null;
+  let total = 0;
+  for (const a of acts) {
+    const meta = join(runDirectory(stateDir, changeId), `${a.id}.json`);
+    if (!existsSync(meta)) return null;
+    const evidence = JSON.parse(readFileSync(meta, 'utf8'));
+    const costs = evidence.attemptCosts ?? (a.retryCount === 0 ? [evidence.usage?.costUsd] : null);
+    // A permanent failure increments retryCount without starting another attempt.
+    const attempts = Math.max(1, a.retryCount + (a.status === 'failed' ? 0 : 1));
+    if (!Array.isArray(costs) || costs.length < attempts) return null;
+    for (const cost of costs) {
+      if (typeof cost !== 'number' || !Number.isFinite(cost)) return null;
+      total += cost;
+    }
+  }
+  return total;
 }
 
 /** Devuelve cada ruta protegida al estado del commit base (la borra si es nueva). null si todo salió bien, o el primer error. */
