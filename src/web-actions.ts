@@ -16,8 +16,8 @@ const messages: Record<string, string> = {
   not_found: 'not_found: no se encontró el registro.', invalid_input: 'invalid_input: revisa los datos de la acción.',
   error: 'No se pudo registrar la acción. Revisa el estado antes de volver a intentarlo.',
 };
-export function actionNotice(url: URL): string {
-  const message = messages[url.searchParams.get('web_result') ?? ''];
+export function actionNotice(result?: string): string {
+  const message = messages[result ?? ''];
   return message ? `<p class="notice" role="status">${message}</p>` : '';
 }
 
@@ -107,7 +107,7 @@ export async function webAction(req: Request, stateDir: string, port: number, au
           const q = adm.db.query('SELECT activity_id FROM adm_questions WHERE id=?').get(id) as { activity_id: string } | null;
           if (!q) throw new StoreError('not_found', 'pregunta inexistente');
           destination = `/activities/${q.activity_id}`;
-          if (answerQuestion(writer, adm, { questionId: id, answer, by: 'web' }) !== 'answered') throw new StoreError('conflict', 'pregunta cerrada');
+          if (answerQuestion(writer, adm, { questionId: id, answer, by: 'web' }) !== 'answered') result = 'conflict';
         }
       });
     } finally { if (previous === undefined) delete process.env.FAB_ACTOR; else process.env.FAB_ACTOR = previous; }
@@ -116,5 +116,6 @@ export async function webAction(req: Request, stateDir: string, port: number, au
     if (error instanceof URIError) return new Response('Identificador inválido.', { status: 400 });
     result = error instanceof StoreError && messages[error.code] ? error.code : 'error';
   } finally { store?.close(); }
-  return new Response(null, { status: 303, headers: { Location: `${destination}?web_result=${result}` } });
+  auth.rememberNotice(req, destination, result);
+  return new Response(null, { status: 303, headers: { Location: destination } });
 }

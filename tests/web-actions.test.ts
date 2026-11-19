@@ -200,7 +200,7 @@ test('pregunta antigua no reencola activity cancelada ni deja una respuesta parc
   const r = await post('/questions/q1/answer', { answer: 'tardía' });
   expect(await html(r.headers.get('location')!)).toContain('conflict');
   expect(store.getActivity(activity).status).toBe('canceled');
-  expect(adm.db.query('SELECT answer FROM adm_questions').get()).toEqual({ answer: null });
+  expect(adm.db.query('SELECT status, answer FROM adm_questions').get()).toEqual({ status: 'canceled', answer: null });
 });
 test('FAB_ACTOR se restaura después de éxito y error', async () => {
   const previous = process.env.FAB_ACTOR;
@@ -218,4 +218,72 @@ test('los formularios conservan Origin en el navegador y el canje oculta el toke
   expect(exchange.headers.get('referrer-policy')).toBe('no-referrer');
   const page = await req(`/activities/${activity}`, { headers: { cookie } });
   expect(page.headers.get('referrer-policy')).toBe('same-origin');
+});
+
+test('H3: aviso solo tras POST de la sesión, una vez y sin marcador en la URL', async () => {
+  expect(await (await req('/?web_result=ok')).text()).not.toContain('Acción registrada.');
+  await login();
+  expect(await html('/?web_result=ok')).not.toContain('Acción registrada.');
+  const r = await post(review(), { decision: 'approve' });
+  expect(r.status).toBe(303);
+  const location = r.headers.get('location')!;
+  expect(location).toBe(`/activities/${activity}`);
+  expect(await (await req(location)).text()).not.toContain('Acción registrada.');
+  expect(await html('/')).not.toContain('Acción registrada.');
+  expect((await req(location, { method: 'HEAD', headers: { cookie } })).status).toBe(200);
+  expect(await html(location)).toContain('Acción registrada.');
+  expect(await html(location)).not.toContain('Acción registrada.');
+});
+test('H5 M13: Origin con sufijo ajeno no pasa una comprobación por prefijo', async () => {
+  await login();
+  for (const origin of [`http://127.0.0.1:${server.port}.evil.test`, `http://localhost:${server.port}.evil.test`]) {
+    expect((await post(review(), { decision: 'approve' }, { origin })).status).toBe(403);
+  }
+  expect(store.getActivity(activity).reviewStatus).toBe('awaiting');
+});
+test('H5 M19: decisión desconocida con comentario no se convierte en commented', async () => {
+  await login();
+  const n = store.countEvents(store.getChange(change).workstreamId, change);
+  expect((await post(review(), { decision: 'desconocida', comment: 'Comentario válido' })).status).toBe(400);
+  expect(store.getActivity(activity).reviewStatus).toBe('awaiting');
+  expect(store.countEvents(store.getChange(change).workstreamId, change)).toBe(n);
+});
+test('H5 M40: HEAD no canjea ni consume el token de acceso', async () => {
+  const head = await fetch(server.loginUrl!, { method: 'HEAD', redirect: 'manual' });
+  expect(head.status).toBe(405); expect(head.headers.get('set-cookie')).toBeNull();
+  await login();
+});
+test('H5 M42: respuestas de acciones conservan cabeceras de seguridad', async () => {
+  const responses: Response[] = [await post(review(), { decision: 'approve' })];
+  await login();
+  responses.push(await post(review(), { csrf: 'incorrecto', decision: 'approve' }));
+  responses.push(await post('/fuera-de-alcance'));
+  responses.push(await post(review(), {}, { 'content-type': 'application/json' }));
+  responses.push(await post(review(), { decision: 'approve' }));
+  expect(responses.map(r => r.status)).toEqual([401, 403, 404, 415, 303]);
+  for (const r of responses) {
+    expect(r.headers.get('content-security-policy')).toBe("default-src 'none'; script-src 'self'; style-src 'self'; connect-src 'self'; img-src 'none'; font-src 'none'; base-uri 'none'; form-action 'self'; frame-ancestors 'none'");
+    expect(r.headers.get('x-content-type-options')).toBe('nosniff');
+    expect(r.headers.get('cache-control')).toBe('no-store');
+    expect(r.headers.get('referrer-policy')).toBe('no-referrer');
+  }
+});
+test('H5 M48: web_result no puede reflejar HTML ni falsificar un aviso', async () => {
+  const injection = '<script>alert("aviso")</script>';
+  for (const authenticated of [false, true]) {
+    if (authenticated) await login();
+    const page = await (await req(`/?web_result=${encodeURIComponent(injection)}`, { headers: authenticated ? { cookie } : {} })).text();
+    expect(page).not.toContain(injection);
+    expect(page).not.toContain('role="status"');
+  }
+});
+test('H5 M51: PUT, DELETE y PATCH autenticados no ejecutan acciones', async () => {
+  await login();
+  const n = store.countEvents(store.getChange(change).workstreamId, change);
+  for (const method of ['PUT', 'DELETE', 'PATCH']) {
+    const r = await req(review(), { method, headers: { cookie, origin: `http://127.0.0.1:${server.port}`, 'content-type': 'application/x-www-form-urlencoded' }, body: new URLSearchParams({ csrf, decision: 'approve' }) });
+    expect(r.status).toBe(405);
+  }
+  expect(store.getActivity(activity).reviewStatus).toBe('awaiting');
+  expect(store.countEvents(store.getChange(change).workstreamId, change)).toBe(n);
 });
