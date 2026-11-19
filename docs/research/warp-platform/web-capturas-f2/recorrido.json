@@ -1,0 +1,54 @@
+{
+  "command": "bun run fab web --write --port 0",
+  "session": "fabf2",
+  "synthetic": true,
+  "actorSeed": "fixture",
+  "viewports": [
+    {
+      "width": 1440,
+      "height": 1000
+    },
+    {
+      "width": 390,
+      "height": 844,
+      "scrollWidth": 390
+    }
+  ],
+  "draftSurvivedBlurAndPoll": true,
+  "consoleErrors": [],
+  "pageErrors": [],
+  "results": {
+    "aprobar": {
+      "changeStatus": "pending",
+      "activityStatus": "completed",
+      "reviewStatus": "approved",
+      "activityCount": 2,
+      "webEvents": 1
+    },
+    "comentar": {
+      "changeStatus": "in_review",
+      "activityStatus": "completed",
+      "reviewStatus": "commented",
+      "activityCount": 2,
+      "webEvents": 1
+    },
+    "reintentar": {
+      "changeStatus": "pending",
+      "activityStatus": "failed",
+      "reviewStatus": null,
+      "activityCount": 2,
+      "webEvents": 1
+    },
+    "responder": {
+      "changeStatus": "pending",
+      "activityStatus": "pending",
+      "reviewStatus": null,
+      "activityCount": 1,
+      "webEvents": 1
+    }
+  },
+  "question": {
+    "status": "answered",
+    "answered_by": "web"
+  }
+}
