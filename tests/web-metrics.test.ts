@@ -100,7 +100,7 @@ test('validadores y reintentos automáticos no cuentan como humanos; fechas ause
   const c = seed(1, 2), a = store.listActivities({ changeId: c.id })[0]!;
   store.db.query('DELETE FROM events').run();
   for (const message of ['validator code_review completed: approved', 'investigation failed (retry 1/3): fallo', 'change created: change_review approved']) store.event(c.workstreamId, 'info', message, c.id, a.id);
-  const m = calculateMetrics(store, dir, { now });
+  const m = calculateMetrics(store, dir);
   expect(m.humans[0]?.total).toBe(0); expect(m.cycles[2]?.samples).toBe(0); expect(m.cycles[3]?.samples).toBe(0);
 });
 test('atribución histórica desconocida, multiintentos y change sin activities', () => {
