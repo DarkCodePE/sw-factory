@@ -5,7 +5,7 @@ import { DEFAULT_DIGEST, resolveProfile } from './profile.ts';
 import { Database } from 'bun:sqlite';
 import { randomUUID } from 'node:crypto';
 import { userInfo } from 'node:os';
-import { existsSync } from 'node:fs';
+import { closeSync, existsSync, fstatSync, openSync, readFileSync } from 'node:fs';
 import { dirname, resolve } from 'node:path';
 import { gitEvidence, writeManifest } from './manifest.ts';
 
@@ -272,6 +272,39 @@ export interface StoreOptions {
   clock?: () => Date;
 }
 
+/**
+ * SQLite readonly puede crear WAL/SHM al leer una base WAL ya cerrada.
+ * Sin WAL tomamos una copia estable en memoria; con WAL usamos SQLite readonly
+ * y exigimos el índice existente. No se reinterpreta ni se ignora un WAL vivo.
+ */
+function openReadonlyDatabase(path: string): Database {
+  if (existsSync(`${path}-wal`)) {
+    if (!existsSync(`${path}-shm`)) throw new Error('WAL sin índice compartido: requiere recuperación por un escritor');
+    return new Database(path, { readonly: true, strict: true });
+  }
+  const fd = openSync(path, 'r');
+  try {
+    const before = fstatSync(fd, { bigint: true });
+    if (!before.isFile()) throw new Error('La base no es un fichero regular');
+    const bytes = readFileSync(fd);
+    const after = fstatSync(fd, { bigint: true });
+    // Una escritura/checkpoint durante la copia exige otra apertura, sin reparar el estado.
+    if (before.size !== after.size || before.mtimeNs !== after.mtimeNs || before.ctimeNs !== after.ctimeNs) {
+      throw new Error('La base cambió durante la lectura; vuelve a intentarlo');
+    }
+    if (existsSync(`${path}-wal`)) {
+      if (!existsSync(`${path}-shm`)) throw new Error('WAL sin índice compartido');
+      return new Database(path, { readonly: true, strict: true });
+    }
+    // deserialize necesita formato rollback en la copia: no hay WAL que reproducir.
+    // Solo se cambian estos dos bytes de la copia, nunca los de la base original.
+    if (bytes.length >= 100 && bytes.subarray(0, 16).toString() === 'SQLite format 3\0') {
+      bytes[18] = 1; bytes[19] = 1;
+    }
+    return Database.deserialize(bytes, { readonly: true, strict: true });
+  } finally { closeSync(fd); }
+}
+
 export class Store {
   readonly db: Database;
   readonly stateDir: string | undefined;
@@ -283,11 +316,7 @@ export class Store {
     this.stateDir = path === ':memory:' ? undefined : dirname(resolve(path));
     this.clock = options?.clock ?? (() => new Date());
     this.dbPath = path;
-    // SQLite puede reconstruir -shm aun con SQLITE_OPEN_READONLY. No hacerlo desde una superficie de lectura.
-    if (options?.readonly && existsSync(`${path}-wal`) && !existsSync(`${path}-shm`)) {
-      throw new Error('WAL sin índice compartido: abre la fábrica con un escritor antes de usar solo lectura');
-    }
-    this.db = new Database(path, options?.readonly ? { readonly: true, strict: true } : { create: true, strict: true });
+    this.db = options?.readonly ? openReadonlyDatabase(path) : new Database(path, { create: true, strict: true });
     if (options?.readonly) return;
     this.db.exec('PRAGMA journal_mode = WAL; PRAGMA foreign_keys = ON; PRAGMA busy_timeout = 5000;');
     this.db.exec(SCHEMA);

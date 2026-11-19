@@ -14,3 +14,16 @@ test('readonly no reconstruye shm cuando un WAL quedó sin índice', () => {
     expect(readdirSync(dir).sort()).toEqual(before);
   } finally { rmSync(dir, { recursive: true, force: true }); }
 });
+
+test('readonly sobre una base WAL cerrada no crea auxiliares y conserva los datos', () => {
+  const dir = mkdtempSync('/tmp/fab-web-closed-');
+  try {
+    const path = join(dir, 'fabrica.db');
+    const writer = new Store(path);
+    writer.createWorkstream({ slug: 'demo', repo: '/repo', goal: 'g' }); writer.close();
+    const before = readdirSync(dir).sort();
+    const reader = new Store(path, { readonly: true });
+    expect(reader.listWorkstreams()[0]!.slug).toBe('demo'); reader.close();
+    expect(readdirSync(dir).sort()).toEqual(before);
+  } finally { rmSync(dir, { recursive: true, force: true }); }
+});
