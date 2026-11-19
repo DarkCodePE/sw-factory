@@ -1148,6 +1148,19 @@ export class Store {
     }).immediate());
   }
 
+  /** Cambia el título; el evento conserva el anterior. Título de 1 a 200 caracteres. */
+  renameChange(changeId: string, title: string): Change {
+    const next = title.trim();
+    if (!next || next.length > 200) throw new StoreError('invalid_input', 'el título debe tener entre 1 y 200 caracteres');
+    return this.withRetry(() => this.db.transaction(() => {
+      const c = this.getChange(changeId);
+      if (c.title === next) return c;
+      this.db.query('UPDATE changes SET title = ?, updated_at = ? WHERE id = ?').run(next, this.now(), changeId);
+      this.event(c.workstreamId, 'info', `título cambiado: "${c.title}" -> "${next}"`, changeId);
+      return this.getChange(changeId);
+    }).immediate());
+  }
+
   /** Human retry of the latest failed activity, preserving validator context and resetting its budget. */
   retryChange(changeId: string): Activity {
     return this.withRetry(() => {

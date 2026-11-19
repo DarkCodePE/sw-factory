@@ -2,6 +2,9 @@
 import { createHash } from 'node:crypto';
 import { join } from 'node:path';
 import { Store, StoreError } from './store.ts';
+import { linkTriagedSignal } from './admission/apply.ts';
+import { removeWorktree } from './worktrees.ts';
+import { SIGNAL_BODY_MAX, SIGNAL_TITLE_MAX } from './web-signals.ts';
 import { REVIEWABLE_KINDS, type ReviewDecision } from './enums.ts';
 import { redact } from './manifest.ts';
 import { AdmissionDb, hasAdmission } from './admission/db.ts';
@@ -36,8 +39,10 @@ export function actionForms(store: Store, url: URL, csrf?: string): string {
   if (match[1] === 'changes') {
     const c = store.getChange(id);
     const waiting = store.listActivities({ changeId: id }).some(a => a.status === 'waiting_reply');
-    if (!waiting && !['failed', 'blocked', 'quarantined', 'implemented'].includes(c.status)) return '';
-    return `<section aria-label="Decisiones">${form(`/changes/${id}/retry`, `<input type="hidden" name="revision" value="${retryRevision(store, id)}"><button>Reintentar change</button><p class="muted">Reencola la última activity fallida; si espera una respuesta, abandona esa espera.</p>`)}</section>`;
+    let body = form(`/changes/${id}/rename`, `<fieldset><legend>Renombrar change</legend><label for="rename-title">Título (máximo ${SIGNAL_TITLE_MAX} caracteres)</label><input id="rename-title" name="title" maxlength="${SIGNAL_TITLE_MAX}" value="${escape(c.title)}" required><button>Renombrar</button></fieldset>`);
+    if (waiting || ['failed', 'blocked', 'quarantined', 'implemented'].includes(c.status)) body += form(`/changes/${id}/retry`, `<input type="hidden" name="revision" value="${retryRevision(store, id)}"><button>Reintentar change</button><p class="muted">Reencola la última activity fallida; si espera una respuesta, abandona esa espera.</p>`);
+    if (!store.isTerminalChange(c.status)) body += form(`/changes/${id}/cancel`, `<fieldset><legend>Cancelar change</legend><label><input type="checkbox" name="confirm" value="yes" required> Confirmo: cancela el change y borra su worktree (igual que fab reject)</label><button>Cancelar change</button></fieldset>`);
+    return `<section aria-label="Decisiones">${body}</section>`;
   }
   const a = store.getActivity(id);
   let body = '';
@@ -71,15 +76,20 @@ export async function webAction(req: Request, stateDir: string, port: number, au
   if (!auth.sessionCsrf(req)) return new Response('Se necesita una sesión local.', { status: 401 });
   if (![ `http://127.0.0.1:${port}`, `http://localhost:${port}` ].includes(req.headers.get('origin') ?? '')) return new Response('Origin rechazado.', { status: 403 });
   let store: Store | undefined;
-  let destination = '/'; let result = 'ok';
+  let destination = '/'; let result = 'ok'; let repo: string | undefined;
   try {
     const form = await readForm(req);
     if (!auth.validCsrf(req, form.get('csrf') ?? '')) return new Response('CSRF rechazado.', { status: 403 });
-    const match = /^\/(activities|changes|questions)\/([^/]+)\/(review|retry|answer)$/.exec(new URL(req.url).pathname);
-    if (!match || !['activities/review', 'changes/retry', 'questions/answer'].includes(`${match[1]}/${match[3]}`)) return new Response('Acción no encontrada.', { status: 404 });
-    const id = decodeURIComponent(match[2]!);
-    if (!/^[\w-]+$/.test(id)) throw new InputError(400, 'Identificador inválido.');
+    const pathname = new URL(req.url).pathname;
+    const match = pathname === '/signals' ? ['', 'signals', '', 'create'] : /^\/(activities|changes|questions|signals)\/([^/]+)\/(review|retry|answer|triage|ignore|cancel|rename)$/.exec(pathname);
+    if (!match || !['activities/review', 'changes/retry', 'questions/answer', 'signals/create', 'signals/triage', 'signals/ignore', 'changes/cancel', 'changes/rename'].includes(`${match[1]}/${match[3]}`)) return new Response('Acción no encontrada.', { status: 404 });
+    const id = match[2] ? decodeURIComponent(match[2]) : '';
+    if (id && !/^[\w-]+$/.test(id)) throw new InputError(400, 'Identificador inválido.');
     const action = match[3]!;
+    const title = (form.get('title') ?? '').trim(), body = form.get('body') ?? '';
+    if (Buffer.byteLength(body) > SIGNAL_BODY_MAX) throw new InputError(413, 'El texto supera 8 KiB.');
+    if (['create', 'rename'].includes(action) && (!title || title.length > SIGNAL_TITLE_MAX)) throw new InputError(400, `El título debe tener entre 1 y ${SIGNAL_TITLE_MAX} caracteres.`);
+    if (action === 'cancel' && form.get('confirm') !== 'yes') throw new InputError(400, 'Confirma la cancelación.');
     const comment = form.get('comment') ?? '', answer = form.get('answer') ?? '';
     if (Buffer.byteLength(comment) > 8192 || Buffer.byteLength(answer) > 8192) throw new InputError(413, 'El texto supera 8 KiB.');
     const decision = form.get('decision') ?? '';
@@ -95,6 +105,29 @@ export async function webAction(req: Request, stateDir: string, port: number, au
           const a = writer.getActivity(id); destination = `/activities/${id}`;
           if (a.reviewStatus !== 'awaiting' && ['approved', 'commented', 'declined'].includes(a.reviewStatus ?? '')) throw new StoreError('conflict', 'revisión resuelta');
           writer.resolveReview(id, decision as ReviewDecision, comment);
+        } else if (action === 'create') {
+          destination = '/signals';
+          const s = writer.addSignal(form.get('workstream') ?? '', title, body || title);
+          writer.event(s.workstreamId, 'info', `signal creada desde la web: ${title}`);
+        } else if (action === 'triage' || action === 'ignore') {
+          destination = '/signals';
+          const s = [...writer.listWorkstreams()].flatMap(w => writer.listSignals(w.id)).find(s => s.id === id);
+          if (!s) throw new StoreError('not_found', 'señal inexistente');
+          if (s.status !== 'new') throw new StoreError('conflict', 'señal ya resuelta');
+          if (action === 'ignore') { writer.ignoreSignal(id); writer.event(s.workstreamId, 'info', `signal ignorada: ${s.title}`); }
+          else {
+            const c = writer.triageSignal(id);
+            if (hasAdmission(writer)) linkTriagedSignal(new AdmissionDb(writer), id, c.id);
+            destination = `/changes/${c.id}`;
+          }
+        } else if (action === 'rename') {
+          writer.getChange(id); destination = `/changes/${id}`;
+          writer.renameChange(id, title);
+        } else if (action === 'cancel') {
+          const c = writer.getChange(id); destination = `/changes/${id}`;
+          if (writer.isTerminalChange(c.status)) throw new StoreError('invalid_transition', 'change terminal');
+          writer.event(c.workstreamId, 'warning', 'reject solicitado', id);
+          writer.closeChange(id, 'canceled'); repo = writer.getWorkstream(c.workstreamId).repo;
         } else if (action === 'retry') {
           writer.getChange(id); destination = `/changes/${id}`;
           if (form.get('revision') !== retryRevision(writer, id)) throw new StoreError('conflict', 'change actualizado');
@@ -111,6 +144,7 @@ export async function webAction(req: Request, stateDir: string, port: number, au
         }
       });
     } finally { if (previous === undefined) delete process.env.FAB_ACTOR; else process.env.FAB_ACTOR = previous; }
+    if (repo) { await writer.waitForRelease(id); await removeWorktree(repo, stateDir, id); }
   } catch (error) {
     if (error instanceof InputError) return new Response(error.message, { status: error.status, headers: error.status === 413 ? { Connection: 'close' } : {} });
     if (error instanceof URIError) return new Response('Identificador inválido.', { status: 400 });
