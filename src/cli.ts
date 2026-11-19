@@ -17,6 +17,7 @@ import { Store, StoreError } from './store.ts';
 import { sandboxReport } from './sandbox/index.ts';
 import { runScript } from './script-runtime/index.ts';
 import { openSearch } from './search/index.ts';
+import { webMain } from './web.ts';
 import { runTui } from './tui.ts';
 import { commitProtectedPaths, removeWorktree, repairWorktree } from './worktrees.ts';
 import { execMain } from './agent/exec.ts';
@@ -67,6 +68,7 @@ const HELP = `fab — agente de código y fábrica de software local
   fab search|find <texto>       buscar sesiones de la carpeta actual
   fab mcp list --settings f    listar servidores configurados
   fab --cwd <path> [prompt]     conversación, --use-spec o --mission --auto high
+  fab web [--port 4310]          web local de solo lectura
   fab --version
   fab agents verify [--pin]         pines sha256 de los binarios claude, codex, agy, droid; --pin guarda los actuales
   fab update [--channel stable|prerelease] [--check]
@@ -139,6 +141,7 @@ function waitingQuestion(store: Store, activityId: string): string {
 }
 
 async function main(argv: string[]): Promise<number> {
+  if (argv[0] === 'web') return webMain(argv.slice(1), STATE_DIR);
   if (argv[0] === 'jira' || argv[0] === 'pr') return connectorsMain(argv[0], argv.slice(1));
   if (argv[0] === 'agents') return agentsMain(argv.slice(1));
   if (argv[0] === 'profile') { mkdirSync(STATE_DIR, { recursive: true }); return profileMain(argv.slice(1), STATE_DIR); }

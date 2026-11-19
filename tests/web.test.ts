@@ -1,0 +1,140 @@
+import { afterEach, beforeEach, expect, test } from 'bun:test';
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
+import { Database } from 'bun:sqlite';
+import { Store } from '../src/store.ts';
+import { startWeb } from '../src/web.ts';
+import { readEvidence, EVIDENCE_LIMIT } from '../src/evidence.ts';
+
+let dir: string;
+let store: Store;
+let server: ReturnType<typeof startWeb>;
+let change: string;
+let activity: string;
+beforeEach(() => {
+  dir = mkdtempSync(join(tmpdir(), 'fab-web-'));
+  store = new Store(join(dir, 'fabrica.db'));
+  const ws = store.createWorkstream({ slug: 'prueba', goal: 'Objetivo', repo: '/repo' });
+  const c = store.createChange(ws.id, '<script>alert(1)</script>', 'Descripción');
+  change = c.id; activity = store.listActivities({ changeId: c.id })[0]!.id;
+  const run = join(dir, 'runs', change); mkdirSync(run, { recursive: true });
+  writeFileSync(join(run, `${activity}.log`), '<script>log</script> Bearer abcdef-secret');
+  writeFileSync(join(run, `${activity}.json`), JSON.stringify({ attemptCosts: [0.25], durationMs: 1200, isolation: 'test' }));
+  writeFileSync(join(run, 'run.json'), JSON.stringify({ activities: [], secret: 'password=old-secret' }));
+  writeFileSync(join(run, 'diff.patch'), '+ cambio');
+  server = startWeb(dir, 0);
+});
+afterEach(() => { server?.stop(true); store?.close(); rmSync(dir, { recursive: true, force: true }); });
+const req = (path: string, init?: RequestInit) => fetch(`http://127.0.0.1:${server.port}${path}`, init);
+
+test('rutas, filtros y evidencia escapada y redactada', async () => {
+  for (const path of ['/', '/workstreams', '/changes', '/changes?ws=prueba', `/changes/${change}`, `/activities/${activity}`, '/style.css', '/poll.js']) {
+    const r = await req(path); expect(r.status).toBe(200);
+    expect(r.headers.get('x-content-type-options')).toBe('nosniff');
+    expect(r.headers.get('content-security-policy')).toContain("default-src 'none'");
+  }
+  const html = await (await req('/changes')).text();
+  expect(html).toContain('&lt;script&gt;'); expect(html).not.toContain('<script>alert');
+  expect(await (await req('/changes?q=ausente')).text()).not.toContain('&lt;script&gt;');
+  expect(await (await req('/changes?status=completed')).text()).not.toContain('&lt;script&gt;');
+  const detail = await (await req(`/activities/${activity}`)).text();
+  expect(detail).toContain('&lt;script&gt;log'); expect(detail).not.toContain('abcdef-secret');
+  expect(detail).not.toContain('old-secret'); expect(detail).toContain('0.25'); expect(detail).toContain('1200');
+  expect(detail).toContain('+ cambio');
+  expect(await (await req(`/changes/${change}`)).text()).toContain('0.25');
+  expect((await req('/no-existe')).status).toBe(404);
+  expect((await req('/changes/ausente')).status).toBe(404);
+  expect((await req('/activities/ausente')).status).toBe(404);
+});
+
+test('Host, métodos, HEAD y traversal', async () => {
+  expect((await req('/', { headers: { Host: 'evil.example' } })).status).toBe(403);
+  expect((await req('/', { headers: { Host: `localhost:${server.port}` } })).status).toBe(200);
+  expect((await req('/', { headers: { Host: 'localhost:123' } })).status).toBe(403);
+  for (const path of ['/', '/workstreams', '/changes', `/changes/${change}`, `/activities/${activity}`, '/style.css', '/poll.js', '/ausente']) {
+    for (const method of ['POST', 'PUT', 'PATCH', 'DELETE', 'OPTIONS']) expect((await req(path, { method })).status).toBe(405);
+    const head = await req(path, { method: 'HEAD' }); expect(await head.text()).toBe('');
+  }
+  expect((await req('/activities/%2e%2e%2fsecret')).status).toBe(400);
+  expect(() => readEvidence(dir, '../escape')).toThrow();
+  const outside = join(dir, 'outside.log'); writeFileSync(outside, 'NO FILTRAR');
+  symlinkSync(outside, join(dir, 'runs', change, 'link.log'));
+  expect(() => readEvidence(dir, `runs/${change}/link.log`)).toThrow();
+  symlinkSync('/tmp', join(dir, 'runs', 'escape'));
+  expect(() => readEvidence(dir, 'runs/escape/file')).toThrow();
+});
+
+test('límite de lectura y PEM incompleto no filtra secretos', () => {
+  writeFileSync(join(dir, 'large.log'), '-----BEGIN PRIVATE KEY-----\n' + 'x'.repeat(EVIDENCE_LIMIT * 2));
+  const r = readEvidence(dir, 'large.log')!;
+  expect(r.truncated).toBe(true); expect(r.text).not.toContain('xxxxxxxx');
+});
+
+test('readonly no crea estado ni migra y todas las rutas conservan disco', async () => {
+  for (const path of [join(dir, 'inexistente'), join(dir, 'vacio')]) {
+    if (path.endsWith('vacio')) mkdirSync(path);
+    expect(() => startWeb(path, 0)).toThrow();
+    expect(existsSync(path) ? readdirSync(path) : []).toEqual([]);
+    const run = Bun.spawnSync(['bun', 'src/cli.ts', 'web', '--port', '0'], { env: { ...process.env, FABRICA_HOME: path } });
+    expect(run.exitCode).not.toBe(0);
+    expect(existsSync(path) ? readdirSync(path) : []).toEqual([]);
+  }
+  const ro = new Store(join(dir, 'fabrica.db'), { readonly: true });
+  expect(() => ro.db.exec("INSERT INTO events (message) VALUES ('no')")).toThrow(); ro.close();
+  const old = join(dir, 'old.db'); const db = new Database(old); db.exec('CREATE TABLE legacy (id TEXT)'); db.close();
+  const before = readFileSync(old); const legacy = new Store(old, { readonly: true }); legacy.close();
+  expect(readFileSync(old)).toEqual(before);
+  store.db.exec('PRAGMA wal_checkpoint(TRUNCATE)');
+  const dataVersion = store.db.query('PRAGMA data_version').get();
+  const files = readdirSync(dir).sort();
+  for (const path of ['/', '/workstreams', '/changes', `/changes/${change}`, `/activities/${activity}`]) await (await req(path)).text();
+  expect(store.db.query('PRAGMA data_version').get()).toEqual(dataVersion);
+  expect(readdirSync(dir).sort()).toEqual(files);
+});
+
+test('árbol, timeline, veredicto, evidencia antigua y ficheros ausentes', async () => {
+  const parent = store.getActivity(activity);
+  store.db.query("UPDATE activities SET status='completed', review_status='approved', validator='code_review', review_comment=? WHERE id=?").run('<script>veredicto</script>', activity);
+  store.db.query('UPDATE activities SET parent_activity_id=? WHERE id=?').run(activity, activity); // ciclo histórico
+  store.event(parent.workstreamId, 'info', '<script>evento</script>', change, activity);
+  const html = await (await req(`/changes/${change}`)).text();
+  expect(html).toContain('Timeline'); expect(html).toContain('&lt;script&gt;evento');
+  expect(html.match(new RegExp(`/activities/${activity}`, 'g'))?.length).toBe(1);
+  const log = await (await req(`/activities/${activity}`)).text();
+  expect(log).toContain('code_review'); expect(log).toContain('&lt;script&gt;veredicto');
+  const path = join(dir, 'runs', change, `${activity}.json`);
+  writeFileSync(path, JSON.stringify({ usage: { costUsd: 0.5 } }));
+  expect(await (await req(`/changes/${change}`)).text()).toContain('0.50 USD');
+  writeFileSync(path, '{broken');
+  rmSync(join(dir, 'runs', change, `${activity}.log`));
+  expect(await (await req(`/activities/${activity}`)).text()).toContain('No hay evidencia guardada');
+  expect(await (await req(`/changes/${change}`)).text()).toContain('No medido');
+});
+
+test('redacta secretos JSON antiguos en logs y evidencia', async () => {
+  writeFileSync(join(dir, 'runs', change, `${activity}.log`), '{"api_key":"clave-antigua-123"}');
+  const html = await (await req(`/activities/${activity}`)).text();
+  expect(html).not.toContain('clave-antigua-123');
+});
+
+test('peticiones nuevas ven escrituras posteriores aunque la base empezara cerrada', async () => {
+  server.stop(true); store.close();
+  const files = readdirSync(dir).sort();
+  server = startWeb(dir, 0);
+  expect(readdirSync(dir).sort()).toEqual(files);
+  expect(await (await req('/changes?q=posterior')).text()).toContain('0 changes');
+  store = new Store(join(dir, 'fabrica.db'));
+  store.createChange('prueba', 'Change posterior', '');
+  expect(await (await req('/changes?q=posterior')).text()).toContain('Change posterior');
+});
+
+test('una evidencia sustituida por symlink no se sirve por HTTP', async () => {
+  const outside = mkdtempSync(join(tmpdir(), 'fab-web-outside-'));
+  try {
+    const target = join(outside, 'secret.log'); writeFileSync(target, 'NO-DEBE-SALIR');
+    const log = join(dir, 'runs', change, `${activity}.log`); rmSync(log); symlinkSync(target, log);
+    const html = await (await req(`/activities/${activity}`)).text();
+    expect(html).toContain('ruta insegura'); expect(html).not.toContain('NO-DEBE-SALIR');
+  } finally { rmSync(outside, { recursive: true, force: true }); }
+});
