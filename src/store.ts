@@ -283,6 +283,7 @@ function openWalReadonly(path: string): Database {
   try {
     // Fija el snapshot al abrir: el último escritor no puede retirar WAL/SHM
     // entre la apertura y las consultas de esta petición. BEGIN es diferido y solo lee.
+    db.exec('PRAGMA busy_timeout = 5000');
     db.exec('BEGIN');
     db.query('SELECT name FROM sqlite_schema LIMIT 1').get();
     return db;
@@ -311,7 +312,9 @@ function openReadonlyDatabase(path: string): Database {
     if (bytes.length >= 100 && bytes.subarray(0, 16).toString() === 'SQLite format 3\0') {
       bytes[18] = 1; bytes[19] = 1;
     }
-    return Database.deserialize(bytes, { readonly: true, strict: true });
+    const db = Database.deserialize(bytes, { readonly: true, strict: true });
+    db.exec('PRAGMA busy_timeout = 5000');
+    return db;
   } finally { closeSync(fd); }
 }
 
@@ -328,7 +331,7 @@ export class Store {
     this.dbPath = path;
     this.db = options?.readonly ? openReadonlyDatabase(path) : new Database(path, { create: true, strict: true });
     if (options?.readonly) return;
-    this.db.exec('PRAGMA journal_mode = WAL; PRAGMA foreign_keys = ON; PRAGMA busy_timeout = 5000;');
+    this.db.exec('PRAGMA busy_timeout = 5000; PRAGMA journal_mode = WAL; PRAGMA foreign_keys = ON;');
     this.db.exec(SCHEMA);
     this.migrate();
   }
