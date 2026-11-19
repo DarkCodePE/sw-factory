@@ -3,9 +3,9 @@ import { homedir } from 'node:os';
 import { join } from 'node:path';
 import { configuredMcpNames } from './agent/settings.ts';
 import { AGENT_NAMES } from './agents.ts';
-import { agentBinStatus, PINNED_AGENTS, type AgentBinVerdict } from './agents-verify.ts';
+import { agentBinStatus, PINNED_AGENTS, sha256Of, type AgentBinVerdict } from './agents-verify.ts';
 import { jiraConfiguredInEnv } from './connectors/jira.ts';
-import { activityMetadata } from './evidence.ts';
+import { activityMetadata, redact } from './evidence.ts';
 import { listProfiles, resolveProfile } from './profile.ts';
 import { detectSandbox } from './sandbox/detect.ts';
 import type { Store, Workstream } from './store.ts';
@@ -23,13 +23,35 @@ function facts(rows: [string, string | number][]) {
   return `<dl class="config-facts">${rows.map(([label, value]) => `<div><dt>${label}</dt><dd>${value}</dd></div>`).join('')}</dl>`;
 }
 
+/** Resumen SHA-256 por ruta, tamaño y mtime: GET /config no relee GB de binarios en cada petición. */
+const digestCache = new Map<string, { size: number; mtimeMs: number; digest: string }>();
+function cachedSha256(path: string): string {
+  const { size, mtimeMs } = statSync(path);
+  const hit = digestCache.get(path);
+  if (hit && hit.size === size && hit.mtimeMs === mtimeMs) return hit.digest;
+  const digest = sha256Of(path);
+  digestCache.set(path, { size, mtimeMs, digest });
+  return digest;
+}
+
+/** La sonda de egress se busca solo entre las activities más recientes del workstream. */
+export const EGRESS_SCAN_LIMIT = 200;
+
+const TEMPLATE_NOTICE = 'Las plantillas se muestran casi íntegras: la redacción solo reconoce formas conocidas de credencial (cabeceras, URLs, prefijos de tokens y cadenas largas de aspecto aleatorio). Un secreto en texto libre no se puede detectar.';
+
 function templateText(text: string): string {
-  return text
-    // El usuario de una URL, sus parámetros y su fragmento también pueden llevar credenciales.
+  return redact(text)
+    // El usuario de una URL, sus parámetros y su fragmento pueden llevar credenciales; un enlace con ancla simple se conserva.
     .replace(/\b[a-z][a-z0-9+.-]*:\/\/[^\s"'<>]+/gi, url => {
       const authority = url.slice(url.indexOf('://') + 3).split('/', 1)[0]!;
-      return authority.includes('@') || /[?#]/.test(url) ? '[REDACTED]' : url;
+      if (authority.includes('@')) return '[REDACTED]';
+      return url.replace(/\?[^#]*/, '?[REDACTED]').replace(/#(?![\w-]{1,40}$).*/, '#[REDACTED]');
     })
+    .replace(/\bBasic\s+[A-Za-z0-9+/=._~-]{8,}/gi, 'Basic [REDACTED]')
+    .replace(/(\s(?:-u|--user)[\s=]+)\S+/g, '$1[REDACTED]')
+    .replace(/\b(?:glpat|npm|pypi|hf|dop_v1|shpat)[-_][A-Za-z0-9_-]{8,}/g, '[REDACTED]')
+    // Cadena larga con letras y dígitos: aspecto de secreto, también en la ruta de una URL.
+    .replace(/(?<![\w-])(?=[A-Za-z0-9_-]*\d)(?=[A-Za-z0-9_-]*[A-Za-z])[A-Za-z0-9_-]{24,}(?![\w-])/g, '[REDACTED]')
     .replace(/-----BEGIN (?:[A-Z]+ )?PRIVATE KEY-----[\s\S]*$/g, '[REDACTED]');
 }
 
@@ -40,6 +62,7 @@ function profileView(stateDir: string, workstream: Workstream, escape: Escape): 
       `<details><summary>${role}</summary><pre tabindex="0">${escape(templateText(text))}</pre></details>`,
     ).join('');
     return `<p>Digest <code>${escape(digest)}</code> · ${workstream.profile ? 'Fijado' : 'Por defecto'}</p>
+      <p class="muted">${TEMPLATE_NOTICE}</p>
       <h3>Workers</h3>${templates([
         ['Reglas de workers', profile.worker.rules], ['Investigación', profile.worker.investigate], ['Implementación', profile.worker.implement],
       ])}
@@ -79,7 +102,7 @@ function credentialStatus(agent: string): string {
 function adapters(stateDir: string, escape: Escape): string {
   const binaryStatus = (agent: string): string => {
     if (!PINNED_AGENTS.includes(agent)) return agent === 'native' ? 'Integrado' : 'De prueba';
-    try { return binLabels[agentBinStatus(agent, stateDir).verdict]; } catch { return 'No medido'; }
+    try { return binLabels[agentBinStatus(agent, stateDir, cachedSha256).verdict]; } catch { return 'No medido'; }
   };
   return `<div class="table-wrap" role="region" aria-label="Adaptadores" tabindex="0"><table class="config-adapters">
     <thead><tr><th scope="col">Adaptador</th><th scope="col">Binario</th><th scope="col">Credencial local</th></tr></thead>
@@ -89,7 +112,7 @@ function adapters(stateDir: string, escape: Escape): string {
 
 function latestEgress(store: Store, stateDir: string, workstream: Workstream, escape: Escape): string {
   let latest: { timestamp: number; result: string } | undefined;
-  for (const activity of store.listActivities({ workstream: workstream.id })) {
+  for (const activity of store.listActivities({ workstream: workstream.id }).slice(-EGRESS_SCAN_LIMIT)) {
     try {
       const probe = activityMetadata(stateDir, activity)?.egressProbe as Record<string, unknown> | null | undefined;
       if (!probe || typeof probe.probedAt !== 'string' || typeof probe.decided !== 'boolean'
@@ -144,7 +167,7 @@ export async function configPage(store: Store, stateDir: string, url: URL, escap
     <section><h2>Sandbox y red</h2>${facts([
       ['Sandbox local', escape(sandbox.available ? sandbox.backend : 'No disponible')],
       ['Aislamiento de red disponible', yesNo(sandbox.network)],
-      ['Última sonda de egress del workstream', egress],
+      [`Última sonda de egress del workstream (últimas ${EGRESS_SCAN_LIMIT} activities)`, egress],
     ])}</section>
     <section><h2>Integraciones</h2>${facts([
       ['Jira (entorno)', configured(jiraConfiguredInEnv())],
