@@ -49,6 +49,12 @@
       "topic": "T43: alcance de Mandate y medición de T11",
       "decision": "B: T11 mide en DarkCodePE/plataforma-starteria. C: una semana de observe, hasta 2026-11-25. D: solo retirar la etiqueta revoca; cerrar el issue no. E: D1 se mantiene (etiqueta obligatoria). F: los comentarios nunca crean turnos. G: sin readmisión. H2: opción A, para Mandate solo completed, canceled y declined son terminales; blocked, failed o quarantined se revocan.",
       "date": "2026-11-18"
+    },
+    {
+      "id": "D9",
+      "topic": "Réplica de Warp Factories: decisiones D-A a D-L de warp-platform/faltantes-fable.md §5",
+      "decision": "D-A: web local en 127.0.0.1, monousuario, por ahora. D-B: cancelar un change desde la web, con confirmación y por la misma ruta que la CLI. D-C: mensaje libre como nota que el pool entrega al empezar el turno siguiente. D-D: una automation no se tría sola por ahora; se decide con datos. D-E: receptor de webhooks solo como aviso para GitHub, detrás de un túnel del dueño. D-F: merge, gate allow y flags de aprobación siguen solo en la CLI. D-G: construir jueces como aviso, con muestreo bajo. D-H: solo el dueño aplica una mejora, asignando el perfil. D-I: ningún conector de entrada nuevo hasta tener datos de T11 y T43. D-J: SÍ a runners remotos (contra la recomendación de Fable); el diseño debe resolver credenciales y confinamiento. D-K: no se guardan valores de secretos, solo nombres. D-L: una sola cola, este task.json.",
+      "date": "2026-11-19"
     }
   ],
   "tasks": [
@@ -753,11 +759,11 @@
       "acceptance": "Cancelar un change en curso lo deja `canceled` y libera el worktree; cancelar uno terminal da `invalid_transition` sin efecto; renombrar deja evento con el título anterior y actor `web`; título de hasta 200 caracteres, escapado.",
       "estimate": "2 d",
       "risk": "medio",
-      "status": "blocked",
+      "status": "pending",
       "depends_on": [
         "T47"
       ],
-      "note": "Bloqueada por D-B: el brief de F2 excluye «parar agentes» de forma explícita.",
+      "note": "D-B: sí, con confirmación y por la misma ruta que fab reject.",
       "pr": null
     },
     {
@@ -839,12 +845,12 @@
       "acceptance": "Una nota escrita con el change en espera aparece en el prompt del turno siguiente y una sola vez; una nota a un change terminal se rechaza; la entrega queda en un evento con actor; prueba con claude real y confinado.",
       "estimate": "4-6 d",
       "risk": "alto",
-      "status": "blocked",
+      "status": "pending",
       "depends_on": [
         "T47",
         "T54"
       ],
-      "note": "Bloqueada por D-C: toca D4 (el pool lanza los turnos; sin launch, deliver ni stop).",
+      "note": "D-C: nota que el pool entrega al empezar el turno siguiente.",
       "pr": null
     },
     {
@@ -910,7 +916,7 @@
         "T47",
         "T52"
       ],
-      "note": "D-F decide si los flags de aprobación se pueden tocar desde la web. Recomendado: no.",
+      "note": "D-F: los flags de aprobación, merge y gate allow siguen en la CLI.",
       "pr": null
     },
     {
@@ -975,7 +981,7 @@
         "T57",
         "T63"
       ],
-      "note": "D-G: el catálogo recomendaba no construirlos todavía. T63 fija el muestreo, no el si.",
+      "note": "D-G: sí, como aviso y con muestreo bajo.",
       "pr": null
     },
     {
@@ -1030,7 +1036,7 @@
         "T64",
         "T66"
       ],
-      "note": "D-H: quién aplica la mejora. Recomendado: solo el dueño.",
+      "note": "D-H: solo el dueño aplica, asignando el perfil.",
       "pr": null
     },
     {
@@ -1048,7 +1054,7 @@
         "T50",
         "T11"
       ],
-      "note": "D-D decide si una automation del dueño puede triarse sola. Recomendado: empezar sin autotriage.",
+      "note": "D-D: sin autotriaje por ahora; decidir con datos.",
       "pr": null
     },
     {
@@ -1061,12 +1067,12 @@
       "acceptance": "Firma ausente o errónea: 401 y ninguna fila de señal; entrega repetida con el mismo id no duplica; una entrega de GitHub con etiqueta `fab` falsificada en el cuerpo no admite nada, porque el gate lee la API; el cuerpo aparece en el prompt solo dentro del bloque con nonce; el resultado de cada entrega es `matched`, `not_matched` o `skipped`; el secreto no aparece en argv, logs ni base.",
       "estimate": "8-12 d",
       "risk": "alto",
-      "status": "blocked",
+      "status": "pending",
       "depends_on": [
         "T68",
         "T43"
       ],
-      "note": "Bloqueada por D-E: escuchar fuera de 127.0.0.1 es una decisión del dueño.",
+      "note": "D-E: solo aviso para GitHub, detrás de un túnel del dueño; sin webhook genérico.",
       "pr": null
     },
     {
@@ -1084,7 +1090,7 @@
         "T43",
         "T69"
       ],
-      "note": "Bloqueada por D-I: qué conectores y con qué prioridad.",
+      "note": "D-I: ningún conector nuevo hasta tener datos de T11 y T43.",
       "pr": null
     },
     {
@@ -1118,7 +1124,7 @@
         "T57",
         "T34"
       ],
-      "note": "D-K: confirma que no habrá almacén de valores.",
+      "note": "D-K: solo nombres, sin almacén de valores.",
       "pr": null
     },
     {
@@ -1135,7 +1141,7 @@
       "depends_on": [
         "T71"
       ],
-      "note": "Bloqueada por D-A: local monousuario o servidor compartido.",
+      "note": "D-A: local y monousuario por ahora; se reabre si la web pasa a servidor compartido.",
       "pr": null
     },
     {
@@ -1148,11 +1154,11 @@
       "acceptance": "Se define al tomar D-J.",
       "estimate": "sin estimar",
       "risk": "alto",
-      "status": "blocked",
+      "status": "pending",
       "depends_on": [
         "T52"
       ],
-      "note": "Bloqueada por D-J: runners remotos sí o no.",
+      "note": "D-J: SÍ a runners remotos, contra la recomendación. Necesita diseño de Fable: credenciales, confinamiento y transporte.",
       "pr": null
     }
   ]
