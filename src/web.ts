@@ -134,14 +134,17 @@ export function startWeb(stateDir: string, port = 4310, options: { write?: boole
   return { port: server.port!, loginUrl: auth?.loginUrl(server.port!), stop(force = false) { server.stop(force); } };
 }
 
+const WRITE_WARNING = 'No abras otros servicios de 127.0.0.1 en este navegador mientras dure la sesión: las cookies se comparten entre puertos.';
+
 export async function webMain(args: string[], stateDir: string): Promise<number> {
   try {
     const { values } = parseArgs({ args, options: { port: { type: 'string' }, write: { type: 'boolean' }, help: { type: 'boolean', short: 'h' } } });
-    if (values.help) { console.log('fab web [--port 4310] [--write] · web local, solo lectura por defecto; estado en FABRICA_HOME'); return 0; }
+    if (values.help) { console.log('fab web [--port 4310] [--write] · web local, solo lectura por defecto; estado en FABRICA_HOME'); console.log(WRITE_WARNING); return 0; }
     const port = values.port === undefined ? 4310 : Number(values.port);
     if (!Number.isInteger(port) || port < 0 || port > 65535) throw new Error('Puerto inválido (0–65535)');
     const server = startWeb(stateDir, port, { write: values.write });
     console.log(`fab web · ${server.loginUrl ?? `http://127.0.0.1:${server.port}`} · ${values.write ? 'escritura habilitada; enlace de un solo uso' : 'solo lectura'}`);
+    if (values.write) console.log(WRITE_WARNING);
     await new Promise<void>(resolve => {
       const done = () => { process.off('SIGINT', done); process.off('SIGTERM', done); server.stop(true); resolve(); };
       process.once('SIGINT', done); process.once('SIGTERM', done);
