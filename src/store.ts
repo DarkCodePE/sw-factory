@@ -8,6 +8,7 @@ import { userInfo } from 'node:os';
 import { closeSync, existsSync, fstatSync, openSync, readFileSync } from 'node:fs';
 import { dirname, resolve } from 'node:path';
 import { gitEvidence, writeManifest } from './manifest.ts';
+import { lastDue, parseCron } from './cron.ts';
 
 import {
   type ActivityKind as BaseActivityKind,
@@ -90,8 +91,30 @@ export interface Signal {
   body: string;
   status: SignalStatus;
   changeId: string | null;
+  source: string | null;
   createdAt: string;
 }
+
+type AutomationResult = 'created' | 'skipped_open' | 'skipped_inactive';
+
+export interface Automation {
+  id: string;
+  workstreamId: string;
+  name: string;
+  cron: string;
+  title: string;
+  body: string;
+  enabled: boolean;
+  createdAt: string;
+  createdBy: string;
+  lastDueAt: string | null;
+  lastResult: AutomationResult | null;
+  lastSignalId: string | null;
+}
+
+type AutomationRun =
+  | { result: 'created'; signalId: string }
+  | { result: 'skipped_open' | 'skipped_inactive'; signalId?: never };
 
 export interface Change {
   id: string;
@@ -108,6 +131,17 @@ export interface Change {
 
 export type ChangeSource = 'cli' | 'channel' | 'jira';
 export interface ChangeSummary extends Change { source: ChangeSource | null; creator: string | null }
+
+export interface ChangeNote {
+  id: string;
+  changeId: string;
+  body: string;
+  actor: string;
+  createdAt: string;
+  activityId: string | null;
+  attemptId: string | null;
+  deliveredAt: string | null;
+}
 
 export interface Activity {
   id: string;
@@ -132,6 +166,9 @@ export interface Activity {
   /** Perfil de instrucciones y sha de fab con los que corrió; null si aún no empezó. */
   profileDigest: string | null;
   fabSha: string | null;
+  /** Adaptador y modelo pedido del último intento; null si no empezó, es anterior a T57 o se usó el modelo por defecto. */
+  agent: string | null;
+  model: string | null;
   /** Pregunta abierta de un turno vivo (solo en `waiting_reply`) y su plazo. */
   questionId: string | null;
   waitUntil: string | null;
@@ -155,10 +192,34 @@ CREATE TABLE IF NOT EXISTS workstreams (
 CREATE TABLE IF NOT EXISTS signals (
   id TEXT PRIMARY KEY, workstream_id TEXT NOT NULL REFERENCES workstreams(id) ON DELETE CASCADE,
   title TEXT NOT NULL, body TEXT NOT NULL, status TEXT NOT NULL, change_id TEXT, created_at TEXT NOT NULL);
+CREATE TABLE IF NOT EXISTS automations (
+  id TEXT PRIMARY KEY,
+  workstream_id TEXT NOT NULL REFERENCES workstreams(id) ON DELETE CASCADE,
+  name TEXT NOT NULL,
+  cron TEXT NOT NULL,
+  title TEXT NOT NULL,
+  body TEXT NOT NULL,
+  enabled INTEGER NOT NULL DEFAULT 1,
+  created_at TEXT NOT NULL,
+  created_by TEXT NOT NULL,
+  last_due_at TEXT,
+  last_result TEXT,
+  last_signal_id TEXT,
+  UNIQUE (workstream_id, name));
 CREATE TABLE IF NOT EXISTS changes (
   id TEXT PRIMARY KEY, workstream_id TEXT NOT NULL REFERENCES workstreams(id) ON DELETE CASCADE,
   title TEXT NOT NULL, description TEXT NOT NULL, status TEXT NOT NULL, branch TEXT,
   created_at TEXT NOT NULL, updated_at TEXT NOT NULL);
+CREATE TABLE IF NOT EXISTS change_notes (
+  id TEXT PRIMARY KEY,
+  change_id TEXT NOT NULL REFERENCES changes(id) ON DELETE CASCADE,
+  body TEXT NOT NULL,
+  actor TEXT NOT NULL,
+  created_at TEXT NOT NULL,
+  activity_id TEXT,
+  attempt_id TEXT,
+  delivered_at TEXT);
+CREATE INDEX IF NOT EXISTS idx_change_notes_pending ON change_notes(change_id, delivered_at);
 CREATE TABLE IF NOT EXISTS activities (
   id TEXT PRIMARY KEY, workstream_id TEXT NOT NULL REFERENCES workstreams(id) ON DELETE CASCADE,
   change_id TEXT NOT NULL REFERENCES changes(id) ON DELETE CASCADE, parent_activity_id TEXT,
@@ -205,7 +266,25 @@ function toSignal(r: Row): Signal {
     body: r.body as string,
     status: r.status as SignalStatus,
     changeId: (r.change_id as string | null) ?? null,
+    source: (r.source as string | null) ?? null,
     createdAt: r.created_at as string,
+  };
+}
+
+function toAutomation(r: Row): Automation {
+  return {
+    id: r.id as string,
+    workstreamId: r.workstream_id as string,
+    name: r.name as string,
+    cron: r.cron as string,
+    title: r.title as string,
+    body: r.body as string,
+    enabled: bool(r.enabled),
+    createdAt: r.created_at as string,
+    createdBy: r.created_by as string,
+    lastDueAt: r.last_due_at as string | null,
+    lastResult: r.last_result as AutomationResult | null,
+    lastSignalId: r.last_signal_id as string | null,
   };
 }
 
@@ -221,6 +300,19 @@ function toChange(r: Row): Change {
     protectedBaseline: JSON.parse((r.protected_baseline as string | null) ?? '{}'),
     createdAt: r.created_at as string,
     updatedAt: r.updated_at as string,
+  };
+}
+
+function toChangeNote(r: Row): ChangeNote {
+  return {
+    id: r.id as string,
+    changeId: r.change_id as string,
+    body: r.body as string,
+    actor: r.actor as string,
+    createdAt: r.created_at as string,
+    activityId: r.activity_id as string | null,
+    attemptId: r.attempt_id as string | null,
+    deliveredAt: r.delivered_at as string | null,
   };
 }
 
@@ -247,6 +339,8 @@ function toActivity(r: Row): Activity {
     agentPgid: (r.agent_pgid as number | null) ?? null,
     profileDigest: (r.profile_digest as string | null) ?? null,
     fabSha: (r.fab_sha as string | null) ?? null,
+    agent: (r.agent as string | null) ?? null,
+    model: (r.model as string | null) ?? null,
     questionId: (r.question_id as string | null) ?? null,
     waitUntil: (r.wait_until as string | null) ?? null,
   };
@@ -381,8 +475,12 @@ export class Store {
     this.addColumn('workstreams', 'profile', 'TEXT');
     this.addColumn('activities', 'profile_digest', 'TEXT');
     this.addColumn('activities', 'fab_sha', 'TEXT');
+    this.addColumn('activities', 'agent', 'TEXT');
+    this.addColumn('activities', 'model', 'TEXT');
     this.addColumn('activities', 'question_id', 'TEXT');
     this.addColumn('activities', 'wait_until', 'TEXT');
+    this.addColumn('signals', 'source', 'TEXT');
+    this.db.exec('CREATE INDEX IF NOT EXISTS idx_signals_source ON signals(source, status);');
     this.db.exec('CREATE INDEX IF NOT EXISTS idx_activities_lease ON activities(status, lease_expires_at);');
     const migrationTtl = new Date(this.clock().getTime() + LEASE_TTL_MS).toISOString();
     this.db
@@ -488,16 +586,20 @@ export class Store {
 
   // ---- signals -----------------------------------------------------------
 
-  addSignal(workstream: string, title: string, body: string): Signal {
-    const ws = this.getWorkstream(workstream);
-    const id = randomUUID();
-    this.withRetry(() => {
-      this.db
-        .query(`INSERT INTO signals (id, workstream_id, title, body, status, change_id, created_at)
-                VALUES (?,?,?,?,'new',NULL,?)`)
-        .run(id, ws.id, title, body, this.now());
-    });
-    return toSignal(this.db.query('SELECT * FROM signals WHERE id = ?').get(id) as Row);
+  addSignal(workstream: string, title: string, body: string, opts?: { source?: 'web' }): Signal {
+    const source = opts?.source;
+    if (source !== undefined && source !== 'web') {
+      throw new StoreError('invalid_input', 'origen de señal inválido');
+    }
+    return this.withRetry(() => this.#insertSignal(this.getWorkstream(workstream).id, title, body, source ?? null));
+  }
+
+  #insertSignal(workstreamId: string, title: string, body: string, source: string | null): Signal {
+    const row = this.db.query<Row, [string, string, string, string, string, string | null]>(
+      `INSERT INTO signals (id, workstream_id, title, body, status, change_id, created_at, source)
+       VALUES (?,?,?,?,'new',NULL,?,?) RETURNING *`,
+    ).get(randomUUID(), workstreamId, title, body, this.now(), source)!;
+    return toSignal(row);
   }
 
   listSignals(workstream: string, status?: SignalStatus): Signal[] {
@@ -532,6 +634,137 @@ export class Store {
       const res = this.db.query(`UPDATE signals SET status = ? WHERE id = ? AND status = 'new'`).run(status, signalId);
       if (res.changes !== 1) throw new StoreError('invalid_transition', `signal ${signalId} is not new`);
     });
+  }
+
+  // ---- automations -------------------------------------------------------
+
+  createAutomation(input: { workstream: string; name: string; cron: string; title: string; body: string }): Automation {
+    const { workstream, name, cron, title, body } = input;
+    if (!/^[a-z0-9][a-z0-9-]{0,40}$/.test(name)) {
+      throw new StoreError('invalid_input', 'nombre de automation inválido');
+    }
+    if (!title || [...title].length > 200) {
+      throw new StoreError('invalid_input', 'el título debe tener entre 1 y 200 caracteres');
+    }
+    if (!body || Buffer.byteLength(body, 'utf8') > 8192) {
+      throw new StoreError('invalid_input', 'el cuerpo debe ocupar entre 1 y 8192 bytes');
+    }
+    try {
+      parseCron(cron);
+    } catch (error) {
+      throw new StoreError('invalid_input', (error as Error).message);
+    }
+    return this.withRetry(() => {
+      const ws = this.getWorkstream(workstream);
+      const existing = this.db.query<{ name: string }, [string]>(
+        'SELECT name FROM automations WHERE workstream_id = ?',
+      ).all(ws.id);
+      if (existing.some(a => a.name === name)) {
+        throw new StoreError('conflict', `ya existe la automation ${name} en ${ws.slug}`);
+      }
+      if (existing.length >= 20) {
+        throw new StoreError('limit_reached', `el workstream ${ws.slug} tiene 20 automations`);
+      }
+      const row = this.db.query(
+        `INSERT INTO automations (id, workstream_id, name, cron, title, body, created_at, created_by)
+         VALUES (?,?,?,?,?,?,?,?) RETURNING *`,
+      ).get(randomUUID(), ws.id, name, cron, title, body, this.now(), process.env.FAB_ACTOR ?? userInfo().username) as Row;
+      this.event(ws.id, 'info', `automation ${name} creada (${cron})`);
+      return toAutomation(row);
+    });
+  }
+
+  listAutomations(workstream?: string): Automation[] {
+    const workstreamId = workstream === undefined ? undefined : this.getWorkstream(workstream).id;
+    // El lector puede abrir una base anterior a la migración.
+    if (!this.db.query("SELECT 1 FROM sqlite_schema WHERE type = 'table' AND name = 'automations'").get()) return [];
+    const rows = workstreamId === undefined
+      ? this.db.query('SELECT * FROM automations ORDER BY created_at, name').all()
+      : this.db.query('SELECT * FROM automations WHERE workstream_id = ? ORDER BY created_at, name').all(workstreamId);
+    return (rows as Row[]).map(toAutomation);
+  }
+
+  private requireAutomation(id: string, row: Row | null): Automation {
+    if (!row) throw new StoreError('not_found', `automation ${id} no encontrada`);
+    return toAutomation(row);
+  }
+
+  setAutomationEnabled(id: string, enabled: boolean): Automation {
+    return this.withRetry(() => {
+      const row = this.db.query<Row, [number, string]>(
+        'UPDATE automations SET enabled = ? WHERE id = ? RETURNING *',
+      ).get(Number(enabled), id);
+      const automation = this.requireAutomation(id, row);
+      this.event(automation.workstreamId, 'info', `automation ${automation.name} ${enabled ? 'activada' : 'pausada'}`);
+      return automation;
+    });
+  }
+
+  deleteAutomation(id: string): void {
+    this.withRetry(() => {
+      const row = this.db.query<Row, [string]>('DELETE FROM automations WHERE id = ? RETURNING *').get(id);
+      const automation = this.requireAutomation(id, row);
+      this.event(automation.workstreamId, 'info', `automation ${automation.name} borrada`);
+    });
+  }
+
+  fireDueAutomations(workstream?: string): ({ id: string } & AutomationRun)[] {
+    const now = this.clock();
+    const candidates = workstream === undefined
+      ? this.db.query<{ id: string }, []>('SELECT id FROM automations WHERE enabled = 1').all()
+      : this.db.query<{ id: string }, [string]>('SELECT id FROM automations WHERE enabled = 1 AND workstream_id = ?')
+        .all(this.getWorkstream(workstream).id);
+    const results: ({ id: string } & AutomationRun)[] = [];
+    for (const { id } of candidates) {
+      const result = this.withRetry(() => {
+        // Releer la fila con el lock de escritura: otro proceso pudo dispararla, pausarla o borrarla.
+        const row = this.db.query<Row, [string]>('SELECT * FROM automations WHERE id = ? AND enabled = 1').get(id);
+        if (!row) return null;
+        const automation = toAutomation(row);
+        const due = lastDue(parseCron(automation.cron), new Date(automation.lastDueAt ?? automation.createdAt), now);
+        return due ? this.fireAutomation(automation, due.toISOString(), true) : null;
+      });
+      if (result) results.push({ id, ...result });
+    }
+    return results;
+  }
+
+  runAutomationNow(id: string): AutomationRun {
+    return this.withRetry(() => {
+      const row = this.db.query<Row, [string]>('SELECT * FROM automations WHERE id = ?').get(id);
+      const automation = this.requireAutomation(id, row);
+      return this.fireAutomation(automation, this.now(), false);
+    });
+  }
+
+  // El llamador mantiene el lock desde la lectura de la automation hasta el evento.
+  private fireAutomation(automation: Automation, at: string, scheduled: boolean): AutomationRun {
+    const { id, workstreamId, name, title, body } = automation;
+    const source = `automation:${id}`;
+    let run: AutomationRun;
+    let message: string;
+    if (this.getWorkstream(workstreamId).state !== 'active') {
+      run = { result: 'skipped_inactive' };
+      message = 'vez saltada, workstream no activo';
+    } else if (this.db.query(
+      `SELECT 1 FROM signals s LEFT JOIN changes c ON c.id = s.change_id
+       WHERE s.source = ? AND (s.status = 'new' OR (
+         s.status = 'triaged' AND c.status NOT IN (${TERMINAL_CHANGE_STATUSES.map(() => '?').join(',')}
+       ))) LIMIT 1`,
+    ).get(source, ...TERMINAL_CHANGE_STATUSES)) {
+      run = { result: 'skipped_open' };
+      message = 'vez saltada, hay una señal o un change abierto';
+    } else {
+      const signal = this.#insertSignal(workstreamId, `${title} (${at.slice(0, 10)})`, body, source);
+      run = { result: 'created', signalId: signal.id };
+      message = `señal ${signal.id.slice(0, 8)} creada${scheduled ? ` (vencía ${at})` : ''}`;
+    }
+    this.db.query(
+      `UPDATE automations SET last_due_at = COALESCE(?, last_due_at), last_result = ?,
+       last_signal_id = COALESCE(?, last_signal_id) WHERE id = ?`,
+    ).run(scheduled ? at : null, run.result, run.signalId ?? null, id);
+    this.event(workstreamId, 'info', `automation ${name}: ${message}`);
+    return run;
   }
 
   // ---- changes -----------------------------------------------------------
@@ -647,6 +880,68 @@ export class Store {
         this.terminalEvidence.add(changeId);
         writeManifest(this, changeId);
       }
+    });
+  }
+
+  // ---- notas del dueño ---------------------------------------------------
+
+  addChangeNote(changeId: string, body: string): ChangeNote {
+    return this.withRetry(() => {
+      const change = this.getChange(changeId);
+      if (isTerminalChange(change.status)) {
+        throw new StoreError('invalid_transition', `change ${changeId} terminal (${change.status})`);
+      }
+      const bytes = Buffer.byteLength(body, 'utf8');
+      if (bytes > 8192 || !body.trim()) {
+        throw new StoreError('invalid_input', 'la nota debe contener texto y ocupar como máximo 8192 bytes');
+      }
+      const { n } = this.db.query<{ n: number }, [string]>(
+        'SELECT COUNT(*) AS n FROM change_notes WHERE change_id = ? AND delivered_at IS NULL'
+      ).get(changeId)!;
+      if (n >= 20) throw new StoreError('limit_reached', 'el change tiene 20 notas sin entregar');
+
+      const id = randomUUID();
+      const actor = process.env.FAB_ACTOR ?? userInfo().username;
+      const createdAt = this.now();
+      this.db.query('INSERT INTO change_notes (id, change_id, body, actor, created_at) VALUES (?,?,?,?,?)')
+        .run(id, changeId, body, actor, createdAt);
+      this.event(change.workstreamId, 'info', `nota del dueño registrada (${id.slice(0, 8)}, ${bytes} bytes)`, changeId);
+      return { id, changeId, body, actor, createdAt, activityId: null, attemptId: null, deliveredAt: null };
+    });
+  }
+
+  listChangeNotes(changeId: string): ChangeNote[] {
+    // Una apertura de solo lectura puede encontrar una base anterior a las notas.
+    if (!this.db.query("SELECT 1 FROM sqlite_schema WHERE type = 'table' AND name = 'change_notes'").get()) return [];
+    const rows = this.db.query<Row, [string]>(
+      'SELECT * FROM change_notes WHERE change_id = ? ORDER BY created_at, rowid'
+    ).all(changeId);
+    return rows.map(toChangeNote);
+  }
+
+  reserveNotes(changeId: string, activityId: string, attemptId: string): ChangeNote[] {
+    return this.withRetry(() => {
+      // Una reserva sin confirmar puede pertenecer a un intento interrumpido.
+      this.db.query(`UPDATE change_notes SET activity_id = ?, attempt_id = ?
+        WHERE change_id = ? AND delivered_at IS NULL`).run(activityId, attemptId, changeId);
+      const rows = this.db.query<Row, [string]>(`SELECT * FROM change_notes
+        WHERE change_id = ? AND delivered_at IS NULL ORDER BY created_at, rowid`).all(changeId);
+      return rows.map(toChangeNote);
+    });
+  }
+
+  confirmNotes(attemptId: string): number {
+    return this.withRetry(() => {
+      const notes = this.db.query<{ id: string; change_id: string; actor: string }, [string, string]>(
+        `UPDATE change_notes SET delivered_at = ? WHERE attempt_id = ? AND delivered_at IS NULL
+         RETURNING id, change_id, actor`
+      ).all(this.now(), attemptId);
+      for (const note of notes) {
+        const change = this.getChange(note.change_id);
+        this.event(change.workstreamId, 'info',
+          `nota ${note.id.slice(0, 8)} de ${note.actor} entregada (turno ${attemptId.slice(0, 8)})`, change.id);
+      }
+      return notes.length;
     });
   }
 
@@ -1198,9 +1493,10 @@ export class Store {
   }
 
   /** Registra con qué perfil y qué sha de fab corre la activity (va al run.json). */
-  setActivityProvenance(activityId: string, profileDigest: string, fabSha: string | null): void {
+  setActivityProvenance(activityId: string, profileDigest: string, fabSha: string | null, run?: { agent: string; model: string | null }): void {
     this.withRetry(() => {
-      this.db.query('UPDATE activities SET profile_digest = ?, fab_sha = ? WHERE id = ?').run(profileDigest, fabSha, activityId);
+      if (run) this.db.query('UPDATE activities SET profile_digest = ?, fab_sha = ?, agent = ?, model = ? WHERE id = ?').run(profileDigest, fabSha, run.agent, run.model, activityId);
+      else this.db.query('UPDATE activities SET profile_digest = ?, fab_sha = ? WHERE id = ?').run(profileDigest, fabSha, activityId);
     });
   }
 

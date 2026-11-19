@@ -5,6 +5,7 @@ import { join } from 'node:path';
 import { AdmissionDb } from '../src/admission/db.ts';
 import { SessionStore } from '../src/admission/sessions.ts';
 import { processActivity, runPool } from '../src/pool.ts';
+import { defaultProfile, saveProfile } from '../src/profile.ts';
 import { Store } from '../src/store.ts';
 import { fakeLive } from './helpers/live.ts';
 
@@ -19,8 +20,8 @@ beforeEach(() => {
 });
 afterEach(() => { store.close(); rmSync(dir, { recursive: true, force: true }); });
 
-const setup = () => {
-  const ws = store.createWorkstream({ slug: 'p', goal: 'g', repo, agent: 'fake', requireChangeApproval: false });
+const setup = (profile?: string) => {
+  const ws = store.createWorkstream({ slug: 'p', goal: 'g', repo, agent: 'fake', requireChangeApproval: false, profile });
   store.setWorkstreamState(ws.id, 'active');
   return { ws, c: store.createChange(ws.id, 'fix it', 'desc') };
 };
@@ -106,6 +107,47 @@ async function asked(backend: ReturnType<typeof fakeLive>) {
 }
 const ASK = { reports: [{ state: 'awaiting' as const, summary: 's', human_action: '¿color?' }] };
 const DONE = { reports: [{ state: 'done' as const, summary: 'listo' }], output: 'hecho' };
+
+test('T57e: el modelo resuelto llega al backend y a la sesión; otro modelo abre una generación con evento', async () => {
+  const profile = (model: string) => saveProfile(dir, {
+    ...defaultProfile(), schemaVersion: 2, harness: 'fake', roles: { investigate: { model } },
+  }).digest;
+  const { ws, c } = setup(profile('m1')), backend = fakeLive([ASK, DONE]);
+  await pool(ws.id, { fake: backend });
+  const adm = new AdmissionDb(store), sessions = new SessionStore(adm);
+  const first = sessions.current(c.id, 'investigation')!;
+  expect(first).toMatchObject({ generation: 1, model: 'm1', launched: true });
+  expect(backend.turns[0]?.model).toBe('m1');
+  expect(store.listActivities({ changeId: c.id })[0]?.model).toBe('m1');
+
+  const [inv] = store.listActivities({ changeId: c.id });
+  expect(answerQuestion(store, adm, { questionId: inv!.questionId!, answer: 'rojo', by: 'maint' })).toBe('answered');
+  store.db.query('UPDATE workstreams SET profile = ? WHERE id = ?').run(profile('m2'), ws.id);
+  await pool(ws.id, { fake: backend });
+  expect(backend.turns).toHaveLength(2);
+  expect(backend.turns[1]).toMatchObject({ model: 'm2', newSessionId: expect.any(String) });
+  expect(backend.turns[1]?.sessionId).toBeUndefined();
+  expect(backend.turns[1]?.newSessionId).not.toBe(first.sessionId);
+  expect(backend.turns[1]?.prompt).toContain('Answer (maint): rojo');
+  expect(adm.db.query('SELECT generation, model, status FROM adm_sessions ORDER BY generation').all()).toEqual([
+    { generation: 1, model: 'm1', status: 'lost' }, { generation: 2, model: 'm2', status: 'open' },
+  ]);
+  expect(store.listEvents(ws.id).some(e => e.severity === 'warning' &&
+    /model distinto \(m1 → m2\).*nueva generación 2/.test(String(e.message)))).toBe(true);
+  expect(store.getActivity(inv!.id)).toMatchObject({ model: 'm2', status: 'completed' });
+});
+
+test('T57e: el perfil v1 reanuda una sesión existente con model NULL', async () => {
+  const backend = fakeLive([ASK, DONE]), { ws, c, adm } = await asked(backend);
+  const sessions = new SessionStore(adm);
+  const first = sessions.current(c.id, 'investigation')!;
+  expect(first).toMatchObject({ generation: 1, model: null });
+  await pool(ws.id, { fake: backend });
+  expect(backend.turns[1]?.sessionId).toBe(first.sessionId);
+  expect(backend.turns[1]?.model).toBeUndefined();
+  expect(sessions.current(c.id, 'investigation')).toEqual(first);
+  expect(store.listActivities({ changeId: c.id })[0]).toMatchObject({ model: null, status: 'completed' });
+});
 
 test('S3: la sesión no existe al reanudar → nueva generación con el prompt reconstruido, con evento y sin sesión nueva en silencio', async () => {
   const backend = fakeLive([ASK, DONE, DONE]), { ws, c, adm } = await asked(backend);

@@ -24,6 +24,7 @@ flowchart TD
     C --> K["10 Superficies CLI, TUI, SDK"]
     C --> L["11 Integraciones: Jira, GitHub, búsqueda, update"]
     B --> M["12 Build, tests y release"]
+    J --> N["14 Perfiles por rol"]
 ```
 
 | Página | Qué responde |
@@ -41,6 +42,7 @@ flowchart TD
 | [10 Superficies](10-superficies-cli-tui-sdk.md) | CLI, TUI de la factory y SDK. |
 | [11 Integraciones](11-integraciones.md) | Conectores Jira/GitHub, búsqueda, autoactualización. |
 | [12 Build y release](12-build-y-release.md) | Bun, binarios compilados, CI y publicación. |
+| [14 Perfiles por rol](14-t57-perfiles-por-rol.md) | Esquema v2, selección de adaptador y modelo, evidencia y sesiones vivas. |
 
 ## Archivos
 
