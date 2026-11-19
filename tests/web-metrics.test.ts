@@ -1,10 +1,11 @@
 import { afterEach, beforeEach, expect, test } from 'bun:test';
-import { mkdtempSync, mkdirSync, writeFileSync, rmSync, readdirSync, readFileSync } from 'node:fs';
+import { mkdtempSync, mkdirSync, writeFileSync, rmSync, readdirSync, readFileSync, symlinkSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { Store } from '../src/store.ts';
 import { calculateMetrics, distribution } from '../src/metrics.ts';
 import { startWeb } from '../src/web.ts';
+import { metricsPage } from '../src/web-metrics.ts';
 let dir: string, store: Store;
 const now = Date.parse('2026-11-19T12:00:00Z');
 beforeEach(() => { dir = mkdtempSync(join(tmpdir(), 'webf3-')); store = new Store(join(dir, 'fabrica.db')); store.createWorkstream({ slug: 'uno', goal: 'g', repo: '/synthetic', taskLimit: 2000 }); });
@@ -112,4 +113,67 @@ test('atribución histórica desconocida, multiintentos y change sin activities'
   expect(m.cost.models[0]?.name).toBe('No medido'); expect(m.cost.adapters[0]?.name).toBe('No medido');
   store.db.query('DELETE FROM activities WHERE change_id=?').run(c.id);
   expect(calculateMetrics(store, dir, { now }).cost.total).toBeNull();
+});
+
+const H = 3600000, t0 = Date.parse('2026-11-18T00:00:00Z');
+test('H1: un validador que agota reintentos no es estado terminal ni revisión pedida', () => {
+  const c = store.createChange('uno', 'x', '');
+  store.db.query("UPDATE activities SET status='completed',kind='implementation' WHERE change_id=?").run(c.id);
+  store.db.query("UPDATE changes SET status='implemented' WHERE id=?").run(c.id);
+  store.db.query("UPDATE workstreams SET state='active'").run();
+  const [v] = store.requestValidation(c.id, ['code_review']);
+  for (let i = 0; i < 4; i++) { const a = store.claimActivity('uno', 'w'); if (!a) break; store.failActivity(a.id, 'w', 'fallo'); }
+  expect(store.getActivity(v!.id).status).toBe('failed');
+  const m = calculateMetrics(store, dir);
+  expect(m.cycles[1]?.samples).toBe(0); expect(m.cycles[3]?.samples).toBe(0);
+  expect(m.kinds.some(([k]) => k === 'change_review')).toBe(false);
+  expect(m.kinds).toContainEqual(['validador:code_review', 1]);
+});
+test('H2: p90 de 10 y 20 valores no es el máximo ni floor', () => {
+  expect(distribution(Array.from({ length: 10 }, (_, i) => i + 1)).p90).toBe(9);
+  expect(distribution(Array.from({ length: 20 }, (_, i) => 20 - i)).p90).toBe(18);
+});
+test('H3: la página de métricas redacta secretos del título', () => {
+  const c = seed(1, 1); store.db.query('UPDATE changes SET title=? WHERE id=?').run('ghp_' + 'a'.repeat(36), c.id);
+  const html = metricsPage(store, dir, new URL('http://x/metricas?range=all'));
+  expect(html).toContain('[REDACTED]'); expect(html).not.toContain('ghp_aaaa');
+});
+test('H4: hitos y activities posteriores a now o anteriores a la creación no cuentan', () => {
+  seed(1, 1);
+  const early = calculateMetrics(store, dir, { now: t0 + 2.5 * H });
+  expect(early.cycles.map(c => c.samples)).toEqual([1, 1, 0, 0]);
+  const future = calculateMetrics(store, dir, { now: t0 + 0.5 * H });
+  expect(future.cycles.map(c => c.samples)).toEqual([0, 0, 0, 0]);
+  expect(future.kinds).toEqual([]); expect(future.cost.adapters).toEqual([]);
+  store.db.query('UPDATE activities SET created_at=?').run(new Date(t0 - H).toISOString());
+  expect(calculateMetrics(store, dir, { now }).cycles[0]?.samples).toBe(0);
+});
+test('H5: el tope conserva los changes más recientes', () => {
+  store.db.transaction(() => { for (let i = 0; i < 1002; i++) seed(0, i < 2 ? 5 : 0, 'uno', new Date(t0 + i * 60000).toISOString()); })();
+  expect(calculateMetrics(store, dir, { now }).cost.total).toBe(0);
+});
+test('H6: evidencia con ruta insegura deja el coste desconocido', () => {
+  const c = seed(1, 3); const other = join(dir, 'otra'); mkdirSync(other);
+  rmSync(join(dir, 'runs', c.id), { recursive: true, force: true }); symlinkSync(other, join(dir, 'runs', c.id));
+  const m = calculateMetrics(store, dir, { now });
+  expect(m.cost.unknownChanges).toBe(1); expect(m.cost.total).toBeNull();
+});
+test('H7: blocked: y quarantined: son estados terminales', () => {
+  for (const prefix of ['blocked: x', 'quarantined: y']) {
+    const c = store.createChange('uno', prefix, ''); store.db.query('DELETE FROM events WHERE change_id=?').run(c.id);
+    store.event(c.workstreamId, 'info', prefix, c.id);
+    expect(calculateMetrics(store, dir).cycles[3]?.samples).toBe(1);
+    store.db.query('DELETE FROM changes WHERE id=?').run(c.id);
+  }
+});
+test('H8: singleAttempt exige cero reintentos y a lo sumo un coste', () => {
+  const write = (c: { id: string }, retry: number, costs: number[]) => {
+    const a = store.listActivities({ changeId: c.id })[0]!;
+    store.db.query('UPDATE activities SET retry_count=? WHERE id=?').run(retry, a.id);
+    writeFileSync(join(dir, 'runs', c.id, `${a.id}.json`), JSON.stringify({ attemptCosts: costs, model: 'm', isolation: { adapter: 'a' } }));
+    return calculateMetrics(store, dir, { now }).cost.models[0]?.name;
+  };
+  const one = seed(1, 1); expect(write(one, 0, [1, 2])).toBe('No medido');
+  store.db.query('DELETE FROM changes WHERE id=?').run(one.id);
+  const two = seed(1, 1); expect(write(two, 1, [1])).toBe('No medido');
 });
