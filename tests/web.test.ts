@@ -5,7 +5,7 @@ import { join } from 'node:path';
 import { Database } from 'bun:sqlite';
 import { Store } from '../src/store.ts';
 import { startWeb } from '../src/web.ts';
-import { readEvidence, activityMetadata, EVIDENCE_LIMIT } from '../src/evidence.ts';
+import { readEvidence, activityMetadata, activityCosts, changeCost, EVIDENCE_LIMIT } from '../src/evidence.ts';
 
 let dir: string;
 let store: Store;
@@ -256,4 +256,44 @@ test('H7: timeline acotada con número exacto omitido y últimos eventos en orde
   expect(html).not.toContain('marca-evento-014'); expect(html).toContain('marca-evento-015');
   expect(html.indexOf('marca-evento-015')).toBeLessThan(html.indexOf('marca-evento-214'));
   expect(html).not.toContain('evento ajeno final');
+});
+
+test('N2: un log largo sin espacios conserva texto tras el recorte acotado', () => {
+  writeFileSync(join(dir, 'larga.log'), 'x'.repeat(512 * 1024));
+  const value = readEvidence(dir, 'larga.log')!;
+  expect(value.truncated).toBe(true);
+  expect(value.text.length).toBe(256 * 1024 - 4096);
+  expect(value.text).not.toBe('');
+});
+
+for (const ending of ['\n', '\r\n']) test(`N1: corte en ${JSON.stringify(ending)} conserva la línea sin depender del reloj`, () => {
+  const prefix = 'x'.repeat(256 * 1024 - ending.length) + ending;
+  writeFileSync(join(dir, 'salto.log'), prefix + 'continuación');
+  const value = readEvidence(dir, 'salto.log')!;
+  expect(value.truncated).toBe(true);
+  expect(value.text).toBe(prefix);
+  expect(value.text).not.toBe('');
+});
+
+function costsFor(meta: Record<string, unknown>) {
+  writeFileSync(join(dir, 'runs', change, `${activity}.json`), JSON.stringify(meta));
+  return { attempts: activityCosts(store.getActivity(activity), meta), total: changeCost(store, dir, change) };
+}
+
+test('N3: un intento que falta no se interpreta como coste cero', () => {
+  store.db.query("UPDATE activities SET retry_count=1,status='in_progress' WHERE id=?").run(activity);
+  expect(costsFor({ attemptCosts: [0] })).toEqual({ attempts: null, total: null });
+  expect(costsFor({ attemptCosts: [0, 0] })).toEqual({ attempts: [0, 0], total: 0 });
+});
+
+test('N3: coste null permanece desconocido y se distingue de cero conocido', () => {
+  expect(costsFor({ attemptCosts: [null] })).toEqual({ attempts: [null], total: null });
+  expect(costsFor({ attemptCosts: [0] })).toEqual({ attempts: [0], total: 0 });
+});
+
+test('N3: una activity fallida no exige un intento adicional que no se ejecutó', () => {
+  store.db.query("UPDATE activities SET retry_count=3,status='failed' WHERE id=?").run(activity);
+  expect(costsFor({ attemptCosts: [0, 0, 0] })).toEqual({ attempts: [0, 0, 0], total: 0 });
+  expect(costsFor({ attemptCosts: [0, 0] })).toEqual({ attempts: null, total: null });
+  expect(costsFor({ attemptCosts: [0, null, 0] })).toEqual({ attempts: [0, null, 0], total: null });
 });

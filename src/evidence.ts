@@ -36,7 +36,12 @@ export function readEvidence(stateDir: string, path: string): EvidenceText | nul
     const truncated = count > EVIDENCE_LIMIT;
     let text = buffer.subarray(0, Math.min(count, EVIDENCE_LIMIT)).toString('utf8');
     // No presentar un token cortado: podría no encajar ya en su patrón de redacción.
-    if (truncated) text = text.replace(/\S+$/u, '');
+    if (truncated) {
+      const floor = Math.max(0, text.length - 4096);
+      let i = text.length;
+      while (i > floor && text[i - 1]!.trim() !== '') i--;
+      text = text.slice(0, i);
+    }
     // JSON histórico puede contener PEM con saltos escapados; redactar los valores decodificados.
     if (!truncated && path.endsWith('.json')) {
       try {
