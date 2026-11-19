@@ -134,6 +134,11 @@ test('H7: URL con barra invertida rechazada', () => {
   reject({ t: { url: 'https://a.dev\\@evil.dev/x' } }, 'servers.t.url');
 });
 
+test('H7: se guarda la URL normalizada', () => {
+  write({ t: { url: 'https://A.dev:443/x' } });
+  expect(loadMcpRegistry(dir).t).toMatchObject({ url: 'https://a.dev/x' });
+});
+
 test('H8: un nombre con secuencias de escape no llega a la terminal', () => {
   write({ '\u001b[31mrojo': { url: 'https://a.dev/x' } });
   const err: string[] = []; const e = console.error;
