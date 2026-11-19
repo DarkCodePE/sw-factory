@@ -8,6 +8,7 @@ export class WebAuth {
   private invitation: string | null = token();
   private session: string | null = null;
   private csrf: string | null = null;
+  private notice?: { path: string; result: string };
 
   loginUrl(port: number): string { return `http://127.0.0.1:${port}/auth?token=${this.invitation}`; }
 
@@ -22,6 +23,17 @@ export class WebAuth {
     const values = (req.headers.get('cookie') ?? '').split(';').map(s => s.trim()).filter(s => s.startsWith('fab_session='));
     if (values.length !== 1 || !this.session || !equal(values[0]!.slice('fab_session='.length), this.session)) return;
     return this.csrf!;
+  }
+
+  rememberNotice(req: Request, path: string, result: string): void {
+    if (this.sessionCsrf(req)) this.notice = { path, result };
+  }
+
+  takeNotice(req: Request, path: string): string | undefined {
+    if (!this.sessionCsrf(req) || this.notice?.path !== path) return;
+    const result = this.notice.result;
+    this.notice = undefined;
+    return result;
   }
 
   validCsrf(req: Request, value: string): boolean {

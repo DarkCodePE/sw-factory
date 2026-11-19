@@ -122,7 +122,7 @@ export function startWeb(stateDir: string, port = 4310, options: { write?: boole
         store = openStore();
         const content = page(store, stateDir, url, auth?.sessionCsrf(req));
         if (!content) return respond('Página no encontrada', 404, 'text/plain; charset=utf-8');
-        content.body = actionNotice(url) + content.body;
+        content.body = actionNotice(req.method === 'GET' ? auth?.takeNotice(req, url.pathname) : undefined) + content.body;
         const workstreams = store.listWorkstreams();
         return respond(`<!doctype html><html lang="es"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><title>${escape(content.title)} · fab</title><link rel="stylesheet" href="/style.css"><script src="/poll.js" defer></script></head><body><a class="skip" href="#contenido">Saltar al contenido</a><aside><a class="brand" href="/">fab<span>Fábrica local</span></a><nav aria-label="Navegación principal"><a href="/"${url.pathname === '/' ? ' aria-current="page"' : ''}>Bandeja</a><a href="/changes"${url.pathname.startsWith('/changes') ? ' aria-current="page"' : ''}>Changes</a><a href="/workstreams"${url.pathname === '/workstreams' ? ' aria-current="page"' : ''}>Workstreams</a></nav><nav aria-label="Workstreams"><h2>Workstreams</h2>${workstreams.map(w => `<a href="/changes?ws=${enc(w.slug)}">${escape(w.slug)}</a>`).join('') || '<p>Sin workstreams</p>'}</nav><p class="local">${auth ? (auth.sessionCsrf(req) ? 'Escritura habilitada' : 'Escritura: abre el enlace de la terminal') : 'Solo lectura'}<br>Actualización cada 2 s</p></aside><main id="contenido"><header><h1>${escape(content.title)}</h1></header>${content.body}</main></body></html>`);
       } catch (error) {
