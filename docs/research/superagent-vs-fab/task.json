@@ -61,6 +61,12 @@
       "topic": "T74 runners remotos: P1 y P2 de warp-platform/diseno/T74.md §8",
       "decision": "P1 opción 1: el runner usa su propia credencial del proveedor, puesta por el dueño en esa máquina (o una clave de API propia con tope de gasto); nada viaja desde casa. P2 opción 1: lo que declara el runner (sandbox, binario, coste) se guarda como «declarado, no verificado»; el resultado pasa igualmente por integridad, gates, validadores y revisión en casa.",
       "date": "2026-11-19"
+    },
+    {
+      "id": "D11",
+      "topic": "Web: H1 de F2 y archivado de workstreams",
+      "decision": "F2 H1: opción B ya (sesión servida bajo un host único por arranque, fab-<aleatorio>.localhost:<puerto>, aceptado solo en Host y Origin), además del aviso A ya hecho. T60: archivar un workstream con changes en curso se permite, igual que en la CLI; la confirmación muestra cuántos hay.",
+      "date": "2026-11-19"
     }
   ],
   "tasks": [
@@ -1166,6 +1172,51 @@
       ],
       "note": "D-J: SÍ a runners remotos, contra la recomendación. Necesita diseño de Fable: credenciales, confinamiento y transporte.",
       "pr": null
+    },
+    {
+      "phase": "web",
+      "status": "pending",
+      "pr": null,
+      "id": "T75",
+      "title": "Sesión de escritura bajo host único por arranque (F2 H1, opción B)",
+      "depends_on": [
+        "T47"
+      ],
+      "why": "La cookie de sesión de 127.0.0.1 llega a cualquier otro puerto de 127.0.0.1; una app revisada podría aprobar su propia revisión (verif-web-f2.md H1).",
+      "proposal": "Servir la sesión de escritura en fab-<aleatorio>.localhost:<puerto>; Host y Origin solo aceptan ese host; la cookie queda ligada a él. Probar resolución de *.localhost en Chrome y Firefox; si no resuelve, fallo cerrado con mensaje.",
+      "acceptance": "Con Chrome real, un servicio en 127.0.0.1:<otro puerto> no recibe la cookie ni puede aprobar (repetir cookie-puerto.ts de la verificación: debe fallar). Tests de Host y Origin con el host nuevo."
+    },
+    {
+      "phase": "web",
+      "status": "pending",
+      "pr": null,
+      "id": "T76",
+      "title": "E2E de la plataforma web de fab",
+      "depends_on": [
+        "T47",
+        "T48",
+        "T49",
+        "T50",
+        "T51",
+        "T53",
+        "T56",
+        "T68",
+        "T71"
+      ],
+      "why": "Cada pieza tiene tests unitarios y recorridos sueltos, pero no hay una prueba de extremo a extremo de la plataforma.",
+      "proposal": "Script e2e repetible (bun + agent-browser) que siembra un stateDir, arranca fab web --write, canjea el enlace, y recorre los flujos del dueño: crear y triar señal, aprobar revisión, responder pregunta, nota, reintentar, cancelar y renombrar, automation, métricas, config, flujo, experimentos y la API con clave; con el pool en modo fake para que los changes avancen.",
+      "acceptance": "Un comando (bun run e2e) que pasa en verde desde cero, deja capturas y falla si cualquier flujo se rompe; documentado en techdocs."
+    },
+    {
+      "phase": "web",
+      "status": "pending",
+      "pr": null,
+      "id": "T77",
+      "title": "Ampliar redact con más formatos de secreto (H4 de F0/F1)",
+      "depends_on": [],
+      "why": "verif-fable.md H4: Authorization Basic, Cookie, glpat-, npm_, passwd=, --token, curl -u, bloques PGP y otros salen sin redactar.",
+      "proposal": "Ampliar redact en src/manifest.ts con esos formatos y tests por formato.",
+      "acceptance": "Cada formato listado en H4 sale redactado en la web y en los manifiestos; sin falsos positivos en los tests existentes."
     }
   ]
 }
