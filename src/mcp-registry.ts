@@ -2,6 +2,8 @@
 // Solo referencias `${NOMBRE}`, nunca valores (D-K, T71 §4.3). `fab mcp list` lo valida y lo muestra.
 import { existsSync, readFileSync } from 'node:fs';
 import { join } from 'node:path';
+import { terminalText } from './chat/config.ts';
+import { redact } from './evidence.ts';
 
 export type McpServer =
   | { kind: 'url'; url: string; headers: Record<string, string>; required: string[] }
@@ -31,7 +33,12 @@ function checkUrl(field: string, raw: unknown): string {
   if (u.protocol !== 'https:' && !(u.protocol === 'http:' && local)) bad(field, 'solo https:, o http: hacia 127.0.0.1 o localhost');
   if (u.username || u.password) bad(field, 'no admite usuario ni contraseña');
   if (raw.includes('?') || raw.includes('#')) bad(field, 'no admite cadena de consulta ni fragmento');
-  return raw;
+  // Los analizadores de URL difieren con `\`; se guarda la forma normalizada.
+  if (raw.includes('\\')) bad(field, 'no admite barra invertida');
+  // shortcut: un secreto sin forma conocida en la ruta no se detecta; la ruta no debe llevar credenciales.
+  const path = (() => { try { return decodeURIComponent(u.pathname); } catch { return u.pathname; } })();
+  if (redact(path) !== path) bad(field, 'la ruta parece contener una credencial; usa una cabecera con ${NOMBRE}');
+  return u.href;
 }
 
 // Cada valor debe ser una referencia exacta; devuelve el nombre referenciado.
@@ -46,6 +53,7 @@ function refMap(field: string, v: unknown, keyRe: RegExp, valRe: RegExp, require
   if (!isObject(v)) return bad(field, 'debe ser un objeto');
   for (const [k, val] of Object.entries(v)) {
     if (!keyRe.test(k)) bad(`${field}.${k}`, 'nombre no válido');
+    if (keyRe === ENV_NAME && isForbiddenEnvName(k)) bad(`${field}.${k}`, `la variable ${k} está prohibida`);
     required.add(refName(`${field}.${k}`, val, valRe));
   }
   return v as Record<string, string>;
@@ -69,6 +77,8 @@ function parseServer(name: string, s: unknown): McpServer {
   const c = s.command;
   if (!Array.isArray(c) || !c.length || !c.every(x => typeof x === 'string' && x !== '')) return bad(`${f}.command`, 'debe ser una lista de textos');
   if (!(c[0] as string).startsWith('/')) bad(`${f}.command`, 'el primer elemento debe ser una ruta absoluta');
+  // Los argumentos acaban en argv (T34): nada que redact() reconozca como secreto; los secretos van por env.
+  if (c.some(x => redact(x as string) !== x)) bad(`${f}.command`, 'los argumentos no pueden llevar secretos; pásalos por env con ${NOMBRE}');
   const env = 'env' in s ? refMap(`${f}.env`, s.env, ENV_NAME, /^\$\{([A-Z_][A-Z0-9_]{0,63})\}$/, required) : {};
   return { kind: 'command', command: c as string[], env, required: done() };
 }
@@ -78,7 +88,7 @@ export function loadMcpRegistry(stateDir: string): McpRegistry {
   const path = join(stateDir, FILE);
   if (!existsSync(path)) return {};
   let raw: unknown;
-  try { raw = JSON.parse(readFileSync(path, 'utf8')); } catch (e) { return bad('JSON', (e as Error).message); }
+  try { raw = JSON.parse(readFileSync(path, 'utf8')); } catch { return bad('JSON', 'JSON inválido'); }
   if (!isObject(raw)) return bad('raíz', 'debe ser un objeto');
   for (const k of Object.keys(raw)) if (k !== 'servers') bad(k, 'clave no admitida');
   if (!isObject(raw.servers)) return bad('servers', 'debe ser un objeto');
@@ -97,7 +107,7 @@ export function mcpListMain(stateDir: string, env: NodeJS.ProcessEnv = process.e
     return 0;
   } catch (e) {
     if (!(e instanceof McpRegistryError)) throw e;
-    console.error(`error: ${e.message}`);
+    console.error(`error: ${terminalText(e.message)}`);
     return 1;
   }
 }

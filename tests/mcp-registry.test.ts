@@ -98,3 +98,60 @@ test('fab mcp list: sin fichero y con fichero inválido', () => {
   expect(out[0]).toContain('Sin servidores');
   expect(err[0]).toContain('servers.t.url');
 });
+
+test('H1: los argumentos de command no llevan secretos (redact no los cambia)', () => {
+  reject({ t: { command: ['/usr/bin/x', '--token=canario_secreto_123'] } }, 'servers.t.command');
+  reject({ t: { command: ['/usr/bin/x', 'Bearer abc123'] } }, 'servers.t.command');
+  write({ t: { command: ['/usr/bin/x', '--port=9000'] } });
+  expect(loadMcpRegistry(dir).t).toMatchObject({ kind: 'command' });
+});
+
+test('H2: la ruta de la URL no pasa si redact la cambiaría', () => {
+  reject({ t: { url: 'https://a.dev/token=abc123/sse' } }, 'servers.t.url');
+  reject({ t: { url: 'https://a.dev/Bearer%20abc123' } }, 'servers.t.url');
+});
+
+test('H3: un JSON roto no reenvía el texto del parser', () => {
+  writeFileSync(join(dir, 'mcp-servers.json'), '{"servers":{"t":{"url": canario_secreto_123}}}');
+  expect(() => loadMcpRegistry(dir)).toThrow('JSON inválido');
+  try { loadMcpRegistry(dir); } catch (e) { expect((e as Error).message).not.toContain('canario_secreto_123'); }
+});
+
+test('H4: la clave de env tampoco puede ser una variable prohibida', () => {
+  for (const k of ['LD_PRELOAD', 'NODE_OPTIONS', 'PATH'])
+    reject({ t: { command: ['/bin/x'], env: { [k]: '${MI_VAR}' } } }, `servers.t.env.${k}`);
+});
+
+test('H6: huecos de la verificación', () => {
+  reject({ t: { url: 'https://a.dev/x', headers: { A: 'Bearer ${X}literal' } } }, 'servers.t.headers.A');
+  reject({ t: { url: 'https://a.dev/x', headers: { A: '${X}literal' } } }, 'servers.t.headers.A');
+  reject({ t: { command: ['/bin/x', ''] } }, 'servers.t.command');
+  write({ t: { url: 'http://localhost:9000/mcp' } });
+  expect(loadMcpRegistry(dir).t).toMatchObject({ kind: 'url' });
+});
+
+test('H7: URL con barra invertida rechazada', () => {
+  reject({ t: { url: 'https://a.dev\\@evil.dev/x' } }, 'servers.t.url');
+});
+
+test('H8: un nombre con secuencias de escape no llega a la terminal', () => {
+  write({ '\u001b[31mrojo': { url: 'https://a.dev/x' } });
+  const err: string[] = []; const e = console.error;
+  console.error = (m: string) => { err.push(m); };
+  try { expect(mcpListMain(dir)).toBe(1); } finally { console.error = e; }
+  expect(err[0]).not.toContain('\u001b');
+});
+
+const fab = (args: string[]) => {
+  const p = Bun.spawnSync([process.execPath, '--no-env-file', join(import.meta.dir, '../src/cli.ts'), ...args], { cwd: dir, env: { PATH: process.env.PATH!, HOME: dir, FABRICA_HOME: dir } });
+  return { code: p.exitCode, out: p.stdout.toString() + p.stderr.toString() };
+};
+
+test('H5/H6d: la CLI real cablea fab mcp list; --help y sobrantes pasan al camino anterior', () => {
+  write({ tracker: { url: 'https://a.dev/x' } });
+  const r = fab(['mcp', 'list']);
+  expect(r.code).toBe(0);
+  expect(r.out).toContain('tracker  url');
+  expect(fab(['mcp', 'list', '--help']).out).not.toContain('tracker  url');
+  expect(fab(['mcp', 'list', 'sobra']).out).not.toContain('tracker  url');
+});
