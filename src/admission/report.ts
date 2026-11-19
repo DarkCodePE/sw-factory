@@ -112,6 +112,6 @@ export function formatReport(r: Report): string {
   if (!r.unlabeledTrusted.length) lines.push('(ninguno)');
   lines.push('', '== Avisos de GitHub (últimas 24 h) ==');
   for (const h of r.hooks.last24h) lines.push(`${h.result}: ${h.count}`);
-  lines.push(r.hooks.last24h.length ? `último aviso=${r.hooks.last}` : '(ninguno)');
+  lines.push(r.hooks.last24h.length ? `último aviso=${r.hooks.last}` : '(sin avisos)');
   return lines.map(line => line.replace(/[\x00-\x1f\x7f-\x9f]/g, '')).join('\n');
 }
