@@ -196,7 +196,7 @@ export async function restoreProtected(worktree: string, base: string, paths: st
 }
 
 /** Un brazo: clon desechable en el commit base, store y workstream propios, agente, y comando de verificación. */
-async function runArm(stateDir: string, root: string, task: SuiteTask, digest: string, agent: string, acceptBinaries: boolean, confine: boolean): Promise<ArmResult> {
+export async function runArm(stateDir: string, root: string, task: SuiteTask, digest: string, agent: string, acceptBinaries: boolean, confine: boolean): Promise<ArmResult> {
   const started = Date.now();
   const fail = (error: string): ArmResult => ({ integrityOk: null, success: false, diffLines: 0, durationMs: Date.now() - started, costUsd: null, changeId: null, error, workerReport: null });
   mkdirSync(root, { recursive: true });
