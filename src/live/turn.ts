@@ -14,10 +14,11 @@ import { TurnStore, type TurnReason } from '../admission/turns.ts';
 import { evidencePath } from '../evidence.ts';
 import { atomicEvidence } from '../manifest.ts';
 import { notesBlock, type WorkerTemplates } from '../prompts.ts';
-import { hostDir } from '../sandbox/confine.ts';
+import { hostDir, type EnvDecl } from '../sandbox/confine.ts';
+import { scrubValues } from '../sandbox/env.ts';
 import type { Activity, Store } from '../store.ts';
 import { claudeLive } from './claude.ts';
-import type { LiveBackend } from './contract.ts';
+import type { LiveBackend, LiveReport } from './contract.ts';
 
 /** Backends vivos conocidos, por nombre de adaptador. Hoy solo claude (`native` no está en esta rama). */
 export const LIVE_BACKENDS: Record<string, LiveBackend> = { claude: claudeLive };
@@ -49,6 +50,8 @@ export type LiveActivityCtx = {
   model?: string | null;
   timeoutMs?: number; signal: AbortSignal; confine?: boolean; capturePath?: string; claudeProjects?: string; mcpConfigDir?: string;
   onSpawn: (pgid: number) => void; crash?: (point: CrashPoint) => void;
+  /** T72: servidores MCP del rol, entorno declarado y valores a limpiar. Todo ausente en modo anterior. */
+  mcpServers?: Record<string, unknown>; envDecl?: EnvDecl; scrub?: Record<string, string>;
 };
 
 /** El resultado de un turno con el aspecto de un disparo, para que el pool siga con las mismas comprobaciones. */
@@ -72,6 +75,9 @@ function writeTurnLog(ctx: LiveActivityCtx, a: Activity, attemptId: string, run:
     return undefined;
   }
 }
+
+const scrubReport = (r: LiveReport, v: Record<string, string>): LiveReport =>
+  ({ ...r, summary: scrubValues(r.summary, v), ...(r.human_action === undefined ? {} : { human_action: scrubValues(r.human_action, v) }) });
 
 /** Un turno: sesión escrita antes de lanzar (S2), `onReport` durable (S6) y resultado por precedencia del report (T26). */
 export async function runLiveActivity(store: Store, adm: AdmissionDb, a: Activity, ctx: LiveActivityCtx): Promise<{ run: AgentRun; outcome?: LiveOutcome }> {
@@ -110,16 +116,21 @@ export async function runLiveActivity(store: Store, adm: AdmissionDb, a: Activit
         return { prompt: basePrompt + notesBlock(notes) + rules, reserved: notes.length };
       });
       ctx.crash?.('session-launched');
+      const record = reports.recorder(a.id, attemptId, ctx.crash);
       let result;
       try {
         result = await runLiveTurn(adm, ctx.backend, a.changeId, {
           ...turn, model: meta.model ?? undefined, prompt, cwd: ctx.cwd, attemptId, timeoutMs: ctx.timeoutMs, signal: ctx.signal, confine: ctx.confine, capturePath: ctx.capturePath, claudeProjects: ctx.claudeProjects, mcpConfigDir: ctx.mcpConfigDir,
-          onSpawn: ctx.onSpawn,
-          onReport: reports.recorder(a.id, attemptId, ctx.crash),
+          onSpawn: ctx.onSpawn, mcpServers: ctx.mcpServers, envDecl: ctx.envDecl, scrub: ctx.scrub,
+          onReport: (r) => record(scrubReport(r, ctx.scrub ?? {})),
         });
       } catch (error) {
         if (!(error instanceof CrashInjected)) turns.end(attemptId, { outcome: isSessionLoss(error) ? 'session_lost' : 'error' });
         throw error;
+      }
+      if (ctx.scrub) { // S6: antes del log del turno y del resultado; los backends que no pasan por runAgent también
+        const v = ctx.scrub, clean = (t: string) => scrubValues(t, v);
+        result = { ...result, output: clean(result.output), stdout: result.stdout === undefined ? undefined : clean(result.stdout), stderr: result.stderr === undefined ? undefined : clean(result.stderr), reports: result.reports.map(r => scrubReport(r, v)) };
       }
       const outcome = liveOutcome(result.reports);
       turns.end(attemptId, {

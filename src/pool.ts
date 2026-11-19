@@ -384,6 +384,7 @@ export async function processActivity(
         capturePath: confine ? activityLog(opts.stateDir, change.id, a.id) : undefined,
         onSpawn: pgid => store.setActivityAgentPgid(a.id, pgid), crash,
         templates: profile.worker, branch, factoryCommits: agent.factoryCommits,
+        mcpServers: access.servers, envDecl: access.decl, scrub: access.decl ? scrub : undefined,
       }));
       if (!confine) atomicEvidence(activityLog(opts.stateDir, change.id, a.id), `${run.stdout ?? ''}${run.stderr ?? ''}`);
     } else {

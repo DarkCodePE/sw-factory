@@ -232,3 +232,34 @@ test('captura sin confinar: FABRICA_SCRUB_NAMES lee los valores de su entorno y 
   expect(await p.exited).toBe(0);
   expect(readFileSync(log, 'utf8')).toBe('[REDACTED:CAP_SECRETO]');
 });
+
+test('T72f: el pool pasa al turno vivo los servidores del rol, el entorno declarado y los valores a limpiar; un canal, ninguno', async () => {
+  registry(TRACKER);
+  const { fakeLive } = await import('./helpers/live.ts');
+  const profile = v2({ investigate: { harness: 'claude', env: ['TRACKER_TOKEN'], mcp: ['tracker'] }, implement: { harness: 'claude', env: ['TRACKER_TOKEN'] } }, 'claude');
+  const backend = fakeLive([{ output: `salida ${CANARY}`, reports: [{ state: 'done', summary: `listo ${CANARY}` }] }], { name: 'claude' });
+  const { pool, first } = setup(profile, { env: ['TRACKER_TOKEN'], mcp: ['tracker'] }, 'claude');
+  await withEnv({ TRACKER_TOKEN: CANARY, FABRICA_HOME: dir }, async () => { await pool({ live: true, liveBackends: { claude: backend }, acceptAgentBinaries: true }); });
+  const turn = backend.turns[0]!;
+  expect(Object.keys(turn.mcpServers ?? {})).toEqual(['tracker']);
+  expect(turn.envDecl).toMatchObject({ wsAllow: ['TRACKER_TOKEN'], channel: false, roleEnv: ['TRACKER_TOKEN'], mcpRequired: ['TRACKER_TOKEN'] });
+  expect(turn.scrub).toEqual({ TRACKER_TOKEN: CANARY });
+  expect(first().status).toBe('completed');
+  expect(first().result).toContain('[REDACTED:TRACKER_TOKEN]');
+  expect(everything()).not.toContain(CANARY); // base (reports incluidos), runs/ y logs del turno
+});
+
+test('T72f: un change de canal vivo no lleva servidores del rol ni variables declaradas', async () => {
+  if (!Bun.which('bwrap')) return;
+  registry(TRACKER);
+  const { fakeLive } = await import('./helpers/live.ts');
+  const backend = fakeLive([{ reports: [{ state: 'done', summary: 'ok' }] }], { name: 'claude' });
+  const { pool, change } = setup(v2({ investigate: { harness: 'claude', env: ['TRACKER_TOKEN'], mcp: ['tracker'] } }, 'claude'), { env: ['TRACKER_TOKEN'], mcp: [] }, 'claude');
+  const adm = new AdmissionDb(store), thread = 'github:demo/t72#2';
+  adm.db.query('INSERT INTO adm_threads(id, source, first_seen) VALUES (?,?,?)').run(thread, 'github:demo/t72', 'x');
+  new ThreadLinks(adm).link(thread, change.id);
+  await withEnv({ TRACKER_TOKEN: CANARY, FABRICA_HOME: dir }, async () => { await pool({ live: true, liveBackends: { claude: backend }, acceptAgentBinaries: true }); });
+  const turn = backend.turns[0]!;
+  expect(turn.mcpServers).toEqual({});
+  expect(turn.envDecl).toMatchObject({ channel: true, roleEnv: [], mcpRequired: [] });
+});
