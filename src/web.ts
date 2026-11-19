@@ -6,6 +6,7 @@ import { ChangeStatus } from './enums.ts';
 import { activityCosts, activityMetadata, changeCost, evidencePath, readEvidence } from './evidence.ts';
 import { redact } from './manifest.ts';
 import { WEB_STYLE } from './web-style.ts';
+import { INBOX_JS, changesView, inboxView, parseQuery, type Ui } from './web-changes.ts';
 
 const escape = (value: unknown): string => redact(String(value ?? '')).replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[c]!);
 const enc = encodeURIComponent;
@@ -13,6 +14,7 @@ const labels: Record<string, string> = { pending: 'Pendiente', in_progress: 'En 
 const badge = (status: string) => `<span class="status ${['failed','blocked','quarantined','completed','in_progress','awaiting','waiting_reply'].includes(status) ? status : ''}">${escape(labels[status] ?? status)}</span>`;
 const money = (cost: number | null) => cost === null ? 'No medido' : `${cost.toFixed(2)} USD`;
 const empty = (text: string) => `<p class="empty">${escape(text)}</p>`;
+const ui: Ui = { escape, badge, labels };
 const TIMELINE_LIMIT = 200;
 const POLL = `setInterval(async()=>{if(document.hidden||document.activeElement?.matches('input,select,textarea')||window.getSelection()?.toString()||document.querySelector('details[open]'))return;try{const r=await fetch(location.href,{cache:'no-store'});if(!r.ok)return;const doc=new DOMParser().parseFromString(await r.text(),'text/html');const old=document.querySelector('main'),next=doc.querySelector('main');if(old&&next&&old.innerHTML!==next.innerHTML){old.replaceWith(next);}}catch{}},2000);`;
 const HEADERS = {
@@ -41,11 +43,6 @@ function evidence(stateDir: string, changeId: string, file: string, title: strin
   } catch { return `<section><h2>${escape(title)}</h2>${empty('Evidencia no disponible: ruta insegura o fichero ilegible.')}</section>`; }
 }
 
-function changesTable(store: Store, changes: Change[]): string {
-  if (!changes.length) return empty('No hay changes para estos filtros.');
-  return `<div class="table-wrap"><table><thead><tr><th>Change</th><th>Estado</th><th>Workstream</th><th>Actualizado</th></tr></thead><tbody>${changes.map(c => `<tr><td><a href="/changes/${enc(c.id)}">${escape(c.title)}</a><small>${escape(c.id.slice(0, 8))}</small></td><td>${badge(c.status)}</td><td>${escape(store.getWorkstream(c.workstreamId).slug)}</td><td><time>${escape(c.updatedAt)}</time></td></tr>`).join('')}</tbody></table></div>`;
-}
-
 function page(store: Store, stateDir: string, url: URL): { title: string; body: string } | null {
   const ws = url.searchParams.get('ws') || undefined;
   if (ws) store.getWorkstream(ws);
@@ -53,16 +50,16 @@ function page(store: Store, stateDir: string, url: URL): { title: string; body: 
     const inbox = store.inbox(ws);
     const counts = new Map<string, number>();
     for (const a of inbox) { const status = a.reviewStatus === 'awaiting' ? 'awaiting' : a.status; counts.set(status, (counts.get(status) ?? 0) + 1); }
-    return { title: 'Bandeja', body: `<p class="intro">Lo que necesita tu atención en la fábrica.</p><div class="counts">${counts.size ? [...counts].map(([s,n]) => `<span>${badge(s)} <strong>${n}</strong></span>`).join('') : '<span>0 pendientes de atención</span>'}</div>${inbox.length ? `<ul class="inbox">${inbox.map(a => `<li><a href="/activities/${enc(a.id)}">${escape(store.getChange(a.changeId).title)}</a><div>${escape(a.validator ?? a.kind)} · ${escape(store.getWorkstream(a.workstreamId).slug)} ${badge(a.reviewStatus === 'awaiting' ? 'awaiting' : a.status)}</div></li>`).join('')}</ul>` : empty('La bandeja está al día. Puedes consultar los changes y su evidencia.')}<p>Las decisiones y aprobaciones se realizan desde la CLI.</p>` };
+    const slugs = new Map(store.listWorkstreams().map(w => [w.id, w.slug]));
+    const items = inbox.map(a => ({ a, title: store.getChange(a.changeId).title, slug: slugs.get(a.workstreamId) ?? '' }));
+    return { title: 'Bandeja', body: `<p class="intro">Lo que necesita tu atención en la fábrica.</p><div class="counts">${counts.size ? [...counts].map(([s,n]) => `<span>${badge(s)} <strong>${n}</strong></span>`).join('') : '<span>0 pendientes de atención</span>'}</div>${inboxView(ui, items, url.searchParams.get('q') ?? '')}<p>Las decisiones y aprobaciones se realizan desde la CLI.</p>` };
   }
   if (url.pathname === '/workstreams') return { title: 'Workstreams', body: `<p class="intro">Frentes de trabajo y su objetivo.</p><ul class="workstreams">${store.listWorkstreams().map(w => `<li><h2><a href="/changes?ws=${enc(w.slug)}">${escape(w.slug)}</a> ${badge(w.state)}</h2><p>${escape(w.goal)}</p><p class="muted">Agente: ${escape(w.agent)} · ${escape(w.repo)}</p></li>`).join('')}</ul>${!store.listWorkstreams().length ? empty('No hay workstreams. Crea uno desde fab ws create.') : ''}` };
   if (url.pathname === '/changes') {
-    const status = url.searchParams.get('status') ?? '';
-    const q = url.searchParams.get('q') ?? '';
-    const all = (ws ? [store.getWorkstream(ws)] : store.listWorkstreams()).flatMap(w => store.listChanges(w.id));
+    const f = parseQuery(url.searchParams);
+    const all = store.changeIndex(ws);
     const statuses = [...new Set([...Object.values(ChangeStatus), 'blocked', 'quarantined', ...all.map(c => c.status)])];
-    const changes = all.filter(c => (!status || c.status === status) && c.title.toLocaleLowerCase().includes(q.toLocaleLowerCase()));
-    return { title: 'Changes', body: `<form action="/changes" method="get" class="filters"><label>Workstream<select name="ws"><option value="">Todos</option>${store.listWorkstreams().map(w => `<option value="${escape(w.slug)}"${ws === w.id || ws === w.slug ? ' selected' : ''}>${escape(w.slug)}</option>`).join('')}</select></label><label>Estado<select name="status"><option value="">Todos</option>${statuses.map(s => `<option value="${escape(s)}"${status === s ? ' selected' : ''}>${escape(labels[s] ?? s)}</option>`).join('')}</select></label><label class="search">Buscar por título<input name="q" type="search" value="${escape(q)}" placeholder="Título del change"></label><button>Filtrar</button></form><p class="muted">${changes.length} changes</p>${changesTable(store, changes)}` };
+    return { title: 'Changes', body: changesView(ui, all, f, ws ?? '', store.listWorkstreams(), statuses) };
   }
   const match = /^\/(changes|activities)\/([^/]+)$/.exec(url.pathname);
   if (!match) return null;
@@ -102,11 +99,12 @@ export function startWeb(stateDir: string, port = 4310) {
         const url = new URL(req.url);
         if (url.pathname === '/style.css') return respond(WEB_STYLE, 200, 'text/css; charset=utf-8');
         if (url.pathname === '/poll.js') return respond(POLL, 200, 'text/javascript; charset=utf-8');
+        if (url.pathname === '/inbox.js') return respond(INBOX_JS, 200, 'text/javascript; charset=utf-8');
         store = openStore();
         const content = page(store, stateDir, url);
         if (!content) return respond('Página no encontrada', 404, 'text/plain; charset=utf-8');
         const workstreams = store.listWorkstreams();
-        return respond(`<!doctype html><html lang="es"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><title>${escape(content.title)} · fab</title><link rel="stylesheet" href="/style.css"><script src="/poll.js" defer></script></head><body><a class="skip" href="#contenido">Saltar al contenido</a><aside><a class="brand" href="/">fab<span>Fábrica local</span></a><nav aria-label="Navegación principal"><a href="/"${url.pathname === '/' ? ' aria-current="page"' : ''}>Bandeja</a><a href="/changes"${url.pathname.startsWith('/changes') ? ' aria-current="page"' : ''}>Changes</a><a href="/workstreams"${url.pathname === '/workstreams' ? ' aria-current="page"' : ''}>Workstreams</a></nav><nav aria-label="Workstreams"><h2>Workstreams</h2>${workstreams.map(w => `<a href="/changes?ws=${enc(w.slug)}">${escape(w.slug)}</a>`).join('') || '<p>Sin workstreams</p>'}</nav><p class="local">Solo lectura<br>Actualización cada 2 s</p></aside><main id="contenido"><header><h1>${escape(content.title)}</h1></header>${content.body}</main></body></html>`);
+        return respond(`<!doctype html><html lang="es"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><title>${escape(content.title)} · fab</title><link rel="stylesheet" href="/style.css"><script src="/poll.js" defer></script><script src="/inbox.js" defer></script></head><body><a class="skip" href="#contenido">Saltar al contenido</a><aside><a class="brand" href="/">fab<span>Fábrica local</span></a><nav aria-label="Navegación principal"><a href="/"${url.pathname === '/' ? ' aria-current="page"' : ''}>Bandeja</a><a href="/changes"${url.pathname.startsWith('/changes') ? ' aria-current="page"' : ''}>Changes</a><a href="/workstreams"${url.pathname === '/workstreams' ? ' aria-current="page"' : ''}>Workstreams</a></nav><nav aria-label="Workstreams"><h2>Workstreams</h2>${workstreams.map(w => `<a href="/changes?ws=${enc(w.slug)}">${escape(w.slug)}</a>`).join('') || '<p>Sin workstreams</p>'}</nav><p class="local">Solo lectura<br>Actualización cada 2 s</p></aside><main id="contenido"><header><h1>${escape(content.title)}</h1></header>${content.body}</main></body></html>`);
       } catch (error) {
         if (error instanceof StoreError && error.code === 'not_found') return respond('Registro no encontrado', 404, 'text/plain; charset=utf-8');
         if (error instanceof URIError) return respond('Ruta inválida', 400, 'text/plain; charset=utf-8');
