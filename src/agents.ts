@@ -31,7 +31,9 @@ export interface AgentRun {
 
 export interface AgentAdapter {
   name: string;
-  command(prompt: string, options?: { readOnly?: boolean; confine?: boolean; promptStdin?: boolean }): string[];
+  command(prompt: string, options?: { readOnly?: boolean; confine?: boolean; promptStdin?: boolean; model?: string }): string[];
+  /** El adaptador acepta un modelo por activity (`options.model`). */
+  supportsModel?: boolean;
   /** runAgent sends the prompt on stdin; command() keeps argv input by default. */
   promptStdin?: boolean;
   env?(): Record<string, string>;
@@ -44,9 +46,11 @@ export interface AgentAdapter {
 const claude: AgentAdapter = {
   name: 'claude',
   promptStdin: true,
+  supportsModel: true,
   command: (prompt, options) => [
     'claude',
     '-p',
+    ...(options?.model ? ['--model', options.model] : []),
     ...(options?.promptStdin ? [] : [prompt]),
     '--permission-mode',
     'acceptEdits',
@@ -89,12 +93,12 @@ const codex: AgentAdapter = {
   promptStdin: true,
   // codex-cli's workspace-write sandbox always mounts .git read-only, even with --add-dir.
   factoryCommits: true,
+  supportsModel: true,
   // `--full-auto` was removed in codex-cli 0.160; workspace-write keeps writes inside the worktree.
   // A linked worktree keeps its index and objects in the main repository's .git, which must also be
   // writable or `git commit` fails; read-only activities keep the default read-only sandbox.
-  command: (prompt, options) => options?.readOnly
-    ? ['codex', 'exec', '--sandbox', 'read-only', '--skip-git-repo-check', options?.promptStdin ? '-' : prompt]
-    : ['codex', 'exec', '--sandbox', 'workspace-write', '--skip-git-repo-check', options?.promptStdin ? '-' : prompt],
+  command: (prompt, options) => ['codex', 'exec', ...(options?.model ? ['-m', options.model] : []),
+    '--sandbox', options?.readOnly ? 'read-only' : 'workspace-write', '--skip-git-repo-check', options?.promptStdin ? '-' : prompt],
 };
 
 /** Antigravity CLI in print mode; uses the signed-in Google AI subscription. */
@@ -112,11 +116,12 @@ const droid: AgentAdapter = {
   name: 'droid',
   // `droid exec --help` documents --file; /dev/stdin avoids a positional prompt.
   promptStdin: true,
+  supportsModel: true,
   command: (prompt, options) => [
     'droid',
     'exec',
     '-m',
-    process.env.FABRICA_DROID_MODEL ?? 'custom:qwen-local',
+    options?.model ?? process.env.FABRICA_DROID_MODEL ?? 'custom:qwen-local',
     '--auto',
     'medium',
     '--output-format',
@@ -133,19 +138,23 @@ const droid: AgentAdapter = {
 /** Deterministic stand-in used by tests: echoes a fixed report without touching files. */
 const fake: AgentAdapter = {
   name: 'fake',
-  command: (prompt) => [
+  supportsModel: true,
+  command: (prompt, options) => [
     'sh',
     '-c',
-    'if [ -n "$FABRICA_FAKE_SLEEP" ]; then sleep "$FABRICA_FAKE_SLEEP"; fi; if [ -n "$FABRICA_FAKE_TOUCH" ]; then touch "$FABRICA_FAKE_TOUCH-$$"; fi; printf "STATUS: %s\\n\\nfake agent handled: %s\\n" "${FABRICA_FAKE_STATUS:-done}" "$1"',
+    'if [ -n "$FABRICA_FAKE_SLEEP" ]; then sleep "$FABRICA_FAKE_SLEEP"; fi; if [ -n "$FABRICA_FAKE_TOUCH" ]; then touch "$FABRICA_FAKE_TOUCH-$$"; fi; printf "STATUS: %s\\n\\nfake agent handled: %s\\n" "${FABRICA_FAKE_STATUS:-done}" "$1"' + (options?.model ? '; printf "model=%s\\n" "$2"' : ''),
     'fake',
     prompt.slice(0, 80),
+    ...(options?.model ? [options.model] : []),
   ],
 };
 
 const native: AgentAdapter = {
   name: 'native',
   promptStdin: true,
+  supportsModel: true,
   command: (prompt, options) => [...selfCommand('exec', new URL('./agent/exec.ts', import.meta.url)),
+    ...(options?.model ? ['-m', options.model] : []),
     '--require-status',
     '--auto', process.env.FABRICA_AGENT_AUTONOMY ?? 'medium',
     ...(process.env.FABRICA_AGENT_SETTINGS ? ['--settings', process.env.FABRICA_AGENT_SETTINGS] : []),
@@ -163,6 +172,8 @@ export function getAgent(name: string): AgentAdapter {
 }
 
 export const AGENT_NAMES = Object.keys(ADAPTERS);
+/** Adaptadores que aceptan un modelo por activity; `agy` no (no se conoce flag). */
+export const MODEL_AGENTS = AGENT_NAMES.filter(n => ADAPTERS[n]!.supportsModel);
 
 /** Preserve the factory decision line when retaining a bounded report tail. */
 export function boundedAgentOutput(text: string): string {
@@ -179,7 +190,7 @@ export async function runAgent(
   prompt: string,
   cwd: string,
   timeoutMs = 20 * 60_000,
-  options: { readOnly?: boolean; confine?: boolean; capturePath?: string; signal?: AbortSignal; onSpawn?: (pgid: number) => void; claudeProjects?: string; mcpConfig?: string } = {}
+  options: { readOnly?: boolean; confine?: boolean; capturePath?: string; signal?: AbortSignal; onSpawn?: (pgid: number) => void; model?: string; claudeProjects?: string; mcpConfig?: string } = {}
 ): Promise<AgentRun> {
   const start = Date.now();
   const argv = agent.command(prompt, { ...options, promptStdin: agent.promptStdin === true });
