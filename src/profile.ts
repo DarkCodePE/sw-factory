@@ -41,7 +41,7 @@ const CLASS_LABEL_RE = /^[a-z0-9_-]{1,24}$/;
 const MAX_SCORERS = 8;
 const unit = (n: unknown): n is number => typeof n === 'number' && n >= 0 && n <= 1;
 // El primer carácter no puede ser `-`: el modelo viaja como elemento de argv y no debe leerse como flag.
-const MODEL_RE = /^[A-Za-z0-9][A-Za-z0-9._:/@-]{0,127}$/;
+export const MODEL_RE = /^[A-Za-z0-9][A-Za-z0-9._:/@-]{0,127}$/;
 
 /** JSON con claves ordenadas y sin espacios: misma semántica, mismos bytes. */
 export function canonicalJson(value: unknown): string {
