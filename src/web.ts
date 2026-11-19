@@ -13,6 +13,7 @@ const labels: Record<string, string> = { pending: 'Pendiente', in_progress: 'En 
 const badge = (status: string) => `<span class="status ${['failed','blocked','quarantined','completed','in_progress','awaiting','waiting_reply'].includes(status) ? status : ''}">${escape(labels[status] ?? status)}</span>`;
 const money = (cost: number | null) => cost === null ? 'No medido' : `${cost.toFixed(2)} USD`;
 const empty = (text: string) => `<p class="empty">${escape(text)}</p>`;
+const TIMELINE_LIMIT = 200;
 const POLL = `setInterval(async()=>{if(document.hidden||document.activeElement?.matches('input,select,textarea')||window.getSelection()?.toString()||document.querySelector('details[open]'))return;try{const r=await fetch(location.href,{cache:'no-store'});if(!r.ok)return;const doc=new DOMParser().parseFromString(await r.text(),'text/html');const old=document.querySelector('main'),next=doc.querySelector('main');if(old&&next&&old.innerHTML!==next.innerHTML){old.replaceWith(next);}}catch{}},2000);`;
 const HEADERS = {
   'Content-Security-Policy': "default-src 'none'; script-src 'self'; style-src 'self'; connect-src 'self'; img-src 'none'; font-src 'none'; base-uri 'none'; form-action 'self'; frame-ancestors 'none'",
@@ -72,8 +73,9 @@ function page(store: Store, stateDir: string, url: URL): { title: string; body: 
     const activities = store.listActivities({ changeId: id });
     let cost: number | null = null;
     try { cost = changeCost(store, stateDir, id); } catch { /* Evidencia inaccesible: coste desconocido. */ }
-    const events = store.listEvents(c.workstreamId, -1).filter(e => e.change_id === id);
-    return { title: c.title, body: `<p><a href="/changes?ws=${enc(store.getWorkstream(c.workstreamId).slug)}">Volver a changes</a></p><div class="summary">${badge(c.status)}<span>Coste total: <strong>${money(cost)}</strong></span><span>Rama: ${escape(c.branch ?? 'No asignada')}</span></div><p class="description">${escape(c.description)}</p><h2>Activities</h2>${tree(activities)}<h2>Timeline</h2>${events.length ? `<ol class="timeline">${events.map(e => `<li><time>${escape(e.created_at)}</time><div><strong>${escape(e.severity)}</strong> · ${escape(e.actor ?? 'fab')}<p>${escape(e.message)}</p></div></li>`).join('')}</ol>` : empty('No hay eventos para este change.')}` };
+    const events = store.listEvents(c.workstreamId, TIMELINE_LIMIT, id);
+    const omitted = Math.max(0, store.countEvents(c.workstreamId, id) - events.length);
+    return { title: c.title, body: `<p><a href="/changes?ws=${enc(store.getWorkstream(c.workstreamId).slug)}">Volver a changes</a></p><div class="summary">${badge(c.status)}<span>Coste total: <strong>${money(cost)}</strong></span><span>Rama: ${escape(c.branch ?? 'No asignada')}</span></div><p class="description">${escape(c.description)}</p><h2>Activities</h2>${tree(activities)}<h2>Timeline</h2>${omitted ? `<p class="notice">Se omiten ${omitted} eventos anteriores.</p>` : ''}${events.length ? `<ol class="timeline">${events.map(e => `<li><time>${escape(e.created_at)}</time><div><strong>${escape(e.severity)}</strong> · ${escape(e.actor ?? 'fab')}<p>${escape(e.message)}</p></div></li>`).join('')}</ol>` : empty('No hay eventos para este change.')}` };
   }
   const a = store.getActivity(id);
   const c = store.getChange(a.changeId);

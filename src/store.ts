@@ -1326,10 +1326,18 @@ export class Store {
         activityId && this.isTerminal(this.getActivity(activityId).status))) writeManifest(this, changeId);
   }
 
-  listEvents(workstream: string, limit = 50): Row[] {
+  listEvents(workstream: string, limit = 50, changeId?: string): Row[] {
     const ws = this.getWorkstream(workstream);
-    return (
-      this.db.query('SELECT * FROM events WHERE workstream_id = ? ORDER BY id DESC LIMIT ?').all(ws.id, limit) as Row[]
-    ).reverse();
+    const changeFilter = changeId === undefined ? '' : ' AND change_id = ?';
+    const params = changeId === undefined ? [ws.id, limit] : [ws.id, changeId, limit];
+    return (this.db.query(`SELECT * FROM events WHERE workstream_id = ?${changeFilter} ORDER BY id DESC LIMIT ?`)
+      .all(...params) as Row[]).reverse();
+  }
+
+  /** Cuenta sin cargar cuerpos; acompaña la página acotada de la timeline. */
+  countEvents(workstream: string, changeId: string): number {
+    const ws = this.getWorkstream(workstream);
+    return (this.db.query('SELECT COUNT(*) AS n FROM events WHERE workstream_id = ? AND change_id = ?')
+      .get(ws.id, changeId) as { n: number }).n;
   }
 }

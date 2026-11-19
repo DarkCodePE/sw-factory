@@ -35,20 +35,27 @@ export function readEvidence(stateDir: string, path: string): EvidenceText | nul
     }
     const truncated = count > EVIDENCE_LIMIT;
     let text = buffer.subarray(0, Math.min(count, EVIDENCE_LIMIT)).toString('utf8');
+    // No presentar un token cortado: podría no encajar ya en su patrón de redacción.
+    if (truncated) text = text.replace(/\S+$/u, '');
     // JSON histórico puede contener PEM con saltos escapados; redactar los valores decodificados.
     if (!truncated && path.endsWith('.json')) {
       try {
-        const textJson = JSON.stringify(JSON.parse(text), (key, v) => typeof v === 'string' ? (/api[_-]?key|token|secret|password|credential/i.test(key) ? '[REDACTED]' : redact(v)) : v, 2);
+        const textJson = JSON.stringify(JSON.parse(text), (key, v) => typeof v === 'string' ? (/api[_-]?key|token|secret|password|credential/i.test(key) ? '[REDACTED]' : redactForWeb(v)) : v, 2);
         return { text: textJson, truncated: false };
       } catch { /* Mostrar JSON roto como texto. */ }
     }
     text = text.replace(/("[\w-]*(?:api[_-]?key|token|secret|password|credential)[\w-]*"\s*:\s*)"(?:[^"\\]|\\.)*"/gi, '$1"[REDACTED]"');
-    text = redact(text).replace(/-----BEGIN (?:[A-Z]+ )?PRIVATE KEY-----[\s\S]*$/g, '[REDACTED]');
+    text = redactForWeb(text);
     return { text, truncated };
   } catch (error) {
     if ((error as NodeJS.ErrnoException).code === 'ENOENT') return null;
     throw error;
   } finally { if (fd !== undefined) closeSync(fd); }
+}
+
+// Regla de presentación; no amplía redact ni cambia la lectura histórica de improve.
+function redactForWeb(text: string): string {
+  return redact(text).replace(/-----BEGIN (?:[A-Z]+ )?PRIVATE KEY-----[\s\S]*$/g, '[REDACTED]');
 }
 
 export function evidencePath(changeId: string, file: string): string {
