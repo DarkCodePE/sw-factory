@@ -27,3 +27,17 @@ test('readonly sobre una base WAL cerrada no crea auxiliares y conserva los dato
     expect(readdirSync(dir).sort()).toEqual(before);
   } finally { rmSync(dir, { recursive: true, force: true }); }
 });
+
+test('un lector conserva su snapshot si el escritor cierra antes de consultar', () => {
+  const dir = mkdtempSync('/tmp/fab-web-writer-close-');
+  try {
+    const path = join(dir, 'fabrica.db');
+    const writer = new Store(path); writer.createWorkstream({ slug: 'demo', repo: '/repo', goal: 'g' });
+    const reader = new Store(path, { readonly: true });
+    writer.close();
+    const before = readdirSync(dir).sort();
+    expect(reader.listWorkstreams()[0]!.slug).toBe('demo');
+    expect(readdirSync(dir).sort()).toEqual(before);
+    reader.close();
+  } finally { rmSync(dir, { recursive: true, force: true }); }
+});

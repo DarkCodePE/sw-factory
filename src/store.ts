@@ -277,10 +277,21 @@ export interface StoreOptions {
  * Sin WAL tomamos una copia estable en memoria; con WAL usamos SQLite readonly
  * y exigimos el índice existente. No se reinterpreta ni se ignora un WAL vivo.
  */
+function openWalReadonly(path: string): Database {
+  if (!existsSync(`${path}-shm`)) throw new Error('WAL sin índice compartido: requiere recuperación por un escritor');
+  const db = new Database(path, { readonly: true, strict: true });
+  try {
+    // Fija el snapshot al abrir: el último escritor no puede retirar WAL/SHM
+    // entre la apertura y las consultas de esta petición. BEGIN es diferido y solo lee.
+    db.exec('BEGIN');
+    db.query('SELECT name FROM sqlite_schema LIMIT 1').get();
+    return db;
+  } catch (error) { db.close(); throw error; }
+}
+
 function openReadonlyDatabase(path: string): Database {
   if (existsSync(`${path}-wal`)) {
-    if (!existsSync(`${path}-shm`)) throw new Error('WAL sin índice compartido: requiere recuperación por un escritor');
-    return new Database(path, { readonly: true, strict: true });
+    return openWalReadonly(path);
   }
   const fd = openSync(path, 'r');
   try {
@@ -293,8 +304,7 @@ function openReadonlyDatabase(path: string): Database {
       throw new Error('La base cambió durante la lectura; vuelve a intentarlo');
     }
     if (existsSync(`${path}-wal`)) {
-      if (!existsSync(`${path}-shm`)) throw new Error('WAL sin índice compartido');
-      return new Database(path, { readonly: true, strict: true });
+      return openWalReadonly(path);
     }
     // deserialize necesita formato rollback en la copia: no hay WAL que reproducir.
     // Solo se cambian estos dos bytes de la copia, nunca los de la base original.
