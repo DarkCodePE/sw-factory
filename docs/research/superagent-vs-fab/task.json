@@ -1,6 +1,6 @@
 {
-  "updated": "2026-11-17",
-  "context": "Integración superagent → fab. Fase 0: PR #55 (feat/fase0-endurecer). Fase 1: PR #56 (feat/fase1-observe). Ambos apilados sobre PR #49 (feat/t2-corpus).",
+  "updated": "2026-11-19",
+  "context": "Integración superagent → fab. Fase 0: PR #55 (feat/fase0-endurecer). Fase 1: PR #56 (feat/fase1-observe). Ambos apilados sobre PR #49 (feat/t2-corpus). Desde T46: web de fab y réplica de las capacidades de Warp Factories (docs/research/warp-platform/faltantes-fable.md), con fases en el campo phase.",
   "decisions": [
     {
       "id": "D1",
@@ -43,6 +43,12 @@
       "topic": "T41, N1: hostDir rechaza symlinks legítimos en la ruta de stateDir",
       "decision": "Opción A: la rama fix/t41-fab-live-symlink (57d4b6b) se fusiona tal cual. N1 no bloquea el PR y pasa a T44. Opciones descartadas: B (raíz de confianza antes del PR) y C (aviso al arrancar el pool vivo). Análisis en t41/verif-fable.md y techdocs/docs/factory/13-t41-config-mcp-del-turno.md.",
       "date": "2026-11-17"
+    },
+    {
+      "id": "D8",
+      "topic": "T43: alcance de Mandate y medición de T11",
+      "decision": "B: T11 mide en DarkCodePE/plataforma-starteria. C: una semana de observe, hasta 2026-11-25. D: solo retirar la etiqueta revoca; cerrar el issue no. E: D1 se mantiene (etiqueta obligatoria). F: los comentarios nunca crean turnos. G: sin readmisión. H2: opción A, para Mandate solo completed, canceled y declined son terminales; blocked, failed o quarantined se revocan.",
+      "date": "2026-11-18"
     }
   ],
   "tasks": [
@@ -609,7 +615,7 @@
     {
       "id": "T42",
       "title": "Test inestable tests/agent.test.ts:103-108 (timeoutMs: 40)",
-      "status": "in_progress",
+      "status": "done",
       "depends_on": [],
       "note": "Falló una vez en la suite completa («Unexpected extra model call»); pasa a solas. PR #75 abierto (Codex); revisión independiente de agy: listo para fusionar, sin hallazgos (auditoria-parciales/informe-agy.md, parte B). Falta que el dueño fusione.",
       "pr": 75,
@@ -622,12 +628,13 @@
     {
       "id": "T43",
       "title": "Fase 3: router, Mandate (revocación por etiqueta) y Subscriptions (enlace del PR, contexto)",
-      "status": "blocked",
+      "status": "in_progress",
       "depends_on": [
         "T11",
         "T13"
       ],
-      "note": "Diseño de referencia en t13/analisis-fable.md §3.2-3.4. Se abre según los umbrales de §1.3 con datos del informe de T13. Decisiones pendientes: C (umbrales y duración), D (solo retirar etiqueta para), E (D1), F (comentario crea turno), G (readmitir). Decisión B: repo para T11."
+      "note": "Hecho en PR #79: Mandate (retirar la etiqueta revoca en auto; observe registra would_revoke) y enlace del PR al hilo. Pendiente: router y contexto, cuando haya datos de T11 (2026-11-25). Decisiones en D8.",
+      "pr": 79
     },
     {
       "id": "T44",
@@ -655,6 +662,498 @@
       "depends_on": [],
       "why": "Codex inventarió 18 tests con plazos o esperas cortas del mismo tipo que el de T42; pueden fallar según la carga de la máquina.",
       "note": "Sin analizar todavía: primero comprobar el inventario y cuáles fallan de verdad."
+    },
+    {
+      "id": "T46",
+      "title": "Registro: `fab web` F0/F1, lectura y evidencia",
+      "phase": "F0-F1",
+      "why": "La web existe y está fusionada, pero no tiene tarea: nada puede depender de ella por id.",
+      "where": "src/web.ts, src/web-style.ts, src/evidence.ts",
+      "proposal": "Registrar lo ya fusionado. Informes en docs/research/warp-platform/ (impl-codex.md, verif-fable.md).",
+      "acceptance": "Tarea presente en task.json con el PR enlazado.",
+      "estimate": "hecho",
+      "risk": "bajo",
+      "status": "done",
+      "depends_on": [],
+      "pr": 80
+    },
+    {
+      "id": "T47",
+      "title": "Registro: `fab web` F2, decisiones desde la web",
+      "phase": "F2",
+      "why": "Primera superficie que escribe por red. Sin ella no hay respuesta, revisión ni reintento desde la web.",
+      "where": "worktree sw-factory-webf2, rama feat/fab-web-f2; módulos nuevos src/web-actions.ts y src/web-auth.ts",
+      "proposal": "La del brief BRIEF-WEB-F2-CODEX.md: `fab web --write`, token de un solo uso, cookie de sesión, CSRF y Origin, actor `web`. Sin merge ni `gate allow`.",
+      "acceptance": "Los tests del brief pasan; cada defensa tiene una mutación que mata algún test; verificación independiente sin hallazgos altos.",
+      "estimate": "4-6 d",
+      "risk": "alto",
+      "status": "in_progress",
+      "depends_on": [
+        "T46"
+      ],
+      "note": "El 2026-11-19 el worktree seguía en 77f0dfb, sin commits propios ni informe.",
+      "pr": null
+    },
+    {
+      "id": "T48",
+      "title": "Registro: `fab web` F3, panel de métricas",
+      "phase": "F3",
+      "why": "Equivale a las pestañas Productivity y Spending del panel de Warp.",
+      "where": "worktree sw-factory-webf3, rama feat/fab-web-f3; src/metrics.ts, src/web-metrics.ts, src/store.ts (metricsCohort, metricsEvents)",
+      "proposal": "Verificar con un goldfish de otro modelo lo que describe impl-f3-codex.md y abrir el PR.",
+      "acceptance": "Verificación independiente sin hallazgos altos; suite completa verde o con los dos fallos conocidos repetidos a solas.",
+      "estimate": "hecho, sin verificar",
+      "risk": "medio",
+      "status": "in_progress",
+      "depends_on": [
+        "T46"
+      ],
+      "note": "Implementada en 4 commits (hasta 48c238f). La suite dio 2 fallos y 1 error que pasan aislados (t2-cualificacion, agent-fetch-url).",
+      "pr": null
+    },
+    {
+      "id": "T49",
+      "title": "Lista de changes y bandeja completas",
+      "phase": "F4",
+      "why": "La lista solo filtra por workstream, estado y título. Warp filtra además por fuente, creador y fecha, ordena y tiene filtros rápidos; su bandeja agrupa por día y deja marcar como resuelto.",
+      "where": "src/web.ts:52-63; src/store.ts:573 (listChanges); adm_thread_changes para la fuente; events.actor para el creador",
+      "proposal": "Añadir a /changes orden (actualizado, creado, título), filtro por fecha, por fuente (CLI, canal, Jira) y por actor del primer evento, y enlaces de filtro rápido por estado. En la bandeja, agrupar por día y buscar. «Marcar como visto» se guarda en localStorage del navegador: no cambia el estado del dominio ni añade tablas.",
+      "acceptance": "Tests con datos sintéticos: cada filtro y cada orden devuelven el conjunto exacto; un change sin fuente conocida aparece como «No medido», no se oculta; la consulta sigue en un Store readonly y no crea ficheros; 1000 changes en menos de 300 ms.",
+      "estimate": "2-3 d",
+      "risk": "bajo",
+      "status": "pending",
+      "depends_on": [
+        "T46"
+      ],
+      "pr": null
+    },
+    {
+      "id": "T50",
+      "title": "Crear una señal y triarla desde la web",
+      "phase": "F4",
+      "why": "Equivale a New run. Hoy solo se puede con `fab signal add` y `fab triage`.",
+      "where": "src/store.ts:488 (addSignal), :509 (triageSignal), :527 (ignoreSignal); src/cli.ts:244-265",
+      "proposal": "Con `--write`: formulario que crea una señal, lista de señales nuevas y botones triar o ignorar. Son dos pasos separados, igual que en la CLI: la señal no lanza nada hasta que el dueño la tría. Sin adjuntos.",
+      "acceptance": "Sin `--write`, 405. Con sesión: crear deja una señal `new` y un evento con actor `web`; triar crea el change; doble envío da `conflict`; título y cuerpo se escapan al mostrarse; límites de tamaño de F2.",
+      "estimate": "2-3 d",
+      "risk": "medio",
+      "status": "pending",
+      "depends_on": [
+        "T47"
+      ],
+      "pr": null
+    },
+    {
+      "id": "T51",
+      "title": "Cancelar y renombrar un change desde la web",
+      "phase": "F4",
+      "why": "Warp tiene Stop y renombrar. En fab cancelar es `fab reject` y no existe renombrar.",
+      "where": "src/cli.ts:382-390 (reject); src/store.ts:1112 (closeChange); método nuevo de Store para el título",
+      "proposal": "Botón Cancelar con confirmación que hace lo mismo que `fab reject` (evento, closeChange, espera de liberación y borrado del worktree). Renombrar: método `renameChange` con evento que guarda el título anterior.",
+      "acceptance": "Cancelar un change en curso lo deja `canceled` y libera el worktree; cancelar uno terminal da `invalid_transition` sin efecto; renombrar deja evento con el título anterior y actor `web`; título de hasta 200 caracteres, escapado.",
+      "estimate": "2 d",
+      "risk": "medio",
+      "status": "blocked",
+      "depends_on": [
+        "T47"
+      ],
+      "note": "Bloqueada por D-B: el brief de F2 excluye «parar agentes» de forma explícita.",
+      "pr": null
+    },
+    {
+      "id": "T52",
+      "title": "Página de configuración de solo lectura",
+      "phase": "F4",
+      "why": "Diez módulos de Warp (workers, definición, defaults, integraciones, harnesses, MCPs, runners, red, repo) son en fab datos que ya existen y solo se ven por CLI.",
+      "where": "src/store.ts:147-150 y :378 (workstream); src/profile.ts:90-106; src/agents.ts:165; src/agents-verify.ts; src/sandbox/report.ts:10; src/sandbox/egress-probe.ts:46; src/connectors/jira.ts:29; src/agent/settings.ts:44",
+      "proposal": "Ruta /config por workstream: flags y topes; perfil vigente con su digest y las plantillas por rol; perfiles guardados; adaptadores y resultado de la verificación de binarios; sandbox y última sonda de egress; integraciones como «configurada» o «no configurada»; nombres de servidores MCP. Nunca se muestra un valor de variable, token ni URL con credenciales.",
+      "acceptance": "Test que siembra variables con valores canario y comprueba que ninguno aparece en el HTML; las plantillas se escapan; la página no crea ficheros ni abre la base en escritura; una integración sin configurar no da error 500.",
+      "estimate": "4-6 d",
+      "risk": "medio",
+      "status": "pending",
+      "depends_on": [
+        "T46"
+      ],
+      "pr": null
+    },
+    {
+      "id": "T53",
+      "title": "Visor del flujo (Blueprint)",
+      "phase": "F4",
+      "why": "Warp dibuja etapas, transiciones y gates. En fab el flujo está en código y no se ve.",
+      "where": "src/enums.ts (REVIEWABLE_KINDS, REVIEW_FOLLOW_UP, ActivityKind); src/store.ts:149-150; src/validators/index.ts:14",
+      "proposal": "Ruta /flujo: SVG de servidor generado desde las constantes del dominio (señal, triage, revisión del change, investigación, implementación, validadores, merge), con las puertas humanas marcadas según los flags del workstream y el número de changes en cada etapa. Solo lectura: el flujo se cambia en el código, no en la web.",
+      "acceptance": "Test: si se añade una transición a REVIEW_FOLLOW_UP aparece en el grafo sin tocar la vista; con `--no-spec-approval` la puerta correspondiente se dibuja abierta; hay una tabla equivalente al grafo; los recuentos coinciden con datos sintéticos.",
+      "estimate": "3-4 d",
+      "risk": "bajo",
+      "status": "pending",
+      "depends_on": [
+        "T46",
+        "T48"
+      ],
+      "pr": null
+    },
+    {
+      "id": "T54",
+      "title": "Línea de tiempo por turnos y transcript estructurado",
+      "phase": "F5",
+      "why": "Warp muestra turnos, segmentos (trabajo, espera, bloqueo) y pasos plegables. fab muestra eventos y el log en texto plano.",
+      "where": "src/admission/db.ts:43-59 (adm_reports, adm_questions, adm_sessions); src/live/turn.ts:58; src/web.ts:65-87",
+      "proposal": "En el detalle del change, una fila por turno con su sesión y generación, el report aplicado, la pregunta y su respuesta, y los tramos de espera. Lectura sobre las tablas adm_* en modo readonly; si la base no tiene esas tablas, la sección dice «Sin turnos vivos».",
+      "acceptance": "Datos sintéticos con dos generaciones de sesión, una pregunta respondida y una caducada: la vista las ordena y etiqueta bien; base sin tablas adm_* no falla ni las crea; el texto de preguntas y respuestas se escapa; prueba corta con claude real y confinado, como pide AGENTS.md para src/live.",
+      "estimate": "6-8 d",
+      "risk": "alto",
+      "status": "pending",
+      "depends_on": [
+        "T46",
+        "T16",
+        "T17",
+        "T19",
+        "T26"
+      ],
+      "pr": null
+    },
+    {
+      "id": "T55",
+      "title": "Aviso del navegador cuando algo te espera",
+      "phase": "F5",
+      "why": "Warp avisa cuando un agente termina o necesita atención. fab solo avisa en el issue, por el Outbox.",
+      "where": "src/web.ts:17 (POLL), :52 (bandeja)",
+      "proposal": "El sondeo que ya existe compara el número de elementos de la bandeja y lanza una notificación del navegador cuando sube. Interruptor en la página, guardado en localStorage. Sin SSE: se añade solo si se mide que el sondeo de 2 s no basta. El aviso lleva el recuento, nunca texto de un issue.",
+      "acceptance": "Test del script: con permiso concedido y bandeja de 1 a 2 se llama una vez a Notification; sin permiso no se pide en cada sondeo; el cuerpo del aviso no contiene títulos ni texto de terceros; la CSP sigue sin permitir script en línea.",
+      "estimate": "1-2 d",
+      "risk": "bajo",
+      "status": "pending",
+      "depends_on": [
+        "T46"
+      ],
+      "pr": null
+    },
+    {
+      "id": "T56",
+      "title": "Mensaje libre del dueño a un change",
+      "phase": "F5",
+      "why": "En Warp se puede escribir a un run en cualquier momento. En fab solo se responde a una pregunta abierta o se comenta una revisión.",
+      "where": "src/admission/sessions.ts:112 (reconstructPrompt); src/admission/recovery.ts:27 (planTurn); src/store.ts:1032",
+      "proposal": "Una nota del dueño queda guardada y el pool la entrega al empezar el turno siguiente del change, dentro del prompt. No interrumpe un turno en marcha ni añade el efecto `deliver`, que D4 excluye.",
+      "acceptance": "Una nota escrita con el change en espera aparece en el prompt del turno siguiente y una sola vez; una nota a un change terminal se rechaza; la entrega queda en un evento con actor; prueba con claude real y confinado.",
+      "estimate": "4-6 d",
+      "risk": "alto",
+      "status": "blocked",
+      "depends_on": [
+        "T47",
+        "T54"
+      ],
+      "note": "Bloqueada por D-C: toca D4 (el pool lanza los turnos; sin launch, deliver ni stop).",
+      "pr": null
+    },
+    {
+      "id": "T57",
+      "title": "Perfil v2: modelo y adaptador por rol",
+      "phase": "F6",
+      "why": "En Warp cada worker tiene su modelo, harness y prompt. En fab el perfil tiene un solo `model` y `harness`, y el adaptador se fija por workstream.",
+      "where": "src/profile.ts:10-18, :53; src/pool.ts:186; src/agents.ts:159; src/store.ts:148",
+      "proposal": "schemaVersion 2 con un bloque opcional por rol (investigate, implement, code_review, security_audit, qa) que puede fijar adaptador y modelo; lo que falte se hereda del perfil y luego del workstream. Sigue identificado por digest: cambiar un rol es un perfil nuevo. Los perfiles v1 se siguen leyendo con el mismo digest.",
+      "acceptance": "El digest de todo perfil v1 existente no cambia; un perfil v2 con modelo por rol hace que la activity de ese rol corra con ese modelo y lo deje en su metadata; un adaptador no confinable en un change de canal falla cerrado (T32); perfil con rol desconocido se rechaza nombrando el campo.",
+      "estimate": "5-8 d",
+      "risk": "alto",
+      "status": "pending",
+      "depends_on": [],
+      "pr": null
+    },
+    {
+      "id": "T58",
+      "title": "Editor web de perfiles",
+      "phase": "F6",
+      "why": "Equivale al editor de worker de Warp (Prompt, Settings, Restore defaults), sin editar en caliente.",
+      "where": "src/profile.ts:75 (saveProfile), :103 (DEFAULT_DIGEST); src/profile-cli.ts; método nuevo de Store para asignar el perfil al workstream",
+      "proposal": "Con `--write`: editar las plantillas crea un perfil nuevo con su digest; el vigente no se toca. Asignarlo al workstream es una acción aparte, con confirmación y evento que guarda el digest anterior. «Restaurar valores por defecto» asigna DEFAULT_DIGEST. Las activities ya creadas conservan su digest.",
+      "acceptance": "Guardar no altera ningún fichero de perfil existente; dos guardados iguales dan el mismo digest y `created: false`; asignar deja evento con digest anterior y nuevo; una activity en curso termina con el digest con el que empezó; plantilla de más de 32 KiB se rechaza.",
+      "estimate": "4-6 d",
+      "risk": "alto",
+      "status": "pending",
+      "depends_on": [
+        "T47",
+        "T52",
+        "T57"
+      ],
+      "pr": null
+    },
+    {
+      "id": "T59",
+      "title": "Definición exportable como árbol de ficheros",
+      "phase": "F6",
+      "why": "Warp guarda la factory como ficheros en un repo. En fab la definición está repartida entre la fila del workstream y el perfil.",
+      "where": "src/profile-cli.ts:12-25 (export, import); src/store.ts:409; src/agent/registry.ts:126-127 (skills)",
+      "proposal": "`fab definition export <ws> <dir>` escribe un árbol legible (workstream, perfil por rol, validadores, skills del repo) y `import` lo valida y crea perfil y workstream en draft. El árbol se versiona en el repo que elija el dueño; los cambios entran por PR. La web lo muestra en la página de configuración.",
+      "acceptance": "Exportar e importar en un estado vacío da el mismo digest de perfil; el árbol no contiene rutas absolutas del dueño ni valores de entorno; importar sobre un slug existente falla sin tocar nada; un fichero desconocido en el árbol se rechaza.",
+      "estimate": "3-5 d",
+      "risk": "medio",
+      "status": "pending",
+      "depends_on": [
+        "T57"
+      ],
+      "pr": null
+    },
+    {
+      "id": "T60",
+      "title": "Ajustes y borrado de workstream desde la web",
+      "phase": "F6",
+      "why": "Equivale a General info y Danger zone. Hoy solo existe `fab ws create|list|state`; no se puede editar ni borrar.",
+      "where": "src/cli.ts:213-242; src/store.ts:471 (setWorkstreamState); src/enums.ts (WORKSTREAM_TRANSITIONS)",
+      "proposal": "Con `--write`: cambiar objetivo, concurrencia y tope de tareas; pausar, activar y archivar. Borrar solo un workstream archivado y sin changes en curso, escribiendo su slug para confirmar. Los flags de aprobación y las rutas protegidas no se editan desde la web.",
+      "acceptance": "Cada cambio deja evento con valor anterior y actor; borrar uno activo da `invalid_transition`; borrar con un change en curso se rechaza; un POST que intente cambiar `require_approval` o las rutas protegidas se ignora y lo prueba un test.",
+      "estimate": "3-4 d",
+      "risk": "alto",
+      "status": "pending",
+      "depends_on": [
+        "T47",
+        "T52"
+      ],
+      "note": "D-F decide si los flags de aprobación se pueden tocar desde la web. Recomendado: no.",
+      "pr": null
+    },
+    {
+      "id": "T61",
+      "title": "Asistente de alta de workstream",
+      "phase": "F6",
+      "why": "Warp guía el alta en seis pasos y deja una lista «Finish setup». En fab es un comando con una docena de flags.",
+      "where": "src/cli.ts:214-233; `fab doctor` en src/cli.ts:391; src/agents-verify.ts",
+      "proposal": "Formulario en pasos (repo local, objetivo, adaptador, perfil, comando de verificación) que termina en `createWorkstream` en estado draft, más una lista de comprobaciones que reutiliza `fab doctor`. Activarlo sigue siendo un paso explícito.",
+      "acceptance": "El workstream creado es idéntico al de `fab ws create` con los mismos valores; un repo que no existe o no es git se rechaza en su paso; nace en draft; la lista marca como pendiente un adaptador sin binario verificado.",
+      "estimate": "3-5 d",
+      "risk": "medio",
+      "status": "pending",
+      "depends_on": [
+        "T47",
+        "T52"
+      ],
+      "pr": null
+    },
+    {
+      "id": "T62",
+      "title": "Vista de experimentos y suites",
+      "phase": "F7",
+      "why": "Los experimentos de `improve` y las suites solo se ven con `fab improve report`.",
+      "where": "src/improve.ts:26-29 (tablas), :316 (reportExperiment), :341 (experimentRunsJson); tests/web-improve.test.ts",
+      "proposal": "Rutas /experimentos y /experimentos/<id> de solo lectura: brazos, repeticiones, éxito, coste, líneas de diff y el resumen que ya calcula reportExperiment. Lista de suites con sus tareas por split.",
+      "acceptance": "Los números de la página coinciden con `fab improve report --json` sobre el mismo estado; una base sin tablas de experimentos no las crea; coste desconocido se muestra «No medido».",
+      "estimate": "3-4 d",
+      "risk": "bajo",
+      "status": "pending",
+      "depends_on": [
+        "T46"
+      ],
+      "pr": null
+    },
+    {
+      "id": "T63",
+      "title": "Medir si los validadores dejan hueco para jueces",
+      "phase": "F7",
+      "why": "AGENTS.md exige medir antes de construir una pieza. Los validadores ya juzgan cada change; no se sabe qué verían los jueces que ellos no ven.",
+      "where": "src/validators/verdict.ts:12; src/store.ts:814 (validationSummary); events",
+      "proposal": "Fijar por escrito, antes de medir: (1) proporción de changes aprobados por los validadores que después recibieron «comentar» o «rechazar» del dueño o un reintento; (2) umbral: si supera el 15 % en al menos 30 changes, los jueces se construyen con muestreo alto; si no, con muestreo bajo y solo como aviso. Medir con eventos existentes, sin llamadas a modelos.",
+      "acceptance": "Nota en la tarea con la medición, el umbral, el resultado y lo que la medición no puede ver. Sin escrituras nuevas en la base.",
+      "estimate": "2 d",
+      "risk": "bajo",
+      "status": "pending",
+      "depends_on": [],
+      "pr": null
+    },
+    {
+      "id": "T64",
+      "title": "Jueces (scorers) sobre ejecuciones terminadas",
+      "phase": "F7",
+      "why": "Warp puntúa ejecuciones con rúbricas, clasificaciones, nota de aprobado y muestreo, por worker, por etapa o por tarea completa. fab no tiene nada equivalente.",
+      "where": "Módulo nuevo src/scorers.ts; tablas nuevas `scorers` y `scores`; src/validators/prompts.ts:51 como modelo de prompt; src/prompts.ts:22 (untrusted)",
+      "proposal": "Un juez es rúbrica, clasificaciones con puntuación, nota de aprobado, tasa de muestreo y alcance (un rol, o el change completo); vive en el perfil, con digest. Corre después de que la activity termine, como proceso de un disparo, confinado y sin escritura en el worktree. El material juzgado va delimitado con nonce. El resultado es un aviso: nunca cambia el estado del change ni cuenta para el merge. Muestreo 0 lo pausa.",
+      "acceptance": "Muestreo determinista por semilla: con tasa 0 no corre ninguno y con 1 corren todos; un juez que falla o no devuelve una clasificación válida deja `score` nulo, no cero; ningún resultado de juez cambia `changes.status` ni `mergeBlocker`; texto con instrucciones dentro del material juzgado no altera el formato de salida (test con canario); prueba con claude real y confinado.",
+      "estimate": "8-12 d",
+      "risk": "alto",
+      "status": "pending",
+      "depends_on": [
+        "T57",
+        "T63"
+      ],
+      "note": "D-G: el catálogo recomendaba no construirlos todavía. T63 fija el muestreo, no el si.",
+      "pr": null
+    },
+    {
+      "id": "T65",
+      "title": "Jueces en la web: lista, historial y pestaña del panel",
+      "phase": "F7",
+      "why": "Equivale a Scorers (Details, Config), «Score past runs», «Score run» y la pestaña Scorers del Dashboard.",
+      "where": "src/web.ts; src/web-metrics.ts (F3); tablas de T64",
+      "proposal": "Lista y detalle de jueces con coste acumulado y tasa de aprobado en el tiempo; pestaña en /metricas. Con `--write`: puntuar una ejecución a mano y puntuar un rango pasado, con vista previa del número de ejecuciones y del coste estimado y la opción de saltar las ya puntuadas.",
+      "acceptance": "La tasa de aprobado coincide con datos sintéticos; «No hay puntuaciones en este rango» cuando no las hay; la vista previa de un rango cuenta lo mismo que luego se encola; repetir la acción con «saltar las ya puntuadas» no crea duplicados.",
+      "estimate": "5-7 d",
+      "risk": "medio",
+      "status": "pending",
+      "depends_on": [
+        "T47",
+        "T48",
+        "T64"
+      ],
+      "pr": null
+    },
+    {
+      "id": "T66",
+      "title": "Benchmarks: matriz de variantes y «añadir a suite»",
+      "phase": "F7",
+      "why": "Warp compara configuraciones de modelo sobre casos repetibles y deja añadir un run real como caso. En fab las suites se escriben a mano y se compara un candidato contra un baseline.",
+      "where": "src/improve.ts:17-18 (SuiteTask), :71 (createExperiment), :257 (RunOptions); src/improve-cli.ts",
+      "proposal": "Corrida con N variantes (perfil y modelo) sobre una suite, reutilizando el motor de `improve`, con estados pendiente, en curso, puntuando, completa, fallida y cancelada. «Añadir a suite» genera desde un change terminado una SuiteTask candidata (repo, base, descripción, verificación) en un fichero que el dueño revisa; no modifica una suite ya usada, porque su digest la identifica.",
+      "acceptance": "Una corrida de 2 variantes × 3 tareas × 2 repeticiones produce 12 filas; cancelar deja las filas hechas y no lanza más; la tarea generada desde un change pasa parseSuite; el digest de una suite existente no cambia.",
+      "estimate": "6-9 d",
+      "risk": "medio",
+      "status": "pending",
+      "depends_on": [
+        "T57",
+        "T62",
+        "T64"
+      ],
+      "pr": null
+    },
+    {
+      "id": "T67",
+      "title": "Automejora por umbral, con candidato revisable",
+      "phase": "F7",
+      "why": "Warp propone cambios a la definición cuando un worker acumula fallos de juez por encima de un umbral. En fab `improve` se lanza a mano.",
+      "where": "src/improve.ts:71; tablas de T64; src/profile.ts:75",
+      "proposal": "Cuando un rol supera el umbral de fallos de juez en una ventana, la fab registra un candidato: un perfil nuevo propuesto por un agente confinado y un experimento pareado contra el vigente. La web lo lista con su evidencia. Aplicarlo es la asignación de perfil de T58, hecha por el dueño. La fab nunca asigna el perfil ni abre el PR por su cuenta.",
+      "acceptance": "Por debajo del umbral no se crea candidato; por encima se crea uno, no uno por fallo; el perfil vigente del workstream no cambia sin la acción de T58; el candidato lleva el id del experimento y los ids de las puntuaciones que lo dispararon; «Ejecutar ahora» crea como mucho un candidato en curso por rol.",
+      "estimate": "5-8 d",
+      "risk": "alto",
+      "status": "pending",
+      "depends_on": [
+        "T58",
+        "T64",
+        "T66"
+      ],
+      "note": "D-H: quién aplica la mejora. Recomendado: solo el dueño.",
+      "pr": null
+    },
+    {
+      "id": "T68",
+      "title": "Automations por horario que crean señales",
+      "phase": "F8",
+      "why": "Warp lanza trabajo cada hora, día, semana o por cron. fab no tiene nada recurrente.",
+      "where": "Tabla nueva `automations`; src/admission/resident.ts (bucle); src/store.ts:488 (addSignal)",
+      "proposal": "Una automation es horario (cada hora, diario, semanal o cron), workstream y una plantilla fija de señal escrita por el dueño. Al vencer crea una señal con fuente `automation:<id>`; no lanza turnos. Si ya hay una señal o un change abierto de esa automation, se salta la vez. «Ejecutar ahora» crea la misma señal. La expresión cron se valida al guardar.",
+      "acceptance": "Con reloj inyectado: una automation diaria crea exactamente una señal por día aunque el proceso se reinicie; con una señal abierta de la misma automation no crea otra; cron inválido se rechaza al guardar; ningún camino crea una activity sin pasar por triage; sin esperas reales en los tests.",
+      "estimate": "5-8 d",
+      "risk": "alto",
+      "status": "pending",
+      "depends_on": [
+        "T50",
+        "T11"
+      ],
+      "note": "D-D decide si una automation del dueño puede triarse sola. Recomendado: empezar sin autotriage.",
+      "pr": null
+    },
+    {
+      "id": "T69",
+      "title": "Webhooks entrantes como aviso y como señal",
+      "phase": "F8",
+      "why": "Warp recibe entregas HTTP que una automation filtra. En fab la entrada es por sondeo.",
+      "where": "Servidor nuevo, separado de `fab web`; src/admission/github.ts:15; src/admission/gate.ts:36; tablas nuevas `webhooks` y `webhook_deliveries`",
+      "proposal": "Dos usos. (1) Aviso: una entrega firmada de GitHub solo adelanta el sondeo; el contenido y la autoridad se vuelven a leer por la API, así que D1 y D2 no cambian. (2) Genérico: una entrega válida queda registrada (resultado, tamaño, fecha) y, si coincide con el filtro de una automation, crea una señal `new` con el cuerpo delimitado como no confiable; nunca un change ni un turno. Solo autenticación por firma HMAC; el secreto se lee de una variable de entorno y no se guarda en la base. Tope de 20 webhooks y de 64 KiB por entrega.",
+      "acceptance": "Firma ausente o errónea: 401 y ninguna fila de señal; entrega repetida con el mismo id no duplica; una entrega de GitHub con etiqueta `fab` falsificada en el cuerpo no admite nada, porque el gate lee la API; el cuerpo aparece en el prompt solo dentro del bloque con nonce; el resultado de cada entrega es `matched`, `not_matched` o `skipped`; el secreto no aparece en argv, logs ni base.",
+      "estimate": "8-12 d",
+      "risk": "alto",
+      "status": "blocked",
+      "depends_on": [
+        "T68",
+        "T43"
+      ],
+      "note": "Bloqueada por D-E: escuchar fuera de 127.0.0.1 es una decisión del dueño.",
+      "pr": null
+    },
+    {
+      "id": "T70",
+      "title": "Más conectores de entrada",
+      "phase": "F8",
+      "why": "Warp admite GitLab, Azure DevOps, Linear, Slack, Teams y Jira como origen de eventos. fab tiene GitHub por etiqueta y Jira por importación manual.",
+      "where": "src/admission/github.ts; src/connectors/",
+      "proposal": "Cada conector nuevo define su equivalente de D1 y D2 (qué marca dispara y cómo se verifica el rol de quien la puso) antes de escribirse. Sin ese equivalente, el conector es solo de salida (avisos).",
+      "acceptance": "Por conector: tests del gate con marca puesta por alguien sin rol, por un bot y por la propia fab; el título y el cuerpo no entran en la decisión de admisión.",
+      "estimate": "sin estimar (5-8 d por conector)",
+      "risk": "alto",
+      "status": "blocked",
+      "depends_on": [
+        "T43",
+        "T69"
+      ],
+      "note": "Bloqueada por D-I: qué conectores y con qué prioridad.",
+      "pr": null
+    },
+    {
+      "id": "T71",
+      "title": "API HTTP local con claves",
+      "phase": "F9",
+      "why": "Warp ofrece claves para usar la factory por API. El SDK de fab es JSON-RPC por stdio y solo cubre `fab exec`.",
+      "where": "src/web.ts:96; módulos de F2 (src/web-auth.ts); tabla nueva `api_keys`",
+      "proposal": "Rutas /api/v1 en JSON sobre el mismo servidor: lectura de workstreams, changes, activities y bandeja, y las mismas mutaciones que la web con `--write`. Clave con ámbito (`read` o `decide`), mostrada una sola vez al crearla y guardada como hash. Va en la cabecera Authorization, nunca en la URL ni en argv. Sin merge ni `gate allow`.",
+      "acceptance": "Sin clave, 401; clave `read` en una mutación, 403; clave revocada, 401; la base no contiene la clave en claro (test que la busca); la clave no aparece en logs ni eventos; la API no expone ninguna mutación que la web no tenga.",
+      "estimate": "4-6 d",
+      "risk": "alto",
+      "status": "pending",
+      "depends_on": [
+        "T47"
+      ],
+      "pr": null
+    },
+    {
+      "id": "T72",
+      "title": "Secretos y MCP por referencia, por workstream y rol",
+      "phase": "F9",
+      "why": "Warp guarda secretos y servidores MCP en su servidor y los asigna a workers. En fab el agente recibe variables por una allowlist fija y no hay MCP por rol.",
+      "where": "src/sandbox/confine.ts:102-106; src/agent/settings.ts:44; perfil v2 de T57",
+      "proposal": "El workstream declara nombres de variables permitidas y el perfil declara, por rol, qué nombres y qué servidores MCP usa. Los valores siguen viviendo en el entorno del dueño: ni la base ni la web los guardan o muestran. La web enseña el nombre y si está definido. «Importar» lee nombres de un fichero, no valores.",
+      "acceptance": "Una variable no declarada no llega al proceso confinado; la base y el HTML no contienen ningún valor canario; un rol sin MCP declarado arranca sin servidores; el token de un MCP no aparece en argv (T34); un change de canal no recibe más variables que uno local.",
+      "estimate": "4-6 d",
+      "risk": "alto",
+      "status": "pending",
+      "depends_on": [
+        "T57",
+        "T34"
+      ],
+      "note": "D-K: confirma que no habrá almacén de valores.",
+      "pr": null
+    },
+    {
+      "id": "T73",
+      "title": "Usuarios, roles y cuenta",
+      "phase": "F9",
+      "why": "Warp tiene usuarios con rol por factory, cuenta personal y política de quién puede dar seguimiento. fab es monousuario.",
+      "where": "src/store.ts:1323 (actor); módulos de F2 y T71",
+      "proposal": "Solo si el dueño elige el servidor compartido: usuarios con rol (lector, triage, admin) y cada mutación comprobada contra el rol en el Store, no en la vista. En local no se construye: el actor del evento ya identifica quién decidió.",
+      "acceptance": "Se define al tomar D-A.",
+      "estimate": "sin estimar",
+      "risk": "alto",
+      "status": "blocked",
+      "depends_on": [
+        "T71"
+      ],
+      "note": "Bloqueada por D-A: local monousuario o servidor compartido.",
+      "pr": null
+    },
+    {
+      "id": "T74",
+      "title": "Runners con nombre",
+      "phase": "F9",
+      "why": "Warp define runners (sistema, arquitectura, imagen) reutilizables. En fab hay un pool local y un sandbox único.",
+      "where": "src/sandbox/confine.ts:41; src/sandbox/detect.ts:112; src/pool.ts",
+      "proposal": "Opción local: un runner es un nombre para un conjunto de opciones del sandbox ya existente (red, montajes de solo lectura), elegible por workstream. Los runners remotos o en la nube quedan fuera salvo decisión.",
+      "acceptance": "Se define al tomar D-J.",
+      "estimate": "sin estimar",
+      "risk": "alto",
+      "status": "blocked",
+      "depends_on": [
+        "T52"
+      ],
+      "note": "Bloqueada por D-J: runners remotos sí o no.",
+      "pr": null
     }
   ]
 }
