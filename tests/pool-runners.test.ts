@@ -13,7 +13,7 @@ import { MAX_ACTIVITY_RETRIES } from '../src/enums.ts';
 const FAKE = resolve(import.meta.dir, 'helpers/fake-runner.ts');
 let dir: string, repo: string, fakeDir: string, store: Store;
 const git = (cwd: string, ...a: string[]) => Bun.spawnSync(['git', ...a], { cwd, env: { ...process.env, GIT_CONFIG_GLOBAL: '/dev/null' } }).stdout.toString().trim();
-const fake = (scenario: string, report = 'STATUS: done\nhecho'): Transport => () => ['bun', FAKE, scenario, fakeDir, report];
+const fake = (scenario: string, report = 'STATUS: done\nhecho'): Transport => () => [process.execPath, FAKE, scenario, fakeDir, report];
 const noSession = (): Transport => () => { throw new Error('se abrió una sesión'); };
 const opts = (ws: string, over: Partial<PoolOptions> = {}): PoolOptions => ({ workstream: ws, stateDir: dir, untilIdle: true, pollMs: 5, log: () => {}, ...over });
 const meta = (changeId: string, activityId: string) => JSON.parse(readFileSync(runDirectory(dir, changeId) + `/${activityId}.json`, 'utf8'));
@@ -89,6 +89,24 @@ test('runner local con confine: la metadata dice bwrap-allowlist; con adaptador 
   const [blocked] = store.listActivities({ changeId: c2.id });
   expect(blocked!.status).toBe('blocked');
   expect(blocked!.error).toContain('RUNNER_NOT_CONFINABLE');
+});
+
+test('el binario del agente de un runner ssh no se comprueba en casa: un `claude` local con pin distinto no bloquea el encargo', async () => {
+  mkdirSync(join(dir, 'bin')); mkdirSync(join(dir, 'home'));
+  writeFileSync(join(dir, 'bin', 'claude'), '#!/bin/sh\n', { mode: 0o755 });
+  writeFileSync(join(dir, 'home', 'agents.json'), JSON.stringify({ agentBinaries: { claude: 'a'.repeat(64) } }));
+  const saved = { PATH: process.env.PATH, FABRICA_HOME: process.env.FABRICA_HOME };
+  process.env.PATH = `${join(dir, 'bin')}:${saved.PATH}`; process.env.FABRICA_HOME = join(dir, 'home');
+  try {
+    const ws = workstream({ agent: 'claude' });
+    const c = store.createChange(ws.id, 'x', 'd');
+    await runPool(store, opts(ws.id)).catch(() => {}); // control: en local, el pin distinto aborta el pool
+    expect(store.listActivities({ changeId: c.id })).toHaveLength(1);
+    expect(store.listActivities({ changeId: c.id })[0]!.status).toBe('pending');
+    store.setWorkstreamRunner(ws.id, 'torre');
+    await runPool(store, opts(ws.id, { runnerTransport: fake('auto') }));
+    expect(store.getChange(c.id).status).toBe('implemented');
+  } finally { for (const [k, v] of Object.entries(saved)) if (v === undefined) delete process.env[k]; else process.env[k] = v; }
 });
 
 test('runner desactivado: RUNNER_DISABLED sin conectar y sin caer a local (R9, A10)', async () => {
