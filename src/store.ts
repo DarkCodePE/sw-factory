@@ -5,6 +5,7 @@ import { DEFAULT_DIGEST, resolveProfile } from './profile.ts';
 import { Database } from 'bun:sqlite';
 import { randomUUID } from 'node:crypto';
 import { userInfo } from 'node:os';
+import { existsSync } from 'node:fs';
 import { dirname, resolve } from 'node:path';
 import { gitEvidence, writeManifest } from './manifest.ts';
 
@@ -266,6 +267,8 @@ export interface CreateWorkstreamInput {
 }
 
 export interface StoreOptions {
+  /** No crea esquema, no migra y SQLite rechaza toda escritura. */
+  readonly?: boolean;
   clock?: () => Date;
 }
 
@@ -280,7 +283,12 @@ export class Store {
     this.stateDir = path === ':memory:' ? undefined : dirname(resolve(path));
     this.clock = options?.clock ?? (() => new Date());
     this.dbPath = path;
-    this.db = new Database(path, { create: true, strict: true });
+    // SQLite puede reconstruir -shm aun con SQLITE_OPEN_READONLY. No hacerlo desde una superficie de lectura.
+    if (options?.readonly && existsSync(`${path}-wal`) && !existsSync(`${path}-shm`)) {
+      throw new Error('WAL sin índice compartido: abre la fábrica con un escritor antes de usar solo lectura');
+    }
+    this.db = new Database(path, options?.readonly ? { readonly: true, strict: true } : { create: true, strict: true });
+    if (options?.readonly) return;
     this.db.exec('PRAGMA journal_mode = WAL; PRAGMA foreign_keys = ON; PRAGMA busy_timeout = 5000;');
     this.db.exec(SCHEMA);
     this.migrate();
