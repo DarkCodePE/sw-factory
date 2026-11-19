@@ -43,6 +43,7 @@ flowchart TD
 | [11 Integraciones](11-integraciones.md) | Conectores Jira/GitHub, búsqueda, autoactualización. |
 | [12 Build y release](12-build-y-release.md) | Bun, binarios compilados, CI y publicación. |
 | [14 Perfiles por rol](14-t57-perfiles-por-rol.md) | Esquema v2, selección de adaptador y modelo, evidencia y sesiones vivas. |
+| [15 E2E de la web](15-t76-e2e-web.md) | `bun run e2e`: recorrido de extremo a extremo con agent-browser y comprobación en el Store. |
 
 ## Archivos
 
