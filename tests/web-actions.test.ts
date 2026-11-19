@@ -58,6 +58,8 @@ test('sesión necesaria; token de 32 bytes, un solo uso y cookie segura durante 
   expect(r.headers.get('location')).toBe('/');
   for (const attr of ['HttpOnly', 'SameSite=Strict', 'Path=/']) expect(r.headers.get('set-cookie')).toContain(attr);
   expect(r.headers.get('set-cookie')).not.toMatch(/Expires|Max-Age/);
+  expect(r.headers.get('set-cookie')).toMatch(/(?:^|; )Path=\/(?:;|$)/);
+  expect(cookie).toMatch(/^fab_session=[a-f0-9]{64}$/);
   expect((await fetch(server.loginUrl!, { redirect: 'manual' })).status).toBe(401);
   expect((await post(review(), {}, { cookie: 'fab_session=incorrecto' })).status).toBe(401);
   server.stop(true); server = startWeb(dir, 0, { write: true });
@@ -122,13 +124,13 @@ test('errores de dominio sin stack y rutas fuera del alcance no ejecutan accione
 });
 test('límites reales en bytes, tipo, comentarios y respuestas vacías', async () => {
   await login();
-  expect((await post(review(), { decision: 'comment', comment: 'é'.repeat(4097) })).status).toBe(413);
+  expect((await post(review(), { decision: 'comment', comment: 'é' + 'a'.repeat(8191) })).status).toBe(413);
   expect((await post(review(), { decision: 'comment', comment: '' })).status).toBe(400);
   expect((await post(review(), { decision: 'invalid' })).status).toBe(400);
   expect((await post(review(), {}, { 'content-type': 'application/json' })).status).toBe(415);
   expect((await post(review(), { padding: 'a'.repeat(16385) })).status).toBe(413);
   const adm = seedQuestion();
-  expect((await post('/questions/q1/answer', { answer: 'é'.repeat(4097) })).status).toBe(413);
+  expect((await post('/questions/q1/answer', { answer: 'é' + 'a'.repeat(8191) })).status).toBe(413);
   expect((await post('/questions/q1/answer', { answer: '  ' })).status).toBe(400);
   expect(adm.db.query('SELECT status FROM adm_questions').get()).toEqual({ status: 'open' });
   expect((await post('/questions/q1/answer', { answer: 'a'.repeat(8192) })).status).toBe(303);
@@ -209,4 +211,11 @@ test('FAB_ACTOR se restaura después de éxito y error', async () => {
     store.event(store.getChange(change).workstreamId, 'info', 'después', change);
     expect(store.listEvents(store.getChange(change).workstreamId, 100, change).at(-1)!.actor).toBe('prueba-actor');
   } finally { if (previous === undefined) delete process.env.FAB_ACTOR; else process.env.FAB_ACTOR = previous; }
+});
+
+test('los formularios conservan Origin en el navegador y el canje oculta el token', async () => {
+  const exchange = await login();
+  expect(exchange.headers.get('referrer-policy')).toBe('no-referrer');
+  const page = await req(`/activities/${activity}`, { headers: { cookie } });
+  expect(page.headers.get('referrer-policy')).toBe('same-origin');
 });
