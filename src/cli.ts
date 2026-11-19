@@ -10,6 +10,7 @@ import { captureMain } from './manifest-capture.ts';
 import { AGENT_NAMES } from './agents.ts';
 import { agentsMain } from './agents-verify.ts';
 import { profileMain } from './profile-cli.ts';
+import { exportDefinition, importDefinition } from './definition.ts';
 import { improveMain } from './improve-cli.ts';
 import type { ReviewDecision, WorkstreamState } from './enums.ts';
 import { runPool } from './pool.ts';
@@ -85,6 +86,7 @@ const HELP = `fab — agente de código y fábrica de software local
   fab improve report <id> | delete <id>   experimentos pareados (fase 1: sin cualificación ni rollout)
   fab ws list
   fab profile export [--out f] | import <f> | inspect <digest> | list   perfiles de instrucciones inmutables por digest
+  fab definition export <slug> <dir> | import <dir> --repo <path> [--slug <slug>]   definición como árbol de ficheros (sin rutas ni valores de entorno)
   fab ws state <slug> <active|paused|archived>
   fab signal add <slug> <title> [--body <text>]
   fab signal list <slug>
@@ -199,6 +201,7 @@ async function main(argv: string[]): Promise<number> {
       'verify-setup': { type: 'string', multiple: true },
       'protect-none': { type: 'boolean' },
       profile: { type: 'string' },
+      slug: { type: 'string' },
       help: { type: 'boolean', short: 'h' },
     },
   });
@@ -239,6 +242,16 @@ async function main(argv: string[]): Promise<number> {
           const ws = store.setWorkstreamState(rest[0] ?? '', rest[1] as WorkstreamState);
           console.log(`${ws.slug} -> ${ws.state}`);
         } else throw new StoreError('invalid_input', 'fab ws create|list|state');
+        return 0;
+      }
+      case 'definition': {
+        if (sub === 'export' && rest[0] && rest[1]) {
+          const files = exportDefinition(store, STATE_DIR, rest[0], resolve(rest[1]));
+          console.log(`definición de ${rest[0]} exportada a ${rest[1]} (${files.length} ficheros)`);
+        } else if (sub === 'import' && rest[0] && values.repo) {
+          const r = importDefinition(store, STATE_DIR, resolve(rest[0]), resolve(values.repo), values.slug);
+          console.log(`workstream ${r.slug} creado en draft con perfil ${r.digest}${r.skills.length ? `; skills del árbol (no se escriben en el repo): ${r.skills.join(', ')}` : ''}`);
+        } else throw new StoreError('invalid_input', 'usage: fab definition export <slug> <dir> | import <dir> --repo <path> [--slug <slug>]');
         return 0;
       }
       case 'signal': {
@@ -414,7 +427,7 @@ async function main(argv: string[]): Promise<number> {
   }
 }
 
-const COMMANDS = new Set(['worktree', 'ws', 'signal', 'triage', 'inbox', 'review', 'run', 'status', 'show', 'merge', 'retry', 'gate', 'reject', 'events', 'tui', 'doctor', 'agents', 'profile', 'improve', 'resident', 'help']);
+const COMMANDS = new Set(['worktree', 'ws', 'definition', 'signal', 'triage', 'inbox', 'review', 'run', 'status', 'show', 'merge', 'retry', 'gate', 'reject', 'events', 'tui', 'doctor', 'agents', 'profile', 'improve', 'resident', 'help']);
 
 // A forced exit is still needed for handles left by dependencies, but pipe
 // writes are asynchronous: wait for both write queues before terminating.
