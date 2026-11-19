@@ -261,7 +261,7 @@ async function readForm(req: Request, limit = 16384): Promise<URLSearchParams> {
 
 export async function webAction(req: Request, stateDir: string, port: number, auth: WebAuth): Promise<Response> {
   if (!auth.sessionCsrf(req)) return new Response('Se necesita una sesión local.', { status: 401 });
-  if (![ `http://127.0.0.1:${port}`, `http://localhost:${port}` ].includes(req.headers.get('origin') ?? '')) return new Response('Origin rechazado.', { status: 403 });
+  if (req.headers.get('origin') !== `http://${auth.host}:${port}`) return new Response('Origin rechazado.', { status: 403 });
   let destination = '/'; let result = 'ok';
   try {
     const profilePath = /^\/perfiles\/(guardar|asignar)$/.exec(new URL(req.url).pathname);

@@ -5,7 +5,7 @@ import { Store } from '../src/store.ts';
 import { startWeb } from '../src/web.ts';
 
 let dir: string, store: Store, server: ReturnType<typeof startWeb>, change: string, cookie: string, csrf: string;
-const req = (path: string, init?: RequestInit) => fetch(`http://127.0.0.1:${server.port}${path}`, { redirect: 'manual', ...init });
+const req = (path: string, init?: RequestInit) => fetch(`http://${server.host ?? "127.0.0.1"}:${server.port}${path}`, { redirect: 'manual', ...init });
 const html = async (path = `/changes/${change}`) => (await req(path, { headers: { cookie } })).text();
 async function login() {
   const r = await fetch(server.loginUrl!, { redirect: 'manual' });
@@ -13,7 +13,7 @@ async function login() {
   csrf = /name="csrf" value="([^"]+)"/.exec(await html())?.[1] ?? '';
 }
 const post = (data: Record<string, string> = {}, headers: Record<string, string> = {}) => req(`/changes/${change}/note`, {
-  method: 'POST', headers: { cookie, origin: `http://127.0.0.1:${server.port}`, 'content-type': 'application/x-www-form-urlencoded', ...headers },
+  method: 'POST', headers: { cookie, origin: `http://${server.host ?? "127.0.0.1"}:${server.port}`, 'content-type': 'application/x-www-form-urlencoded', ...headers },
   body: new URLSearchParams({ csrf, ...data }),
 });
 const notes = () => store.listChangeNotes(change);

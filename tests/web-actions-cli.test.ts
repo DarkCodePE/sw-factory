@@ -10,9 +10,9 @@ beforeEach(() => {
   store.createWorkstream({ slug: 'fixture', goal: 'g', repo: '/repo' }); store.close();
 });
 afterEach(() => rmSync(dir, { recursive: true, force: true }));
-const warning = 'No abras otros servicios de 127.0.0.1 en este navegador mientras dure la sesión';
+const warning = 'fab-<aleatorio>.localhost';
 
-test('H1: la ayuda advierte del riesgo de compartir la cookie entre puertos', () => {
+test('H1: la ayuda advierte del host único de la sesión', () => {
   const r = Bun.spawnSync(['bun', 'src/cli.ts', 'web', '--help'], { env: { ...process.env, FABRICA_HOME: dir } });
   expect(r.exitCode).toBe(0);
   expect(r.stdout.toString()).toContain('--write');
@@ -27,13 +27,14 @@ for (const write of [false, true]) {
     const decoder = new TextDecoder(); let output = '';
     try {
       // Esperar datos del pipe, sin pausas ni sondeo por tiempo.
-      while (!/fab web · http:\/\/127\.0\.0\.1:\d+[^\n]*\n/.test(output)) {
+      while (!/fab web · http:\/\/[\w.-]+:\d+[^\n]*\n/.test(output)) {
         const { done, value } = await reader.read();
         if (done) throw new Error('El comando terminó antes de escuchar');
         output += decoder.decode(value, { stream: true });
       }
-      const base = /http:\/\/127\.0\.0\.1:\d+/.exec(output)![0];
-      const r = await fetch(`${base}/fuera-de-alcance`, { method: 'POST' });
+      const [, host, port] = /http:\/\/([\w.-]+):(\d+)/.exec(output)!;
+      expect(host).toBe(write ? host!.match(/^fab-[0-9a-f]{16}\.localhost$/)![0] : '127.0.0.1');
+      const r = await fetch(`http://127.0.0.1:${port}/fuera-de-alcance`, { method: 'POST', headers: { host: `${host}:${port}` } });
       expect(r.status).toBe(write ? 401 : 405);
       expect(output.includes('/auth?token=')).toBe(write);
     } finally {

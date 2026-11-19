@@ -6,7 +6,7 @@ import { Store, StoreError } from '../src/store.ts';
 import { startWeb } from '../src/web.ts';
 
 let dir: string, store: Store, server: ReturnType<typeof startWeb>, cookie: string, csrf: string, wsId: string;
-const base = () => `http://127.0.0.1:${server.port}`;
+const base = () => `http://${server.host ?? "127.0.0.1"}:${server.port}`;
 const req = (path: string, init?: RequestInit) => fetch(base() + path, { redirect: 'manual', ...init });
 const html = async (path: string) => (await req(path, { headers: { cookie } })).text();
 async function login() {

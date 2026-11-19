@@ -13,7 +13,7 @@ import { PROFILE_BODY_LIMIT, profilesPage } from './web-profile.ts';
 
 import { INBOX_JS, changesView, inboxView, parseQuery, type Ui } from './web-changes.ts';
 import { metricsPage, METRICS_STYLE } from './web-metrics.ts';
-import { WebAuth } from './web-auth.ts';
+import { WebAuth, assertLoopback } from './web-auth.ts';
 import { turnsSection, notesSection, turnLogRoute } from './web-turns.ts';
 import { signalsView } from './web-signals.ts';
 import { automationsView } from './web-automations.ts';
@@ -107,6 +107,8 @@ function page(store: Store, stateDir: string, url: URL, csrf?: string): { title:
   return { title: `Activity · ${a.validator ?? a.kind}`, body: `<p><a href="/changes/${enc(c.id)}">${escape(c.title)}</a></p><div class="summary">${badge(a.status)} ${a.reviewStatus ? badge(a.reviewStatus) : ''}<span>${escape(a.id)}</span></div>${actionForms(store, url, csrf)}<h2>Intentos</h2><div class="table-wrap"><table><thead><tr><th>Intento</th><th>Coste</th><th>Duración</th></tr></thead><tbody>${Array.from({ length: count }, (_, i) => `<tr><td>${i + 1}</td><td>${money(costs?.[i] ?? null)}</td><td>${i === count - 1 && duration !== null ? `${duration} ms` : 'No medida'}</td></tr>`).join('')}</tbody></table></div><p class="muted">La evidencia histórica solo conserva la duración del último intento.</p><h2>Veredicto y resultado</h2><p>Validador: ${escape(a.validator ?? (a.kind === 'gates' ? 'gate' : 'No aplica'))} · Revisión: ${escape(labels[a.reviewStatus ?? ''] ?? a.reviewStatus ?? 'Sin veredicto')}</p><pre tabindex="0">${escape([a.reviewComment, a.result, a.error].filter(Boolean).join('\n') || 'Sin resultado registrado.')}</pre>${evidence(stateDir, c.id, `${a.id}.log`, 'Log')}${evidence(stateDir, c.id, `${a.id}.json`, 'Metadata de ejecución')}${evidence(stateDir, c.id, 'run.json', 'run.json')}${evidence(stateDir, c.id, 'diff.patch', 'Diff')}` };
 }
 
+const loopback = (port: number) => [`127.0.0.1:${port}`, `localhost:${port}`];
+
 export function startWeb(stateDir: string, port = 4310, options: { write?: boolean } = {}) {
   const auth = options.write ? new WebAuth() : undefined;
   const openStore = () => new Store(join(stateDir, 'fabrica.db'), { readonly: true });
@@ -116,8 +118,10 @@ export function startWeb(stateDir: string, port = 4310, options: { write?: boole
   // Verifica la base antes de escuchar y vuelve a abrirla en cada petición.
   server = Bun.serve({ hostname: '127.0.0.1', port, ...(auth ? { maxRequestBodySize: PROFILE_BODY_LIMIT } : {}), async fetch(req) {
       const respond = (body: string, status = 200, type = 'text/html; charset=utf-8') => new Response(req.method === 'HEAD' ? null : body, { status, headers: { ...HEADERS, ...(auth?.sessionCsrf(req) ? { 'Referrer-Policy': 'same-origin' } : {}), 'Content-Type': type, ...(status === 405 ? { Allow: 'GET, HEAD' } : {}) } });
-      if (![`127.0.0.1:${server.port}`, `localhost:${server.port}`].includes(req.headers.get('host') ?? '')) return respond('Acceso denegado', 403, 'text/plain; charset=utf-8');
       const url = new URL(req.url);
+      // Con escritura, las rutas con sesión solo se sirven en el host único; la API con clave no usa cookie y conserva loopback.
+      const hosts = auth ? [`${auth.host}:${server.port}`, ...(isApiPath(url.pathname) ? loopback(server.port!) : [])] : loopback(server.port!);
+      if (!hosts.includes(req.headers.get('host') ?? '')) return respond('Acceso denegado', 403, 'text/plain; charset=utf-8');
       if (isApiPath(url.pathname)) return handleApi(req, url, openStore, auth ? { stateDir } : undefined);
       const isMetrics = url.pathname === '/metricas';
       const isConfig = url.pathname === '/config';
@@ -160,10 +164,10 @@ export function startWeb(stateDir: string, port = 4310, options: { write?: boole
         return respond('No se pudo leer el estado de la fábrica.', 500, 'text/plain; charset=utf-8');
       } finally { store?.close(); }
     } });
-  return { port: server.port!, loginUrl: auth?.loginUrl(server.port!), stop(force = false) { server.stop(force); } };
+  return { port: server.port!, host: auth?.host, loginUrl: auth?.loginUrl(server.port!), stop(force = false) { server.stop(force); } };
 }
 
-const WRITE_WARNING = 'No abras otros servicios de 127.0.0.1 en este navegador mientras dure la sesión: las cookies se comparten entre puertos.';
+const WRITE_WARNING = 'La sesión de escritura solo se sirve en el host fab-<aleatorio>.localhost de este arranque: abre el enlace tal cual, no sustituyas el host.';
 
 export async function webMain(args: string[], stateDir: string): Promise<number> {
   try {
@@ -172,6 +176,7 @@ export async function webMain(args: string[], stateDir: string): Promise<number>
     const port = values.port === undefined ? 4310 : Number(values.port);
     if (!Number.isInteger(port) || port < 0 || port > 65535) throw new Error('Puerto inválido (0–65535)');
     const server = startWeb(stateDir, port, { write: values.write });
+    if (server.host) try { await assertLoopback(server.host); } catch (e) { server.stop(true); throw e; }
     console.log(`fab web · ${server.loginUrl ?? `http://127.0.0.1:${server.port}`} · ${values.write ? 'escritura habilitada; enlace de un solo uso' : 'solo lectura'}`);
     if (values.write) console.log(WRITE_WARNING);
     await new Promise<void>(resolve => {
@@ -179,5 +184,5 @@ export async function webMain(args: string[], stateDir: string): Promise<number>
       process.once('SIGINT', done); process.once('SIGTERM', done);
     });
     return 0;
-  } catch { console.error('fab web: no se pudo abrir la web. Comprueba el puerto y que FABRICA_HOME contenga una base fab existente.'); return 1; }
+  } catch (e) { if (e instanceof Error && e.message.includes('no resuelve a loopback')) { console.error(`fab web: ${e.message}`); return 1; } console.error('fab web: no se pudo abrir la web. Comprueba el puerto y que FABRICA_HOME contenga una base fab existente.'); return 1; }
 }

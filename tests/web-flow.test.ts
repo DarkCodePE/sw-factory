@@ -17,7 +17,7 @@ function seed(opts: Record<string, unknown>, titles: string[] = []) {
     store.addSignal(ws.id, '<img src=x onerror=alert(1)>', 'cuerpo');
   } finally { store.close(); }
 }
-const get = async (path: string) => { server ??= startWeb(dir, 0); return fetch(`http://127.0.0.1:${server.port}${path}`); };
+const get = async (path: string) => { server ??= startWeb(dir, 0); return fetch(`http://${server.host ?? "127.0.0.1"}:${server.port}${path}`); };
 
 test('puerta de spec abierta con --no-spec-approval: se dibuja y se avisa', async () => {
   seed({ requireApproval: false });
@@ -65,10 +65,10 @@ test('es solo lectura: la base y el directorio no cambian y POST no se acepta', 
   seed({});
   const files = readdirSync(dir).sort(), db = readFileSync(join(dir, 'fabrica.db'));
   server = startWeb(dir, 0, { write: true });
-  const res = await fetch(`http://127.0.0.1:${server.port}/flujo?ws=demo`);
+  const res = await fetch(`http://${server.host ?? "127.0.0.1"}:${server.port}/flujo?ws=demo`);
   expect(res.status).toBe(200);
   expect(await res.text()).toContain('Flujo');
-  const post = await fetch(`http://127.0.0.1:${server.port}/flujo?ws=demo`, { method: 'POST', body: 'x' });
+  const post = await fetch(`http://${server.host ?? "127.0.0.1"}:${server.port}/flujo?ws=demo`, { method: 'POST', body: 'x' });
   expect(post.status).toBe(405);
   expect(readdirSync(dir).sort()).toEqual(files);
   expect(readFileSync(join(dir, 'fabrica.db')).equals(db)).toBe(true);

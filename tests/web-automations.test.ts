@@ -5,10 +5,10 @@ import { Store } from '../src/store.ts';
 import { startWeb } from '../src/web.ts';
 
 let dir: string, store: Store, server: ReturnType<typeof startWeb>, cookie: string, csrf: string, auto: string;
-const req = (path: string, init?: RequestInit) => fetch(`http://127.0.0.1:${server.port}${path}`, { redirect: 'manual', ...init });
+const req = (path: string, init?: RequestInit) => fetch(`http://${server.host ?? "127.0.0.1"}:${server.port}${path}`, { redirect: 'manual', ...init });
 const html = async (path: string) => (await req(path, { headers: { cookie } })).text();
 const post = (path: string, data: Record<string, string> = {}, headers: Record<string, string> = {}) => req(path, {
-  method: 'POST', headers: { cookie, origin: `http://127.0.0.1:${server.port}`, 'content-type': 'application/x-www-form-urlencoded', ...headers },
+  method: 'POST', headers: { cookie, origin: `http://${server.host ?? "127.0.0.1"}:${server.port}`, 'content-type': 'application/x-www-form-urlencoded', ...headers },
   body: new URLSearchParams({ csrf, ...data }),
 });
 async function login() {
