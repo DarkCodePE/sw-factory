@@ -104,3 +104,11 @@ test('sin --suite: el fichero nuevo contiene solo la tarea; id repetido en la su
   expect(() => writeSuiteWithTask(store, id, { ...spec, suitePath: out, out: out2 })).toThrow(/repetido/);
   expect(existsSync(out2)).toBe(false);
 });
+
+test('H5: sin tablas adm_* en la base, añadir una tarea no las crea', () => {
+  const id = change({ verify: ['bun test a'] });
+  const tablas = () => store.db.query("SELECT name FROM sqlite_master WHERE name LIKE 'adm_%'").all();
+  expect(tablas()).toEqual([]);
+  suiteTaskFromChange(store, id, spec);
+  expect(tablas()).toEqual([]);
+});
