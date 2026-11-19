@@ -6,6 +6,7 @@ import { ChangeStatus } from './enums.ts';
 import { activityCosts, activityMetadata, changeCost, evidencePath, readEvidence } from './evidence.ts';
 import { redact } from './manifest.ts';
 import { WEB_STYLE } from './web-style.ts';
+import { handleApi, isApiPath } from './web-api.ts';
 
 const escape = (value: unknown): string => redact(String(value ?? '')).replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[c]!);
 const enc = encodeURIComponent;
@@ -96,6 +97,7 @@ export function startWeb(stateDir: string, port = 4310) {
   server = Bun.serve({ hostname: '127.0.0.1', port, fetch(req) {
       const respond = (body: string, status = 200, type = 'text/html; charset=utf-8') => new Response(req.method === 'HEAD' ? null : body, { status, headers: { ...HEADERS, 'Content-Type': type, ...(status === 405 ? { Allow: 'GET, HEAD' } : {}) } });
       if (![`127.0.0.1:${server.port}`, `localhost:${server.port}`].includes(req.headers.get('host') ?? '')) return respond('Acceso denegado', 403, 'text/plain; charset=utf-8');
+      if (isApiPath(new URL(req.url).pathname)) return handleApi(req, new URL(req.url), openStore);
       if (req.method !== 'GET' && req.method !== 'HEAD') return respond('Método no permitido', 405, 'text/plain; charset=utf-8');
       let store: Store | undefined;
       try {
