@@ -26,6 +26,12 @@ export function validateJiraKey(key: string): void {
   if (!/^[A-Z][A-Z0-9]+-\d+$/.test(key)) throw new Error('Clave de HU inválida: usa el formato PROYECTO-123');
 }
 
+/** Comprueba la configuración de entorno sin abrir archivos ni autenticar contra Jira. */
+export function jiraConfiguredInEnv(env: Env = process.env): boolean {
+  if (REQUIRED.some(key => !env[key]?.trim())) return false;
+  try { hostname(env.JIRA_HOSTNAME!); return true; } catch { return false; }
+}
+
 export function loadJiraEnv(env: Env = process.env, cwd = process.cwd()): JiraConfig {
   const values: Env = { ...env };
   const origins: Record<string, string> = {};

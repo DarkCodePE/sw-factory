@@ -60,10 +60,8 @@ function envValue(value: string | undefined): string | undefined {
   return result;
 }
 
-export async function loadExecSettings(path?: string): Promise<ExecSettings> {
-  if (!path) return {};
+async function readSettingsJson(path: string): Promise<unknown> {
   const file = await open(path, 'r');
-  let raw: unknown;
   try {
     const bytes = Buffer.alloc(1024 * 1024 + 1);
     let size = 0;
@@ -74,13 +72,28 @@ export async function loadExecSettings(path?: string): Promise<ExecSettings> {
       if (!read.bytesRead) break;
     }
     try {
-      raw = JSON.parse(bytes.subarray(0, size).toString('utf8'));
+      return JSON.parse(bytes.subarray(0, size).toString('utf8'));
     } catch {
       throw new Error('Invalid settings JSON');
     }
   } finally {
     await file.close();
   }
+}
+
+/** Inventario local de nombres, sin interpolar variables ni preparar proveedores. */
+export async function configuredMcpNames(path?: string): Promise<string[]> {
+  if (!path) return [];
+  const raw = await readSettingsJson(path);
+  if (!object(raw) || raw.mcpServers !== undefined && !object(raw.mcpServers)) {
+    throw new Error('Invalid settings schema');
+  }
+  return Object.keys(raw.mcpServers ?? {}).sort();
+}
+
+export async function loadExecSettings(path?: string): Promise<ExecSettings> {
+  if (!path) return {};
+  const raw = await readSettingsJson(path);
 
   if (!object(raw) ||
       raw.modelId !== undefined && typeof raw.modelId !== 'string' ||

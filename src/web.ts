@@ -5,6 +5,7 @@ import { Store, StoreError, type Activity, type Change } from './store.ts';
 import { ChangeStatus } from './enums.ts';
 import { activityCosts, activityMetadata, changeCost, evidencePath, readEvidence } from './evidence.ts';
 import { redact } from './manifest.ts';
+import { configPage } from './web-config.ts';
 import { WEB_STYLE } from './web-style.ts';
 
 const escape = (value: unknown): string => redact(String(value ?? '')).replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[c]!);
@@ -93,7 +94,7 @@ export function startWeb(stateDir: string, port = 4310) {
   try { initial.listWorkstreams(); } finally { initial.close(); }
   let server: ReturnType<typeof Bun.serve>;
   // Verifica la base antes de escuchar y vuelve a abrirla en cada petición.
-  server = Bun.serve({ hostname: '127.0.0.1', port, fetch(req) {
+  server = Bun.serve({ hostname: '127.0.0.1', port, async fetch(req) {
       const respond = (body: string, status = 200, type = 'text/html; charset=utf-8') => new Response(req.method === 'HEAD' ? null : body, { status, headers: { ...HEADERS, 'Content-Type': type, ...(status === 405 ? { Allow: 'GET, HEAD' } : {}) } });
       if (![`127.0.0.1:${server.port}`, `localhost:${server.port}`].includes(req.headers.get('host') ?? '')) return respond('Acceso denegado', 403, 'text/plain; charset=utf-8');
       if (req.method !== 'GET' && req.method !== 'HEAD') return respond('Método no permitido', 405, 'text/plain; charset=utf-8');
@@ -103,10 +104,11 @@ export function startWeb(stateDir: string, port = 4310) {
         if (url.pathname === '/style.css') return respond(WEB_STYLE, 200, 'text/css; charset=utf-8');
         if (url.pathname === '/poll.js') return respond(POLL, 200, 'text/javascript; charset=utf-8');
         store = openStore();
-        const content = page(store, stateDir, url);
+        const isConfig = url.pathname === '/config';
+        const content = isConfig ? await configPage(store, stateDir, url, escape) : page(store, stateDir, url);
         if (!content) return respond('Página no encontrada', 404, 'text/plain; charset=utf-8');
         const workstreams = store.listWorkstreams();
-        return respond(`<!doctype html><html lang="es"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><title>${escape(content.title)} · fab</title><link rel="stylesheet" href="/style.css"><script src="/poll.js" defer></script></head><body><a class="skip" href="#contenido">Saltar al contenido</a><aside><a class="brand" href="/">fab<span>Fábrica local</span></a><nav aria-label="Navegación principal"><a href="/"${url.pathname === '/' ? ' aria-current="page"' : ''}>Bandeja</a><a href="/changes"${url.pathname.startsWith('/changes') ? ' aria-current="page"' : ''}>Changes</a><a href="/workstreams"${url.pathname === '/workstreams' ? ' aria-current="page"' : ''}>Workstreams</a></nav><nav aria-label="Workstreams"><h2>Workstreams</h2>${workstreams.map(w => `<a href="/changes?ws=${enc(w.slug)}">${escape(w.slug)}</a>`).join('') || '<p>Sin workstreams</p>'}</nav><p class="local">Solo lectura<br>Actualización cada 2 s</p></aside><main id="contenido"><header><h1>${escape(content.title)}</h1></header>${content.body}</main></body></html>`);
+        return respond(`<!doctype html><html lang="es"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><title>${escape(content.title)} · fab</title><link rel="stylesheet" href="/style.css">${isConfig ? '' : '<script src="/poll.js" defer></script>'}</head><body><a class="skip" href="#contenido">Saltar al contenido</a><aside><a class="brand" href="/">fab<span>Fábrica local</span></a><nav aria-label="Navegación principal"><a href="/"${url.pathname === '/' ? ' aria-current="page"' : ''}>Bandeja</a><a href="/changes"${url.pathname.startsWith('/changes') ? ' aria-current="page"' : ''}>Changes</a><a href="/workstreams"${url.pathname === '/workstreams' ? ' aria-current="page"' : ''}>Workstreams</a><a href="/config"${isConfig ? ' aria-current="page"' : ''}>Configuración</a></nav><nav aria-label="Workstreams"><h2>Workstreams</h2>${workstreams.map(w => `<a href="/changes?ws=${enc(w.slug)}">${escape(w.slug)}</a>`).join('') || '<p>Sin workstreams</p>'}</nav><p class="local">Solo lectura${isConfig ? '' : '<br>Actualización cada 2 s'}</p></aside><main id="contenido"><header><h1>${escape(content.title)}</h1></header>${content.body}</main></body></html>`);
       } catch (error) {
         if (error instanceof StoreError && error.code === 'not_found') return respond('Registro no encontrado', 404, 'text/plain; charset=utf-8');
         if (error instanceof URIError) return respond('Ruta inválida', 400, 'text/plain; charset=utf-8');
