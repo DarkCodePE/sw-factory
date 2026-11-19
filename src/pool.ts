@@ -2,24 +2,26 @@
 // in the change's worktree, and records the result back in the store.
 import { runGates, runSetupAt, type GateStep } from './gates.ts';
 import { createHash, randomUUID } from 'node:crypto';
-import { existsSync, readFileSync, rmSync } from 'node:fs';
+import { existsSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { join, resolve } from 'node:path';
 import { selfCommand } from './self.ts';
 import { activityLog, atomicEvidence, gitEvidence, isolationFor, readEgressProbe, runDirectory, writeManifest } from './manifest.ts';
 import { verifyAgentStart, type AgentStartCheck } from './agents-verify.ts';
-import { getAgent, runAgent, type AgentAdapter, type AgentRun } from './agents.ts';
+import { getAgent, MCP_AGENTS, runAgent, type AgentAdapter, type AgentRun } from './agents.ts';
 import { expireQuestions } from './admission/answers.ts';
 import { isChannelChange } from './admission/channel.ts';
 import { AdmissionDb, hasAdmission } from './admission/db.ts';
 import { CrashInjected, Effects, type CrashPoint } from './admission/effects.ts';
 import { planTurn } from './admission/recovery.ts';
 import { applyReport, closeWithReport, ReportStore } from './admission/reports.ts';
-import { assertConfinement } from './sandbox/confine.ts';
+import { assertConfinement, hostDir, type EnvDecl } from './sandbox/confine.ts';
+import { agentEnv, scrubValues } from './sandbox/env.ts';
+import { claudeMcpServers, loadMcpRegistry, McpRegistryError } from './mcp-registry.ts';
 import { backendOf, liveBackendFor, runLiveActivity } from './live/turn.ts';
 import type { LiveOutcome } from './admission/reports.ts';
 import type { LiveBackend } from './live/contract.ts';
 import { buildWorkerPrompt, notesBlock } from './prompts.ts';
-import { fabSha, resolveProfile, resolveRole, roleOf } from './profile.ts';
+import { fabSha, resolveProfile, resolveRole, roleOf, type RoleConfig } from './profile.ts';
 import { HEARTBEAT_INTERVAL_MS, isBusyError, LEASE_TTL_MS, type Activity, type Store, type Workstream } from './store.ts';
 import { buildValidatorPrompt } from './validators/prompts.ts';
 import { protectedIntegrity, purgeRegenerableCaches } from './validators/integrity.ts';
@@ -87,6 +89,46 @@ export interface PoolOptions {
   log?: (msg: string) => void;
 }
 
+/** Lo que recibe un rol (T72 §5.1, §5.4). `decl` ausente = modo anterior: nada cambia (S4). */
+type Access =
+  | { block: string }
+  | { decl?: EnvDecl; values: Record<string, string>; meta: { env: string[]; mcp: string[]; missing: string[] }; servers?: Record<string, unknown> };
+
+/**
+ * Modo declarado si el workstream fija `env_allow` o `mcp_allow`; la lista no fijada cuenta como vacía. Entrega
+ * `declarado por el perfil ∩ permitido por el workstream` y bloquea, sin lanzar, lo que el perfil pide fuera del tope (S2).
+ * Un change de canal no recibe ninguna variable ni servidor declarados (S3).
+ */
+export function resolveAccess(i: { ws: Workstream; cfg?: RoleConfig; adapter: string; model: string | null; channel: boolean; confine: boolean; stateDir: string }): Access {
+  const { ws } = i;
+  if (ws.envAllow === null && ws.mcpAllow === null) return { values: {}, meta: { env: [], mcp: [], missing: [] } };
+  const wsAllow = ws.envAllow ?? [], mcpAllow = ws.mcpAllow ?? [];
+  const roleEnv = i.channel ? [] : i.cfg?.env ?? [], roleMcp = i.channel ? [] : i.cfg?.mcp ?? [];
+  const list = (code: string, names: string[]) => ({ block: `${code}: ${names.join(', ')}` });
+  let registry = {}, mcpRequired: string[] = [];
+  if (roleMcp.length) {
+    if (!MCP_AGENTS.includes(i.adapter)) return list('MCP_NOT_SUPPORTED', [i.adapter]);
+    const notAllowed = roleMcp.filter(n => !mcpAllow.includes(n));
+    if (notAllowed.length) return list('MCP_NOT_ALLOWED', notAllowed);
+    try { registry = loadMcpRegistry(i.stateDir); } catch (e) {
+      if (e instanceof McpRegistryError) return { block: `MCP_REGISTRY_INVALID: ${e.message}` };
+      throw e;
+    }
+    const unknown = roleMcp.filter(n => !Object.hasOwn(registry, n));
+    if (unknown.length) return list('MCP_UNKNOWN', unknown);
+    const commands = roleMcp.filter(n => (registry as Record<string, { kind: string }>)[n]!.kind === 'command');
+    if (i.confine && commands.length) return list('MCP_NOT_CONFINABLE', commands);
+    mcpRequired = [...new Set(roleMcp.flatMap(n => (registry as Record<string, { required: string[] }>)[n]!.required))];
+  }
+  const decl: EnvDecl = { wsAllow, channel: i.channel, roleEnv, mcpRequired };
+  const r = agentEnv({ adapter: i.adapter, confined: i.confine, channel: i.channel, wsAllow, roleEnv, mcpRequired, host: process.env, model: i.model ?? undefined });
+  if (r.denied.length) return list('ENV_NOT_ALLOWED', r.denied);
+  return {
+    decl, values: Object.fromEntries(r.delivered.map(n => [n, process.env[n]!])), meta: { env: r.delivered, mcp: roleMcp, missing: r.missing },
+    servers: MCP_AGENTS.includes(i.adapter) ? claudeMcpServers(registry, roleMcp) : undefined,
+  };
+}
+
 const setupInFlight = new Map<string, Promise<{ ok: boolean; steps: GateStep[] }>>();
 
 /** Run the workstream's setup argv before the first gate, and again only when the argv changed. One run per workstream at a time. */
@@ -145,6 +187,8 @@ export async function processActivity(
   const ws = store.getWorkstream(activity.workstreamId);
   const heartbeatIntervalMs = opts.heartbeatMs ?? HEARTBEAT_INTERVAL_MS;
 
+  let mcpConfigPath: string | undefined;
+  let scrub: Record<string, string> = {};
   let lastBeat = Date.now();
   const heartbeatTimer = setInterval(() => {
     try {
@@ -283,6 +327,15 @@ export async function processActivity(
         return;
       }
     }
+    // T72: lo declarado por el perfil dentro del tope del workstream; fuera del tope, se bloquea sin lanzar.
+    const access = resolveAccess({ ws, cfg: role ? profile.roles?.[role] : undefined, adapter, model, channel, confine, stateDir: opts.stateDir });
+    if ('block' in access) {
+      store.blockActivity(a.id, workerId, access.block);
+      log(`[${workerId}] ${a.kind} blocked: ${access.block}`);
+      return;
+    }
+    scrub = access.values;
+    const accessMeta = access.decl ? access.meta : {};
     // M1: un pool sin --live no ejecuta de un disparo una activity que ya tiene sesión lanzada, una respuesta por entregar o un report guardado.
     if (!live && adm && !a.validator && planTurn(adm, a).action !== 'fresh') {
       store.blockActivity(a.id, workerId, 'LIVE_SESSION_REQUIRED: la activity tiene una sesión viva (lanzada, respuesta pendiente o report guardado); arranca el pool con `fab run --live`');
@@ -298,6 +351,12 @@ export async function processActivity(
         store.event(ws.id, 'info', `rol ${role}: adaptador ${adapter}, modelo ${model ?? 'por defecto'} (perfil ${profileDigest.slice(0, 8)})`, change.id, a.id);
       }
     }
+    if (access.meta.missing.length && !recoveringReport) store.event(ws.id, 'warning', `variables permitidas y no definidas: ${access.meta.missing.join(', ')}`, change.id, a.id);
+    // Un turno vivo escribe su propia configuración (T72f); un disparo, esta. Con `--strict-mcp-config` no se cargan los servidores del usuario (S5).
+    if (access.decl && !live && access.servers) {
+      mcpConfigPath = join(hostDir(join(resolve(opts.stateDir), 'live', change.id.slice(0, 8), 'mcp'), path), `mcp-${randomUUID()}.json`);
+      writeFileSync(mcpConfigPath, JSON.stringify({ mcpServers: access.servers }), { mode: 0o600 });
+    }
     const prompt = a.validator
       ? buildValidatorPrompt(a.validator, { change, diffStat, base: 'main', branch, worktree: path, history, untrusted: channel || undefined }, profile.validators)
       : buildWorkerPrompt({ workstream: ws, change, activity: a, history, worktree: path, branch, untrusted: channel || undefined }, { factoryCommits: agent.factoryCommits }, profile.worker);
@@ -306,13 +365,13 @@ export async function processActivity(
     const probeFile = `${runDirectory(opts.stateDir, change.id)}/${a.id}.egress.json`;
     // A retry keeps the activity id: drop the previous attempt's probe so it is never reported as this one's.
     rmSync(probeFile, { force: true });
-    const captureAgent: AgentAdapter = { ...agent, env: () => ({ ...agent.env?.(), FABRICA_EGRESS_PROBE_FILE: probeFile }), command: (text, options) => [
+    const captureAgent: AgentAdapter = { ...agent, env: () => ({ ...agent.env?.(), FABRICA_EGRESS_PROBE_FILE: probeFile, ...(access.meta.env.length ? { FABRICA_SCRUB_NAMES: access.meta.env.join(',') } : {}) }), command: (text, options) => [
       ...selfCommand('__capture', new URL('./manifest-capture.ts', import.meta.url)),
       activityLog(opts.stateDir, change.id, a.id), ...agent.command(text, options),
     ] };
     // From launch onward the cost is unknown until the agent reports it.
     attemptCosts[attemptCosts.length - 1] = null;
-    atomicEvidence(meta, JSON.stringify({ ...pendingEvidence, ...provenance }));
+    atomicEvidence(meta, JSON.stringify({ ...pendingEvidence, ...provenance, ...accessMeta }));
     const crash = (point: CrashPoint) => opts.crash?.(point);
     let outcome: LiveOutcome | undefined;
     let run: AgentRun;
@@ -337,6 +396,7 @@ export async function processActivity(
       run = await runAgent(confine ? agent : captureAgent, prompt + notes, path, turnTimeoutMs(opts), {
         confine,
         model: model ?? undefined,
+        envDecl: access.decl, scrub, mcpConfig: mcpConfigPath,
         capturePath: confine ? activityLog(opts.stateDir, change.id, a.id) : undefined,
         readOnly,
         signal: abortController.signal,
@@ -346,9 +406,14 @@ export async function processActivity(
       });
     }
 
+    // S6: nada de lo que la fab guarda de la ejecución lleva un valor entregado (los backends vivos y falsos no pasan por runAgent).
+    if (access.decl) {
+      const clean = (t: string) => scrubValues(t, scrub);
+      run = { ...run, output: clean(run.output), status: { ...run.status, reason: clean(run.status.reason) }, ...(run.stdout !== undefined ? { stdout: clean(run.stdout) } : {}), ...(run.stderr !== undefined ? { stderr: clean(run.stderr) } : {}) };
+    }
     attemptCosts[attemptCosts.length - 1] = run.usage?.costUsd ?? null;
     atomicEvidence(meta, JSON.stringify({
-      ...provenance, isolation: confine ? 'bwrap-allowlist' : isolationFor(provenance.adapter ?? adapter), durationMs: run.durationMs, exitCode: run.exitCode, usage: run.usage ?? null,
+      ...provenance, ...accessMeta, isolation: confine ? 'bwrap-allowlist' : isolationFor(provenance.adapter ?? adapter), durationMs: run.durationMs, exitCode: run.exitCode, usage: run.usage ?? null,
       attemptCosts,
       egressProbe: adapter === 'native' ? readEgressProbe(probeFile) : null,
       // Keep only a declared final worker report, independently of later block/failure decisions; never diagnostics or an earlier attempt.
@@ -478,7 +543,7 @@ export async function processActivity(
       } catch {}
       return;
     }
-    const msg = err instanceof Error ? err.message : String(err);
+    const msg = scrubValues(err instanceof Error ? err.message : String(err), scrub);
     try {
       const currentChange = store.getChange(activity.changeId);
       if (!store.isTerminalChange(currentChange.status) && !abortController.signal.aborted) {
@@ -494,6 +559,7 @@ export async function processActivity(
     log(`[${workerId}] error: ${msg}`);
   } finally {
     clearInterval(heartbeatTimer);
+    if (mcpConfigPath) rmSync(mcpConfigPath, { force: true });
     writeManifest(store, activity.changeId, opts.stateDir);
   }
 }

@@ -111,3 +111,14 @@ export function mcpListMain(stateDir: string, env: NodeJS.ProcessEnv = process.e
     return 1;
   }
 }
+
+/** Los servidores pedidos con el formato de `--mcp-config` de claude. Las referencias `${NOMBRE}` van sin resolver: las expande `claude` desde su entorno [I, T72g]. */
+export function claudeMcpServers(registry: McpRegistry, names: string[]): Record<string, unknown> {
+  return Object.fromEntries(names.map(n => {
+    const s = registry[n]!;
+    // shortcut: el registro no declara el transporte; `/sse` al final de la ruta se trata como SSE, el resto como http (T72g lo comprueba).
+    return [n, s.kind === 'url'
+      ? { type: new URL(s.url).pathname.endsWith('/sse') ? 'sse' : 'http', url: s.url, headers: s.headers }
+      : { command: s.command[0], args: s.command.slice(1), env: s.env }];
+  }));
+}
