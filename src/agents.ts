@@ -31,7 +31,7 @@ export interface AgentRun {
 
 export interface AgentAdapter {
   name: string;
-  command(prompt: string, options?: { readOnly?: boolean; confine?: boolean; promptStdin?: boolean; model?: string }): string[];
+  command(prompt: string, options?: { readOnly?: boolean; confine?: boolean; promptStdin?: boolean; model?: string; mcpConfig?: string }): string[];
   /** El adaptador acepta un modelo por activity (`options.model`). */
   supportsModel?: boolean;
   /** runAgent sends the prompt on stdin; command() keeps argv input by default. */
@@ -71,6 +71,8 @@ const claude: AgentAdapter = {
     ].join(','),
     '--output-format',
     'json',
+    // Con `--strict-mcp-config` no se cargan los servidores del usuario (T72 S5).
+    ...(options?.mcpConfig ? ['--strict-mcp-config', '--mcp-config', options.mcpConfig] : []),
   ],
   parse: parseClaudeJson,
 };
@@ -174,6 +176,8 @@ export function getAgent(name: string): AgentAdapter {
 export const AGENT_NAMES = Object.keys(ADAPTERS);
 /** Adaptadores que aceptan un modelo por activity; `agy` no (no se conoce flag). */
 export const MODEL_AGENTS = AGENT_NAMES.filter(n => ADAPTERS[n]!.supportsModel);
+/** Adaptadores que aceptan una configuración MCP por ejecución (`options.mcpConfig`); hoy solo `claude`. */
+export const MCP_AGENTS = ['claude'];
 
 /** Preserve the factory decision line when retaining a bounded report tail. */
 export function boundedAgentOutput(text: string): string {
