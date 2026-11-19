@@ -188,8 +188,9 @@ export async function processActivity(
     store.setChangeBase(change.id, baseSha);
     const verifiedWorkspace = (head: string | null | undefined) => !!head &&
       gitEvidence(path, 'rev-parse', 'HEAD') === head && gitEvidence(path, 'status', '--porcelain', '-uall') === '';
+    // Procedencia base antes de cualquier bloqueo; el lanzamiento real la completa con agente y modelo.
+    store.setActivityProvenance(a.id, profileDigest, fabSha());
     if (a.kind === 'gates') {
-      store.setActivityProvenance(a.id, profileDigest, fabSha());
       const head = gitEvidence(path, 'rev-parse', 'HEAD');
       const current = store.getChange(change.id);
       purgeRegenerableCaches(path);
@@ -290,7 +291,7 @@ export async function processActivity(
     }
     // Un report huérfano se aplica sin lanzar otro turno. Conserva la procedencia del que lo emitió.
     const recoveringReport = !!live && !!adm && !!new ReportStore(adm).pending(a.id);
-    const provenance = recoveringReport ? { adapter: a.agent, model: a.model } : { adapter, model };
+    const provenance = recoveringReport ? { adapter: a.agent ?? adapter, model: a.model } : { adapter, model };
     if (!recoveringReport) {
       store.setActivityProvenance(a.id, profileDigest, fabSha(), { agent: adapter, model });
       if (profile.schemaVersion === 2 && role && (adapter !== ws.agent || model !== null)) {
