@@ -14,6 +14,7 @@
     "fab": "bun ./src/cli.ts",
     "test": "bun test tests",
     "typecheck": "tsc --noEmit -p .",
+    "e2e": "bun scripts/e2e/run.ts",
     "postinstall": "sh scripts/build-native.sh --if-needed"
   },
   "devDependencies": {
