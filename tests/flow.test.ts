@@ -115,3 +115,12 @@ for (const verify of [true, false]) for (const open of [true, false]) {
     for (let i = 1; i < seen.length; i++) expect(connected(g, seen[i - 1]!, seen[i]!)).toBe(true);
   });
 }
+
+test('triar apunta a la primera etapa que de verdad existe y un change en cuarentena está detenido', () => {
+  const tri = (ws: ReturnType<typeof mk>) => flowGraph(ws).edges.find(e => e.label === 'triar')!.to;
+  expect(tri(mk('cerrada'))).toBe('change_review');
+  expect(tri(mk('abierta', { requireChangeApproval: false }))).toBe('investigation');
+  const ws = mk('cuarentena'); const ch = store.createChange(ws.id, 'q', '');
+  store.db.query("UPDATE changes SET status='quarantined' WHERE id=?").run(ch.id);
+  expect(stage(ch.id)).toBe('stopped');
+});
