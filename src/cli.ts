@@ -11,6 +11,7 @@ import { AGENT_NAMES } from './agents.ts';
 import { agentsMain } from './agents-verify.ts';
 import { profileMain } from './profile-cli.ts';
 import { improveMain } from './improve-cli.ts';
+import { scoreMain } from './scorers-cli.ts';
 import type { ReviewDecision, WorkstreamState } from './enums.ts';
 import { runPool } from './pool.ts';
 import { Store, StoreError } from './store.ts';
@@ -83,6 +84,9 @@ const HELP = `fab — agente de código y fábrica de software local
   fab improve create --experiment-id <id> --baseline <digest> --candidate <digest> --suite <archivo>
   fab improve run <id> --split development|validation|qualification --repeats N [--agent <name>] [--seed N]
   fab improve report <id> | delete <id>   experimentos pareados (fase 1: sin cualificación ni rollout)
+  fab score run <slug> [--once] [--max N] [--budget-usd X] [--agent <name>]   jueces: avisos, nunca puertas; confinados
+  fab score add <activityId> --scorer <name> | list <slug> [--change <id>] [--json]
+  fab score backfill <slug> [--since <iso>] [--scorer <name>] [--yes]   vista previa (nº y coste) y, con --yes, encola
   fab ws list
   fab profile export [--out f] | import <f> | inspect <digest> | list   perfiles de instrucciones inmutables por digest
   fab ws state <slug> <active|paused|archived>
@@ -148,6 +152,12 @@ async function main(argv: string[]): Promise<number> {
   if (argv[0] === 'improve') {
     const store = openStore();
     try { return await improveMain(argv.slice(1), store, STATE_DIR); } finally { store.close(); }
+  }
+  if (argv[0] === 'score') {
+    const store = openStore();
+    const ac = new AbortController();
+    process.once('SIGINT', () => ac.abort());
+    try { return await scoreMain(argv.slice(1), store, STATE_DIR, ac.signal); } finally { store.close(); }
   }
   if (argv[0] === 'validate') {
     const store = openStore();
@@ -414,7 +424,7 @@ async function main(argv: string[]): Promise<number> {
   }
 }
 
-const COMMANDS = new Set(['worktree', 'ws', 'signal', 'triage', 'inbox', 'review', 'run', 'status', 'show', 'merge', 'retry', 'gate', 'reject', 'events', 'tui', 'doctor', 'agents', 'profile', 'improve', 'resident', 'help']);
+const COMMANDS = new Set(['worktree', 'ws', 'signal', 'triage', 'inbox', 'review', 'run', 'status', 'show', 'merge', 'retry', 'gate', 'reject', 'events', 'tui', 'doctor', 'agents', 'profile', 'improve', 'score', 'resident', 'help']);
 
 // A forced exit is still needed for handles left by dependencies, but pipe
 // writes are asynchronous: wait for both write queues before terminating.
