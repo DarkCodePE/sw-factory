@@ -109,6 +109,17 @@ export interface Change {
 export type ChangeSource = 'cli' | 'channel' | 'jira';
 export interface ChangeSummary extends Change { source: ChangeSource | null; creator: string | null }
 
+export interface ChangeNote {
+  id: string;
+  changeId: string;
+  body: string;
+  actor: string;
+  createdAt: string;
+  activityId: string | null;
+  attemptId: string | null;
+  deliveredAt: string | null;
+}
+
 export interface Activity {
   id: string;
   workstreamId: string;
@@ -132,6 +143,9 @@ export interface Activity {
   /** Perfil de instrucciones y sha de fab con los que corrió; null si aún no empezó. */
   profileDigest: string | null;
   fabSha: string | null;
+  /** Adaptador y modelo pedido del último intento; null si no empezó, es anterior a T57 o se usó el modelo por defecto. */
+  agent: string | null;
+  model: string | null;
   /** Pregunta abierta de un turno vivo (solo en `waiting_reply`) y su plazo. */
   questionId: string | null;
   waitUntil: string | null;
@@ -159,6 +173,16 @@ CREATE TABLE IF NOT EXISTS changes (
   id TEXT PRIMARY KEY, workstream_id TEXT NOT NULL REFERENCES workstreams(id) ON DELETE CASCADE,
   title TEXT NOT NULL, description TEXT NOT NULL, status TEXT NOT NULL, branch TEXT,
   created_at TEXT NOT NULL, updated_at TEXT NOT NULL);
+CREATE TABLE IF NOT EXISTS change_notes (
+  id TEXT PRIMARY KEY,
+  change_id TEXT NOT NULL REFERENCES changes(id) ON DELETE CASCADE,
+  body TEXT NOT NULL,
+  actor TEXT NOT NULL,
+  created_at TEXT NOT NULL,
+  activity_id TEXT,
+  attempt_id TEXT,
+  delivered_at TEXT);
+CREATE INDEX IF NOT EXISTS idx_change_notes_pending ON change_notes(change_id, delivered_at);
 CREATE TABLE IF NOT EXISTS activities (
   id TEXT PRIMARY KEY, workstream_id TEXT NOT NULL REFERENCES workstreams(id) ON DELETE CASCADE,
   change_id TEXT NOT NULL REFERENCES changes(id) ON DELETE CASCADE, parent_activity_id TEXT,
@@ -224,6 +248,19 @@ function toChange(r: Row): Change {
   };
 }
 
+function toChangeNote(r: Row): ChangeNote {
+  return {
+    id: r.id as string,
+    changeId: r.change_id as string,
+    body: r.body as string,
+    actor: r.actor as string,
+    createdAt: r.created_at as string,
+    activityId: r.activity_id as string | null,
+    attemptId: r.attempt_id as string | null,
+    deliveredAt: r.delivered_at as string | null,
+  };
+}
+
 function toActivity(r: Row): Activity {
   return {
     id: r.id as string,
@@ -247,6 +284,8 @@ function toActivity(r: Row): Activity {
     agentPgid: (r.agent_pgid as number | null) ?? null,
     profileDigest: (r.profile_digest as string | null) ?? null,
     fabSha: (r.fab_sha as string | null) ?? null,
+    agent: (r.agent as string | null) ?? null,
+    model: (r.model as string | null) ?? null,
     questionId: (r.question_id as string | null) ?? null,
     waitUntil: (r.wait_until as string | null) ?? null,
   };
@@ -381,6 +420,8 @@ export class Store {
     this.addColumn('workstreams', 'profile', 'TEXT');
     this.addColumn('activities', 'profile_digest', 'TEXT');
     this.addColumn('activities', 'fab_sha', 'TEXT');
+    this.addColumn('activities', 'agent', 'TEXT');
+    this.addColumn('activities', 'model', 'TEXT');
     this.addColumn('activities', 'question_id', 'TEXT');
     this.addColumn('activities', 'wait_until', 'TEXT');
     this.db.exec('CREATE INDEX IF NOT EXISTS idx_activities_lease ON activities(status, lease_expires_at);');
@@ -647,6 +688,68 @@ export class Store {
         this.terminalEvidence.add(changeId);
         writeManifest(this, changeId);
       }
+    });
+  }
+
+  // ---- notas del dueño ---------------------------------------------------
+
+  addChangeNote(changeId: string, body: string): ChangeNote {
+    return this.withRetry(() => {
+      const change = this.getChange(changeId);
+      if (isTerminalChange(change.status)) {
+        throw new StoreError('invalid_transition', `change ${changeId} terminal (${change.status})`);
+      }
+      const bytes = Buffer.byteLength(body, 'utf8');
+      if (bytes > 8192 || !body.trim()) {
+        throw new StoreError('invalid_input', 'la nota debe contener texto y ocupar como máximo 8192 bytes');
+      }
+      const { n } = this.db.query<{ n: number }, [string]>(
+        'SELECT COUNT(*) AS n FROM change_notes WHERE change_id = ? AND delivered_at IS NULL'
+      ).get(changeId)!;
+      if (n >= 20) throw new StoreError('limit_reached', 'el change tiene 20 notas sin entregar');
+
+      const id = randomUUID();
+      const actor = process.env.FAB_ACTOR ?? userInfo().username;
+      const createdAt = this.now();
+      this.db.query('INSERT INTO change_notes (id, change_id, body, actor, created_at) VALUES (?,?,?,?,?)')
+        .run(id, changeId, body, actor, createdAt);
+      this.event(change.workstreamId, 'info', `nota del dueño registrada (${id.slice(0, 8)}, ${bytes} bytes)`, changeId);
+      return { id, changeId, body, actor, createdAt, activityId: null, attemptId: null, deliveredAt: null };
+    });
+  }
+
+  listChangeNotes(changeId: string): ChangeNote[] {
+    // Una apertura de solo lectura puede encontrar una base anterior a las notas.
+    if (!this.db.query("SELECT 1 FROM sqlite_schema WHERE type = 'table' AND name = 'change_notes'").get()) return [];
+    const rows = this.db.query<Row, [string]>(
+      'SELECT * FROM change_notes WHERE change_id = ? ORDER BY created_at, rowid'
+    ).all(changeId);
+    return rows.map(toChangeNote);
+  }
+
+  reserveNotes(changeId: string, activityId: string, attemptId: string): ChangeNote[] {
+    return this.withRetry(() => {
+      // Una reserva sin confirmar puede pertenecer a un intento interrumpido.
+      this.db.query(`UPDATE change_notes SET activity_id = ?, attempt_id = ?
+        WHERE change_id = ? AND delivered_at IS NULL`).run(activityId, attemptId, changeId);
+      const rows = this.db.query<Row, [string]>(`SELECT * FROM change_notes
+        WHERE change_id = ? AND delivered_at IS NULL ORDER BY created_at, rowid`).all(changeId);
+      return rows.map(toChangeNote);
+    });
+  }
+
+  confirmNotes(attemptId: string): number {
+    return this.withRetry(() => {
+      const notes = this.db.query<{ id: string; change_id: string; actor: string }, [string, string]>(
+        `UPDATE change_notes SET delivered_at = ? WHERE attempt_id = ? AND delivered_at IS NULL
+         RETURNING id, change_id, actor`
+      ).all(this.now(), attemptId);
+      for (const note of notes) {
+        const change = this.getChange(note.change_id);
+        this.event(change.workstreamId, 'info',
+          `nota ${note.id.slice(0, 8)} de ${note.actor} entregada (turno ${attemptId.slice(0, 8)})`, change.id);
+      }
+      return notes.length;
     });
   }
 
@@ -1185,9 +1288,10 @@ export class Store {
   }
 
   /** Registra con qué perfil y qué sha de fab corre la activity (va al run.json). */
-  setActivityProvenance(activityId: string, profileDigest: string, fabSha: string | null): void {
+  setActivityProvenance(activityId: string, profileDigest: string, fabSha: string | null, run?: { agent: string; model: string | null }): void {
     this.withRetry(() => {
-      this.db.query('UPDATE activities SET profile_digest = ?, fab_sha = ? WHERE id = ?').run(profileDigest, fabSha, activityId);
+      if (run) this.db.query('UPDATE activities SET profile_digest = ?, fab_sha = ?, agent = ?, model = ? WHERE id = ?').run(profileDigest, fabSha, run.agent, run.model, activityId);
+      else this.db.query('UPDATE activities SET profile_digest = ?, fab_sha = ? WHERE id = ?').run(profileDigest, fabSha, activityId);
     });
   }
 

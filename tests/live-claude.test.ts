@@ -72,6 +72,25 @@ describe('T34: flags repetidos y token fuera de argv', () => {
 });
 
 describe('live claude run', () => {
+  test('T57e: el argv de Claude nuevo y reanudado lleva un solo --model y un solo --mcp-config', async () => {
+    const f = fakeClaude(`echo '{"type":"result","result":"ok","session_id":"x"}'`);
+    const dir = mcpDir();
+    try {
+      Bun.spawnSync(['git', 'init', '-q', f.dir]);
+      for (const sessionId of [undefined, 'sesion-existente']) {
+        await claudeLive.run({ sessionId, model: 'modelo-t57', prompt: 'x', cwd: f.dir, attemptId: 'a', mcpConfigDir: dir });
+        const argv = readFileSync(join(f.dir, 'argv'), 'utf8').trimEnd().split('\n');
+        expect(argv.filter(arg => arg === '--model')).toHaveLength(1);
+        expect(argv[argv.indexOf('--model') + 1]).toBe('modelo-t57');
+        expect(argv.filter(arg => arg === '--mcp-config')).toHaveLength(1);
+        expect(argv).toContain(sessionId ? '--resume' : '--session-id');
+      }
+    } finally {
+      f.restore();
+      rmSync(f.dir, { recursive: true, force: true });
+      rmSync(join(dir, '..'), { recursive: true, force: true });
+    }
+  });
   test('unknown session id raises SessionNotFoundError', async () => {
     const f = fakeClaude(`echo "No conversation found with session ID: $2" >&2; exit 1`);
     Bun.spawnSync(['git', 'init', '-q', f.dir]); // hostDir resuelve el git dir

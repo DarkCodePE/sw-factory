@@ -18,7 +18,7 @@ import type { LiveBackend } from './contract.ts';
 export const LIVE_BACKENDS: Record<string, LiveBackend> = { claude: claudeLive };
 
 /**
- * Criterio explícito de la rama viva: el pool se arrancó con `live` (`fab run --live`), el adaptador del workstream tiene backend
+ * Criterio explícito de la rama viva: el pool se arrancó con `live` (`fab run --live`), el adaptador resuelto tiene backend
  * vivo y la activity es de trabajo (investigación o implementación). Validadores y gates siguen en un disparo. Nunca por defecto.
  */
 export function liveBackendFor(opts: { live?: boolean; liveBackends?: Record<string, LiveBackend> }, agentName: string, a: Activity): LiveBackend | undefined {
@@ -41,6 +41,7 @@ export type LiveActivityCtx = {
   backend: LiveBackend; cwd: string; branch: string; profileDigest: string; factoryCommits?: boolean; templates?: WorkerTemplates;
   /** Prompt completo del primer turno (el que construye el pool). */
   prompt: string;
+  model?: string | null;
   timeoutMs?: number; signal: AbortSignal; confine?: boolean; capturePath?: string; claudeProjects?: string; mcpConfigDir?: string;
   onSpawn: (pgid: number) => void; crash?: (point: CrashPoint) => void;
 };
@@ -63,7 +64,7 @@ export async function runLiveActivity(store: Store, adm: AdmissionDb, a: Activit
     const outcome = liveOutcome([plan.report]);
     return { run: asRun({ ok: true, output: '', exitCode: 0, durationMs: 0, status: { kind: 'missing', reason: 'recuperado de un report guardado' } }, outcome), outcome };
   }
-  const meta = { backend: ctx.backend.name, cwd: ctx.cwd, model: null, profileDigest: ctx.profileDigest };
+  const meta = { backend: ctx.backend.name, cwd: ctx.cwd, model: ctx.model ?? null, profileDigest: ctx.profileDigest };
   let prompt = plan.action === 'fresh' ? ctx.prompt + LIVE_RULES : plan.prompt;
   const questionId = plan.action === 'resume' ? plan.questionId : undefined;
   reports.markApplied(a.id); // lo que quede pendiente es de un intento anterior ya resuelto; este turno produce el suyo
@@ -75,7 +76,7 @@ export async function runLiveActivity(store: Store, adm: AdmissionDb, a: Activit
       ctx.crash?.('session-launched');
       const attemptId = randomUUID();
       const result = await runLiveTurn(adm, ctx.backend, a.changeId, {
-        ...turn, prompt, cwd: ctx.cwd, attemptId, timeoutMs: ctx.timeoutMs, signal: ctx.signal, confine: ctx.confine, capturePath: ctx.capturePath, claudeProjects: ctx.claudeProjects, mcpConfigDir: ctx.mcpConfigDir,
+        ...turn, model: meta.model ?? undefined, prompt, cwd: ctx.cwd, attemptId, timeoutMs: ctx.timeoutMs, signal: ctx.signal, confine: ctx.confine, capturePath: ctx.capturePath, claudeProjects: ctx.claudeProjects, mcpConfigDir: ctx.mcpConfigDir,
         onSpawn: ctx.onSpawn,
         onReport: reports.recorder(a.id, attemptId, ctx.crash),
       });
