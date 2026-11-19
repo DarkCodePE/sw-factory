@@ -3,6 +3,7 @@
 import { existsSync, mkdirSync, mkdtempSync, realpathSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { dirname, join, resolve } from 'node:path';
+import { agentEnv, type AgentEnvInput } from './env.ts';
 
 /** Adaptadores que corren confinados; el perfil exige uno de ellos a los jueces. */
 export const CONFINABLE_AGENTS: readonly string[] = ['claude', 'codex', 'fake', 'simulated'];
@@ -41,7 +42,13 @@ export function hostDir(dir: string, cwd: string): string {
   return real;
 }
 
-export function confineAgent(name: string, argv: string[], cwd: string, extra: Record<string, string> = {}, claudeProjects?: string, mcpConfig?: string, model?: string) {
+/** Modo declarado (T72): el resto de entradas de `agentEnv` las pone `confineAgent`. */
+export type EnvDecl = Pick<Partial<AgentEnvInput>, 'wsAllow' | 'channel' | 'roleEnv' | 'mcpRequired'>;
+
+/**
+ * `argv` no lleva ningún valor de variable: `bwrap` hereda `env` (el llamador DEBE lanzarlo con él; `runAgent` lo hace) y el hijo recibe exactamente ese entorno.
+ */
+export function confineAgent(name: string, argv: string[], cwd: string, extra: Record<string, string> = {}, claudeProjects?: string, mcpConfig?: string, model?: string, decl?: EnvDecl) {
   assertConfinement(name);
   const scratch = mkdtempSync(join(tmpdir(), 'fab-confine-'));
   try {
@@ -104,11 +111,7 @@ export function confineAgent(name: string, argv: string[], cwd: string, extra: R
     }
     const env: Record<string, string> = { PATH: '/opt/fab-runtime:/usr/local/bin:/usr/bin:/bin:/home/agent/.local/bin', HOME: '/home/agent', TMPDIR: '/tmp', LANG: 'C.UTF-8',
       GIT_CONFIG_COUNT: '2', GIT_CONFIG_KEY_0: 'user.name', GIT_CONFIG_VALUE_0: 'fab', GIT_CONFIG_KEY_1: 'user.email', GIT_CONFIG_VALUE_1: 'fab@local' };
-    const allowed = name === 'claude' ? ['ANTHROPIC_API_KEY', 'ANTHROPIC_AUTH_TOKEN', 'ANTHROPIC_BASE_URL', ...(model ? [] : ['ANTHROPIC_MODEL'])]
-      : name === 'codex' ? ['OPENAI_API_KEY'] : ['FABRICA_FAKE_SLEEP', 'FABRICA_FAKE_STATUS', 'FABRICA_FAKE_TOUCH'];
-    for (const key of allowed) { const v = extra[key] ?? process.env[key]; if (v !== undefined) env[key] = v; }
-    args.push('--clearenv');
-    for (const [key, value] of Object.entries(env)) args.push('--setenv', key, value);
+    Object.assign(env, { ...agentEnv({ adapter: name, confined: true, channel: false, wsAllow: null, roleEnv: [], mcpRequired: [], ...decl, host: { ...process.env, ...extra }, model }).env, ...env });
     args.push('--chdir', worktree, '--', ...command);
     return { argv: [Bun.which('bwrap', { PATH: process.env.PATH })!, ...args], env, cleanup: () => rmSync(scratch, { recursive: true, force: true }) };
   } catch (e) {

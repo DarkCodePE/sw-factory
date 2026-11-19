@@ -1,6 +1,7 @@
 // Headless coding-agent adapters. Each turns (prompt, cwd) into one non-interactive run.
 // The factory never edits code itself; it hands one activity to one agent run.
-import { confineAgent } from './sandbox/confine.ts';
+import { confineAgent, type EnvDecl } from './sandbox/confine.ts';
+import { agentEnv } from './sandbox/env.ts';
 import { atomicEvidence } from './manifest.ts';
 import { existsSync, readFileSync } from 'node:fs';
 import { selfCommand } from './self.ts';
@@ -190,16 +191,16 @@ export async function runAgent(
   prompt: string,
   cwd: string,
   timeoutMs = 20 * 60_000,
-  options: { readOnly?: boolean; confine?: boolean; capturePath?: string; signal?: AbortSignal; onSpawn?: (pgid: number) => void; model?: string; claudeProjects?: string; mcpConfig?: string } = {}
+  options: { readOnly?: boolean; confine?: boolean; capturePath?: string; signal?: AbortSignal; onSpawn?: (pgid: number) => void; model?: string; claudeProjects?: string; mcpConfig?: string; envDecl?: EnvDecl } = {}
 ): Promise<AgentRun> {
   const start = Date.now();
   const argv = agent.command(prompt, { ...options, promptStdin: agent.promptStdin === true });
-  const confined = options.confine ? confineAgent(agent.name, argv, cwd, agent.env?.(), options.claudeProjects, options.mcpConfig, options.model) : undefined;
+  const confined = options.confine ? confineAgent(agent.name, argv, cwd, agent.env?.(), options.claudeProjects, options.mcpConfig, options.model, options.envDecl) : undefined;
   let proc;
   try {
     proc = Bun.spawn(confined?.argv ?? argv, {
       cwd,
-      env: confined?.env ?? { ...process.env, ...(agent.env?.() ?? {}) },
+      env: confined?.env ?? agentEnv({ adapter: agent.name, confined: false, channel: false, wsAllow: null, roleEnv: [], mcpRequired: [], ...options.envDecl, host: { ...process.env, ...(agent.env?.() ?? {}) }, model: options.model }).env,
       stdin: agent.promptStdin ? new TextEncoder().encode(prompt) : 'ignore', stdout: 'pipe', stderr: 'pipe', detached: true,
     });
   } catch (e) {
