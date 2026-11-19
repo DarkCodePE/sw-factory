@@ -55,6 +55,12 @@
       "topic": "Réplica de Warp Factories: decisiones D-A a D-L de warp-platform/faltantes-fable.md §5",
       "decision": "D-A: web local en 127.0.0.1, monousuario, por ahora. D-B: cancelar un change desde la web, con confirmación y por la misma ruta que la CLI. D-C: mensaje libre como nota que el pool entrega al empezar el turno siguiente. D-D: una automation no se tría sola por ahora; se decide con datos. D-E: receptor de webhooks solo como aviso para GitHub, detrás de un túnel del dueño. D-F: merge, gate allow y flags de aprobación siguen solo en la CLI. D-G: construir jueces como aviso, con muestreo bajo. D-H: solo el dueño aplica una mejora, asignando el perfil. D-I: ningún conector de entrada nuevo hasta tener datos de T11 y T43. D-J: SÍ a runners remotos (contra la recomendación de Fable); el diseño debe resolver credenciales y confinamiento. D-K: no se guardan valores de secretos, solo nombres. D-L: una sola cola, este task.json.",
       "date": "2026-11-19"
+    },
+    {
+      "id": "D10",
+      "topic": "T74 runners remotos: P1 y P2 de warp-platform/diseno/T74.md §8",
+      "decision": "P1 opción 1: el runner usa su propia credencial del proveedor, puesta por el dueño en esa máquina (o una clave de API propia con tope de gasto); nada viaja desde casa. P2 opción 1: lo que declara el runner (sandbox, binario, coste) se guarda como «declarado, no verificado»; el resultado pasa igualmente por integridad, gates, validadores y revisión en casa.",
+      "date": "2026-11-19"
     }
   ],
   "tasks": [
