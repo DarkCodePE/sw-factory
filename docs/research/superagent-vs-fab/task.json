@@ -1,5 +1,5 @@
 {
-  "updated": "2026-11-16",
+  "updated": "2026-11-17",
   "context": "Integración superagent → fab. Fase 0: PR #55 (feat/fase0-endurecer). Fase 1: PR #56 (feat/fase1-observe). Ambos apilados sobre PR #49 (feat/t2-corpus).",
   "decisions": [
     {
@@ -37,6 +37,12 @@
       "topic": "Ronda 3, S3-S8 (06 §5.3)",
       "decision": "Aprobadas tal cual: sesión perdida con generación nueva visible (S3), turno huérfano sin reejecutar (S4), waiting_reply con plazo (S5), report durable con prioridad sobre STATUS (S6), Outbox con plantilla fija (S7), autoridad y solo adaptador confinable para trabajo de canal (S8).",
       "date": "2026-11-11"
+    },
+    {
+      "id": "D7",
+      "topic": "T41, N1: hostDir rechaza symlinks legítimos en la ruta de stateDir",
+      "decision": "Opción A: la rama fix/t41-fab-live-symlink (57d4b6b) se fusiona tal cual. N1 no bloquea el PR y pasa a T44. Opciones descartadas: B (raíz de confianza antes del PR) y C (aviso al arrancar el pool vivo). Análisis en t41/verif-fable.md y techdocs/docs/factory/13-t41-config-mcp-del-turno.md.",
+      "date": "2026-11-17"
     }
   ],
   "tasks": [
@@ -129,8 +135,12 @@
       "title": "Riesgo fase 0: ruta del worktree truncada a 8 caracteres",
       "why": "Dos changes con el mismo prefijo colisionan. Hoy verifyWorktree falla en vez de reutilizar el equivocado, pero el change queda bloqueado.",
       "where": "src/worktrees.ts — usar el id completo (o más caracteres) solo para worktrees nuevos, sin romper los existentes.",
-      "status": "pending",
-      "depends_on": []
+      "status": "blocked",
+      "depends_on": [
+        "T44"
+      ],
+      "owner": "codex",
+      "note": "2026-11-17: análisis de Codex en t9/analisis-codex.md. Corrige esta entrada: en el mismo repo, dos changes con el mismo prefijo reutilizan en silencio el mismo worktree y la misma rama, y limpiar uno borra lo del otro (confirmado leyendo src/worktrees.ts:46-78). Riesgo acumulado modelado: 0,1 % a los ~2 900 changes. Bloqueada por tres decisiones del dueño ([DECIDIR] A prioridad, B longitud, C compatibilidad; §7 del análisis) y por T44, que toca las mismas líneas de src/pool.ts."
     },
     {
       "id": "T10",
@@ -215,13 +225,13 @@
       "why": "Hoy vive en memoria del pool: si el pool muere tras un awaiting, la pregunta se pierde y el turno se reejecuta. Aplicarlo a mitad de turno haría fallar el latido y abortar al agente.",
       "where": "src/live/{claude,native}.ts (handler MCP), src/pool.ts:108-115, src/store.ts:685-689",
       "proposal": "El handler persiste el report por attemptId sin cambiar el estado; el pool lo aplica al final en una transacción con el efecto reply; la recuperación lo aplica en vez de reejecutar.",
-      "status": "partial",
+      "status": "done",
       "depends_on": [],
       "pr": 62,
       "branch": "feat/ronda3-hallazgos",
       "owner": "sonnet",
       "reviewer": "fable",
-      "note": "Fusionado (#62). Falta integrar en el pool (T12)."
+      "note": "Fusionado (#62) e integrado en el pool con T12 (#67). Auditoría de agy del 2026-11-17 (auditoria-parciales/informe-agy.md): hecha, con test que la fija."
     },
     {
       "id": "T17",
@@ -231,13 +241,13 @@
       "why": "activities no tiene columna de sesión y las espigas lo devuelven solo en memoria. No sobrevive a la caída del pool ni a requeueOrphans; retryChange crea otra activity.",
       "where": "src/store.ts:152-158,307-322,1030; src/live/claude.ts:55",
       "proposal": "Fila por (change, tipo de activity, generación) escrita antes de lanzar, con backend, cwd, modelo y huella de perfil.",
-      "status": "partial",
+      "status": "done",
       "depends_on": [],
       "pr": 62,
       "branch": "feat/ronda3-hallazgos",
       "owner": "sonnet",
       "reviewer": "fable",
-      "note": "Fusionado (#62). Falta integrar en el pool (T12)."
+      "note": "Fusionado (#62) e integrado en el pool con T12 (#67). Auditoría de agy del 2026-11-17 (auditoria-parciales/informe-agy.md): hecha, con test que la fija."
     },
     {
       "id": "T18",
@@ -247,13 +257,13 @@
       "why": "El contrato define SessionNotFoundError pero ninguna transición lo usa. Bajo confine sin directorio persistente o tras recrear el worktree, la activity falla 3 veces con una respuesta humana ya dada.",
       "where": "06 §5.1 y §6; src/live/contract.ts:48",
       "proposal": "Generación nueva con prompt reconstruido desde estado durable (change, historial, preguntas y respuestas), con evento y contando para el tope. Nunca sesión nueva por un error transitorio.",
-      "status": "partial",
+      "status": "done",
       "depends_on": [],
       "pr": 62,
       "branch": "feat/ronda3-hallazgos",
       "owner": "sonnet",
       "reviewer": "fable",
-      "note": "Fusionado (#62). Falta integrar en el pool (T12)."
+      "note": "Fusionado (#62) e integrado en el pool con T12 (#67). Auditoría de agy del 2026-11-17 (auditoria-parciales/informe-agy.md): hecha, con test que la fija."
     },
     {
       "id": "T19",
@@ -263,13 +273,13 @@
       "why": "Un fallo u orfandad devuelve la activity a pending y el agente se reejecuta solo; no existe «resultado desconocido» en activities. El prompt inicial se reenviaría a una sesión que ya hizo el trabajo.",
       "where": "src/store.ts:923-932,1102-1103",
       "proposal": "Para activities vivas: reconciliar (report persistido, estado del worktree) y reanudar con un mensaje «continúa», no con el prompt inicial.",
-      "status": "partial",
+      "status": "done",
       "depends_on": [],
       "pr": 62,
       "branch": "feat/ronda3-hallazgos",
       "owner": "sonnet",
       "reviewer": "fable",
-      "note": "Fusionado (#62). Falta integrar en el pool (T12)."
+      "note": "Fusionado (#62) e integrado en el pool con T12 (#67). Auditoría de agy del 2026-11-17 (auditoria-parciales/informe-agy.md): hecha, con test que la fija."
     },
     {
       "id": "T20",
@@ -295,13 +305,13 @@
       "why": "No se leen comentarios, el evento no tiene actor y no se define quién puede responder. En un repo público, un tercero podría meter texto en una sesión con permisos de escritura.",
       "where": "src/admission/github.ts:18, resident.ts:44-46; 06 §5.1",
       "proposal": "Trigger por comentario con actor e id del comentario; permiso con la consulta existente (github.ts:66-71), solo triage o superior; posterior al recibo de la pregunta; el resto se registra y se ignora.",
-      "status": "partial",
+      "status": "done",
       "depends_on": [],
       "pr": 62,
       "branch": "feat/ronda3-hallazgos",
       "owner": "sonnet",
       "reviewer": "fable",
-      "note": "Fusionado (#62). Falta integrar en el pool (T12)."
+      "note": "Fusionado (#62) e integrado en el pool con T12 (#67). Auditoría de agy del 2026-11-17 (auditoria-parciales/informe-agy.md): hecha, con test que la fija. Citas comprobadas por muestreo por Fable."
     },
     {
       "id": "T22",
@@ -327,13 +337,13 @@
       "why": "Nada une adm_threads con un change y ExternalRef solo admite jira. En modo auto, el comentario de la propia fab crearía un trigger que admite otra vez.",
       "where": "src/admission/db.ts:21, resident.ts:42-47; src/connectors/types.ts:7, links.ts:48",
       "proposal": "Relación N hilos → 1 change, ExternalRef con github, una admisión por hilo, y descartar los eventos del actor de la fab.",
-      "status": "partial",
+      "status": "done",
       "depends_on": [],
       "pr": 62,
       "branch": "feat/ronda3-hallazgos",
       "owner": "sonnet",
       "reviewer": "fable",
-      "note": "Fusionado (#62). Falta integrar en el pool (T12)."
+      "note": "Fusionado (#62) e integrado en el pool con T12 (#67). Auditoría de agy del 2026-11-17 (auditoria-parciales/informe-agy.md): hecha, con test que la fija. Citas comprobadas por muestreo por Fable."
     },
     {
       "id": "T24",
@@ -372,13 +382,13 @@
       "why": "Un turno vivo con report válido y sin STATUS da status missing, y el pool falla esa activity. Tampoco hay regla para varios reports en un turno.",
       "where": "src/pool.ts:305-309; live/native.md",
       "proposal": "En modo vivo manda el report; gana el último válido; sin report, falla como hoy.",
-      "status": "partial",
+      "status": "done",
       "depends_on": [],
       "pr": 62,
       "branch": "feat/ronda3-hallazgos",
       "owner": "sonnet",
       "reviewer": "fable",
-      "note": "Fusionado (#62). Falta integrar en el pool (T12)."
+      "note": "Fusionado (#62) e integrado en el pool con T12 (#67). Auditoría de agy del 2026-11-17 (auditoria-parciales/informe-agy.md): hecha, con test que la fija."
     },
     {
       "id": "T27",
@@ -436,13 +446,13 @@
       "why": "El gate lo calcula y lo guarda, pero nadie lo lee fuera de src/admission.",
       "where": "src/admission/resident.ts:67-68",
       "proposal": "propose → solo addSignal (triage humano); change → triageSignal.",
-      "status": "partial",
+      "status": "done",
       "depends_on": [],
       "pr": 62,
       "branch": "feat/ronda3-hallazgos",
       "owner": "sonnet",
       "reviewer": "fable",
-      "note": "Fusionado (#62). Falta integrar en el pool (T12)."
+      "note": "Fusionado (#62) e integrado en el pool con T12 (#67). Auditoría de agy del 2026-11-17 (auditoria-parciales/informe-agy.md): hecha, con test que la fija. Citas comprobadas por muestreo por Fable."
     },
     {
       "id": "T31",
@@ -468,13 +478,13 @@
       "why": "native lanza si se le pide confine, y el 06 decide los dos adaptadores en paralelo para texto no confiable (ADR-0007).",
       "where": "06:L193; src/live/native.ts:35-37",
       "proposal": "La salida de la fase 2 exige claude confinado; native sigue en paralelo solo para changes creados a mano.",
-      "status": "partial",
+      "status": "done",
       "depends_on": [],
       "pr": 62,
       "branch": "feat/ronda3-hallazgos",
       "owner": "sonnet",
       "reviewer": "fable",
-      "note": "Fusionado (#62). Falta integrar en el pool (T12)."
+      "note": "Fusionado (#62) e integrado en el pool con T12 (#67). Auditoría de agy del 2026-11-17 (auditoria-parciales/informe-agy.md): hecha, con test que la fija."
     },
     {
       "id": "T33",
@@ -484,13 +494,13 @@
       "why": "change.description entra literal bajo # Change y puede imitar secciones del prompt.",
       "where": "src/prompts.ts:57-60",
       "proposal": "Delimitador con nonce y aviso. No sustituye al sandbox.",
-      "status": "partial",
+      "status": "done",
       "depends_on": [],
       "pr": 62,
       "branch": "feat/ronda3-hallazgos",
       "owner": "sonnet",
       "reviewer": "fable",
-      "note": "Fusionado (#62). Falta integrar en el pool (T12)."
+      "note": "Fusionado (#62) e integrado en el pool con T12 (#67). Auditoría de agy del 2026-11-17 (auditoria-parciales/informe-agy.md): hecha, con test que la fija."
     },
     {
       "id": "T34",
@@ -500,13 +510,13 @@
       "why": "El token va dentro de --mcp-config y se ve en la lista de procesos. Que dos --allowedTools y dos --mcp-config se fusionen es solo empírico.",
       "where": "src/live/claude.ts:13-17; src/sandbox/confine.ts:64",
       "proposal": "Pasar la config por archivo y añadir un test que fije el comportamiento.",
-      "status": "partial",
+      "status": "done",
       "depends_on": [],
       "pr": 62,
       "branch": "feat/ronda3-hallazgos",
       "owner": "sonnet",
       "reviewer": "fable",
-      "note": "Fusionado (#62). Falta integrar en el pool (T12)."
+      "note": "Fusionado (#62) e integrado en el pool con T12 (#67). Auditoría de agy del 2026-11-17 (auditoria-parciales/informe-agy.md): hecha, con test que la fija. Citas comprobadas por muestreo por Fable."
     },
     {
       "id": "T35",
@@ -584,17 +594,30 @@
     {
       "id": "T41",
       "title": "El agente confinado puede cambiar fab-live por un symlink y el host escribe ahí mcp-<uuid>.json con el token del turno",
-      "status": "pending",
+      "status": "done",
       "depends_on": [],
       "where": "src/live/claude.ts:58-61",
-      "note": "H8 de la verificación de T40; ya existía antes. Idea: sacar la config MCP del git dir, como claude-projects (<stateDir>/live/<id>)."
+      "note": "H8 de la verificación de T40; ya existía antes. Idea: sacar la config MCP del git dir, como claude-projects (<stateDir>/live/<id>). PR #76 fusionado (merge aa2142b) sobre 57d4b6b. Verificación de Fable en dos pasadas (t41/verif-fable.md): la segunda da «listo para PR»; cerrados H1-H4 y H7; H5 y H6 abiertos a propósito. N1 y N2 pasan a T44 (decisión D7).",
+      "pr": 76,
+      "owner": "sonnet",
+      "reviewer": "fable",
+      "branch": "fix/t41-fab-live-symlink",
+      "followups": [
+        "T44"
+      ]
     },
     {
       "id": "T42",
       "title": "Test inestable tests/agent.test.ts:103-108 (timeoutMs: 40)",
-      "status": "pending",
+      "status": "in_progress",
       "depends_on": [],
-      "note": "Falló una vez en la suite completa («Unexpected extra model call»); pasa a solas."
+      "note": "Falló una vez en la suite completa («Unexpected extra model call»); pasa a solas. PR #75 abierto (Codex); revisión independiente de agy: listo para fusionar, sin hallazgos (auditoria-parciales/informe-agy.md, parte B). Falta que el dueño fusione.",
+      "pr": 75,
+      "owner": "codex",
+      "reviewer": "agy",
+      "followups": [
+        "T45"
+      ]
     },
     {
       "id": "T43",
@@ -605,6 +628,33 @@
         "T13"
       ],
       "note": "Diseño de referencia en t13/analisis-fable.md §3.2-3.4. Se abre según los umbrales de §1.3 con datos del informe de T13. Decisiones pendientes: C (umbrales y duración), D (solo retirar etiqueta para), E (D1), F (comentario crea turno), G (readmitir). Decisión B: repo para T11."
+    },
+    {
+      "id": "T44",
+      "title": "hostDir rechaza cualquier symlink en la ruta de stateDir: los turnos vivos fallan si el estado vive bajo un enlace legítimo",
+      "severity": "media",
+      "source": "t41/verif-fable.md N1 (y N2)",
+      "status": "in_progress",
+      "depends_on": [
+        "T41"
+      ],
+      "where": "src/sandbox/confine.ts:33-39 y src/pool.ts:299-300 (en 57d4b6b)",
+      "why": "Con HOME enlazado o FABRICA_HOME vía enlace, todo turno vivo falla con «la ruta contiene un symlink». Falla cerrado; es disponibilidad, no seguridad. Antes de 57d4b6b funcionaba.",
+      "fix_idea": "Resolver stateDir una vez como raíz de confianza; rechazarlo si su ruta escrita o su ruta real caen en un montaje escribible; exigir «sin symlinks» solo de la raíz hacia abajo. De paso N2: comprobar antes del mkdir. Toca la pieza que cierra H1 y H7: necesita verificación completa con /verificar-cambio.",
+      "note": "Implementada por Sonnet en fix/t44-statedir-raiz (ad4330e, 4 commits sobre aa2142b): hostDir(dir, cwd, root) con stateDir como raíz de confianza; N1 y N2 cerrados. Verificación de Fable en dos pasadas (t44/verif-fable.md): la primera halló V1-V3, la segunda da «listo para PR». Suite 1422/2/0. Sin push: falta que el dueño abra y fusione el PR. Quien verificó escribió también los briefs. Mientras tanto, el afectado apunta FABRICA_HOME a la ruta real. Decisión D7.",
+      "owner": "sonnet",
+      "reviewer": "fable",
+      "branch": "fix/t44-statedir-raiz"
+    },
+    {
+      "id": "T45",
+      "title": "Sanear los otros tests que dependen del tiempo",
+      "severity": "baja",
+      "source": "t42/impl-codex.md (inventario de 18 tests) y auditoria-parciales/informe-agy.md parte B",
+      "status": "pending",
+      "depends_on": [],
+      "why": "Codex inventarió 18 tests con plazos o esperas cortas del mismo tipo que el de T42; pueden fallar según la carga de la máquina.",
+      "note": "Sin analizar todavía: primero comprobar el inventario y cuáles fallan de verdad."
     }
   ]
 }
