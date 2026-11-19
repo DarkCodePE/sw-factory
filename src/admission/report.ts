@@ -13,6 +13,8 @@ export type Report = {
   stopsLost: { thread: string; url: string; state: 'open' | 'closed'; labelPresent: boolean; decidedAt: string; changeStatus: ChangeStatus }[];
   unlabeledTrusted: { thread: string; url: string; firstSeen: string; admittedAt: string | null }[];
   effects: { key: string; status: string; attempts: number; lastError: string | null }[];
+  /** Avisos firmados de GitHub (T69b): recuento por resultado en las últimas 24 h y fecha del último. */
+  hooks: { last24h: { result: string; count: number }[]; last: string | null };
 };
 
 export function buildReport(adm: AdmissionDb): Report {
@@ -77,6 +79,10 @@ export function buildReport(adm: AdmissionDb): Report {
       const m = /^label-by:(.*)\(([^()]*)\)$/.exec(d.reasons[1] ?? '');
       return { trigger: d.trigger_key, labelBy: m?.[1] ?? '?', role: m?.[2] ?? 'unknown', decidedAt: d.decided_at };
     }),
+    hooks: {
+      last24h: adm.db.query('SELECT result, COUNT(*) AS count FROM adm_hook_deliveries WHERE received_at >= ? GROUP BY result ORDER BY result').all(new Date(adm.now() - 86_400_000).toISOString()) as { result: string; count: number }[],
+      last: (adm.db.query('SELECT MAX(received_at) AS at FROM adm_hook_deliveries').get() as { at: string | null }).at,
+    },
     effects: q(`SELECT key, status, attempts, last_error AS lastError FROM adm_effects
       WHERE attempts > 1 OR status IN ('dead','unknown') ORDER BY id`),
   };
@@ -104,5 +110,8 @@ export function formatReport(r: Report): string {
   lines.push('', '== Issues de confianza sin etiqueta (unlabeledTrusted) ==');
   for (const u of r.unlabeledTrusted) lines.push(`${u.url}  ${u.thread}  primera vez=${u.firstSeen}  admitido=${u.admittedAt ?? '-'}`);
   if (!r.unlabeledTrusted.length) lines.push('(ninguno)');
+  lines.push('', '== Avisos de GitHub (últimas 24 h) ==');
+  for (const h of r.hooks.last24h) lines.push(`${h.result}: ${h.count}`);
+  lines.push(r.hooks.last24h.length ? `último aviso=${r.hooks.last}` : '(ninguno)');
   return lines.map(line => line.replace(/[\x00-\x1f\x7f-\x9f]/g, '')).join('\n');
 }
