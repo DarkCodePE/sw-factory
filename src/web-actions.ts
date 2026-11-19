@@ -81,8 +81,8 @@ export async function webAction(req: Request, stateDir: string, port: number, au
     const form = await readForm(req);
     if (!auth.validCsrf(req, form.get('csrf') ?? '')) return new Response('CSRF rechazado.', { status: 403 });
     const pathname = new URL(req.url).pathname;
-    const match = pathname === '/signals' ? ['', 'signals', '', 'create'] : /^\/(activities|changes|questions|signals)\/([^/]+)\/(review|retry|answer|triage|ignore|cancel|rename)$/.exec(pathname);
-    if (!match || !['activities/review', 'changes/retry', 'questions/answer', 'signals/create', 'signals/triage', 'signals/ignore', 'changes/cancel', 'changes/rename'].includes(`${match[1]}/${match[3]}`)) return new Response('Acción no encontrada.', { status: 404 });
+    const match = pathname === '/signals' ? ['', 'signals', '', 'create'] : /^\/(activities|changes|questions|signals|automations)\/([^/]+)\/(review|retry|answer|triage|ignore|cancel|rename|run|enable|disable)$/.exec(pathname);
+    if (!match || !['activities/review', 'changes/retry', 'questions/answer', 'signals/create', 'signals/triage', 'signals/ignore', 'changes/cancel', 'changes/rename', 'automations/run', 'automations/enable', 'automations/disable'].includes(`${match[1]}/${match[3]}`)) return new Response('Acción no encontrada.', { status: 404 });
     const id = match[2] ? decodeURIComponent(match[2]) : '';
     if (id && !/^[\w-]+$/.test(id)) throw new InputError(400, 'Identificador inválido.');
     const action = match[3]!;
@@ -120,6 +120,10 @@ export async function webAction(req: Request, stateDir: string, port: number, au
             if (hasAdmission(writer)) linkTriagedSignal(new AdmissionDb(writer), id, c.id);
             destination = `/changes/${c.id}`;
           }
+        } else if (match[1] === 'automations') {
+          // Ignora title y body del formulario: la señal lleva el texto que guardó el dueño (A5).
+          destination = '/automations';
+          if (action === 'run') writer.runAutomationNow(id); else writer.setAutomationEnabled(id, action === 'enable');
         } else if (action === 'rename') {
           writer.getChange(id); destination = `/changes/${id}`;
           writer.renameChange(id, title);
