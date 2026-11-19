@@ -16,7 +16,7 @@ const money = (cost: number | null) => cost === null ? 'No medido' : `${cost.toF
 const empty = (text: string) => `<p class="empty">${escape(text)}</p>`;
 const ui: Ui = { escape, badge, labels };
 const TIMELINE_LIMIT = 200;
-const POLL = `setInterval(async()=>{if(document.hidden||document.activeElement?.matches('input,select,textarea')||window.getSelection()?.toString()||document.querySelector('details[open]'))return;try{const r=await fetch(location.href,{cache:'no-store'});if(!r.ok)return;const doc=new DOMParser().parseFromString(await r.text(),'text/html');const old=document.querySelector('main'),next=doc.querySelector('main');if(old&&next&&old.innerHTML!==next.innerHTML){old.replaceWith(next);}}catch{}},2000);`;
+const POLL = `setInterval(async()=>{if(document.hidden||document.activeElement?.matches('input,select,textarea')||window.getSelection()?.toString()||document.querySelector('details[open]'))return;try{const r=await fetch(location.href,{cache:'no-store'});if(!r.ok)return;const doc=new DOMParser().parseFromString(await r.text(),'text/html');const old=document.querySelector('main'),next=doc.querySelector('main');if(next)window.fabPrepare?.(next);if(old&&next&&old.innerHTML!==next.innerHTML){old.replaceWith(next);}}catch{}},2000);`;
 const HEADERS = {
   'Content-Security-Policy': "default-src 'none'; script-src 'self'; style-src 'self'; connect-src 'self'; img-src 'none'; font-src 'none'; base-uri 'none'; form-action 'self'; frame-ancestors 'none'",
   'X-Content-Type-Options': 'nosniff', 'Cache-Control': 'no-store', 'Referrer-Policy': 'no-referrer',

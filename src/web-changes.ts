@@ -13,7 +13,7 @@ const enc = encodeURIComponent;
 export function parseQuery(p: URLSearchParams): Query {
   const sort = p.get('sort') ?? '';
   const day = (k: string) => { const v = p.get(k) ?? ''; return DAY.test(v) ? v : ''; };
-  return { status: p.get('status') ?? '', q: p.get('q') ?? '', sort: sort in SORTS ? sort as Query['sort'] : 'updated', from: day('from'), to: day('to'), source: p.get('source') ?? '', actor: p.get('actor') ?? '' };
+  return { status: p.get('status') ?? '', q: p.get('q') ?? '', sort: Object.hasOwn(SORTS, sort) ? sort as Query['sort'] : 'updated', from: day('from'), to: day('to'), source: p.get('source') ?? '', actor: p.get('actor') ?? '' };
 }
 
 /** `from`/`to` son días UTC inclusivos y se comparan con la fecha de actualización. */
@@ -39,8 +39,10 @@ export function changesView(ui: Ui, all: ChangeSummary[], f: Query, ws: string, 
   const sel = (cond: boolean) => cond ? ' selected' : '';
   const actors = [...new Set(all.map(c => c.creator).filter((a): a is string => a !== null))].sort();
   const base = { ws, q: f.q, sort: f.sort, from: f.from, to: f.to, source: f.source, actor: f.actor };
-  const counts = new Map<string, number>(); for (const c of all) counts.set(c.status, (counts.get(c.status) ?? 0) + 1);
-  const quick = [['', 'Todos', all.length] as const, ...statuses.filter(s => counts.has(s)).map(s => [s, ui.labels[s] ?? s, counts.get(s)!] as const)]
+  // Los contadores cuentan lo que el enlace mostrará: el resto de filtros se conserva, el estado no.
+  const scoped = applyQuery(all, { ...f, status: '' });
+  const counts = new Map<string, number>(); for (const c of scoped) counts.set(c.status, (counts.get(c.status) ?? 0) + 1);
+  const quick = [['', 'Todos', scoped.length] as const, ...statuses.filter(s => counts.has(s)).map(s => [s, ui.labels[s] ?? s, counts.get(s)!] as const)]
     .map(([s, label, n]) => `<a href="${e(link({ ...base, status: s }))}"${f.status === s ? ' aria-current="true"' : ''}>${e(label)} <strong>${n}</strong></a>`).join('');
   const form = `<form action="/changes" method="get" class="filters"><label>Workstream<select name="ws"><option value="">Todos</option>${workstreams.map(w => `<option value="${e(w.slug)}"${sel(ws === w.id || ws === w.slug)}>${e(w.slug)}</option>`).join('')}</select></label>`
     + `<label>Estado<select name="status"><option value="">Todos</option>${statuses.map(s => `<option value="${e(s)}"${sel(f.status === s)}>${e(ui.labels[s] ?? s)}</option>`).join('')}</select></label>`
@@ -64,11 +66,11 @@ export function inboxView(ui: Ui, items: { a: Activity; title: string; slug: str
   }
   const search = `<form action="/" method="get" class="filters"><label class="search">Buscar en la bandeja<input name="q" type="search" value="${e(q)}" placeholder="Título, validador o workstream"></label><button>Buscar</button></form>`;
   if (!shown.length) return `${search}<p class="empty">${items.length ? 'Nada coincide con la búsqueda.' : 'La bandeja está al día. Puedes consultar los changes y su evidencia.'}</p>`;
-  return `${search}${[...days].map(([day, list]) => `<section class="day"><h2><time>${e(day)}</time></h2><ul class="inbox">${list.map(({ a, title, slug }) => `<li data-seen-id="${e(a.id)}"><a href="/activities/${enc(a.id)}">${e(title)}</a><div>${e(a.validator ?? a.kind)} · ${e(slug)} ${ui.badge(a.reviewStatus === 'awaiting' ? 'awaiting' : a.status)} <button type="button" data-seen>Marcar como visto</button></div></li>`).join('')}</ul></section>`).join('')}`;
+  return `${search}${[...days].map(([day, list]) => `<section class="day"><h2><time>${e(day)}</time></h2><ul class="inbox">${list.map(({ a, title, slug }) => `<li data-seen-id="${e(a.id)}"><a href="/activities/${enc(a.id)}">${e(title)}</a><div>${e(a.validator ?? a.kind)} · ${e(slug)} ${ui.badge(a.reviewStatus === 'awaiting' ? 'awaiting' : a.status)} <button type="button" data-seen aria-pressed="false">Marcar como visto</button></div></li>`).join('')}</ul></section>`).join('')}`;
 }
 
-// «Visto» vive solo en el navegador (localStorage): no cambia el dominio. Se reaplica cuando el sondeo reemplaza <main>.
+// «Visto» vive solo en el navegador (localStorage): no cambia el dominio. El sondeo llama a fabPrepare sobre el <main> recibido antes de compararlo, para que una marca local no cuente como cambio y no se pierda el foco.
 export const INBOX_JS = `(()=>{const K='fab.inbox.seen';const read=()=>{try{return new Set(JSON.parse(localStorage.getItem(K)||'[]'))}catch{return new Set()}};const write=s=>{try{localStorage.setItem(K,JSON.stringify([...s]))}catch{}};
-const apply=()=>{const s=read();document.querySelectorAll('[data-seen-id]').forEach(li=>{const on=s.has(li.dataset.seenId);li.classList.toggle('seen',on);const b=li.querySelector('[data-seen]');if(b){const t=on?'Visto · deshacer':'Marcar como visto';if(b.textContent!==t)b.textContent=t;b.setAttribute('aria-pressed',String(on))}})};
-document.addEventListener('click',ev=>{const b=ev.target.closest&&ev.target.closest('[data-seen]');if(!b)return;const li=b.closest('[data-seen-id]');const s=read();const id=li.dataset.seenId;s.has(id)?s.delete(id):s.add(id);write(s);apply()});
-new MutationObserver(apply).observe(document.body,{childList:true,subtree:true});apply()})();`;
+const apply=(root=document)=>{const s=read();root.querySelectorAll('[data-seen-id]').forEach(li=>{const on=s.has(li.dataset.seenId);li.classList.toggle('seen',on);const b=li.querySelector('[data-seen]');if(b){const t=on?'Visto · deshacer':'Marcar como visto';if(b.textContent!==t)b.textContent=t;b.setAttribute('aria-pressed',String(on))}})};
+window.fabPrepare=apply;document.addEventListener('click',ev=>{const b=ev.target.closest&&ev.target.closest('[data-seen]');if(!b)return;const li=b.closest('[data-seen-id]');const s=read();const id=li.dataset.seenId;s.has(id)?s.delete(id):s.add(id);write(s);apply()});
+new MutationObserver(()=>apply()).observe(document.body,{childList:true,subtree:true});apply()})();`;
