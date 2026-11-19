@@ -60,8 +60,166 @@ export function actionForms(store: Store, url: URL, csrf?: string): string {
   return body ? `<section aria-label="Decisiones">${body}</section>` : '';
 }
 
-class InputError extends Error {
+export class InputError extends Error {
   constructor(readonly status: number, message: string) { super(message); }
+}
+
+type Raw = Record<string, string | undefined>;
+type Outcome = { destination: string; result: string; repo?: string };
+type Action = { path: RegExp; input: (raw: Raw) => Raw; run: (store: Store, id: string, input: Raw, out: Outcome, actor: string) => void };
+
+const text = (raw: Raw, key: string) => raw[key] ?? '';
+const limit = (value: string, max = 8192) => { if (Buffer.byteLength(value) > max) throw new InputError(413, 'El texto supera 8 KiB.'); };
+const titleOf = (raw: Raw) => {
+  const title = text(raw, 'title').trim();
+  if (!title || title.length > SIGNAL_TITLE_MAX) throw new InputError(400, `El título debe tener entre 1 y ${SIGNAL_TITLE_MAX} caracteres.`);
+  return title;
+};
+// Valida y normaliza los campos de una acción; el orden de las comprobaciones es el de F2.
+const pick = (...keys: string[]) => (raw: Raw): Raw => { for (const k of keys) limit(text(raw, k)); return Object.fromEntries(keys.map(k => [k, text(raw, k)])); };
+const route = (entity: string, verb: string) => new RegExp(`^/${entity}/([^/]+)/${verb}$`);
+const findSignal = (store: Store, id: string) => {
+  const s = [...store.listWorkstreams()].flatMap(w => store.listSignals(w.id)).find(s => s.id === id);
+  if (!s) throw new StoreError('not_found', 'señal inexistente');
+  if (s.status !== 'new') throw new StoreError('conflict', 'señal ya resuelta');
+  return s;
+};
+
+// Registro único de acciones: los formularios de la web y, después, la API pasan por aquí.
+export const ACTIONS: Record<string, Action> = {
+  'activities/review': {
+    path: route('activities', 'review'),
+    input: raw => {
+      const comment = text(raw, 'comment'), decision = text(raw, 'decision');
+      limit(comment);
+      if (!['approve', 'comment', 'decline'].includes(decision) || decision !== 'approve' && !comment.trim()) throw new InputError(400, 'Elige una decisión y escribe un comentario para pedir cambios o rechazar.');
+      return { comment, decision };
+    },
+    run: (store, id, input, out) => {
+      const a = store.getActivity(id); out.destination = `/activities/${id}`;
+      if (a.reviewStatus !== 'awaiting' && ['approved', 'commented', 'declined'].includes(a.reviewStatus ?? '')) throw new StoreError('conflict', 'revisión resuelta');
+      store.resolveReview(id, input.decision as ReviewDecision, input.comment!);
+    },
+  },
+  'changes/retry': {
+    path: route('changes', 'retry'),
+    input: raw => ({ revision: text(raw, 'revision') }),
+    run: (store, id, input, out) => {
+      store.getChange(id); out.destination = `/changes/${id}`;
+      if (input.revision !== retryRevision(store, id)) throw new StoreError('conflict', 'change actualizado');
+      for (const a of store.listActivities({ changeId: id }).filter(a => a.status === 'waiting_reply')) store.abandonWait(a.id);
+      store.retryChange(id);
+      if (hasAdmission(store)) resetSessionCap(store, new AdmissionDb(store), id);
+    },
+  },
+  'changes/note': {
+    path: route('changes', 'note'),
+    input: pick('body'),
+    run: (store, id, input, out) => {
+      store.getChange(id); out.destination = `/changes/${id}`;
+      store.addChangeNote(id, input.body!);
+    },
+  },
+  'changes/rename': {
+    path: route('changes', 'rename'),
+    input: raw => (limit(text(raw, 'body'), SIGNAL_BODY_MAX), { title: titleOf(raw) }),
+    run: (store, id, input, out) => {
+      store.getChange(id); out.destination = `/changes/${id}`;
+      store.renameChange(id, input.title!);
+    },
+  },
+  'changes/cancel': {
+    path: route('changes', 'cancel'),
+    input: raw => { if (raw.confirm !== 'yes') throw new InputError(400, 'Confirma la cancelación.'); return {}; },
+    run: (store, id, _input, out) => {
+      const c = store.getChange(id); out.destination = `/changes/${id}`;
+      if (store.isTerminalChange(c.status)) throw new StoreError('invalid_transition', 'change terminal');
+      store.event(c.workstreamId, 'warning', 'reject solicitado', id);
+      store.closeChange(id, 'canceled'); out.repo = store.getWorkstream(c.workstreamId).repo;
+    },
+  },
+  'questions/answer': {
+    path: route('questions', 'answer'),
+    input: raw => {
+      const answer = text(raw, 'answer'); limit(answer);
+      if (!answer.trim()) throw new InputError(400, 'Escribe una respuesta.');
+      return { answer };
+    },
+    run: (store, id, input, out, actor) => {
+      if (!hasAdmission(store)) throw new StoreError('not_found', 'sin preguntas');
+      const adm = new AdmissionDb(store);
+      const q = adm.db.query('SELECT activity_id FROM adm_questions WHERE id=?').get(id) as { activity_id: string } | null;
+      if (!q) throw new StoreError('not_found', 'pregunta inexistente');
+      out.destination = `/activities/${q.activity_id}`;
+      if (answerQuestion(store, adm, { questionId: id, answer: input.answer!, by: actor }) !== 'answered') out.result = 'conflict';
+    },
+  },
+  'signals/create': {
+    path: /^\/(signals)$/,
+    input: raw => { limit(text(raw, 'body'), SIGNAL_BODY_MAX); return { title: titleOf(raw), body: text(raw, 'body'), workstream: text(raw, 'workstream') }; },
+    run: (store, _id, input, out) => {
+      out.destination = '/signals';
+      const s = store.addSignal(input.workstream!, input.title!, input.body || input.title!);
+      store.event(s.workstreamId, 'info', `signal creada desde la web: ${input.title}`);
+    },
+  },
+  'signals/triage': {
+    path: route('signals', 'triage'),
+    input: raw => (limit(text(raw, 'body'), SIGNAL_BODY_MAX), {}),
+    run: (store, id, _input, out) => {
+      out.destination = '/signals';
+      findSignal(store, id);
+      const c = store.triageSignal(id);
+      if (hasAdmission(store)) linkTriagedSignal(new AdmissionDb(store), id, c.id);
+      out.destination = `/changes/${c.id}`;
+    },
+  },
+  'signals/ignore': {
+    path: route('signals', 'ignore'),
+    input: raw => (limit(text(raw, 'body'), SIGNAL_BODY_MAX), {}),
+    run: (store, id, _input, out) => {
+      out.destination = '/signals';
+      const s = findSignal(store, id);
+      store.ignoreSignal(id); store.event(s.workstreamId, 'info', `signal ignorada: ${s.title}`);
+    },
+  },
+  // Las automations ignoran title y body: la señal lleva el texto que guardó el dueño (A5).
+  'automations/run': {
+    path: route('automations', 'run'),
+    input: raw => (limit(text(raw, 'body'), SIGNAL_BODY_MAX), {}),
+    run: (store, id, _input, out) => { out.destination = '/automations'; store.runAutomationNow(id); },
+  },
+  'automations/enable': {
+    path: route('automations', 'enable'),
+    input: raw => (limit(text(raw, 'body'), SIGNAL_BODY_MAX), {}),
+    run: (store, id, _input, out) => { out.destination = '/automations'; store.setAutomationEnabled(id, true); },
+  },
+  'automations/disable': {
+    path: route('automations', 'disable'),
+    input: raw => (limit(text(raw, 'body'), SIGNAL_BODY_MAX), {}),
+    run: (store, id, _input, out) => { out.destination = '/automations'; store.setAutomationEnabled(id, false); },
+  },
+};
+
+/** Abre el Store escritor, fija el actor y ejecuta una acción. Lanza InputError si la entrada no vale; el resto de fallos van en `result`. */
+export async function performAction(stateDir: string, name: string, id: string, rawInput: Raw, actor: string): Promise<Outcome> {
+  const action = ACTIONS[name];
+  if (!action) throw new InputError(404, 'Acción no encontrada.');
+  const input = action.input(rawInput);
+  const out: Outcome = { destination: '/', result: 'ok' };
+  let store: Store | undefined;
+  try {
+    store = new Store(join(stateDir, 'fabrica.db'));
+    const writer = store;
+    // FAB_ACTOR es el patrón del Store. El tramo es síncrono: ningún await expone el actor a otra petición.
+    const previous = process.env.FAB_ACTOR; process.env.FAB_ACTOR = actor;
+    try { writer.withRetry(() => action.run(writer, id, input, out, actor)); }
+    finally { if (previous === undefined) delete process.env.FAB_ACTOR; else process.env.FAB_ACTOR = previous; }
+    if (out.repo) { await writer.waitForRelease(id); await removeWorktree(out.repo, stateDir, id); }
+  } catch (error) {
+    out.result = error instanceof StoreError && messages[error.code] ? error.code : 'error';
+  } finally { store?.close(); }
+  return out;
 }
 
 async function readForm(req: Request): Promise<URLSearchParams> {
@@ -81,88 +239,25 @@ async function readForm(req: Request): Promise<URLSearchParams> {
 export async function webAction(req: Request, stateDir: string, port: number, auth: WebAuth): Promise<Response> {
   if (!auth.sessionCsrf(req)) return new Response('Se necesita una sesión local.', { status: 401 });
   if (![ `http://127.0.0.1:${port}`, `http://localhost:${port}` ].includes(req.headers.get('origin') ?? '')) return new Response('Origin rechazado.', { status: 403 });
-  let store: Store | undefined;
-  let destination = '/'; let result = 'ok'; let repo: string | undefined;
+  let destination = '/'; let result = 'ok';
   try {
     const form = await readForm(req);
     if (!auth.validCsrf(req, form.get('csrf') ?? '')) return new Response('CSRF rechazado.', { status: 403 });
     const pathname = new URL(req.url).pathname;
-    const match = pathname === '/signals' ? ['', 'signals', '', 'create'] : /^\/(activities|changes|questions|signals|automations)\/([^/]+)\/(review|retry|answer|note|triage|ignore|cancel|rename|run|enable|disable)$/.exec(pathname);
-    if (!match || !['activities/review', 'changes/retry', 'changes/note', 'questions/answer', 'signals/create', 'signals/triage', 'signals/ignore', 'changes/cancel', 'changes/rename', 'automations/run', 'automations/enable', 'automations/disable'].includes(`${match[1]}/${match[3]}`)) return new Response('Acción no encontrada.', { status: 404 });
-    const id = match[2] ? decodeURIComponent(match[2]) : '';
+    const name = Object.keys(ACTIONS).find(n => ACTIONS[n]!.path.test(pathname));
+    if (!name) return new Response('Acción no encontrada.', { status: 404 });
+    const raw = ACTIONS[name]!.path.exec(pathname)![1]!;
+    const id = name === 'signals/create' ? '' : decodeURIComponent(raw);
     if (id && !/^[\w-]+$/.test(id)) throw new InputError(400, 'Identificador inválido.');
-    const action = match[3]!;
-    const title = (form.get('title') ?? '').trim(), body = form.get('body') ?? '';
-    if (Buffer.byteLength(body) > SIGNAL_BODY_MAX) throw new InputError(413, 'El texto supera 8 KiB.');
-    if (['create', 'rename'].includes(action) && (!title || title.length > SIGNAL_TITLE_MAX)) throw new InputError(400, `El título debe tener entre 1 y ${SIGNAL_TITLE_MAX} caracteres.`);
-    if (action === 'cancel' && form.get('confirm') !== 'yes') throw new InputError(400, 'Confirma la cancelación.');
-    const comment = form.get('comment') ?? '', answer = form.get('answer') ?? '';
-    if (Buffer.byteLength(comment) > 8192 || Buffer.byteLength(answer) > 8192) throw new InputError(413, 'El texto supera 8 KiB.');
-    const decision = form.get('decision') ?? '';
-    if (action === 'review' && (!['approve', 'comment', 'decline'].includes(decision) || decision !== 'approve' && !comment.trim())) throw new InputError(400, 'Elige una decisión y escribe un comentario para pedir cambios o rechazar.');
-    if (action === 'answer' && !answer.trim()) throw new InputError(400, 'Escribe una respuesta.');
-    store = new Store(join(stateDir, 'fabrica.db'));
-    const writer = store;
-    // FAB_ACTOR es el patrón del Store. El tramo es síncrono: ningún await expone el actor a otra petición.
-    const previous = process.env.FAB_ACTOR; process.env.FAB_ACTOR = 'web';
-    try {
-      writer.withRetry(() => {
-        if (action === 'review') {
-          const a = writer.getActivity(id); destination = `/activities/${id}`;
-          if (a.reviewStatus !== 'awaiting' && ['approved', 'commented', 'declined'].includes(a.reviewStatus ?? '')) throw new StoreError('conflict', 'revisión resuelta');
-          writer.resolveReview(id, decision as ReviewDecision, comment);
-        } else if (action === 'note') {
-          writer.getChange(id); destination = `/changes/${id}`;
-          writer.addChangeNote(id, body);
-        } else if (action === 'create') {
-          destination = '/signals';
-          const s = writer.addSignal(form.get('workstream') ?? '', title, body || title);
-          writer.event(s.workstreamId, 'info', `signal creada desde la web: ${title}`);
-        } else if (action === 'triage' || action === 'ignore') {
-          destination = '/signals';
-          const s = [...writer.listWorkstreams()].flatMap(w => writer.listSignals(w.id)).find(s => s.id === id);
-          if (!s) throw new StoreError('not_found', 'señal inexistente');
-          if (s.status !== 'new') throw new StoreError('conflict', 'señal ya resuelta');
-          if (action === 'ignore') { writer.ignoreSignal(id); writer.event(s.workstreamId, 'info', `signal ignorada: ${s.title}`); }
-          else {
-            const c = writer.triageSignal(id);
-            if (hasAdmission(writer)) linkTriagedSignal(new AdmissionDb(writer), id, c.id);
-            destination = `/changes/${c.id}`;
-          }
-        } else if (match[1] === 'automations') {
-          // Ignora title y body del formulario: la señal lleva el texto que guardó el dueño (A5).
-          destination = '/automations';
-          if (action === 'run') writer.runAutomationNow(id); else writer.setAutomationEnabled(id, action === 'enable');
-        } else if (action === 'rename') {
-          writer.getChange(id); destination = `/changes/${id}`;
-          writer.renameChange(id, title);
-        } else if (action === 'cancel') {
-          const c = writer.getChange(id); destination = `/changes/${id}`;
-          if (writer.isTerminalChange(c.status)) throw new StoreError('invalid_transition', 'change terminal');
-          writer.event(c.workstreamId, 'warning', 'reject solicitado', id);
-          writer.closeChange(id, 'canceled'); repo = writer.getWorkstream(c.workstreamId).repo;
-        } else if (action === 'retry') {
-          writer.getChange(id); destination = `/changes/${id}`;
-          if (form.get('revision') !== retryRevision(writer, id)) throw new StoreError('conflict', 'change actualizado');
-          for (const a of writer.listActivities({ changeId: id }).filter(a => a.status === 'waiting_reply')) writer.abandonWait(a.id);
-          writer.retryChange(id);
-          if (hasAdmission(writer)) resetSessionCap(writer, new AdmissionDb(writer), id);
-        } else {
-          if (!hasAdmission(writer)) throw new StoreError('not_found', 'sin preguntas');
-          const adm = new AdmissionDb(writer);
-          const q = adm.db.query('SELECT activity_id FROM adm_questions WHERE id=?').get(id) as { activity_id: string } | null;
-          if (!q) throw new StoreError('not_found', 'pregunta inexistente');
-          destination = `/activities/${q.activity_id}`;
-          if (answerQuestion(writer, adm, { questionId: id, answer, by: 'web' }) !== 'answered') result = 'conflict';
-        }
-      });
-    } finally { if (previous === undefined) delete process.env.FAB_ACTOR; else process.env.FAB_ACTOR = previous; }
-    if (repo) { await writer.waitForRelease(id); await removeWorktree(repo, stateDir, id); }
+    // Con claves repetidas gana la primera, como form.get.
+    const fields: Raw = {};
+    for (const [k, v] of form) if (!(k in fields)) fields[k] = v;
+    ({ destination, result } = await performAction(stateDir, name, id, fields, 'web'));
   } catch (error) {
     if (error instanceof InputError) return new Response(error.message, { status: error.status, headers: error.status === 413 ? { Connection: 'close' } : {} });
     if (error instanceof URIError) return new Response('Identificador inválido.', { status: 400 });
-    result = error instanceof StoreError && messages[error.code] ? error.code : 'error';
-  } finally { store?.close(); }
+    result = 'error';
+  }
   auth.rememberNotice(req, destination, result);
   return new Response(null, { status: 303, headers: { Location: destination } });
 }

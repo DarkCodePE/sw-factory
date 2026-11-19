@@ -287,3 +287,19 @@ test('H5 M51: PUT, DELETE y PATCH autenticados no ejecutan acciones', async () =
   expect(store.getActivity(activity).reviewStatus).toBe('awaiting');
   expect(store.countEvents(store.getChange(change).workstreamId, change)).toBe(n);
 });
+
+test('T71c: ACTIONS tiene exactamente las acciones que ofrece la web', async () => {
+  const { ACTIONS } = await import('../src/web-actions.ts');
+  expect(Object.keys(ACTIONS).sort()).toEqual(['activities/review', 'automations/disable', 'automations/enable', 'automations/run', 'changes/cancel', 'changes/note', 'changes/rename', 'changes/retry', 'questions/answer', 'signals/create', 'signals/ignore', 'signals/triage']);
+  for (const bad of ['merge', 'gate/allow', 'changes/merge']) expect(ACTIONS[bad]).toBeUndefined();
+});
+test('T71c: performAction fija el actor, valida la entrada y devuelve el destino', async () => {
+  const { performAction, InputError } = await import('../src/web-actions.ts');
+  const out = await performAction(dir, 'changes/rename', change, { title: 'Nuevo título' }, 'api:prueba');
+  expect(out).toEqual({ destination: `/changes/${change}`, result: 'ok' });
+  expect(store.getChange(change).title).toBe('Nuevo título');
+  expect(await performAction(dir, 'changes/rename', 'no-existe', { title: 'x' }, 'web')).toEqual({ destination: '/', result: 'not_found' });
+  await expect(performAction(dir, 'changes/rename', change, { title: '' }, 'web')).rejects.toBeInstanceOf(InputError);
+  await expect(performAction(dir, 'merge', change, {}, 'web')).rejects.toBeInstanceOf(InputError);
+  expect(process.env.FAB_ACTOR).toBeUndefined();
+});
