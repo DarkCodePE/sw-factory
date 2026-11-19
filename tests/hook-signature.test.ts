@@ -29,4 +29,6 @@ test('nunca lanza con cabeceras raras', () => {
     expect(verifySignature(SECRET, BODY, h)).toBe(false);
   }
   expect(verifySignature('', BODY, SIG)).toBe(false);
+  expect(verifySignature('', BODY, sign('', BODY))).toBe(false); // un secreto vacío no autentica
+  expect(verifySignature(SECRET, BODY, `sha1=${SIG.slice(7)}`)).toBe(false); // prefijo ajeno con el hex correcto
 });

@@ -75,3 +75,8 @@ test('floor posterior al último vencimiento: null; floor igual al vencimiento t
 test('sin vencimiento en 366 días: null', () => {
   expect(lastDue(parseCron('0 0 30 2 *'), at('2020-01-01T00:00:00'), at('2026-03-10T00:00:00'))).toBeNull();
 });
+
+test('tope de 366 días: un vencimiento más antiguo no se encuentra', () => {
+  // El último 29 de febrero fue en 2024, hace más de 366 días respecto a marzo de 2026.
+  expect(lastDue(parseCron('0 0 29 2 *'), at('2020-01-01T00:00:00'), at('2026-03-10T00:00:00'))).toBeNull();
+});
