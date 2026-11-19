@@ -19,7 +19,7 @@ const stage = (id: string) => stageOf(store.getChange(id), store.listActivities(
 test('una entrada nueva en REVIEW_FOLLOW_UP aparece como un nodo y dos aristas sin tocar flow.ts', () => {
   const ws = mk('uno');
   const before = flowGraph(ws);
-  REVIEW_FOLLOW_UP.qa_extra = { approve: 'implementation', comment: 'qa_extra' };
+  REVIEW_FOLLOW_UP.qa_extra = { approve: 'implementation', comment: 'qa_extra' } as never;
   const REVIEWABLE = REVIEWABLE_KINDS as string[];
   REVIEWABLE.push('qa_extra');
   try {
