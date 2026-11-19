@@ -106,6 +106,7 @@ const HELP = `fab — agente de código y fábrica de software local
   fab worktree repair <changeId> [--discard]  repara preparación; conserva la rama
   fab retry <changeId>          re-encola un bloqueo, fallo o validador agotado
   fab reject <changeId>         cancela el change y borra su worktree
+  fab note <changeId> <texto>   nota del dueño: se entrega al empezar el siguiente turno de trabajo; no lanza ni interrumpe nada
   fab events <slug>
   fab exec [prompt]             agente propio; fab exec --help para opciones
   fab doctor                    estado del sandbox, del runtime de Script y de la búsqueda
@@ -380,6 +381,12 @@ async function main(argv: string[]): Promise<number> {
         console.log(`change ${short(c.id)}: ${a.kind} re-encolada`);
         return 0;
       }
+      case 'note': {
+        const c = findByPrefix(allChanges(store), sub ?? '', 'change');
+        const n = store.addChangeNote(c.id, rest.join(' '));
+        console.log(`change ${short(c.id)}: nota ${short(n.id)} registrada; se entrega en el siguiente turno`);
+        return 0;
+      }
       case 'reject': {
         const c = findByPrefix(allChanges(store), sub ?? '', 'change');
         store.event(c.workstreamId, 'warning', 'reject solicitado', c.id);
@@ -414,7 +421,7 @@ async function main(argv: string[]): Promise<number> {
   }
 }
 
-const COMMANDS = new Set(['worktree', 'ws', 'signal', 'triage', 'inbox', 'review', 'run', 'status', 'show', 'merge', 'retry', 'gate', 'reject', 'events', 'tui', 'doctor', 'agents', 'profile', 'improve', 'resident', 'help']);
+const COMMANDS = new Set(['worktree', 'ws', 'signal', 'triage', 'inbox', 'review', 'run', 'status', 'show', 'merge', 'retry', 'gate', 'reject', 'note', 'events', 'tui', 'doctor', 'agents', 'profile', 'improve', 'resident', 'help']);
 
 // A forced exit is still needed for handles left by dependencies, but pipe
 // writes are asynchronous: wait for both write queues before terminating.

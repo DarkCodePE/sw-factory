@@ -4,6 +4,7 @@ import type { Database } from 'bun:sqlite';
 import { evidencePath, readEvidence } from './evidence.ts';
 import { changeTimeline, type Segment, type TurnView } from './admission/timeline.ts';
 import type { Ui } from './web-changes.ts';
+import type { ChangeNote } from './store.ts';
 
 const PLAN: Record<string, string> = { fresh: 'Primer turno', answer: 'Respuesta a una pregunta', retry: 'Reintento con motivo', orphan: 'Continuación tras una caída', reconstructed: 'Sesión reconstruida' };
 const SEGMENT: Record<Segment['kind'], string> = { trabajo: 'Trabajo', espera_persona: 'Espera de una persona', cola: 'En cola', bloqueo: 'Bloqueo', interrumpido: 'Interrumpido' };
@@ -51,4 +52,12 @@ export function turnLogRoute(db: Database, stateDir: string, pathname: string): 
     const value = readEvidence(stateDir, evidencePath(changeId, `${row.activity_id}.t-${attemptId}.log`));
     return value ? { status: 200, body: value.text } : none;
   } catch { return none; }
+}
+
+/** Lista de notas del dueño: el cuerpo se escapa y la entrega se lee de `delivered_at`. */
+export function notesSection(notes: ChangeNote[], changeStatus: string, ui: Ui): string {
+  const e = ui.escape, head = '<h2>Notas</h2>';
+  if (!notes.length) return `${head}<p class="empty">Sin notas</p>`;
+  const stuck = changeStatus === 'implemented' && notes.some(n => !n.deliveredAt) ? '<p class="notice">Este change espera merge: puede que no haya más turnos de trabajo y la nota no llegue a entregarse.</p>' : '';
+  return `${head}${stuck}<ul class="notes">${notes.map(n => `<li><p>${e(n.body)}</p><small>${e(n.actor)} · <time>${e(n.createdAt)}</time> · ${n.deliveredAt ? `Entregada <time>${e(n.deliveredAt)}</time>` : 'Pendiente de entrega'}</small></li>`).join('')}</ul>`;
 }

@@ -12,7 +12,7 @@ import { configPage } from './web-config.ts';
 import { INBOX_JS, changesView, inboxView, parseQuery, type Ui } from './web-changes.ts';
 import { metricsPage, METRICS_STYLE } from './web-metrics.ts';
 import { WebAuth } from './web-auth.ts';
-import { turnsSection, turnLogRoute } from './web-turns.ts';
+import { turnsSection, notesSection, turnLogRoute } from './web-turns.ts';
 import { actionForms, actionNotice, webAction } from './web-actions.ts';
 import { WEB_ACTION_STYLE } from './web-actions-style.ts';
 
@@ -85,7 +85,7 @@ function page(store: Store, stateDir: string, url: URL, csrf?: string): { title:
     try { cost = changeCost(store, stateDir, id); } catch { /* Evidencia inaccesible: coste desconocido. */ }
     const events = store.listEvents(c.workstreamId, TIMELINE_LIMIT, id);
     const omitted = Math.max(0, store.countEvents(c.workstreamId, id) - events.length);
-    return { title: c.title, body: `<p><a href="/changes?ws=${enc(store.getWorkstream(c.workstreamId).slug)}">Volver a changes</a></p><div class="summary">${badge(c.status)}<span>Coste total: <strong>${money(cost)}</strong></span><span>Rama: ${escape(c.branch ?? 'No asignada')}</span></div><p class="description">${escape(c.description)}</p>${actionForms(store, url, csrf)}<h2>Activities</h2>${tree(activities)}${turnsSection(store.db, id, ui)}<h2>Timeline</h2>${omitted ? `<p class="notice">Se omiten ${omitted} eventos anteriores.</p>` : ''}${events.length ? `<ol class="timeline">${events.map(e => `<li><time>${escape(e.created_at)}</time><div><strong>${escape(e.severity)}</strong> · ${escape(e.actor ?? 'fab')}<p>${escape(e.message)}</p></div></li>`).join('')}</ol>` : empty('No hay eventos para este change.')}` };
+    return { title: c.title, body: `<p><a href="/changes?ws=${enc(store.getWorkstream(c.workstreamId).slug)}">Volver a changes</a></p><div class="summary">${badge(c.status)}<span>Coste total: <strong>${money(cost)}</strong></span><span>Rama: ${escape(c.branch ?? 'No asignada')}</span></div><p class="description">${escape(c.description)}</p>${actionForms(store, url, csrf)}<h2>Activities</h2>${tree(activities)}${turnsSection(store.db, id, ui)}${notesSection(store.listChangeNotes(id), c.status, ui)}<h2>Timeline</h2>${omitted ? `<p class="notice">Se omiten ${omitted} eventos anteriores.</p>` : ''}${events.length ? `<ol class="timeline">${events.map(e => `<li><time>${escape(e.created_at)}</time><div><strong>${escape(e.severity)}</strong> · ${escape(e.actor ?? 'fab')}<p>${escape(e.message)}</p></div></li>`).join('')}</ol>` : empty('No hay eventos para este change.')}` };
   }
   const a = store.getActivity(id);
   const c = store.getChange(a.changeId);

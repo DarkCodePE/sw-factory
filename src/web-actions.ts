@@ -13,6 +13,7 @@ const escape = (s: string) => redact(s).replace(/[&<>"']/g, c => ({ '&': '&amp;'
 const messages: Record<string, string> = {
   ok: 'Acción registrada.', conflict: 'conflict: el estado cambió o la acción ya se aplicó. Revisa el estado actual.',
   invalid_transition: 'invalid_transition: esta acción no corresponde al estado actual.',
+  limit_reached: 'limit_reached: el change ya tiene 20 notas sin entregar.',
   not_found: 'not_found: no se encontró el registro.', invalid_input: 'invalid_input: revisa los datos de la acción.',
   error: 'No se pudo registrar la acción. Revisa el estado antes de volver a intentarlo.',
 };
@@ -35,9 +36,15 @@ export function actionForms(store: Store, url: URL, csrf?: string): string {
   const form = (path: string, body: string) => `<form action="${path}" method="post" class="web-action">${hidden}${body}</form>`;
   if (match[1] === 'changes') {
     const c = store.getChange(id);
-    const waiting = store.listActivities({ changeId: id }).some(a => a.status === 'waiting_reply');
-    if (!waiting && !['failed', 'blocked', 'quarantined', 'implemented'].includes(c.status)) return '';
-    return `<section aria-label="Decisiones">${form(`/changes/${id}/retry`, `<input type="hidden" name="revision" value="${retryRevision(store, id)}"><button>Reintentar change</button><p class="muted">Reencola la última activity fallida; si espera una respuesta, abandona esa espera.</p>`)}</section>`;
+    const activities = store.listActivities({ changeId: id });
+    const waiting = activities.some(a => a.status === 'waiting_reply');
+    let out = '';
+    if (waiting || ['failed', 'blocked', 'quarantined', 'implemented'].includes(c.status)) out += form(`/changes/${id}/retry`, `<input type="hidden" name="revision" value="${retryRevision(store, id)}"><button>Reintentar change</button><p class="muted">Reencola la última activity fallida; si espera una respuesta, abandona esa espera.</p>`);
+    if (!store.isTerminalChange(c.status)) {
+      const planned = activities.some(a => ['pending', 'in_progress', 'waiting_reply'].includes(a.status));
+      out += form(`/changes/${id}/note`, `<fieldset><legend>Nota para el agente</legend><label for="note-body">Nota (máximo 8 KiB)</label><textarea id="note-body" name="body" rows="4" maxlength="8192" required></textarea><button>Guardar nota</button><p class="muted">No lanza ni interrumpe nada. Se entrega al empezar el siguiente turno de trabajo, una sola vez.${planned ? '' : ' Ahora no hay ningún turno previsto.'} Enviar dos veces crea dos notas.</p></fieldset>`);
+    }
+    return out ? `<section aria-label="Decisiones">${out}</section>` : '';
   }
   const a = store.getActivity(id);
   let body = '';
@@ -75,13 +82,13 @@ export async function webAction(req: Request, stateDir: string, port: number, au
   try {
     const form = await readForm(req);
     if (!auth.validCsrf(req, form.get('csrf') ?? '')) return new Response('CSRF rechazado.', { status: 403 });
-    const match = /^\/(activities|changes|questions)\/([^/]+)\/(review|retry|answer)$/.exec(new URL(req.url).pathname);
-    if (!match || !['activities/review', 'changes/retry', 'questions/answer'].includes(`${match[1]}/${match[3]}`)) return new Response('Acción no encontrada.', { status: 404 });
+    const match = /^\/(activities|changes|questions)\/([^/]+)\/(review|retry|answer|note)$/.exec(new URL(req.url).pathname);
+    if (!match || !['activities/review', 'changes/retry', 'changes/note', 'questions/answer'].includes(`${match[1]}/${match[3]}`)) return new Response('Acción no encontrada.', { status: 404 });
     const id = decodeURIComponent(match[2]!);
     if (!/^[\w-]+$/.test(id)) throw new InputError(400, 'Identificador inválido.');
     const action = match[3]!;
-    const comment = form.get('comment') ?? '', answer = form.get('answer') ?? '';
-    if (Buffer.byteLength(comment) > 8192 || Buffer.byteLength(answer) > 8192) throw new InputError(413, 'El texto supera 8 KiB.');
+    const comment = form.get('comment') ?? '', answer = form.get('answer') ?? '', noteBody = form.get('body') ?? '';
+    if (Buffer.byteLength(comment) > 8192 || Buffer.byteLength(answer) > 8192 || Buffer.byteLength(noteBody) > 8192) throw new InputError(413, 'El texto supera 8 KiB.');
     const decision = form.get('decision') ?? '';
     if (action === 'review' && (!['approve', 'comment', 'decline'].includes(decision) || decision !== 'approve' && !comment.trim())) throw new InputError(400, 'Elige una decisión y escribe un comentario para pedir cambios o rechazar.');
     if (action === 'answer' && !answer.trim()) throw new InputError(400, 'Escribe una respuesta.');
@@ -95,6 +102,9 @@ export async function webAction(req: Request, stateDir: string, port: number, au
           const a = writer.getActivity(id); destination = `/activities/${id}`;
           if (a.reviewStatus !== 'awaiting' && ['approved', 'commented', 'declined'].includes(a.reviewStatus ?? '')) throw new StoreError('conflict', 'revisión resuelta');
           writer.resolveReview(id, decision as ReviewDecision, comment);
+        } else if (action === 'note') {
+          writer.getChange(id); destination = `/changes/${id}`;
+          writer.addChangeNote(id, noteBody);
         } else if (action === 'retry') {
           writer.getChange(id); destination = `/changes/${id}`;
           if (form.get('revision') !== retryRevision(writer, id)) throw new StoreError('conflict', 'change actualizado');
