@@ -33,7 +33,7 @@ export function calculateMetrics(store: Store, stateDir: string, options: { ws?:
       return valid.length ? Math.min(...valid) : null;
     };
     // change_review se crea ya solicitando revisión, incluso después de resolverse.
-    const milestones = [first(acts.map(a => a.createdAt)), first([...acts.filter(a => a.kind === 'change_review').map(a => a.createdAt), e?.reviewAt]), first([e?.decisionAt]), first([e?.terminalAt])];
+    const milestones = [first(acts.map(a => a.createdAt)), first([...acts.filter(a => a.kind === 'change_review' && !a.validator).map(a => a.createdAt), e?.reviewAt]), first([e?.decisionAt]), first([e?.terminalAt])];
     milestones.forEach((t, i) => { if (t !== null) values[i]!.push(t - Date.parse(c.createdAt)); });
     const reviews = e?.reviews ?? 0, answers = e?.answers ?? 0, retries = e?.retries ?? 0;
     humans.push({ id: c.id, title: c.title, reviews, answers, retries, total: reviews + answers + retries });
@@ -42,7 +42,7 @@ export function calculateMetrics(store: Store, stateDir: string, options: { ws?:
     costs.push({ id: c.id, title: c.title, cost });
     for (const a of acts) {
       if (Date.parse(a.createdAt) > now) continue;
-      kinds.push(a.kind);
+      kinds.push(a.validator ? `validador:${a.validator}` : a.kind);
       let meta: Record<string, unknown> | null = null;
       try { meta = activityMetadata(stateDir, a); } catch { /* Fallo cerrado del lector compartido. */ }
       const attempts = activityCosts(a, meta);

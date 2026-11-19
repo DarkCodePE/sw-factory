@@ -1345,7 +1345,7 @@ export class Store {
     return { changes, total };
   }
 
-  /** Hitos y acciones humanas registrados. No interpreta texto de issues ni decisiones de validadores. */
+  /** Hitos y acciones humanas registrados. No interpreta texto de issues; ignora los eventos de activities validadoras. */
   metricsEvents(changeIds: string[], until: string): Array<{ changeId: string; reviewAt: string | null; decisionAt: string | null; terminalAt: string | null; reviews: number; answers: number; retries: number }> {
     if (!changeIds.length) return [];
     const review = "(message = 'change_review approved' OR message LIKE 'change_review approved:%' OR message = 'change_review commented' OR message LIKE 'change_review commented:%' OR message = 'change_review declined' OR message LIKE 'change_review declined:%' OR message = 'investigation approved' OR message LIKE 'investigation approved:%' OR message = 'investigation commented' OR message LIKE 'investigation commented:%' OR message = 'investigation declined' OR message LIKE 'investigation declined:%')";
@@ -1357,7 +1357,8 @@ export class Store {
       SUM(CASE WHEN ${review} THEN 1 ELSE 0 END) AS reviews,
       SUM(CASE WHEN message GLOB 'human reply received (question *); re-queued' THEN 1 ELSE 0 END) AS answers,
       SUM(CASE WHEN message GLOB 'change retried (*)' THEN 1 ELSE 0 END) AS retries
-      FROM events WHERE change_id IN (${changeIds.map(() => '?').join(',')}) AND julianday(created_at) <= julianday(?) GROUP BY change_id`)
+      FROM events WHERE change_id IN (${changeIds.map(() => '?').join(',')}) AND julianday(created_at) <= julianday(?)
+      AND (activity_id IS NULL OR activity_id NOT IN (SELECT id FROM activities WHERE validator IS NOT NULL)) GROUP BY change_id`)
       .all(...changeIds, until) as ReturnType<Store['metricsEvents']>;
   }
 
