@@ -105,7 +105,7 @@ test('confinement fails closed when bwrap is missing or broken', async () => {
     // Preflight succeeds but the real mount fails: the worker must never run.
     process.env.PATH = `${root}:/usr/bin:/bin`;
     Bun.spawnSync(['git', 'init', '-q', join(root, 'repo')]);
-    writeFileSync(join(root, 'bwrap'), '#!/bin/sh\nfor arg do if [ "$arg" = "--clearenv" ]; then echo mount-denied >&2; exit 1; fi; done\nexec /usr/bin/bwrap "$@"\n', { mode: 0o755 });
+    writeFileSync(join(root, 'bwrap'), '#!/bin/sh\nfor arg do if [ "$arg" = "--chdir" ]; then echo mount-denied >&2; exit 1; fi; done\nexec /usr/bin/bwrap "$@"\n', { mode: 0o755 });
     const fake = getAgent('fake');
     await expect(runAgent(fake, '', join(root, 'repo'), 10_000, { confine: true })).rejects.toThrow(/--confine:.*mount-denied/);
   } finally { process.env.PATH = original; rmSync(root, { recursive: true, force: true }); }
