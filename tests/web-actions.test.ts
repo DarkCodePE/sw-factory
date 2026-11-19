@@ -1,6 +1,7 @@
 import { afterEach, beforeEach, expect, test } from 'bun:test';
 import { mkdtempSync, rmSync } from 'node:fs';
 import { join } from 'node:path';
+import { runInNewContext } from 'node:vm';
 import { Store } from '../src/store.ts';
 import { AdmissionDb } from '../src/admission/db.ts';
 import { startWeb } from '../src/web.ts';
@@ -135,7 +136,25 @@ test('límites reales en bytes, tipo, comentarios y respuestas vacías', async (
 test('sondeo conserva borradores incluso tras perder el foco', async () => {
   await login();
   const js = await (await req('/poll.js')).text();
-  expect(js).toContain("addEventListener('input'"); expect(js).toContain('data-dirty');
+  let dirty = false, fetches = 0, replacements = 0;
+  let input!: (event: unknown) => void, poll!: () => Promise<void>;
+  const form = { setAttribute: () => { dirty = true; } };
+  const main = { innerHTML: 'anterior', replaceWith: () => { replacements++; } };
+  const document = {
+    hidden: false, activeElement: { matches: () => false },
+    addEventListener: (_: string, fn: typeof input) => { input = fn; },
+    querySelector: (selector: string) => selector === 'main' ? main : selector === 'form[data-dirty]' && dirty ? form : null,
+  };
+  runInNewContext(js, { document, location: { href: '/' }, window: { getSelection: () => '' },
+    setInterval: (fn: typeof poll) => { poll = fn; },
+    fetch: async () => { fetches++; return { ok: true, text: async () => '' }; },
+    DOMParser: class { parseFromString() { return { querySelector: () => ({ innerHTML: 'nuevo' }) }; } },
+  });
+  await poll(); expect(fetches).toBe(1); expect(replacements).toBe(1);
+  input({ target: { closest: () => form } });
+  // El foco ya está fuera del campo; el borrador debe sobrevivir a los siguientes sondeos.
+  await poll(); await poll();
+  expect(fetches).toBe(1); expect(replacements).toBe(1);
 });
 
 test('CSRF ausente, cookie duplicada y Unicode inválido se rechazan sin excepción', async () => {
