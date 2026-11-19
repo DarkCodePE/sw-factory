@@ -45,6 +45,22 @@ CREATE TABLE IF NOT EXISTS experiment_runs (
   if (!expCols.some(c => c.name === 'control')) db.exec('ALTER TABLE experiments ADD COLUMN control TEXT');
 }
 
+/** Solo lectura (web): dice si `ensureSchema` sería un no-op, sin crear ni migrar nada. */
+export function experimentSchemaState(db: Database): 'absent' | 'incomplete' | 'ok' {
+  const cols = (t: string) => new Set((db.query(`PRAGMA table_info(${t})`).all() as { name: string }[]).map(c => c.name));
+  const exps = cols('experiments'), runs = cols('experiment_runs');
+  if (!exps.size && !runs.size) return 'absent';
+  const need = (have: Set<string>, names: string[]) => names.every(n => have.has(n));
+  return need(exps, ['id', 'baseline', 'candidate', 'suite', 'suite_digest', 'created_at', 'repeated_baseline', 'control'])
+    && need(runs, ['experiment_id', 'batch', 'seed', 'split', 'task_id', 'repeat', 'arm', 'position', 'success', 'diff_lines', 'duration_ms', 'cost_usd', 'integrity_ok', 'task_group', 'confined', 'worker_report']) ? 'ok' : 'incomplete';
+}
+
+/** Solo lectura: requiere `experimentSchemaState(db) === 'ok'`. */
+export function listExperiments(db: Database) {
+  return (db.query('SELECT id, baseline, candidate, suite, suite_digest, created_at FROM experiments ORDER BY created_at DESC, id').all() as Record<string, string>[])
+    .map(r => ({ id: r.id!, baseline: r.baseline!, candidate: r.candidate!, suite: r.suite!, suiteDigest: r.suite_digest!, createdAt: r.created_at! }));
+}
+
 export function parseSuite(raw: unknown): Suite {
   const tasks = (raw as { tasks?: unknown })?.tasks;
   if (!Array.isArray(tasks) || !tasks.length) throw bad('suite inválida: "tasks" debe ser una lista no vacía');

@@ -6,6 +6,7 @@ import { ChangeStatus } from './enums.ts';
 import { activityCosts, activityMetadata, changeCost, evidencePath, readEvidence } from './evidence.ts';
 import { redact } from './manifest.ts';
 import { WEB_STYLE } from './web-style.ts';
+import { experimentsPage } from './web-experiments.ts';
 import { NOTIFY, NOTIFY_ID, inboxCounts } from './web-notify.ts';
 import { configPage } from './web-config.ts';
 import { INBOX_JS, changesView, inboxView, parseQuery, type Ui } from './web-changes.ts';
@@ -23,6 +24,11 @@ const empty = (text: string) => `<p class="empty">${escape(text)}</p>`;
 const ui: Ui = { escape, badge, labels };
 const TIMELINE_LIMIT = 200;
 const POLL = `document.addEventListener('input',e=>{const f=e.target.closest('form[method=post]');if(f)f.setAttribute('data-dirty','');});setInterval(async()=>{if(document.querySelector('form[data-dirty]'))return;try{const r=await fetch(location.href,{cache:'no-store'});if(!r.ok)return;const doc=new DOMParser().parseFromString(await r.text(),'text/html');window.fabNotify?.(doc);if(document.querySelector('form[data-dirty]')||document.hidden||document.activeElement?.matches('input,select,textarea')||window.getSelection()?.toString()||document.querySelector('details[open]'))return;const old=document.querySelector('main'),next=doc.querySelector('main');if(next)window.fabPrepare?.(next);if(old&&next&&old.innerHTML!==next.innerHTML){old.replaceWith(next);}}catch{}},2000);`;
+const READ_ASSETS = new Map([
+  ['/metrics.css', { body: METRICS_STYLE, type: 'text/css; charset=utf-8' }],
+  ['/inbox.js', { body: INBOX_JS, type: 'text/javascript; charset=utf-8' }],
+  ['/notify.js', { body: NOTIFY, type: 'text/javascript; charset=utf-8' }],
+]);
 const HEADERS = {
   'Content-Security-Policy': "default-src 'none'; script-src 'self'; style-src 'self'; connect-src 'self'; img-src 'none'; font-src 'none'; base-uri 'none'; form-action 'self'; frame-ancestors 'none'",
   'X-Content-Type-Options': 'nosniff', 'Cache-Control': 'no-store', 'Referrer-Policy': 'no-referrer',
@@ -103,7 +109,10 @@ export function startWeb(stateDir: string, port = 4310, options: { write?: boole
       const url = new URL(req.url);
       const isMetrics = url.pathname === '/metricas';
       const isConfig = url.pathname === '/config';
-      if (req.method === 'POST' && auth && !isMetrics && !isConfig) {
+      const isExperiments = url.pathname === '/experimentos' || url.pathname.startsWith('/experimentos/');
+      const readAsset = READ_ASSETS.get(url.pathname);
+      const readOnlyRoute = isMetrics || isConfig || isExperiments || readAsset !== undefined;
+      if (req.method === 'POST' && auth && !readOnlyRoute) {
         let response: Response;
         try { response = await webAction(req, stateDir, server.port!, auth); }
         catch { return respond('No se pudo registrar la acción.', 500, 'text/plain; charset=utf-8'); }
@@ -121,15 +130,13 @@ export function startWeb(stateDir: string, port = 4310, options: { write?: boole
         }
         if (url.pathname === '/style.css') return respond(WEB_STYLE + WEB_ACTION_STYLE, 200, 'text/css; charset=utf-8');
         if (url.pathname === '/poll.js') return respond(POLL, 200, 'text/javascript; charset=utf-8');
-        if (url.pathname === '/notify.js') return respond(NOTIFY, 200, 'text/javascript; charset=utf-8');
-        if (url.pathname === '/inbox.js') return respond(INBOX_JS, 200, 'text/javascript; charset=utf-8');
-        if (url.pathname === '/metrics.css') return respond(METRICS_STYLE, 200, 'text/css; charset=utf-8');
+        if (readAsset) return respond(readAsset.body, 200, readAsset.type);
         store = openStore();
-        const content = isMetrics ? metricsPage(store, stateDir, url) : isConfig ? await configPage(store, stateDir, url, escape) : page(store, stateDir, url, auth?.sessionCsrf(req));
+        const content = isMetrics ? metricsPage(store, stateDir, url) : isConfig ? await configPage(store, stateDir, url, escape) : isExperiments ? experimentsPage(store.db, url.pathname) : page(store, stateDir, url, auth?.sessionCsrf(req));
         if (!content) return respond('Página no encontrada', 404, 'text/plain; charset=utf-8');
         content.body = actionNotice(url) + content.body;
         const workstreams = store.listWorkstreams();
-        return respond(`<!doctype html><html lang="es"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><title>${escape(content.title)} · fab</title><link rel="stylesheet" href="/style.css">${isMetrics ? '<link rel="stylesheet" href="/metrics.css">' : isConfig ? '' : '<script src="/poll.js" defer></script><script src="/inbox.js" defer></script><script src="/notify.js" defer></script>'}</head><body><a class="skip" href="#contenido">Saltar al contenido</a><aside><a class="brand" href="/">fab<span>Fábrica local</span></a><nav aria-label="Navegación principal"><a href="/"${url.pathname === '/' ? ' aria-current="page"' : ''}>Bandeja</a><a href="/changes"${url.pathname.startsWith('/changes') ? ' aria-current="page"' : ''}>Changes</a><a href="/workstreams"${url.pathname === '/workstreams' ? ' aria-current="page"' : ''}>Workstreams</a><a href="/metricas"${isMetrics ? ' aria-current="page"' : ''}>Métricas</a><a href="/config"${isConfig ? ' aria-current="page"' : ''}>Configuración</a></nav><nav aria-label="Workstreams"><h2>Workstreams</h2>${workstreams.map(w => `<a href="/changes?ws=${enc(w.slug)}">${escape(w.slug)}</a>`).join('') || '<p>Sin workstreams</p>'}</nav><p class="local">${auth ? (auth.sessionCsrf(req) ? 'Escritura habilitada' : 'Escritura: abre el enlace de la terminal') : 'Solo lectura'}${isMetrics ? '<br>Actualización manual' : isConfig ? '' : '<br>Actualización cada 2 s'}</p>${isMetrics || isConfig ? '' : `<button type="button" id="${NOTIFY_ID}" hidden>Avisos: no</button>`}</aside><main id="contenido" data-inbox="${escape(JSON.stringify(inboxCounts(store.inbox().map(a => a.reviewStatus === 'awaiting' ? 'awaiting' : a.status), labels)))}"><header><h1>${escape(content.title)}</h1></header>${content.body}</main></body></html>`);
+        return respond(`<!doctype html><html lang="es"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><title>${escape(content.title)} · fab</title><link rel="stylesheet" href="/style.css">${isMetrics ? '<link rel="stylesheet" href="/metrics.css">' : isConfig ? '' : '<script src="/poll.js" defer></script><script src="/inbox.js" defer></script><script src="/notify.js" defer></script>'}</head><body><a class="skip" href="#contenido">Saltar al contenido</a><aside><a class="brand" href="/">fab<span>Fábrica local</span></a><nav aria-label="Navegación principal"><a href="/"${url.pathname === '/' ? ' aria-current="page"' : ''}>Bandeja</a><a href="/changes"${url.pathname.startsWith('/changes') ? ' aria-current="page"' : ''}>Changes</a><a href="/workstreams"${url.pathname === '/workstreams' ? ' aria-current="page"' : ''}>Workstreams</a><a href="/metricas"${isMetrics ? ' aria-current="page"' : ''}>Métricas</a><a href="/config"${isConfig ? ' aria-current="page"' : ''}>Configuración</a><a href="/experimentos"${isExperiments ? ' aria-current="page"' : ''}>Experimentos</a></nav><nav aria-label="Workstreams"><h2>Workstreams</h2>${workstreams.map(w => `<a href="/changes?ws=${enc(w.slug)}">${escape(w.slug)}</a>`).join('') || '<p>Sin workstreams</p>'}</nav><p class="local">${auth ? (auth.sessionCsrf(req) ? 'Escritura habilitada' : 'Escritura: abre el enlace de la terminal') : 'Solo lectura'}${isMetrics ? '<br>Actualización manual' : isConfig ? '' : '<br>Actualización cada 2 s'}</p>${isMetrics || isConfig ? '' : `<button type="button" id="${NOTIFY_ID}" hidden>Avisos: no</button>`}</aside><main id="contenido" data-inbox="${escape(JSON.stringify(inboxCounts(store.inbox().map(a => a.reviewStatus === 'awaiting' ? 'awaiting' : a.status), labels)))}"><header><h1>${escape(content.title)}</h1></header>${content.body}</main></body></html>`);
       } catch (error) {
         if (error instanceof StoreError && error.code === 'not_found') return respond('Registro no encontrado', 404, 'text/plain; charset=utf-8');
         if (error instanceof URIError) return respond('Ruta inválida', 400, 'text/plain; charset=utf-8');
