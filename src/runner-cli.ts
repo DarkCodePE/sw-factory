@@ -1,12 +1,14 @@
-// fab runner add|list|enable|disable|rm. Gestiona los runners (T74a); no abre ninguna conexión.
+// fab runner add|list|enable|disable|rm|check. Gestión (T74a); solo `check` abre una conexión (T74e).
 import { parseArgs } from 'node:util';
 import { StoreError, type Runner, type Store } from './store.ts';
+import { RunnerError, checkRunner, type RemoteRunner, type Transport } from './runners/client.ts';
 
 export const CODE_LEAVES_WARNING = 'con un runner remoto el código de este workstream sale de tu máquina hacia';
 
 const row = (r: Runner) => `${r.name.padEnd(20)} ${r.kind.padEnd(5)} ${(r.target ?? '-').padEnd(24)} ${r.enabled ? 'activo' : 'pausado'}  ${JSON.stringify(r.options)}`;
 
-export function runnerMain(argv: string[], store: Store): number {
+/** `transport` solo lo inyectan los tests. */
+export async function runnerMain(argv: string[], store: Store, transport?: Transport): Promise<number> {
   const { values, positionals } = parseArgs({
     args: argv,
     allowPositionals: true,
@@ -33,6 +35,24 @@ export function runnerMain(argv: string[], store: Store): number {
   } else if (sub === 'rm') {
     store.deleteRunner(need());
     console.log(`runner ${name} borrado`);
-  } else throw new StoreError('invalid_input', 'fab runner add|list|enable|disable|rm');
+  } else if (sub === 'check') {
+    if (!!values.ssh === !!name) throw new StoreError('invalid_input', 'fab runner check <nombre> | --ssh <alias>');
+    let runner: RemoteRunner;
+    if (values.ssh) runner = { name: values.ssh, target: values.ssh };
+    else {
+      const r = store.getRunner(name!);
+      if (r.kind !== 'ssh' || !r.target) throw new StoreError('invalid_input', `el runner ${r.name} no es remoto`);
+      runner = { name: r.name, target: r.target };
+    }
+    try {
+      const c = await checkRunner(runner, transport);
+      console.log(`protocolo: ${c.protocol}\nfabSha: ${c.fabSha}\nsandbox: ${c.sandbox}\nadaptadores: ${Object.entries(c.agents).map(([n, a]) => `${n}=${a.sha256.slice(0, 12)}`).join(' ') || '-'}\n(declarado por el runner, no verificado)`);
+      return 0;
+    } catch (e) {
+      if (!(e instanceof RunnerError)) throw e;
+      console.error(e.message);
+      return 1;
+    }
+  } else throw new StoreError('invalid_input', 'fab runner add|list|enable|disable|rm|check');
   return 0;
 }

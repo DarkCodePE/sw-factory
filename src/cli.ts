@@ -154,7 +154,7 @@ async function main(argv: string[]): Promise<number> {
   if (argv[0] === 'profile') { mkdirSync(STATE_DIR, { recursive: true }); return profileMain(argv.slice(1), STATE_DIR); }
   if (argv[0] === 'runner') {
     const store = openStore();
-    try { return runnerMain(argv.slice(1), store); } catch (err) {
+    try { return await runnerMain(argv.slice(1), store); } catch (err) {
       console.error(err instanceof StoreError ? `error (${err.code}): ${err.message}` : `error: ${(err as Error).message}`);
       return 1;
     } finally { store.close(); }
