@@ -2,7 +2,7 @@
 // fab — local software factory CLI.
 import { Writable } from 'node:stream';
 import { Console } from 'node:console';
-import { mkdirSync } from 'node:fs';
+import { mkdirSync, readFileSync } from 'node:fs';
 import { resolve } from 'node:path';
 import { parseArgs } from 'node:util';
 
@@ -80,6 +80,8 @@ const HELP = `fab — agente de código y fábrica de software local
 
   fab ws create <slug> --repo <path> --goal <text> [--agent ${AGENT_NAMES.join('|')}]
                 [--verify <comando>] [--verify-setup <comando>] [--protect <glob>] [--protect-none] [--profile <digest>] [--concurrency N] [--task-limit N] [--no-change-approval] [--no-spec-approval]
+  fab ws env <ws> [--allow NOMBRE… | --import <fichero> | --none | --legacy]   variables permitidas (solo nombres)
+  fab ws mcp <ws> [--allow nombre… | --none | --legacy]                        servidores MCP permitidos
   fab improve create --experiment-id <id> --baseline <digest> --candidate <digest> --suite <archivo>
   fab improve run <id> --split development|validation|qualification --repeats N [--agent <name>] [--seed N]
   fab improve report <id> | delete <id>   experimentos pareados (fase 1: sin cualificación ni rollout)
@@ -199,6 +201,10 @@ async function main(argv: string[]): Promise<number> {
       'verify-setup': { type: 'string', multiple: true },
       'protect-none': { type: 'boolean' },
       profile: { type: 'string' },
+      allow: { type: 'string', multiple: true },
+      import: { type: 'string' },
+      none: { type: 'boolean' },
+      legacy: { type: 'boolean' },
       help: { type: 'boolean', short: 'h' },
     },
   });
@@ -238,7 +244,31 @@ async function main(argv: string[]): Promise<number> {
         } else if (sub === 'state') {
           const ws = store.setWorkstreamState(rest[0] ?? '', rest[1] as WorkstreamState);
           console.log(`${ws.slug} -> ${ws.state}`);
-        } else throw new StoreError('invalid_input', 'fab ws create|list|state');
+        } else if (sub === 'env' || sub === 'mcp') {
+          const slug = rest[0] ?? '';
+          const ws = store.getWorkstream(slug);
+          const isEnv = sub === 'env';
+          const modes = [values.allow, values.import, values.none, values.legacy].filter(v => v !== undefined && v !== false).length;
+          if (modes > 1) throw new StoreError('invalid_input', `fab ws ${sub}: --allow, ${isEnv ? '--import, ' : ''}--none y --legacy son excluyentes`);
+          if (values.import !== undefined && !isEnv) throw new StoreError('invalid_input', '--import solo existe en fab ws env');
+          let names: string[] | null | undefined;
+          if (values.allow) names = values.allow;
+          else if (values.none) names = [];
+          else if (values.legacy) names = null;
+          else if (values.import !== undefined) names = readNameList(values.import);
+          if (names !== undefined) {
+            const upd = isEnv ? store.setWorkstreamEnvAllow(ws.id, names) : store.setWorkstreamMcpAllow(ws.id, names);
+            console.log(`${upd.slug} ${sub}: ${(isEnv ? upd.envAllow : upd.mcpAllow)?.join(', ') ?? 'modo anterior'}`);
+          } else {
+            const list = isEnv ? ws.envAllow : ws.mcpAllow;
+            if (list === null) console.log(`${ws.slug} ${sub}: modo anterior`);
+            else {
+              // Solo mira el entorno de este proceso; el del pool puede ser otro.
+              for (const n of list) console.log(isEnv ? `${n.padEnd(32)} ${process.env[n] === undefined ? 'no definida' : 'definida'}` : n);
+              if (!list.length) console.log('(vacía: modo declarado, sin nada permitido)');
+            }
+          }
+        } else throw new StoreError('invalid_input', 'fab ws create|list|state|env|mcp');
         return 0;
       }
       case 'signal': {
@@ -412,6 +442,13 @@ async function main(argv: string[]): Promise<number> {
   } finally {
     store.close();
   }
+}
+
+/** Un nombre por línea, `#` comenta; una línea con `=` aborta sin leer ni mostrar ningún valor. */
+function readNameList(path: string): string[] {
+  const lines = readFileSync(path, 'utf8').split('\n').map(l => l.replace(/#.*/, '').trim()).filter(Boolean);
+  if (lines.some(l => l.includes('='))) throw new StoreError('invalid_input', 'el fichero parece contener valores; pasa solo nombres');
+  return lines;
 }
 
 const COMMANDS = new Set(['worktree', 'ws', 'signal', 'triage', 'inbox', 'review', 'run', 'status', 'show', 'merge', 'retry', 'gate', 'reject', 'events', 'tui', 'doctor', 'agents', 'profile', 'improve', 'resident', 'help']);
