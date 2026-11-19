@@ -25,7 +25,7 @@ export function actionNotice(result?: string): string {
   return message ? `<p class="notice" role="status">${message}</p>` : '';
 }
 
-function retryRevision(store: Store, id: string): string {
+export function retryRevision(store: Store, id: string): string {
   const c = store.getChange(id);
   return createHash('sha256').update(JSON.stringify([c.status, store.listActivities({ changeId: id }).map(a => [a.id, a.status, a.reviewStatus, a.questionId])])).digest('hex');
 }
