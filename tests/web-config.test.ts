@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, expect, spyOn, test } from 'bun:test';
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, statSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, statSync, utimesSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { sha256Of } from '../src/agents-verify.ts';
@@ -220,4 +220,114 @@ test('muestra los pines y la sonda más reciente por fecha dentro de su workstre
   expect(inconclusive).toContain('No medido');
   expect(inconclusive).toContain('2026-11-19T10:00:00.000Z');
   expect(inconclusive).not.toContain('Bloqueado');
+});
+
+test('H1: el hash de un binario se cachea por ruta, tamaño y mtime', async () => {
+  new Store(join(dir, 'fabrica.db')).close();
+  const bin = join(dir, 'claude');
+  writeFileSync(bin, 'AAAA', { mode: 0o755 });
+  const fixed = new Date('2026-01-01T00:00:00Z');
+  utimesSync(bin, fixed, fixed);
+  writeFileSync(join(dir, 'agents.json'), JSON.stringify({ agentBinaries: { claude: sha256Of(bin) } }));
+  start();
+  expect(await page()).toContain('<td>claude</td><td>Coincide con el pin');
+  // Mismo tamaño y mtime: el contenido no se relee.
+  writeFileSync(bin, 'BBBB');
+  utimesSync(bin, fixed, fixed);
+  expect(await page()).toContain('<td>claude</td><td>Coincide con el pin');
+  // Otro mtime: se recalcula y se detecta el cambio.
+  const later = new Date('2026-01-02T00:00:00Z');
+  utimesSync(bin, later, later);
+  expect(await page()).toContain('<td>claude</td><td>Distinto del pin');
+});
+
+test('H1: la sonda solo mira las últimas 200 activities y /config no incluye el sondeo', async () => {
+  const store = new Store(join(dir, 'fabrica.db'));
+  store.createWorkstream({ slug: 'largo', goal: 'g', repo: '/repo', taskLimit: 500 });
+  const write = (n: number, probedAt: string) => {
+    const change = store.createChange('largo', `c${n}`, '');
+    const activity = store.listActivities({ changeId: change.id })[0]!;
+    const run = join(dir, 'runs', change.id);
+    mkdirSync(run, { recursive: true });
+    writeFileSync(join(run, `${activity.id}.json`), JSON.stringify({
+      egressProbe: { probedAt, decided: true, reachable: true, positiveControl: true },
+    }));
+  };
+  write(0, '2026-11-18T10:00:00.000Z'); // la más antigua queda fuera de la ventana
+  for (let i = 1; i <= 200; i++) store.createChange('largo', `c${i}`, '');
+  store.close();
+  start();
+  const html = await page();
+  expect(html).not.toContain('2026-11-18T10:00:00.000Z');
+  expect(html).toContain('últimas 200 activities');
+  expect(html).not.toContain('poll.js');
+});
+
+test('H2/H3: formas de credencial extra se redactan y los enlaces con ancla se conservan', async () => {
+  const profile = defaultProfile();
+  profile.worker.investigate += ' Authorization: Basic Y2FuOnB3Z';
+  profile.worker.investigate += ' curl -u usuario-canario:clave-canario-u https://ejemplo.invalid/';
+  profile.worker.investigate += ' https://hooks.ejemplo.invalid/T0canarioRutaSecreta1234567890abcd/envio';
+  profile.worker.investigate += ' glpat-canGit12 npm_canNpm123';
+  profile.worker.investigate += ' https://docs.ejemplo.invalid/guia?id=canario-query#seccion-ancla';
+  profile.worker.investigate += ' https://docs.ejemplo.invalid/guia#state=canario-fragmento';
+  profile.worker.investigate += ' https://docs.ejemplo.invalid/ref#instalacion';
+  const { digest } = saveProfile(dir, profile);
+  const store = new Store(join(dir, 'fabrica.db'));
+  store.createWorkstream({ slug: 'perfil', goal: 'g', repo: '/repo', profile: digest });
+  store.close();
+  start();
+  const html = await page('/config?ws=perfil');
+  for (const value of ['Y2FuOnB3Z', 'clave-canario-u', 'T0canarioRutaSecreta', 'canGit12', 'canNpm123',
+    'canario-query', 'canario-fragmento']) expect(html).not.toContain(value);
+  expect(html).toContain('https://docs.ejemplo.invalid/guia?[REDACTED]#seccion-ancla');
+  expect(html).toContain('https://docs.ejemplo.invalid/ref#instalacion');
+  expect(html).toContain('Un secreto en texto libre no se puede detectar');
+});
+
+test('H4: escapa adaptador y slug del selector, y no filtra el error de un perfil roto', async () => {
+  const store = new Store(join(dir, 'fabrica.db'));
+  store.createWorkstream({ slug: 'roto', goal: 'g', repo: '/repo' });
+  store.db.query("UPDATE workstreams SET slug = ?, agent = ?, profile = ?").run(
+    'slug<b>canario</b>', 'agente<i>canario</i>', 'f'.repeat(64));
+  store.close();
+  start();
+  const html = await page();
+  expect(html).not.toContain('<b>canario');
+  expect(html).not.toContain('<i>canario');
+  expect(html).toContain('slug&lt;b&gt;canario');
+  expect(html).toContain('agente&lt;i&gt;canario');
+  expect(html).toContain('El perfil asignado no está disponible o no supera la verificación de integridad.');
+  expect(html).not.toContain(dir);
+  expect(html).not.toContain('perfil desconocido');
+  expect(html).not.toContain('fab profile import');
+});
+
+test('H4: Jira exige host válido y las tres variables', async () => {
+  const set = (overrides: Record<string, string | undefined>) => {
+    const base: Record<string, string | undefined> = { JIRA_HOSTNAME: 'jira.ejemplo.invalid', JIRA_USERNAME: 'u', JIRA_API_TOKEN: 't', JIRA_ENV_FILE: join(dir, 'ausente.env') };
+    for (const [name, value] of Object.entries({ ...base, ...overrides })) env(name, value);
+  };
+  new Store(join(dir, 'fabrica.db')).close();
+  start();
+  set({});
+  expect(await page()).toContain('Jira (entorno)</dt><dd>Configurada');
+  for (const missing of ['JIRA_HOSTNAME', 'JIRA_USERNAME', 'JIRA_API_TOKEN']) {
+    set({ [missing]: undefined });
+    expect(await page()).toContain('Jira (entorno)</dt><dd>No configurada');
+  }
+  set({ JIRA_HOSTNAME: 'no es un host://' });
+  expect(await page()).toContain('Jira (entorno)</dt><dd>No configurada');
+});
+
+test('H4: un fichero de settings con esquema inválido no muestra servidores', async () => {
+  env('FABRICA_AGENT_SETTINGS', join(dir, 'ajustes.json'));
+  new Store(join(dir, 'fabrica.db')).close();
+  start();
+  for (const invalid of [{ mcpServers: ['canario-array'] }, ['canario-raiz']]) {
+    writeFileSync(join(dir, 'ajustes.json'), JSON.stringify(invalid));
+    const html = await page();
+    expect(html).toContain('Configuración MCP no disponible.');
+    expect(html).not.toContain('canario-');
+  }
 });
