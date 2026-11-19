@@ -3,7 +3,7 @@
 // cannot double-claim or overwrite each other's results.
 import { DEFAULT_DIGEST, resolveProfile } from './profile.ts';
 import { Database } from 'bun:sqlite';
-import { randomUUID } from 'node:crypto';
+import { createHash, randomBytes, randomUUID, timingSafeEqual } from 'node:crypto';
 import { userInfo } from 'node:os';
 import { closeSync, existsSync, fstatSync, openSync, readFileSync } from 'node:fs';
 import { dirname, resolve } from 'node:path';
@@ -82,6 +82,10 @@ export interface Workstream {
   verifySetupHash?: string | null;
   /** Digest del perfil de instrucciones fijado; null = perfil por defecto. */
   profile: string | null;
+  /** Variables de entorno que el workstream permite a sus agentes (solo nombres); null = modo anterior. */
+  envAllow: string[] | null;
+  /** Servidores MCP que el workstream permite a sus agentes; null = modo anterior. */
+  mcpAllow: string[] | null;
 }
 
 export interface Signal {
@@ -115,6 +119,20 @@ export interface Automation {
 type AutomationRun =
   | { result: 'created'; signalId: string }
   | { result: 'skipped_open' | 'skipped_inactive'; signalId?: never };
+
+type ApiKeyScope = 'read' | 'decide';
+
+interface ApiKeyIdentity {
+  id: string;
+  name: string;
+  scope: ApiKeyScope;
+}
+
+interface ApiKeyMetadata extends ApiKeyIdentity {
+  createdAt: string;
+  createdBy: string;
+  revokedAt: string | null;
+}
 
 export interface Change {
   id: string;
@@ -203,6 +221,14 @@ CREATE TABLE IF NOT EXISTS automations (
   last_result TEXT,
   last_signal_id TEXT,
   UNIQUE (workstream_id, name));
+CREATE TABLE IF NOT EXISTS api_keys (
+  id TEXT PRIMARY KEY,
+  name TEXT NOT NULL UNIQUE,
+  scope TEXT NOT NULL CHECK (scope IN ('read','decide')),
+  hash TEXT NOT NULL,
+  created_at TEXT NOT NULL,
+  created_by TEXT NOT NULL,
+  revoked_at TEXT);
 CREATE TABLE IF NOT EXISTS changes (
   id TEXT PRIMARY KEY, workstream_id TEXT NOT NULL REFERENCES workstreams(id) ON DELETE CASCADE,
   title TEXT NOT NULL, description TEXT NOT NULL, status TEXT NOT NULL, branch TEXT,
@@ -251,8 +277,29 @@ function toWorkstream(r: Row): Workstream {
     verifySetup: r.verify_setup == null ? [] : JSON.parse(r.verify_setup as string),
     verifySetupHash: (r.verify_setup_hash as string | null) ?? null,
     profile: (r.profile as string | null) ?? null,
+    envAllow: r.env_allow == null ? null : JSON.parse(r.env_allow as string),
+    mcpAllow: r.mcp_allow == null ? null : JSON.parse(r.mcp_allow as string),
     createdAt: r.created_at as string,
   };
+}
+
+const ENV_NAME = /^[A-Z_][A-Z0-9_]{0,63}$/;
+const ENV_FORBIDDEN = /^(PATH|HOME|TMPDIR|NODE_OPTIONS|LD_.*|BUN_.*|GIT_CONFIG.*|FAB_.*|FABRICA_.*)$/;
+const MCP_NAME = /^[a-z0-9][a-z0-9-]{0,40}$/;
+
+/** Reglas de nombres de T71 §4.2; el valor de una variable nunca entra aquí. */
+function checkAllowNames(field: 'env_allow' | 'mcp_allow', names: string[]): void {
+  const env = field === 'env_allow';
+  const max = env ? 16 : 8;
+  if (names.length > max) throw new StoreError('invalid_input', `${field}: como máximo ${max} nombres`);
+  if (new Set(names).size !== names.length) throw new StoreError('invalid_input', `${field}: nombres repetidos`);
+  for (const [i, n] of names.entries()) {
+    const ok = typeof n === 'string' && (env ? ENV_NAME.test(n) : MCP_NAME.test(n));
+    // No se repite el texto: una línea de --import podría ser un valor.
+    if (!ok) throw new StoreError('invalid_input', `${field}: el nombre nº ${i + 1} no es válido`);
+    if (env && ENV_FORBIDDEN.test(n)) throw new StoreError('invalid_input', `${field}: ${n} está prohibido (controla el cargador, git o la fab)`);
+    if (!env && n === 'fab') throw new StoreError('invalid_input', `${field}: "fab" está reservado`);
+  }
 }
 
 function toSignal(r: Row): Signal {
@@ -470,6 +517,8 @@ export class Store {
     this.addColumn('activities', 'lease_expires_at', 'TEXT');
     this.addColumn('activities', 'agent_pgid', 'INTEGER');
     this.addColumn('workstreams', 'profile', 'TEXT');
+    this.addColumn('workstreams', 'env_allow', 'TEXT');
+    this.addColumn('workstreams', 'mcp_allow', 'TEXT');
     this.addColumn('activities', 'profile_digest', 'TEXT');
     this.addColumn('activities', 'fab_sha', 'TEXT');
     this.addColumn('activities', 'agent', 'TEXT');
@@ -579,6 +628,28 @@ export class Store {
       this.event(ws.id, 'info', `workstream ${ws.state} -> ${next}`);
     });
     return this.getWorkstream(ws.id);
+  }
+
+  setWorkstreamEnvAllow(idOrSlug: string, names: string[] | null): Workstream {
+    return this.#setAllow(idOrSlug, 'env_allow', names);
+  }
+
+  setWorkstreamMcpAllow(idOrSlug: string, names: string[] | null): Workstream {
+    return this.#setAllow(idOrSlug, 'mcp_allow', names);
+  }
+
+  #setAllow(idOrSlug: string, field: 'env_allow' | 'mcp_allow', names: string[] | null): Workstream {
+    if (names !== null) checkAllowNames(field, names);
+    const next = names === null ? null : JSON.stringify(names);
+    this.withRetry(() => {
+      this.db.transaction(() => {
+        const ws = this.getWorkstream(idOrSlug);
+        const prev = (field === 'env_allow' ? ws.envAllow : ws.mcpAllow);
+        this.db.query(`UPDATE workstreams SET ${field} = ? WHERE id = ?`).run(next, ws.id);
+        this.event(ws.id, 'info', `${field}: ${prev === null ? 'legacy' : JSON.stringify(prev)} -> ${next ?? 'legacy'}`);
+      }).immediate();
+    });
+    return this.getWorkstream(idOrSlug);
   }
 
   // ---- signals -----------------------------------------------------------
@@ -920,6 +991,73 @@ export class Store {
       }
       return notes.length;
     });
+  }
+
+  // ---- claves de API -----------------------------------------------------
+
+  createApiKey(name: string, scope: ApiKeyScope): { id: string; key: string } {
+    if (typeof name !== 'string' || !/^[a-z0-9][a-z0-9-]{0,40}$/.test(name)) {
+      throw new StoreError('invalid_input', 'nombre de clave API inválido');
+    }
+    if (scope !== 'read' && scope !== 'decide') {
+      throw new StoreError('invalid_input', 'ámbito de clave API inválido');
+    }
+    return this.withRetry(() => {
+      if (this.db.query('SELECT 1 FROM api_keys WHERE name = ?').get(name)) {
+        throw new StoreError('conflict', 'ya existe una clave API con ese nombre');
+      }
+      const { count } = this.db.query<{ count: number }, []>(
+        'SELECT COUNT(*) AS count FROM api_keys WHERE revoked_at IS NULL',
+      ).get()!;
+      if (count >= 20) {
+        throw new StoreError('limit_reached', 'ya hay 20 claves API activas');
+      }
+      const id = randomBytes(6).toString('hex');
+      const secret = randomBytes(32).toString('base64url');
+      const hash = createHash('sha256').update(secret).digest('hex');
+      this.db.query(
+        `INSERT INTO api_keys (id, name, scope, hash, created_at, created_by) VALUES (?,?,?,?,?,?)`,
+      ).run(id, name, scope, hash, this.now(), process.env.FAB_ACTOR ?? userInfo().username);
+      return { id, key: `fabk_${id}_${secret}` };
+    });
+  }
+
+  listApiKeys(): ApiKeyMetadata[] {
+    if (!this.hasApiKeysTable()) return [];
+    return this.db.query<ApiKeyMetadata, []>(
+      `SELECT id, name, scope, created_at AS createdAt, created_by AS createdBy, revoked_at AS revokedAt
+       FROM api_keys ORDER BY created_at, name`,
+    ).all();
+  }
+
+  revokeApiKey(idOrName: string): void {
+    this.withRetry(() => {
+      // Si un nombre coincide con el id de otra clave, el id tiene prioridad.
+      const { changes } = this.db.query(
+        `UPDATE api_keys SET revoked_at = COALESCE(revoked_at, ?)
+         WHERE id = (SELECT id FROM api_keys WHERE id = ? OR name = ? ORDER BY (id = ?) DESC LIMIT 1)`,
+      ).run(this.now(), idOrName, idOrName, idOrName);
+      if (changes === 0) throw new StoreError('not_found', 'clave API no encontrada');
+    });
+  }
+
+  verifyApiKey(key: string): ApiKeyIdentity | null {
+    const match = /^fabk_([a-f0-9]{12})_([A-Za-z0-9_-]{43})$/.exec(key);
+    if (!match || !this.hasApiKeysTable()) return null;
+    const [, id, secret] = match;
+    const row = this.db.query<ApiKeyIdentity & { hash: string }, [string]>(
+      'SELECT id, name, scope, hash FROM api_keys WHERE id = ? AND revoked_at IS NULL',
+    ).get(id!);
+    if (!row) return null;
+    const stored = Buffer.from(row.hash);
+    const candidate = Buffer.from(createHash('sha256').update(secret!).digest('hex'));
+    if (stored.length !== candidate.length || !timingSafeEqual(stored, candidate)) return null;
+    return { id: row.id, name: row.name, scope: row.scope };
+  }
+
+  private hasApiKeysTable(): boolean {
+    // Un lector puede abrir una base anterior a esta tabla sin migrarla.
+    return this.db.query("SELECT 1 FROM sqlite_schema WHERE type = 'table' AND name = 'api_keys'").get() !== null;
   }
 
   // ---- activities --------------------------------------------------------
