@@ -1,0 +1,296 @@
+import { afterEach, beforeEach, expect, spyOn, test } from 'bun:test';
+import { Database } from 'bun:sqlite';
+import { mkdtempSync, readFileSync, rmSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
+import { Store } from '../src/store.ts';
+
+const initial = '2026-11-19T07:00:00.000Z';
+const due = '2026-11-19T07:30:00.000Z';
+const template = { workstream: 'demo', name: 'diaria', cron: '30 7 * * *', title: 'Resumen', body: '  Plantilla ñ {{fecha}}\n' };
+let now: string;
+const clock = () => new Date(now);
+let store: Store;
+let workstreamId: string;
+
+function activeWorkstream(db: Store, slug: string): string {
+  const ws = db.createWorkstream({ slug, goal: 'g', repo: '/repo' });
+  return db.setWorkstreamState(ws.id, 'active').id;
+}
+
+beforeEach(() => {
+  now = initial;
+  store = new Store(':memory:', { clock });
+  workstreamId = activeWorkstream(store, 'demo');
+});
+
+afterEach(() => store.close());
+
+test('alta y disparo programado dejan solo una señal nueva con texto literal y fecha UTC', () => {
+  const automation = store.createAutomation(template);
+  expect(automation).toMatchObject({
+    workstreamId, name: template.name, cron: template.cron, title: template.title, body: template.body,
+    enabled: true, createdAt: initial, createdBy: expect.any(String),
+    lastDueAt: null, lastResult: null, lastSignalId: null,
+  });
+  expect(store.listEvents(workstreamId, 1)[0]).toMatchObject({
+    actor: automation.createdBy, message: 'automation diaria creada (30 7 * * *)',
+  });
+  expect(store.fireDueAutomations()).toEqual([]);
+  // El tick llega el día 20 UTC, después del último vencimiento del día 19.
+  now = '2026-11-19T16:05:00.000-08:00';
+  const [result] = store.fireDueAutomations();
+  expect(result).toEqual({ id: automation.id, result: 'created', signalId: expect.any(String) });
+  expect(store.listSignals('demo')).toEqual([{
+    id: result!.signalId!, workstreamId, source: 'automation:' + automation.id,
+    title: 'Resumen (2026-11-19)', body: template.body, status: 'new', changeId: null,
+    createdAt: '2026-11-20T00:05:00.000Z',
+  }]);
+  expect(store.listChanges(workstreamId)).toEqual([]);
+  expect(store.listActivities({ workstream: workstreamId })).toEqual([]);
+  expect(store.listAutomations('demo')[0]).toMatchObject({
+    lastDueAt: due, lastResult: 'created', lastSignalId: result!.signalId,
+  });
+  expect(store.listEvents(workstreamId, 1)[0]!.message)
+    .toBe(`automation diaria: señal ${result!.signalId!.slice(0, 8)} creada (vencía ${due})`);
+});
+
+test('los métodos de automation carecen de llamadas que creen trabajo', () => {
+  const source = readFileSync(new URL('../src/store.ts', import.meta.url), 'utf8');
+  const section = source.match(/\/\/ ---- automations[^]*?\/\/ ---- changes/)?.[0];
+  expect(section).toBeDefined();
+  expect(section).not.toMatch(/\b(?:triageSignal|createChange|insertActivity)\b/);
+});
+
+test('dos conexiones, 50 llamadas y reapertura procesan una vez el último vencimiento', () => {
+  const dir = mkdtempSync(join(tmpdir(), 'fab-automations-'));
+  const path = join(dir, 'fabrica.db');
+  let first: Store | undefined;
+  let second: Store | undefined;
+  try {
+    first = new Store(path, { clock });
+    const id = activeWorkstream(first, 'demo');
+    first.createAutomation(template);
+    second = new Store(path, { clock });
+    now = due;
+    const winner = first;
+    const retry = second.withRetry.bind(second);
+    const results: ReturnType<Store['fireDueAutomations']> = [];
+    // La primera conexión procesa el vencimiento entre la lista de candidatos de la
+    // segunda y su toma del lock. La segunda debe releer el vencimiento bajo el lock.
+    const interleave = spyOn(second, 'withRetry').mockImplementationOnce(fn => {
+      results.push(...winner.fireDueAutomations());
+      return retry(fn);
+    });
+    try {
+      results.push(...second.fireDueAutomations());
+    } finally {
+      interleave.mockRestore();
+    }
+    for (let i = 2; i < 50; i++) results.push(...(i % 2 ? first : second).fireDueAutomations());
+    expect(results).toHaveLength(1);
+    expect(results[0]!.result).toBe('created');
+    expect(first.listSignals(id)).toHaveLength(1);
+    first.ignoreSignal(results[0]!.signalId!);
+    first.close();
+    first = undefined;
+    second.close();
+    second = new Store(path, { clock });
+    expect(second.fireDueAutomations()).toEqual([]);
+    now = '2026-11-22T08:00:00.000Z';
+    expect(second.fireDueAutomations()).toEqual([
+      { id: results[0]!.id, result: 'created', signalId: expect.any(String) },
+    ]);
+    expect(second.listSignals(id).map(s => s.title)).toEqual(['Resumen (2026-11-19)', 'Resumen (2026-11-22)']);
+    expect(second.listAutomations()[0]!.lastDueAt).toBe('2026-11-22T07:30:00.000Z');
+    expect(second.fireDueAutomations()).toEqual([]);
+  } finally {
+    first?.close();
+    second?.close();
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test('una señal nueva bloquea el siguiente vencimiento y al ignorarla se libera', () => {
+  const a = store.createAutomation(template);
+  now = due;
+  const [created] = store.fireDueAutomations();
+  now = '2026-11-20T07:30:00.000Z';
+  expect(store.fireDueAutomations()).toEqual([{ id: a.id, result: 'skipped_open' }]);
+  expect(store.fireDueAutomations()).toEqual([]);
+  expect(store.listAutomations()[0]).toMatchObject({
+    lastDueAt: now, lastResult: 'skipped_open', lastSignalId: created!.signalId,
+  });
+  expect(store.listEvents(workstreamId, 1)[0]!.message).toContain('hay una señal o un change abierto');
+  store.ignoreSignal(created!.signalId!);
+  now = '2026-11-21T07:30:00.000Z';
+  expect(store.fireDueAutomations()).toEqual([{ id: a.id, result: 'created', signalId: expect.any(String) }]);
+});
+
+test('un change triado abierto bloquea el disparo hasta que pasa a terminal', () => {
+  const a = store.createAutomation(template);
+  const original = store.runAutomationNow(a.id);
+  const change = store.triageSignal(original.signalId!);
+  expect(store.runAutomationNow(a.id)).toEqual({ result: 'skipped_open' });
+  store.closeChange(change.id, 'canceled');
+  expect(store.runAutomationNow(a.id)).toEqual({ result: 'created', signalId: expect.any(String) });
+});
+
+test('la comprobación de pendientes distingue automations incluso en el mismo workstream', () => {
+  const a = store.createAutomation(template);
+  const b = store.createAutomation({ ...template, name: 'otra' });
+  store.addSignal(workstreamId, 'local', 'cuerpo');
+  expect(store.runAutomationNow(a.id).result).toBe('created');
+  expect(store.runAutomationNow(b.id).result).toBe('created');
+  expect(store.listSignals(workstreamId)).toHaveLength(3);
+});
+
+test('un workstream pausado registra el vencimiento saltado aunque haya una señal abierta', () => {
+  const a = store.createAutomation(template);
+  store.runAutomationNow(a.id);
+  store.setWorkstreamState(workstreamId, 'paused');
+  now = due;
+  expect(store.fireDueAutomations()).toEqual([{ id: a.id, result: 'skipped_inactive' }]);
+  expect(store.fireDueAutomations()).toEqual([]);
+  expect(store.listAutomations()[0]).toMatchObject({ lastDueAt: due, lastResult: 'skipped_inactive' });
+  expect(store.runAutomationNow(a.id)).toEqual({ result: 'skipped_inactive' });
+  expect(store.listEvents(workstreamId, 1)[0]!.message).toContain('workstream no activo');
+  expect(store.listSignals(workstreamId)).toHaveLength(1);
+});
+
+test('filtra por workstream, omite automations pausadas y permite un disparo manual sin mover el horario', () => {
+  const a = store.createAutomation(template);
+  const other = activeWorkstream(store, 'otra');
+  const b = store.createAutomation({ ...template, workstream: other });
+  now = due;
+  expect(store.fireDueAutomations('demo')).toEqual([{ id: a.id, result: 'created', signalId: expect.any(String) }]);
+  expect(store.setAutomationEnabled(a.id, false).enabled).toBe(false);
+  const [signal] = store.listSignals('demo');
+  store.ignoreSignal(signal!.id);
+  now = '2026-11-20T06:00:00.000Z';
+  const manual = store.runAutomationNow(a.id);
+  expect(manual.result).toBe('created');
+  expect(store.listSignals('demo').at(-1)!.title).toBe('Resumen (2026-11-20)');
+  expect(store.listAutomations(other)).toEqual([b]);
+  expect(store.listAutomations('demo')[0]).toMatchObject({
+    enabled: false, lastDueAt: due, lastResult: 'created', lastSignalId: manual.signalId,
+  });
+  store.ignoreSignal(manual.signalId!);
+  now = '2026-11-20T07:30:00.000Z';
+  expect(store.fireDueAutomations(workstreamId)).toEqual([]);
+  expect(store.setAutomationEnabled(a.id, true).enabled).toBe(true);
+  expect(store.fireDueAutomations(workstreamId)[0]!.result).toBe('created');
+  expect(store.listEvents(workstreamId, -1).map(e => e.message)).toContain('automation diaria pausada');
+  expect(store.listEvents(workstreamId, -1).map(e => e.message)).toContain('automation diaria activada');
+});
+
+test('valida nombre, título, cuerpo en bytes y expresión cron al guardar', () => {
+  const variants = [
+    { name: 'A' }, { name: 'a'.repeat(42) }, { name: 'a<script>' }, { name: 'a\n' },
+    { title: '' }, { title: 'x'.repeat(201) }, { body: '' }, { body: 'é'.repeat(4096) + 'x' },
+  ];
+  for (const change of variants) {
+    expect(() => store.createAutomation({ ...template, ...change })).toThrow(expect.objectContaining({ code: 'invalid_input' }));
+  }
+  expect(() => store.createAutomation({ ...template, cron: '*/5 7 * * *' }))
+    .toThrow(expect.objectContaining({ code: 'invalid_input', message: expect.stringContaining('minuto') }));
+  expect(store.listAutomations()).toEqual([]);
+  expect(store.createAutomation({ ...template, name: 'a'.repeat(41), title: 'á'.repeat(200), body: 'é'.repeat(4096) }).body)
+    .toBe('é'.repeat(4096));
+});
+
+test('el nombre es único por workstream y la automation 21 excede el cupo', () => {
+  store.createAutomation(template);
+  expect(() => store.createAutomation(template)).toThrow(expect.objectContaining({ code: 'conflict' }));
+  for (let i = 1; i < 20; i++) store.createAutomation({ ...template, name: `diaria-${i}` });
+  expect(() => store.createAutomation({ ...template, name: 'exceso' })).toThrow(expect.objectContaining({ code: 'limit_reached' }));
+  expect(store.listAutomations()).toHaveLength(20);
+});
+
+test('borrar una automation conserva sus señales y borrar el workstream borra sus automations', () => {
+  const a = store.createAutomation(template);
+  const b = store.createAutomation({ ...template, name: 'otra' });
+  const { signalId } = store.runAutomationNow(a.id);
+  store.deleteAutomation(a.id);
+  expect(store.listSignals('demo')[0]).toMatchObject({ id: signalId, source: 'automation:' + a.id });
+  expect(store.listEvents(workstreamId, 1)[0]!.message).toBe('automation diaria borrada');
+  expect(store.listAutomations()).toEqual([b]);
+  for (const operation of [() => store.deleteAutomation(a.id), () => store.runAutomationNow(a.id), () => store.setAutomationEnabled(a.id, true)]) {
+    expect(operation).toThrow(expect.objectContaining({ code: 'not_found' }));
+  }
+  store.db.query('DELETE FROM workstreams WHERE id = ?').run(workstreamId);
+  expect(store.listAutomations()).toEqual([]);
+});
+
+test('addSignal admite web y rechaza un origen reservado por tipo y en tiempo de ejecución', () => {
+  expect(store.addSignal('demo', 'local', 'texto').source).toBeNull();
+  expect(store.addSignal('demo', 'web', 'texto', { source: 'web' }).source).toBe('web');
+  expect(() =>
+    // @ts-expect-error El origen de automation es privado del Store.
+    store.addSignal('demo', 'falsa', 'texto', { source: 'automation:x' }),
+  ).toThrow(expect.objectContaining({ code: 'invalid_input' }));
+  expect(store.listSignals('demo')).toHaveLength(2);
+});
+
+test('migra una base anterior y un lector puede listar antes de migrarla sin cambiarla', () => {
+  const dir = mkdtempSync(join(tmpdir(), 'fab-automations-migrate-'));
+  const path = join(dir, 'fabrica.db');
+  try {
+    const previous = new Database(path, { create: true });
+    try {
+      previous.exec(`
+        PRAGMA journal_mode = WAL;
+        CREATE TABLE workstreams (
+          id TEXT PRIMARY KEY, slug TEXT NOT NULL UNIQUE, goal TEXT NOT NULL, repo TEXT NOT NULL,
+          state TEXT NOT NULL, agent TEXT NOT NULL, worker_concurrency INTEGER NOT NULL,
+          task_limit INTEGER NOT NULL, require_change_approval INTEGER NOT NULL,
+          require_approval INTEGER NOT NULL, created_at TEXT NOT NULL);
+        CREATE TABLE signals (
+          id TEXT PRIMARY KEY, workstream_id TEXT NOT NULL REFERENCES workstreams(id) ON DELETE CASCADE,
+          title TEXT NOT NULL, body TEXT NOT NULL, status TEXT NOT NULL, change_id TEXT, created_at TEXT NOT NULL);
+      `);
+      previous.query("INSERT INTO workstreams VALUES ('ws','demo','g','/repo','active','native',2,20,1,1,?)").run(initial);
+      previous.query("INSERT INTO signals VALUES ('s','ws','anterior','cuerpo','new',NULL,?)").run(initial);
+    } finally {
+      previous.close();
+    }
+    const bytes = readFileSync(path);
+    const reader = new Store(path, { readonly: true });
+    try {
+      expect(reader.listAutomations()).toEqual([]);
+      expect(reader.listSignals('demo')[0]!.source).toBeNull();
+    } finally {
+      reader.close();
+    }
+    expect(readFileSync(path)).toEqual(bytes);
+
+    const writer = new Store(path, { clock });
+    try {
+      expect(writer.listSignals('demo')[0]).toMatchObject({ title: 'anterior', source: null });
+      expect(writer.db.query("PRAGMA index_info('idx_signals_source')").all())
+        .toEqual([expect.objectContaining({ name: 'source' }), expect.objectContaining({ name: 'status' })]);
+      const a = writer.createAutomation(template);
+      const migratedReader = new Store(path, { readonly: true });
+      try {
+        expect(migratedReader.listAutomations('demo')).toEqual([a]);
+      } finally {
+        migratedReader.close();
+      }
+    } finally {
+      writer.close();
+    }
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test('si falla el evento se revierten la señal y el avance, y el vencimiento se puede reintentar', () => {
+  const a = store.createAutomation(template);
+  now = due;
+  store.db.exec("CREATE TRIGGER rechazar_evento BEFORE INSERT ON events BEGIN SELECT RAISE(ABORT, 'evento rechazado'); END");
+  expect(() => store.fireDueAutomations()).toThrow('evento rechazado');
+  expect(store.listSignals('demo')).toEqual([]);
+  expect(store.listAutomations()).toEqual([a]);
+  store.db.exec('DROP TRIGGER rechazar_evento');
+  expect(store.fireDueAutomations()[0]!.result).toBe('created');
+});
