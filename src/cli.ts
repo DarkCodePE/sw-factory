@@ -9,6 +9,7 @@ import { parseArgs } from 'node:util';
 import { captureMain } from './manifest-capture.ts';
 import { AGENT_NAMES } from './agents.ts';
 import { agentsMain } from './agents-verify.ts';
+import { mcpListMain } from './mcp-registry.ts';
 import { profileMain } from './profile-cli.ts';
 import { improveMain } from './improve-cli.ts';
 import type { ReviewDecision, WorkstreamState } from './enums.ts';
@@ -66,7 +67,7 @@ const HELP = `fab — agente de código y fábrica de software local
   fab tui                      agente interactivo; / para comandos, Tab para razonamiento
   fab resume [id] [--last]      reanudar conversación local
   fab search|find <texto>       buscar sesiones de la carpeta actual
-  fab mcp list --settings f    listar servidores configurados
+  fab mcp list [--settings f]  listar servidores (sin --settings: registro mcp-servers.json)
   fab --cwd <path> [prompt]     conversación, --use-spec o --mission --auto high
   fab web [--port 4310]          web local de solo lectura
   fab --version
@@ -172,6 +173,7 @@ async function main(argv: string[]): Promise<number> {
     return 1;
   }
   if (argv[0] === 'resume') return chatMain(argv.slice(1).includes('--fork') ? argv.slice(1) : ['--resume', ...argv.slice(1)]);
+  if (argv[0] === 'mcp' && argv[1] === 'list' && argv.length === 2 && !argv.some(a => a === '--settings' || a.startsWith('--settings=')) && !process.env.FABRICA_AGENT_SETTINGS) return mcpListMain(STATE_DIR);
   if (argv[0] === 'search' || argv[0] === 'find' || argv[0] === 'mcp') return localCommandMain(argv[0], argv.slice(1));
   if (argv[0] === 'help' && argv[1] === 'exec') return execMain(['--help']);
   if (argv[0] === 'help') return chatMain(['--help']);
