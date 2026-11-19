@@ -38,7 +38,7 @@ export function hostDir(dir: string, cwd: string): string {
   return real;
 }
 
-export function confineAgent(name: string, argv: string[], cwd: string, extra: Record<string, string> = {}, claudeProjects?: string, mcpConfig?: string) {
+export function confineAgent(name: string, argv: string[], cwd: string, extra: Record<string, string> = {}, claudeProjects?: string, mcpConfig?: string, model?: string) {
   assertConfinement(name);
   const scratch = mkdtempSync(join(tmpdir(), 'fab-confine-'));
   try {
@@ -101,7 +101,7 @@ export function confineAgent(name: string, argv: string[], cwd: string, extra: R
     }
     const env: Record<string, string> = { PATH: '/opt/fab-runtime:/usr/local/bin:/usr/bin:/bin:/home/agent/.local/bin', HOME: '/home/agent', TMPDIR: '/tmp', LANG: 'C.UTF-8',
       GIT_CONFIG_COUNT: '2', GIT_CONFIG_KEY_0: 'user.name', GIT_CONFIG_VALUE_0: 'fab', GIT_CONFIG_KEY_1: 'user.email', GIT_CONFIG_VALUE_1: 'fab@local' };
-    const allowed = name === 'claude' ? ['ANTHROPIC_API_KEY', 'ANTHROPIC_AUTH_TOKEN', 'ANTHROPIC_MODEL', 'ANTHROPIC_BASE_URL']
+    const allowed = name === 'claude' ? ['ANTHROPIC_API_KEY', 'ANTHROPIC_AUTH_TOKEN', 'ANTHROPIC_BASE_URL', ...(model ? [] : ['ANTHROPIC_MODEL'])]
       : name === 'codex' ? ['OPENAI_API_KEY'] : ['FABRICA_FAKE_SLEEP', 'FABRICA_FAKE_STATUS', 'FABRICA_FAKE_TOUCH'];
     for (const key of allowed) { const v = extra[key] ?? process.env[key]; if (v !== undefined) env[key] = v; }
     args.push('--clearenv');

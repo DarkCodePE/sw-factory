@@ -194,7 +194,7 @@ export async function runAgent(
 ): Promise<AgentRun> {
   const start = Date.now();
   const argv = agent.command(prompt, { ...options, promptStdin: agent.promptStdin === true });
-  const confined = options.confine ? confineAgent(agent.name, argv, cwd, agent.env?.(), options.claudeProjects, options.mcpConfig) : undefined;
+  const confined = options.confine ? confineAgent(agent.name, argv, cwd, agent.env?.(), options.claudeProjects, options.mcpConfig, options.model) : undefined;
   let proc;
   try {
     proc = Bun.spawn(confined?.argv ?? argv, {
