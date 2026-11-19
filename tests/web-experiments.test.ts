@@ -53,3 +53,12 @@ test('esquema antiguo sin columnas nuevas no se migra', async () => {
   const r = await get('/experimentos'); expect(r.status).toBe(200); expect(await r.text()).toContain('incompleto');
   expect(store.db.query("PRAGMA table_info(experiments)").all().length).toBe(6);
 });
+test('brazo sin ningún coste medido muestra «No medido», no cero', async () => {
+  seed(); store.db.query("UPDATE experiment_runs SET cost_usd=NULL").run(); server = startWeb(dir, 0);
+  const html = await (await get('/experimentos/e1')).text();
+  expect(html).not.toContain('0.00 USD'); expect(html).toContain('<td>No medido</td>');
+});
+test('esquema al que solo le falta la columna control se declara incompleto', async () => {
+  seed(); store.db.exec('ALTER TABLE experiments DROP COLUMN control'); server = startWeb(dir, 0);
+  expect(await (await get('/experimentos')).text()).toContain('incompleto');
+});
