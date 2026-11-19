@@ -140,7 +140,7 @@ test('T57d A6: el modelo resuelto excluye ANTHROPIC_MODEL del entorno confinado'
       const c = confineAgent('claude', ['sh', ...(model ? ['--model', model] : [])], repo, {}, undefined, undefined, model);
       try {
         expect(c.env.ANTHROPIC_MODEL).toBe(model ? undefined : 'canario-t57');
-        expect(c.argv.includes('canario-t57')).toBe(!model);
+        expect(c.argv.includes('canario-t57')).toBe(false); // T72d: ningún valor en argv
       } finally { c.cleanup(); }
     }
   });
