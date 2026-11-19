@@ -9,7 +9,7 @@ function table(caption: string, headers: string[], rows: string[][]) {
 }
 function bars(name: string, rows: [string, number][]) {
   const max = Math.max(1, ...rows.map(r => r[1]));
-  return `<svg role="img" aria-label="${esc(name)}; valores en la tabla siguiente" viewBox="0 0 600 ${Math.max(1, rows.length) * 36}" width="600" height="${Math.max(1, rows.length) * 36}">${rows.map(([label, v], i) => `<text x="0" y="${i * 36 + 21}" fill="currentColor" font-size="14">${esc(label)}</text><rect x="225" y="${i * 36 + 7}" width="${v / max * 310}" height="20" fill="currentColor"/><text x="550" y="${i * 36 + 21}" fill="currentColor" font-size="14">${v}</text>`).join('')}</svg>`;
+  return `<svg role="img" aria-label="${esc(name)}; valores en la tabla siguiente" viewBox="0 0 350 ${Math.max(1, rows.length) * 36}" width="350" height="${Math.max(1, rows.length) * 36}">${rows.map(([label, v], i) => `<text x="0" y="${i * 36 + 21}" fill="currentColor" font-size="14">${esc(label)}</text><rect x="145" y="${i * 36 + 7}" width="${v / max * 155}" height="20" fill="currentColor"/><text x="315" y="${i * 36 + 21}" fill="currentColor" font-size="14">${v}</text>`).join('')}</svg>`;
 }
 export function metricsPage(store: Store, stateDir: string, url: URL): string {
   const ws = url.searchParams.get('ws') || undefined, range = url.searchParams.get('range') ?? '7';
