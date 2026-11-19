@@ -17,6 +17,7 @@ import { signalsView } from './web-signals.ts';
 import { automationsView } from './web-automations.ts';
 import { actionForms, actionNotice, webAction } from './web-actions.ts';
 import { WEB_ACTION_STYLE } from './web-actions-style.ts';
+import { handleApi, isApiPath } from './web-api.ts';
 
 const escape = (value: unknown): string => redact(String(value ?? '')).replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[c]!);
 const enc = encodeURIComponent;
@@ -112,6 +113,7 @@ export function startWeb(stateDir: string, port = 4310, options: { write?: boole
       const respond = (body: string, status = 200, type = 'text/html; charset=utf-8') => new Response(req.method === 'HEAD' ? null : body, { status, headers: { ...HEADERS, ...(auth?.sessionCsrf(req) ? { 'Referrer-Policy': 'same-origin' } : {}), 'Content-Type': type, ...(status === 405 ? { Allow: 'GET, HEAD' } : {}) } });
       if (![`127.0.0.1:${server.port}`, `localhost:${server.port}`].includes(req.headers.get('host') ?? '')) return respond('Acceso denegado', 403, 'text/plain; charset=utf-8');
       const url = new URL(req.url);
+      if (isApiPath(url.pathname)) return handleApi(req, url, openStore);
       const isMetrics = url.pathname === '/metricas';
       const isConfig = url.pathname === '/config';
       const isExperiments = url.pathname === '/experimentos' || url.pathname.startsWith('/experimentos/');
