@@ -108,7 +108,7 @@ export function confineAgent(name: string, argv: string[], cwd: string, extra: R
     }
     const env: Record<string, string> = { PATH: '/opt/fab-runtime:/usr/local/bin:/usr/bin:/bin:/home/agent/.local/bin', HOME: '/home/agent', TMPDIR: '/tmp', LANG: 'C.UTF-8',
       GIT_CONFIG_COUNT: '2', GIT_CONFIG_KEY_0: 'user.name', GIT_CONFIG_VALUE_0: 'fab', GIT_CONFIG_KEY_1: 'user.email', GIT_CONFIG_VALUE_1: 'fab@local' };
-    Object.assign(env, agentEnv({ adapter: name, confined: true, channel: false, wsAllow: null, roleEnv: [], mcpRequired: [], ...decl, host: { ...process.env, ...extra }, model }).env, env);
+    Object.assign(env, { ...agentEnv({ adapter: name, confined: true, channel: false, wsAllow: null, roleEnv: [], mcpRequired: [], ...decl, host: { ...process.env, ...extra }, model }).env, ...env });
     args.push('--chdir', worktree, '--', ...command);
     return { argv: [Bun.which('bwrap', { PATH: process.env.PATH })!, ...args], env, cleanup: () => rmSync(scratch, { recursive: true, force: true }) };
   } catch (e) {
