@@ -5,6 +5,7 @@ import { Store, StoreError, type Activity, type Change } from './store.ts';
 import { ChangeStatus } from './enums.ts';
 import { activityCosts, activityMetadata, changeCost, evidencePath, readEvidence } from './evidence.ts';
 import { redact } from './manifest.ts';
+import { experimentsPage } from './web-experiments.ts';
 import { WEB_STYLE } from './web-style.ts';
 
 const escape = (value: unknown): string => redact(String(value ?? '')).replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[c]!);
@@ -64,6 +65,7 @@ function page(store: Store, stateDir: string, url: URL): { title: string; body: 
     const changes = all.filter(c => (!status || c.status === status) && c.title.toLocaleLowerCase().includes(q.toLocaleLowerCase()));
     return { title: 'Changes', body: `<form action="/changes" method="get" class="filters"><label>Workstream<select name="ws"><option value="">Todos</option>${store.listWorkstreams().map(w => `<option value="${escape(w.slug)}"${ws === w.id || ws === w.slug ? ' selected' : ''}>${escape(w.slug)}</option>`).join('')}</select></label><label>Estado<select name="status"><option value="">Todos</option>${statuses.map(s => `<option value="${escape(s)}"${status === s ? ' selected' : ''}>${escape(labels[s] ?? s)}</option>`).join('')}</select></label><label class="search">Buscar por título<input name="q" type="search" value="${escape(q)}" placeholder="Título del change"></label><button>Filtrar</button></form><p class="muted">${changes.length} changes</p>${changesTable(store, changes)}` };
   }
+  if (url.pathname.startsWith('/experimentos')) return experimentsPage(store.db, url.pathname);
   const match = /^\/(changes|activities)\/([^/]+)$/.exec(url.pathname);
   if (!match) return null;
   const id = decodeURIComponent(match[2]!);
@@ -106,7 +108,7 @@ export function startWeb(stateDir: string, port = 4310) {
         const content = page(store, stateDir, url);
         if (!content) return respond('Página no encontrada', 404, 'text/plain; charset=utf-8');
         const workstreams = store.listWorkstreams();
-        return respond(`<!doctype html><html lang="es"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><title>${escape(content.title)} · fab</title><link rel="stylesheet" href="/style.css"><script src="/poll.js" defer></script></head><body><a class="skip" href="#contenido">Saltar al contenido</a><aside><a class="brand" href="/">fab<span>Fábrica local</span></a><nav aria-label="Navegación principal"><a href="/"${url.pathname === '/' ? ' aria-current="page"' : ''}>Bandeja</a><a href="/changes"${url.pathname.startsWith('/changes') ? ' aria-current="page"' : ''}>Changes</a><a href="/workstreams"${url.pathname === '/workstreams' ? ' aria-current="page"' : ''}>Workstreams</a></nav><nav aria-label="Workstreams"><h2>Workstreams</h2>${workstreams.map(w => `<a href="/changes?ws=${enc(w.slug)}">${escape(w.slug)}</a>`).join('') || '<p>Sin workstreams</p>'}</nav><p class="local">Solo lectura<br>Actualización cada 2 s</p></aside><main id="contenido"><header><h1>${escape(content.title)}</h1></header>${content.body}</main></body></html>`);
+        return respond(`<!doctype html><html lang="es"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><title>${escape(content.title)} · fab</title><link rel="stylesheet" href="/style.css"><script src="/poll.js" defer></script></head><body><a class="skip" href="#contenido">Saltar al contenido</a><aside><a class="brand" href="/">fab<span>Fábrica local</span></a><nav aria-label="Navegación principal"><a href="/"${url.pathname === '/' ? ' aria-current="page"' : ''}>Bandeja</a><a href="/changes"${url.pathname.startsWith('/changes') ? ' aria-current="page"' : ''}>Changes</a><a href="/workstreams"${url.pathname === '/workstreams' ? ' aria-current="page"' : ''}>Workstreams</a><a href="/experimentos"${url.pathname.startsWith('/experimentos') ? ' aria-current="page"' : ''}>Experimentos</a></nav><nav aria-label="Workstreams"><h2>Workstreams</h2>${workstreams.map(w => `<a href="/changes?ws=${enc(w.slug)}">${escape(w.slug)}</a>`).join('') || '<p>Sin workstreams</p>'}</nav><p class="local">Solo lectura<br>Actualización cada 2 s</p></aside><main id="contenido"><header><h1>${escape(content.title)}</h1></header>${content.body}</main></body></html>`);
       } catch (error) {
         if (error instanceof StoreError && error.code === 'not_found') return respond('Registro no encontrado', 404, 'text/plain; charset=utf-8');
         if (error instanceof URIError) return respond('Ruta inválida', 400, 'text/plain; charset=utf-8');
