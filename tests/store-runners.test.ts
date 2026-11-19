@@ -90,3 +90,27 @@ test('una base anterior se abre con runner nulo', () => {
     expect(s.listRunners()).toEqual([]);
   } finally { s.close(); }
 });
+
+test('CLI: add, list, ws runner con aviso, rm en uso falla', () => {
+  const env = { ...process.env, FABRICA_HOME: dir };
+  const fab = (...a: string[]) => Bun.spawnSync(['bun', 'src/cli.ts', ...a], { env, cwd: join(import.meta.dir, '..') });
+  const out = (r: ReturnType<typeof fab>) => r.stdout.toString() + r.stderr.toString();
+  store.close(); // la CLI abre su propia base en FABRICA_HOME
+  expect(fab('ws', 'create', 'w', '--repo', dir, '--goal', 'g').exitCode).toBe(0);
+  const add = fab('runner', 'add', 'torre', '--ssh', 'torre.lan', '--max-bundle-mb', '64');
+  expect(add.exitCode).toBe(0);
+  expect(out(add)).toContain('sale de tu máquina');
+  expect(out(fab('runner', 'list'))).toContain('torre.lan');
+  expect(JSON.parse(out(fab('runner', 'list', '--json')))[0]).toMatchObject({ name: 'torre', options: { maxBundleMb: 64 } });
+  expect(out(fab('runner', 'add', 'x', '--ssh', 'u@h'))).toContain('invalid_input');
+  const assign = fab('ws', 'runner', 'w', 'torre');
+  expect(assign.exitCode).toBe(0);
+  expect(out(assign)).toContain('sale de tu máquina');
+  const rm = fab('runner', 'rm', 'torre');
+  expect(rm.exitCode).toBe(1);
+  expect(out(rm)).toContain('conflict');
+  expect(fab('ws', 'runner', 'w', '--none').exitCode).toBe(0);
+  expect(fab('runner', 'disable', 'torre').exitCode).toBe(0);
+  expect(fab('runner', 'rm', 'torre').exitCode).toBe(0);
+  store = new Store(join(dir, 'fabrica.db'));
+});

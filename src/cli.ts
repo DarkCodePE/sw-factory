@@ -10,6 +10,7 @@ import { captureMain } from './manifest-capture.ts';
 import { AGENT_NAMES } from './agents.ts';
 import { agentsMain } from './agents-verify.ts';
 import { profileMain } from './profile-cli.ts';
+import { CODE_LEAVES_WARNING, runnerMain } from './runner-cli.ts';
 import { improveMain } from './improve-cli.ts';
 import type { ReviewDecision, WorkstreamState } from './enums.ts';
 import { runPool } from './pool.ts';
@@ -86,6 +87,9 @@ const HELP = `fab — agente de código y fábrica de software local
   fab improve run <id> --split development|validation|qualification --repeats N [--agent <name>] [--seed N]
   fab improve report <id> | delete <id>   experimentos pareados (fase 1: sin cualificación ni rollout)
   fab ws list
+  fab runner add <nombre> --ssh <alias> [--max-bundle-mb N] | --local [--confine]   runner remoto (el código sale de tu máquina) o local
+  fab runner list [--json] | enable <nombre> | disable <nombre> | rm <nombre>
+  fab ws runner <ws> <nombre> | --none   asigna o quita el runner del workstream
   fab profile export [--out f] | import <f> | inspect <digest> | list   perfiles de instrucciones inmutables por digest
   fab ws state <slug> <active|paused|archived>
   fab signal add <slug> <title> [--body <text>]
@@ -147,6 +151,13 @@ async function main(argv: string[]): Promise<number> {
   if (argv[0] === 'jira' || argv[0] === 'pr') return connectorsMain(argv[0], argv.slice(1));
   if (argv[0] === 'agents') return agentsMain(argv.slice(1));
   if (argv[0] === 'profile') { mkdirSync(STATE_DIR, { recursive: true }); return profileMain(argv.slice(1), STATE_DIR); }
+  if (argv[0] === 'runner') {
+    const store = openStore();
+    try { return runnerMain(argv.slice(1), store); } catch (err) {
+      console.error(err instanceof StoreError ? `error (${err.code}): ${err.message}` : `error: ${(err as Error).message}`);
+      return 1;
+    } finally { store.close(); }
+  }
   if (argv[0] === 'improve') {
     const store = openStore();
     try { return await improveMain(argv.slice(1), store, STATE_DIR); } finally { store.close(); }
@@ -268,7 +279,13 @@ async function main(argv: string[]): Promise<number> {
               if (!list.length) console.log('(vacía: modo declarado, sin nada permitido)');
             }
           }
-        } else throw new StoreError('invalid_input', 'fab ws create|list|state|env|mcp');
+        } else if (sub === 'runner') {
+          const [slug, name] = rest;
+          if (!slug || !!name === !!values.none) throw new StoreError('invalid_input', 'usage: fab ws runner <ws> <nombre> | --none');
+          const upd = store.setWorkstreamRunner(slug, name ?? null);
+          console.log(`${upd.slug} runner: ${upd.runner ?? 'ninguno'}`);
+          if (name && store.getRunner(name).kind === 'ssh') console.log(`aviso: ${CODE_LEAVES_WARNING} ${store.getRunner(name).target}.`);
+        } else throw new StoreError('invalid_input', 'fab ws create|list|state|env|mcp|runner');
         return 0;
       }
       case 'signal': {
@@ -451,7 +468,7 @@ function readNameList(path: string): string[] {
   return lines;
 }
 
-const COMMANDS = new Set(['worktree', 'ws', 'signal', 'triage', 'inbox', 'review', 'run', 'status', 'show', 'merge', 'retry', 'gate', 'reject', 'events', 'tui', 'doctor', 'agents', 'profile', 'improve', 'resident', 'help']);
+const COMMANDS = new Set(['worktree', 'ws', 'signal', 'triage', 'inbox', 'review', 'run', 'status', 'show', 'merge', 'retry', 'gate', 'reject', 'events', 'tui', 'doctor', 'agents', 'profile', 'runner', 'improve', 'resident', 'help']);
 
 // A forced exit is still needed for handles left by dependencies, but pipe
 // writes are asynchronous: wait for both write queues before terminating.
