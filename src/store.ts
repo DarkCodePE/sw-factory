@@ -619,6 +619,29 @@ export class Store {
     return this.getWorkstream(ws.id);
   }
 
+  /** Ajustes editables desde la web (D-F): objetivo, concurrencia y tope. Un evento por valor con el anterior. */
+  updateWorkstreamSettings(idOrSlug: string, input: { goal?: string; workerConcurrency?: number; taskLimit?: number }): Workstream {
+    const ws = this.getWorkstream(idOrSlug);
+    const goal = input.goal?.trim();
+    if (goal !== undefined && (!goal || goal.length > 2000)) throw new StoreError('invalid_input', 'goal: 1-2000 caracteres');
+    for (const [name, v, max] of [['worker_concurrency', input.workerConcurrency, 16], ['task_limit', input.taskLimit, 1000]] as const) {
+      if (v !== undefined && (!Number.isInteger(v) || v < 1 || v > max)) throw new StoreError('invalid_input', `${name}: entero entre 1 y ${max}`);
+    }
+    const changes: [string, string, string | number, string | number][] = [];
+    if (goal !== undefined && goal !== ws.goal) changes.push(['goal', 'goal', ws.goal, goal]);
+    if (input.workerConcurrency !== undefined && input.workerConcurrency !== ws.workerConcurrency) changes.push(['worker_concurrency', 'worker_concurrency', ws.workerConcurrency, input.workerConcurrency]);
+    if (input.taskLimit !== undefined && input.taskLimit !== ws.taskLimit) changes.push(['task_limit', 'task_limit', ws.taskLimit, input.taskLimit]);
+    this.withRetry(() => {
+      for (const [column, label, before, after] of changes) {
+        const res = this.db.query(`UPDATE workstreams SET ${column} = ? WHERE id = ? AND ${column} = ?`).run(after, ws.id, before);
+        if (res.changes !== 1) throw new StoreError('conflict', `workstream ${ws.slug} changed concurrently`);
+        const show = (v: string | number) => typeof v === 'string' ? JSON.stringify(v.length > 200 ? `${v.slice(0, 200)}…` : v) : v;
+        this.event(ws.id, 'info', `workstream ${ws.slug}: ${label} ${show(before)} -> ${show(after)}`);
+      }
+    });
+    return this.getWorkstream(ws.id);
+  }
+
   // ---- signals -----------------------------------------------------------
 
   addSignal(workstream: string, title: string, body: string, opts?: { source?: 'web' }): Signal {

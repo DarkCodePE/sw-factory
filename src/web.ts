@@ -17,6 +17,7 @@ import { WebAuth } from './web-auth.ts';
 import { turnsSection, notesSection, turnLogRoute } from './web-turns.ts';
 import { signalsView } from './web-signals.ts';
 import { automationsView } from './web-automations.ts';
+import { workstreamsBody, wizardPage } from './web-ws.ts';
 import { actionForms, actionNotice, webAction } from './web-actions.ts';
 import { WEB_ACTION_STYLE } from './web-actions-style.ts';
 import { handleApi, isApiPath } from './web-api.ts';
@@ -75,7 +76,8 @@ function page(store: Store, stateDir: string, url: URL, csrf?: string): { title:
   }
   if (url.pathname === '/signals') return signalsView(store, escape, csrf);
   if (url.pathname === '/automations') return automationsView(store, escape, csrf, ws);
-  if (url.pathname === '/workstreams') return { title: 'Workstreams', body: `<p class="intro">Frentes de trabajo y su objetivo.</p><ul class="workstreams">${store.listWorkstreams().map(w => `<li><h2><a href="/changes?ws=${enc(w.slug)}">${escape(w.slug)}</a> ${badge(w.state)}</h2><p>${escape(w.goal)}</p><p class="muted">Agente: ${escape(w.agent)} · ${escape(w.repo)}</p></li>`).join('')}</ul>${!store.listWorkstreams().length ? empty('No hay workstreams. Crea uno desde fab ws create.') : ''}` };
+  if (url.pathname === '/workstreams') return { title: 'Workstreams', body: workstreamsBody(store, ui, csrf) };
+  if (url.pathname === '/workstreams/nuevo') return wizardPage(store, stateDir, url, csrf);
   if (url.pathname === '/changes') {
     const f = parseQuery(url.searchParams);
     const all = store.changeIndex(ws);

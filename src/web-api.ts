@@ -47,7 +47,7 @@ async function mutate(req: Request, path: string, stateDir: string, actor: strin
   try { body = JSON.parse(Buffer.from(buf).toString('utf8')); } catch { return fail(400, 'invalid_input', 'JSON inválido'); }
   if (!body || typeof body !== 'object' || Array.isArray(body) || Object.values(body).some(v => typeof v !== 'string')) return fail(400, 'invalid_input', 'el cuerpo debe ser un objeto con valores de texto');
   const name = Object.keys(ACTIONS).find(n => ACTIONS[n]!.path.test(path))!;
-  const id = name === 'signals/create' ? '' : ACTIONS[name]!.path.exec(path)![1]!;
+  const id = name.endsWith('/create') ? '' : ACTIONS[name]!.path.exec(path)![1]!;
   if (id && !/^[\w-]+$/.test(id)) return fail(400, 'invalid_input', 'identificador inválido');
   try {
     const out = await performAction(stateDir, name, id, body as Record<string, string>, actor);

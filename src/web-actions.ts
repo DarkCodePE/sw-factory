@@ -12,6 +12,7 @@ import { answerQuestion } from './admission/answers.ts';
 import { resetSessionCap } from './admission/sessions.ts';
 import type { WebAuth } from './web-auth.ts';
 import { PROFILE_BODY_LIMIT, ProfileInputError, profileAction } from './web-profile.ts';
+import { archiveWorkstream, createWorkstream, workstreamSettings, workstreamState, wsFields } from './web-ws.ts';
 
 const escape = (s: string) => redact(s).replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[c]!);
 const messages: Record<string, string> = {
@@ -67,7 +68,7 @@ export class InputError extends Error {
 
 type Raw = Record<string, string | undefined>;
 type Outcome = { destination: string; result: string; repo?: string };
-type Action = { path: RegExp; input: (raw: Raw) => Raw; run: (store: Store, id: string, input: Raw, out: Outcome, actor: string) => void };
+type Action = { path: RegExp; input: (raw: Raw) => Raw; run: (store: Store, id: string, input: Raw, out: Outcome, actor: string, stateDir: string) => void };
 
 const text = (raw: Raw, key: string) => raw[key] ?? '';
 const limit = (value: string, max = 8192) => { if (Buffer.byteLength(value) > max) throw new InputError(413, 'El texto supera 8 KiB.'); };
@@ -200,6 +201,27 @@ export const ACTIONS: Record<string, Action> = {
     input: raw => (limit(text(raw, 'body'), SIGNAL_BODY_MAX), {}),
     run: (store, id, _input, out) => { out.destination = '/automations'; store.setAutomationEnabled(id, false); },
   },
+  // T60/T61: ajustes, estado, archivo y alta de workstreams. Mismo Store, actor y validación que antes de T71c.
+  'workstreams/create': {
+    path: /^\/(workstreams)\/nuevo$/,
+    input: wsFields,
+    run: (store, _id, input, out, _actor, stateDir) => { out.destination = '/workstreams'; createWorkstream(store, stateDir, input as ReturnType<typeof wsFields>); },
+  },
+  'workstreams/settings': {
+    path: route('workstreams', 'settings'),
+    input: raw => ({ goal: raw.goal, concurrency: raw.concurrency, task_limit: raw.task_limit }),
+    run: (store, id, input, out) => { out.destination = '/workstreams'; workstreamSettings(store, id, input); },
+  },
+  'workstreams/state': {
+    path: route('workstreams', 'state'),
+    input: raw => ({ state: raw.state }),
+    run: (store, id, input, out) => { out.destination = '/workstreams'; workstreamState(store, id, input.state); },
+  },
+  'workstreams/archive': {
+    path: route('workstreams', 'archive'),
+    input: raw => ({ confirm: raw.confirm }),
+    run: (store, id, input, out) => { out.destination = '/workstreams'; archiveWorkstream(store, id, input.confirm); },
+  },
 };
 
 /** Abre el Store escritor, fija el actor y ejecuta una acción. Lanza InputError si la entrada no vale; el resto de fallos van en `result`. */
@@ -214,7 +236,7 @@ export async function performAction(stateDir: string, name: string, id: string, 
     const writer = store;
     // FAB_ACTOR es el patrón del Store. El tramo es síncrono: ningún await expone el actor a otra petición.
     const previous = process.env.FAB_ACTOR; process.env.FAB_ACTOR = actor;
-    try { writer.withRetry(() => action.run(writer, id, input, out, actor)); }
+    try { writer.withRetry(() => action.run(writer, id, input, out, actor, stateDir)); }
     finally { if (previous === undefined) delete process.env.FAB_ACTOR; else process.env.FAB_ACTOR = previous; }
     if (out.repo) { await writer.waitForRelease(id); await removeWorktree(out.repo, stateDir, id); }
   } catch (error) {
@@ -254,7 +276,7 @@ export async function webAction(req: Request, stateDir: string, port: number, au
     const name = Object.keys(ACTIONS).find(n => ACTIONS[n]!.path.test(pathname));
     if (!name) return new Response('Acción no encontrada.', { status: 404 });
     const raw = ACTIONS[name]!.path.exec(pathname)![1]!;
-    const id = name === 'signals/create' ? '' : decodeURIComponent(raw);
+    const id = name.endsWith('/create') ? '' : decodeURIComponent(raw);
     if (id && !/^[\w-]+$/.test(id)) throw new InputError(400, 'Identificador inválido.');
     // Con claves repetidas gana la primera, como form.get.
     const fields: Raw = {};
