@@ -89,7 +89,7 @@ test('web: /changes muestra «No medido», escapa y mantiene los filtros rápido
   const s = startWeb(dir, 0);
   try {
     const html = await (await fetch(`http://127.0.0.1:${s.port}/changes`)).text();
-    expect(html).toContain('No medido'); expect(html).toContain('&lt;b&gt;x&lt;/b&gt;'); expect(html).not.toContain('<b>x</b>');
+    expect(html).toContain('<td>No medido</td><td>No medido</td>'); expect(html).toContain('&lt;b&gt;x&lt;/b&gt;'); expect(html).not.toContain('<b>x</b>');
     expect(html).toContain('class="quick"'); expect(html).toContain('status=failed');
     const only = await (await fetch(`http://127.0.0.1:${s.port}/changes?source=jira&sort=title`)).text();
     expect(only).toContain('Beta'); expect(only).not.toContain('Alfa');
