@@ -8,7 +8,7 @@ import type { Store } from './store.ts';
 import { DEFAULT_DIGEST, fabSha } from './profile.ts';
 import { GIT_SAFE_FLAGS, branchFor } from './worktrees.ts';
 
-export { redact } from './evidence.ts';
+export { redact, readEgressProbe } from './evidence.ts';
 
 export function atomicEvidence(path: string, text: string): void {
   mkdirSync(dirname(path), { recursive: true, mode: 0o700 });
@@ -48,13 +48,6 @@ export function isolationFor(adapter: string) {
   return { adapter, posture: posture[adapter] ?? 'unknown; no isolation attested' };
 }
 
-// Sonda de egress escrita por el hijo native; ausente si la activity no usó red.
-export function readEgressProbe(path: string) {
-  try {
-    const { reachable, decided, positiveControl, probedAt } = JSON.parse(readFileSync(path, 'utf8'));
-    return { reachable, decided, positiveControl, probedAt };
-  } catch { return null; }
-}
 
 export function writeManifest(store: Store, changeId: string, stateDir = store.stateDir): void {
   if (!stateDir) return; // In-memory stores have no durable state directory.

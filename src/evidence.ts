@@ -1,5 +1,5 @@
 // Lectura de evidencia histórica: nunca crea directorios ni ejecuta git.
-import { closeSync, constants, fstatSync, lstatSync, openSync, readSync, realpathSync } from 'node:fs';
+import { closeSync, constants, fstatSync, lstatSync, openSync, readFileSync, readSync, realpathSync } from 'node:fs';
 import { isAbsolute, join, relative, resolve, sep } from 'node:path';
 import type { Activity, Store } from './store.ts';
 
@@ -99,3 +99,12 @@ export function changeCost(store: Store, stateDir: string, changeId: string): nu
   }
   return total;
 }
+
+// Sonda de egress escrita por el hijo native; ausente si la activity no usó red.
+export function readEgressProbe(path: string) {
+  try {
+    const { reachable, decided, positiveControl, probedAt } = JSON.parse(readFileSync(path, 'utf8'));
+    return { reachable, decided, positiveControl, probedAt };
+  } catch { return null; }
+}
+
