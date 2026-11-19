@@ -75,3 +75,13 @@ test('A8: cambiar el perfil tras lanzar es otra sesión (profile_digest se compa
   expect(() => s.begin(change.id, 'implementation', { ...meta, profileDigest: 'p2' })).toThrow(SessionMismatchError);
   expect(s.begin(change.id, 'implementation', meta).turn).toHaveProperty('sessionId'); // el mismo perfil reanuda
 });
+
+test('T57e: una fila preexistente con model NULL reanuda sin modelo y rechaza uno distinto', () => {
+  const { adm, change } = claimed(), s = new SessionStore(adm);
+  const { model: _, ...sinModelo } = meta;
+  const { session } = s.begin(change.id, 'implementation', { ...sinModelo, model: null });
+  s.markLaunched(session.sessionId);
+  expect(s.current(change.id, 'implementation')?.model).toBeNull();
+  expect(s.begin(change.id, 'implementation', sinModelo).turn).toEqual({ sessionId: session.sessionId });
+  expect(() => s.begin(change.id, 'implementation', meta)).toThrow(SessionMismatchError);
+});
