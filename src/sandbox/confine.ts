@@ -4,8 +4,11 @@ import { existsSync, mkdirSync, mkdtempSync, realpathSync, rmSync, writeFileSync
 import { tmpdir } from 'node:os';
 import { dirname, join, resolve } from 'node:path';
 
+/** Adaptadores que corren confinados; el perfil exige uno de ellos a los jueces. */
+export const CONFINABLE_AGENTS: readonly string[] = ['claude', 'codex', 'fake', 'simulated'];
+
 export function assertConfinement(agent: string): void {
-  if (!['claude', 'codex', 'fake', 'simulated'].includes(agent)) throw new Error(`--confine: adaptador ${agent} no soportado`);
+  if (!CONFINABLE_AGENTS.includes(agent)) throw new Error(`--confine: adaptador ${agent} no soportado`);
   const bwrap = Bun.which('bwrap', { PATH: process.env.PATH });
   if (!bwrap) throw new Error('--confine requiere bubblewrap (bwrap); no se ejecutará sin aislar');
   const p = Bun.spawnSync([bwrap, '--ro-bind', '/usr', '/usr', '--symlink', 'usr/bin', '/bin', '--symlink', 'usr/lib', '/lib', '--symlink', 'usr/lib64', '/lib64', '--unshare-pid', '--proc', '/proc', '--dev', '/dev', '--', '/bin/true']);

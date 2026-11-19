@@ -575,6 +575,19 @@ export class Store {
     return this.getWorkstream(id);
   }
 
+  /** Asigna un perfil al workstream (T58). `expected` es el digest vigente que vio quien pide el cambio; el evento guarda anterior y nuevo. */
+  assignProfile(idOrSlug: string, digest: string, expected: string): void {
+    try { resolveProfile(this.stateDir, digest); } catch (e) { throw new StoreError('invalid_input', (e as Error).message); }
+    this.withRetry(() => {
+      const ws = this.getWorkstream(idOrSlug);
+      const current = ws.profile ?? DEFAULT_DIGEST;
+      if (current !== expected || current === digest) throw new StoreError('conflict', 'el perfil vigente cambió o ya es ese');
+      const r = this.db.query('UPDATE workstreams SET profile = ? WHERE id = ? AND COALESCE(profile, ?) = ?').run(digest === DEFAULT_DIGEST ? null : digest, ws.id, DEFAULT_DIGEST, expected);
+      if (r.changes !== 1) throw new StoreError('conflict', 'el perfil vigente cambió');
+      this.event(ws.id, 'info', `perfil asignado: ${current} → ${digest}`);
+    });
+  }
+
   setVerifySetupHash(id: string, hash: string): void {
     this.withRetry(() => this.db.query('UPDATE workstreams SET verify_setup_hash = ? WHERE id = ?').run(hash, id));
   }

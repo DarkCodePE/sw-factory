@@ -11,6 +11,7 @@ import { AdmissionDb, hasAdmission } from './admission/db.ts';
 import { answerQuestion } from './admission/answers.ts';
 import { resetSessionCap } from './admission/sessions.ts';
 import type { WebAuth } from './web-auth.ts';
+import { PROFILE_BODY_LIMIT, ProfileInputError, profileAction } from './web-profile.ts';
 
 const escape = (s: string) => redact(s).replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[c]!);
 const messages: Record<string, string> = {
@@ -222,17 +223,17 @@ export async function performAction(stateDir: string, name: string, id: string, 
   return out;
 }
 
-async function readForm(req: Request): Promise<URLSearchParams> {
+async function readForm(req: Request, limit = 16384): Promise<URLSearchParams> {
   if (req.headers.get('content-type')?.split(';')[0]?.trim().toLowerCase() !== 'application/x-www-form-urlencoded') throw new InputError(415, 'Solo se admite application/x-www-form-urlencoded.');
-  if (Number(req.headers.get('content-length')) > 16384) throw new InputError(413, 'El cuerpo supera 16 KiB.');
+  if (Number(req.headers.get('content-length')) > limit) throw new InputError(413, 'El cuerpo es demasiado grande.');
   // Bun limita la recepción a 16 KiB antes de materializar el cuerpo (startWeb).
   let body: ArrayBuffer;
   try { body = await req.arrayBuffer(); }
   catch (error) {
-    if (error instanceof Error && error.name === 'RequestBodyTooLarge') throw new InputError(413, 'El cuerpo supera 16 KiB.');
+    if (error instanceof Error && error.name === 'RequestBodyTooLarge') throw new InputError(413, 'El cuerpo es demasiado grande.');
     throw error;
   }
-  if (body.byteLength > 16384) throw new InputError(413, 'El cuerpo supera 16 KiB.');
+  if (body.byteLength > limit) throw new InputError(413, 'El cuerpo es demasiado grande.');
   return new URLSearchParams(Buffer.from(body).toString('utf8'));
 }
 
@@ -241,8 +242,14 @@ export async function webAction(req: Request, stateDir: string, port: number, au
   if (![ `http://127.0.0.1:${port}`, `http://localhost:${port}` ].includes(req.headers.get('origin') ?? '')) return new Response('Origin rechazado.', { status: 403 });
   let destination = '/'; let result = 'ok';
   try {
-    const form = await readForm(req);
+    const profilePath = /^\/perfiles\/(guardar|asignar)$/.exec(new URL(req.url).pathname);
+    const form = await readForm(req, profilePath ? PROFILE_BODY_LIMIT : 16384);
     if (!auth.validCsrf(req, form.get('csrf') ?? '')) return new Response('CSRF rechazado.', { status: 403 });
+    if (profilePath) {
+      ({ destination, result } = profileAction(stateDir, profilePath[1] as 'guardar' | 'asignar', form));
+      auth.rememberNotice(req, destination.split('?')[0]!, result);
+      return new Response(null, { status: 303, headers: { Location: destination } });
+    }
     const pathname = new URL(req.url).pathname;
     const name = Object.keys(ACTIONS).find(n => ACTIONS[n]!.path.test(pathname));
     if (!name) return new Response('Acción no encontrada.', { status: 404 });
@@ -255,6 +262,7 @@ export async function webAction(req: Request, stateDir: string, port: number, au
     ({ destination, result } = await performAction(stateDir, name, id, fields, 'web'));
   } catch (error) {
     if (error instanceof InputError) return new Response(error.message, { status: error.status, headers: error.status === 413 ? { Connection: 'close' } : {} });
+    if (error instanceof ProfileInputError) return new Response(error.message, { status: 400 });
     if (error instanceof URIError) return new Response('Identificador inválido.', { status: 400 });
     result = 'error';
   }
