@@ -62,7 +62,7 @@ test('plantilla o esquema inválido se rechaza sin escribir nada', () => {
   bad(p => { p.worker.rules = 'sin marca'; }, /STATUS/);
   bad(p => { p.validators.rules = 'STATUS: done'; }, /VERDICT/);
   bad(p => { p.worker.implement = 'implementa'; }, /commit/);
-  bad(p => { p.schemaVersion = 2; }, /schemaVersion/);
+  bad(p => { p.schemaVersion = 3 as any; }, /schemaVersion/);
   expect(existsSync(join(dir, 'profiles'))).toBe(false);
 });
 

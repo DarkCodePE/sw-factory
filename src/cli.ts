@@ -317,7 +317,8 @@ async function main(argv: string[]): Promise<number> {
         const c = findByPrefix(allChanges(store), sub ?? '', 'change');
         console.log(`change ${c.id}\n${c.title} [${c.status}] branch=${c.branch ?? '-'}\n\n${c.description}`);
         for (const a of store.listActivities({ changeId: c.id })) {
-          console.log(`\n--- ${a.kind} ${short(a.id)} ${a.status}${a.reviewStatus ? ` review=${a.reviewStatus}` : ''} retries=${a.retryCount}`);
+          console.log(`\n--- ${a.kind} ${short(a.id)} ${a.status}${a.reviewStatus ? ` review=${a.reviewStatus}` : ''} retries=${a.retryCount}` +
+            (a.agent ? ` agent=${a.agent}` : '') + (a.model ? ` model=${a.model}` : ''));
           if (a.reviewComment) console.log(`comentario: ${a.reviewComment}`);
           if (a.status === 'waiting_reply') console.log(`pregunta: ${waitingQuestion(store, a.id)}`);
           if (a.result) console.log(a.result.slice(0, 3000));

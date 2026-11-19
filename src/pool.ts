@@ -6,8 +6,8 @@ import { existsSync, readFileSync, rmSync } from 'node:fs';
 import { join, resolve } from 'node:path';
 import { selfCommand } from './self.ts';
 import { activityLog, atomicEvidence, gitEvidence, isolationFor, readEgressProbe, runDirectory, writeManifest } from './manifest.ts';
-import { verifyAgentStart } from './agents-verify.ts';
-import { getAgent, runAgent, type AgentRun } from './agents.ts';
+import { verifyAgentStart, type AgentStartCheck } from './agents-verify.ts';
+import { getAgent, runAgent, type AgentAdapter, type AgentRun } from './agents.ts';
 import { expireQuestions } from './admission/answers.ts';
 import { isChannelChange } from './admission/channel.ts';
 import { AdmissionDb, hasAdmission } from './admission/db.ts';
@@ -19,7 +19,7 @@ import { backendOf, liveBackendFor, runLiveActivity } from './live/turn.ts';
 import type { LiveOutcome } from './admission/reports.ts';
 import type { LiveBackend } from './live/contract.ts';
 import { buildWorkerPrompt } from './prompts.ts';
-import { fabSha, resolveProfile } from './profile.ts';
+import { fabSha, resolveProfile, resolveRole, roleOf } from './profile.ts';
 import { HEARTBEAT_INTERVAL_MS, isBusyError, LEASE_TTL_MS, type Activity, type Store, type Workstream } from './store.ts';
 import { buildValidatorPrompt } from './validators/prompts.ts';
 import { protectedIntegrity, purgeRegenerableCaches } from './validators/integrity.ts';
@@ -71,7 +71,7 @@ export interface PoolOptions {
   confine?: boolean;
   /** Stop once nothing is pending or running (instead of polling forever). */
   untilIdle?: boolean;
-  /** Start even when the workstream agent's pinned sha256 does not match the binary on PATH. */
+  /** Allow launch even when an agent's pinned sha256 does not match the binary on PATH. */
   acceptAgentBinaries?: boolean;
   /** Rama viva (S1): las activities de trabajo cuyo adaptador tiene backend vivo corren con sesión reanudable y `report`. Por defecto, no. */
   live?: boolean;
@@ -138,11 +138,11 @@ export async function processActivity(
   activity: Activity,
   workerId: string,
   opts: PoolOptions,
-  abortController = new AbortController()
+  abortController = new AbortController(),
+  agentChecks = new Map<string, AgentStartCheck>(),
 ): Promise<void> {
   const log = opts.log ?? console.log;
   const ws = store.getWorkstream(activity.workstreamId);
-  const agent = getAgent(opts.agentOverride ?? ws.agent);
   const heartbeatIntervalMs = opts.heartbeatMs ?? HEARTBEAT_INTERVAL_MS;
 
   let lastBeat = Date.now();
@@ -171,6 +171,9 @@ export async function processActivity(
       return;
     }
 
+    const { digest: profileDigest, profile } = resolveProfile(opts.stateDir, ws.profile);
+    const role = roleOf(a);
+    const { adapter, model } = resolveRole(profile, role, ws.agent, opts.agentOverride);
     const meta = `${runDirectory(opts.stateDir, change.id)}/${a.id}.json`;
     const previous = existsSync(meta) ? JSON.parse(readFileSync(meta, 'utf8')) : null;
     // Preserve all costs, including unknown attempts from legacy evidence. Reports remain attempt-local.
@@ -178,15 +181,15 @@ export async function processActivity(
       i === a.retryCount - 1 ? previous?.usage?.costUsd ?? null : null);
     attemptCosts.push(0);
     // Reset before setup too: a launch/setup failure must not reuse an earlier report or cost.
-    const pendingEvidence = { isolation: opts.confine ? 'bwrap-allowlist' : isolationFor(agent.name), workerReport: null, attemptCosts };
+    const pendingEvidence = { isolation: opts.confine ? 'bwrap-allowlist' : isolationFor(adapter), workerReport: null, attemptCosts };
     atomicEvidence(meta, JSON.stringify(pendingEvidence));
     const { path, branch, baseSha } = await ensureWorktree(ws.repo, opts.stateDir, change.id);
     store.setChangeBranch(change.id, branch);
     store.setChangeBase(change.id, baseSha);
-    const { digest: profileDigest, profile } = resolveProfile(opts.stateDir, ws.profile);
-    store.setActivityProvenance(a.id, profileDigest, fabSha());
     const verifiedWorkspace = (head: string | null | undefined) => !!head &&
       gitEvidence(path, 'rev-parse', 'HEAD') === head && gitEvidence(path, 'status', '--porcelain', '-uall') === '';
+    // Procedencia base antes de cualquier bloqueo; el lanzamiento real la completa con agente y modelo.
+    store.setActivityProvenance(a.id, profileDigest, fabSha());
     if (a.kind === 'gates') {
       const head = gitEvidence(path, 'rev-parse', 'HEAD');
       const current = store.getChange(change.id);
@@ -257,15 +260,26 @@ export async function processActivity(
         diffStat = '';
       }
     }
-    const live = liveBackendFor(opts, agent.name, a);
+    const agent = getAgent(adapter);
+    let agentCheck = agentChecks.get(adapter);
+    if (!agentCheck) {
+      agentCheck = verifyAgentStart(adapter);
+      agentChecks.set(adapter, agentCheck);
+      if (agentCheck.warning) log(agentCheck.warning);
+    }
+    if (agentCheck.violation && !opts.acceptAgentBinaries) {
+      store.blockActivity(a.id, workerId, `AGENT_BINARY_MISMATCH: ${agentCheck.violation}`);
+      return;
+    }
+    const live = liveBackendFor(opts, adapter, a);
     const adm = live || hasAdmission(store) ? new AdmissionDb(store) : undefined;
     // T32/B1: el trabajo que entra por un canal es texto no confiable: va delimitado en el prompt y solo corre confinado.
     const channel = !!adm && isChannelChange(adm, change.id);
     const confine = !!opts.confine || channel;
-    if (channel && !opts.confine) {
-      try { assertConfinement(agent.name); } catch (err) {
+    if (channel) {
+      try { assertConfinement(adapter); } catch (err) {
         store.blockActivity(a.id, workerId, `CHANNEL_NOT_CONFINABLE: ${(err as Error).message}`);
-        log(`[${workerId}] ${a.kind} blocked: change de canal sin adaptador confinable (${agent.name})`);
+        log(`[${workerId}] ${a.kind} blocked: change de canal sin adaptador confinable (${adapter})`);
         return;
       }
     }
@@ -275,27 +289,36 @@ export async function processActivity(
       log(`[${workerId}] ${a.kind} blocked: requiere un pool --live`);
       return;
     }
+    // Un report huérfano se aplica sin lanzar otro turno. Conserva la procedencia del que lo emitió.
+    const recoveringReport = !!live && !!adm && !!new ReportStore(adm).pending(a.id);
+    const provenance = recoveringReport ? { adapter: a.agent ?? adapter, model: a.model } : { adapter, model };
+    if (!recoveringReport) {
+      store.setActivityProvenance(a.id, profileDigest, fabSha(), { agent: adapter, model });
+      if (profile.schemaVersion === 2 && role && (adapter !== ws.agent || model !== null)) {
+        store.event(ws.id, 'info', `rol ${role}: adaptador ${adapter}, modelo ${model ?? 'por defecto'} (perfil ${profileDigest.slice(0, 8)})`, change.id, a.id);
+      }
+    }
     const prompt = a.validator
       ? buildValidatorPrompt(a.validator, { change, diffStat, base: 'main', branch, worktree: path, history, untrusted: channel || undefined }, profile.validators)
       : buildWorkerPrompt({ workstream: ws, change, activity: a, history, worktree: path, branch, untrusted: channel || undefined }, { factoryCommits: agent.factoryCommits }, profile.worker);
-    log(`[${workerId}] ${a.validator ?? a.kind} "${change.title}" -> ${agent.name} in ${path}`);
+    log(`[${workerId}] ${a.validator ?? a.kind} "${change.title}" -> ${adapter} in ${path}`);
     const readOnly = a.validator ? (a.validator !== 'qa') : (a.kind === 'investigation');
     const probeFile = `${runDirectory(opts.stateDir, change.id)}/${a.id}.egress.json`;
     // A retry keeps the activity id: drop the previous attempt's probe so it is never reported as this one's.
     rmSync(probeFile, { force: true });
-    const captureAgent = { ...agent, env: () => ({ ...agent.env?.(), FABRICA_EGRESS_PROBE_FILE: probeFile }), command: (text: string, options?: { readOnly?: boolean; promptStdin?: boolean }) => [
+    const captureAgent: AgentAdapter = { ...agent, env: () => ({ ...agent.env?.(), FABRICA_EGRESS_PROBE_FILE: probeFile }), command: (text, options) => [
       ...selfCommand('__capture', new URL('./manifest-capture.ts', import.meta.url)),
       activityLog(opts.stateDir, change.id, a.id), ...agent.command(text, options),
     ] };
     // From launch onward the cost is unknown until the agent reports it.
     attemptCosts[attemptCosts.length - 1] = null;
-    atomicEvidence(meta, JSON.stringify(pendingEvidence));
+    atomicEvidence(meta, JSON.stringify({ ...pendingEvidence, ...provenance }));
     const crash = (point: CrashPoint) => opts.crash?.(point);
     let outcome: LiveOutcome | undefined;
     let run: AgentRun;
     if (live) {
       ({ run, outcome } = await runLiveActivity(store, adm!, a, {
-        backend: live, cwd: path, profileDigest, prompt, timeoutMs: turnTimeoutMs(opts), signal: abortController.signal, confine,
+        backend: live, cwd: path, profileDigest, model, prompt, timeoutMs: turnTimeoutMs(opts), signal: abortController.signal, confine,
         claudeProjects: join(resolve(opts.stateDir), 'live', change.id.slice(0, 8), 'claude-projects'),
         mcpConfigDir: join(resolve(opts.stateDir), 'live', change.id.slice(0, 8), 'mcp'),
         capturePath: confine ? activityLog(opts.stateDir, change.id, a.id) : undefined,
@@ -305,6 +328,7 @@ export async function processActivity(
       if (!confine) atomicEvidence(activityLog(opts.stateDir, change.id, a.id), `${run.stdout ?? ''}${run.stderr ?? ''}`);
     } else run = await runAgent(confine ? agent : captureAgent, prompt, path, turnTimeoutMs(opts), {
       confine,
+      model: model ?? undefined,
       capturePath: confine ? activityLog(opts.stateDir, change.id, a.id) : undefined,
       readOnly,
       signal: abortController.signal,
@@ -315,9 +339,9 @@ export async function processActivity(
 
     attemptCosts[attemptCosts.length - 1] = run.usage?.costUsd ?? null;
     atomicEvidence(meta, JSON.stringify({
-      isolation: confine ? 'bwrap-allowlist' : isolationFor(agent.name), durationMs: run.durationMs, exitCode: run.exitCode, usage: run.usage ?? null,
+      ...provenance, isolation: confine ? 'bwrap-allowlist' : isolationFor(provenance.adapter ?? adapter), durationMs: run.durationMs, exitCode: run.exitCode, usage: run.usage ?? null,
       attemptCosts,
-      egressProbe: agent.name === 'native' ? readEgressProbe(probeFile) : null,
+      egressProbe: adapter === 'native' ? readEgressProbe(probeFile) : null,
       // Keep only a declared final worker report, independently of later block/failure decisions; never diagnostics or an earlier attempt.
       workerReport: !a.validator && !abortController.signal.aborted && run.status.kind !== 'missing' ? run.output : null,
     }));
@@ -418,9 +442,9 @@ export async function processActivity(
         return;
       }
       // The commit is attributed to the factory and only records what the agent left on disk.
-      if (agent.factoryCommits) await commitWorktree(path, `${change.title}\n\nImplemented by ${agent.name} (fab activity ${a.id.slice(0, 8)}).`);
+      if (agent.factoryCommits) await commitWorktree(path, `${change.title}\n\nImplemented by ${adapter} (fab activity ${a.id.slice(0, 8)}).`);
       const commits = await branchCommits(ws.repo, branch);
-      if (commits.length === 0 && agent.name !== 'fake') {
+      if (commits.length === 0 && adapter !== 'fake') {
         failLive(store, a.id, workerId, 'implementation reported done but left no commits on the branch');
         log(`[${workerId}] implementation produced no commits`);
         return;
@@ -462,12 +486,13 @@ export async function processActivity(
 export async function runPool(store: Store, opts: PoolOptions): Promise<void> {
   const log = opts.log ?? console.log;
   const ws = store.getWorkstream(opts.workstream);
-  // agents-verify: única comprobación al arrancar. El pin del adaptador del
-  // workstream que no coincida impide arrancar; sin pin → aviso, no bloqueo.
-  const agentCheck = verifyAgentStart(opts.agentOverride ?? ws.agent);
+  // Conserva la comprobación inicial y reutilízala al comprobar cada adaptador por rol.
+  const startupAdapter = opts.agentOverride ?? ws.agent;
+  const agentCheck = verifyAgentStart(startupAdapter);
+  const agentChecks = new Map([[startupAdapter, agentCheck]]);
   if (agentCheck.violation && !opts.acceptAgentBinaries) throw new Error(agentCheck.violation);
   if (agentCheck.warning) log(agentCheck.warning);
-  if (opts.live && !backendOf(opts, opts.agentOverride ?? ws.agent)) log(`aviso: --live pero el adaptador «${opts.agentOverride ?? ws.agent}» no tiene backend vivo: sus activities correrán de un disparo, sin sesión reanudable`); // B4
+  if (opts.live && !backendOf(opts, startupAdapter)) log(`aviso: --live pero el adaptador «${startupAdapter}» no tiene backend vivo: depende del rol; las activities sin backend vivo correrán de un disparo, sin sesión reanudable`); // B4
   const adm = opts.live || hasAdmission(store) ? new AdmissionDb(store) : undefined; // una vez, no en cada vuelta del bucle (B3)
   const running = new Set<Promise<void>>();
   const activeControllers = new Map<Promise<void>, AbortController>();
@@ -530,7 +555,7 @@ export async function runPool(store: Store, opts: PoolOptions): Promise<void> {
         }
         if (!claimed) break;
         const controller = new AbortController();
-        const p: Promise<void> = processActivity(store, claimed, workerId, opts, controller).finally(() => {
+        const p: Promise<void> = processActivity(store, claimed, workerId, opts, controller, agentChecks).finally(() => {
           running.delete(p);
           activeControllers.delete(p);
         });
