@@ -1,11 +1,11 @@
 // Runner falso para tests de runners/client.ts: habla el protocolo v1 por stdin/stdout según el escenario.
-// Uso: bun fake-runner.ts <escenario> <dir-de-trabajo>. Registra en <dir>/transcript lo que casa escribe y en <dir>/env las variables que ve.
+// Uso: bun fake-runner.ts <escenario> <dir-de-trabajo> [informe]. `auto`: commit si el encargo espera cambios, sin cambios si no. Registra en <dir>/transcript lo que casa escribe y en <dir>/env las variables que ve.
 import { appendFileSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { receiveJob, sealResult } from '../../src/runners/bundle.ts';
 import { decodeLine } from '../../src/runners/protocol.ts';
 
-const [scenario = 'ok', dir = '.'] = process.argv.slice(2);
+let [scenario = 'ok', dir = '.', reportText = 'hecho'] = process.argv.slice(2);
 writeFileSync(join(dir, 'env'), Object.keys(process.env).join('\n'));
 writeFileSync(join(dir, 'pid'), String(process.pid));
 const H64 = 'c'.repeat(64);
@@ -30,12 +30,13 @@ if (scenario === 'hang') { Bun.spawn(['sleep', '300']); await new Promise(() => 
 const jl = await line();
 if (jl === null) process.exit(0);
 const job = decodeLine(jl, ['job'], 'home') as Extract<ReturnType<typeof decodeLine>, { type: 'job' }>;
+if (scenario === 'auto') scenario = job.expectChanges ? 'ok' : 'no-change';
 if (scenario === 'busy') { await send({ v: 1, type: 'error', code: 'busy', message: 'ocupado' }); process.exit(0); }
 if (scenario.startsWith('refuse:')) { await send({ v: 1, type: 'error', code: scenario.slice(7), message: 'x' }); process.exit(0); }
 await bytes(job.promptBytes);
 const bundlePath = join(dir, 'in.bundle');
 writeFileSync(bundlePath, await bytes(job.bundleBytes));
-const base = { v: 1, type: 'result', jobId: job.jobId, exitCode: 0, durationMs: 5, usage: null, output: 'hecho', head: null, bundleBytes: 0, bundleSha256: null };
+const base = { v: 1, type: 'result', jobId: job.jobId, exitCode: 0, durationMs: 5, usage: null, output: reportText, head: null, bundleBytes: 0, bundleSha256: null };
 await send({ v: 1, type: 'accepted', jobId: job.jobId });
 if (scenario === 'lost-accepted') process.exit(0);
 const log = (s: string) => send({ v: 1, type: 'log', data: Buffer.from(s).toString('base64') });
