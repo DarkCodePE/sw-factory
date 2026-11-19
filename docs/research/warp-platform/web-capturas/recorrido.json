@@ -1,0 +1,262 @@
+[
+  {
+    "page": "bandeja",
+    "viewport": 1440,
+    "theme": "light",
+    "measure": {
+      "dark": false,
+      "heading": "Bandeja",
+      "scroll": 1440,
+      "width": 1440
+    },
+    "console": "",
+    "errors": ""
+  },
+  {
+    "page": "workstreams",
+    "viewport": 1440,
+    "theme": "light",
+    "measure": {
+      "dark": false,
+      "heading": "Workstreams",
+      "scroll": 1440,
+      "width": 1440
+    },
+    "console": "",
+    "errors": ""
+  },
+  {
+    "page": "changes",
+    "viewport": 1440,
+    "theme": "light",
+    "measure": {
+      "dark": false,
+      "heading": "Changes",
+      "scroll": 1440,
+      "width": 1440
+    },
+    "console": "",
+    "errors": ""
+  },
+  {
+    "page": "change",
+    "viewport": 1440,
+    "theme": "light",
+    "measure": {
+      "dark": false,
+      "heading": "Conservar evidencia de cada intento",
+      "scroll": 1440,
+      "width": 1440
+    },
+    "console": "",
+    "errors": ""
+  },
+  {
+    "page": "activity",
+    "viewport": 1440,
+    "theme": "light",
+    "measure": {
+      "dark": false,
+      "heading": "Activity · investigation",
+      "scroll": 1440,
+      "width": 1440
+    },
+    "console": "",
+    "errors": ""
+  },
+  {
+    "page": "bandeja",
+    "viewport": 1440,
+    "theme": "dark",
+    "measure": {
+      "dark": true,
+      "heading": "Bandeja",
+      "scroll": 1440,
+      "width": 1440
+    },
+    "console": "",
+    "errors": ""
+  },
+  {
+    "page": "workstreams",
+    "viewport": 1440,
+    "theme": "dark",
+    "measure": {
+      "dark": true,
+      "heading": "Workstreams",
+      "scroll": 1440,
+      "width": 1440
+    },
+    "console": "",
+    "errors": ""
+  },
+  {
+    "page": "changes",
+    "viewport": 1440,
+    "theme": "dark",
+    "measure": {
+      "dark": true,
+      "heading": "Changes",
+      "scroll": 1440,
+      "width": 1440
+    },
+    "console": "",
+    "errors": ""
+  },
+  {
+    "page": "change",
+    "viewport": 1440,
+    "theme": "dark",
+    "measure": {
+      "dark": true,
+      "heading": "Conservar evidencia de cada intento",
+      "scroll": 1440,
+      "width": 1440
+    },
+    "console": "",
+    "errors": ""
+  },
+  {
+    "page": "activity",
+    "viewport": 1440,
+    "theme": "dark",
+    "measure": {
+      "dark": true,
+      "heading": "Activity · investigation",
+      "scroll": 1440,
+      "width": 1440
+    },
+    "console": "",
+    "errors": ""
+  },
+  {
+    "page": "bandeja",
+    "viewport": 390,
+    "theme": "light",
+    "measure": {
+      "dark": false,
+      "heading": "Bandeja",
+      "scroll": 390,
+      "width": 390
+    },
+    "console": "",
+    "errors": ""
+  },
+  {
+    "page": "workstreams",
+    "viewport": 390,
+    "theme": "light",
+    "measure": {
+      "dark": false,
+      "heading": "Workstreams",
+      "scroll": 390,
+      "width": 390
+    },
+    "console": "",
+    "errors": ""
+  },
+  {
+    "page": "changes",
+    "viewport": 390,
+    "theme": "light",
+    "measure": {
+      "dark": false,
+      "heading": "Changes",
+      "scroll": 390,
+      "width": 390
+    },
+    "console": "",
+    "errors": ""
+  },
+  {
+    "page": "change",
+    "viewport": 390,
+    "theme": "light",
+    "measure": {
+      "dark": false,
+      "heading": "Conservar evidencia de cada intento",
+      "scroll": 390,
+      "width": 390
+    },
+    "console": "",
+    "errors": ""
+  },
+  {
+    "page": "activity",
+    "viewport": 390,
+    "theme": "light",
+    "measure": {
+      "dark": false,
+      "heading": "Activity · investigation",
+      "scroll": 390,
+      "width": 390
+    },
+    "console": "",
+    "errors": ""
+  },
+  {
+    "page": "bandeja",
+    "viewport": 390,
+    "theme": "dark",
+    "measure": {
+      "dark": true,
+      "heading": "Bandeja",
+      "scroll": 390,
+      "width": 390
+    },
+    "console": "",
+    "errors": ""
+  },
+  {
+    "page": "workstreams",
+    "viewport": 390,
+    "theme": "dark",
+    "measure": {
+      "dark": true,
+      "heading": "Workstreams",
+      "scroll": 390,
+      "width": 390
+    },
+    "console": "",
+    "errors": ""
+  },
+  {
+    "page": "changes",
+    "viewport": 390,
+    "theme": "dark",
+    "measure": {
+      "dark": true,
+      "heading": "Changes",
+      "scroll": 390,
+      "width": 390
+    },
+    "console": "",
+    "errors": ""
+  },
+  {
+    "page": "change",
+    "viewport": 390,
+    "theme": "dark",
+    "measure": {
+      "dark": true,
+      "heading": "Conservar evidencia de cada intento",
+      "scroll": 390,
+      "width": 390
+    },
+    "console": "",
+    "errors": ""
+  },
+  {
+    "page": "activity",
+    "viewport": 390,
+    "theme": "dark",
+    "measure": {
+      "dark": true,
+      "heading": "Activity · investigation",
+      "scroll": 390,
+      "width": 390
+    },
+    "console": "",
+    "errors": ""
+  }
+]

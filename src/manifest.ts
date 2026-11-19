@@ -3,22 +3,12 @@
 import { existsSync, mkdirSync, readFileSync, renameSync, rmSync, writeFileSync } from 'node:fs';
 import { dirname, join, resolve } from 'node:path';
 import { randomUUID } from 'node:crypto';
+import { redact } from './evidence.ts';
 import type { Store } from './store.ts';
 import { DEFAULT_DIGEST, fabSha } from './profile.ts';
 import { GIT_SAFE_FLAGS, branchFor } from './worktrees.ts';
 
-export function redact(text: string): string {
-  return text
-    .replace(/-----BEGIN (?:[A-Z]+ )?PRIVATE KEY-----[\s\S]*?-----END (?:[A-Z]+ )?PRIVATE KEY-----/g, '[REDACTED]')
-    .replace(/\bBearer\s+[A-Za-z0-9._~+/=-]+/gi, 'Bearer [REDACTED]')
-    .replace(/\b(?:sk-[A-Za-z0-9_-]{16,}|AIza[\w-]{35})\b/g, '[REDACTED]')
-    .replace(/\b(?:AKIA|ASIA)[A-Z0-9]{16}\b/g, '[REDACTED]')
-    .replace(/\b(?:gh[pousr]_[A-Za-z0-9]{16,}|github_pat_[A-Za-z0-9_]{16,})\b/g, '[REDACTED]')
-    .replace(/\bxox[baprs]-[A-Za-z0-9-]{10,}\b/g, '[REDACTED]')
-    .replace(/\beyJ[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+\b/g, '[REDACTED]')
-    .replace(/\b([a-z][a-z0-9+.-]*:\/\/)[^\s/@]+:[^\s/@]+@/gi, '$1[REDACTED]@')
-    .replace(/\b([\w-]*(?:api[_-]?key|token|secret|password|credential)[\w-]*\s*[:=]\s*)["']?[^\s"',}]+["']?/gi, '$1[REDACTED]');
-}
+export { redact, readEgressProbe } from './evidence.ts';
 
 export function atomicEvidence(path: string, text: string): void {
   mkdirSync(dirname(path), { recursive: true, mode: 0o700 });
@@ -58,13 +48,6 @@ export function isolationFor(adapter: string) {
   return { adapter, posture: posture[adapter] ?? 'unknown; no isolation attested' };
 }
 
-// Sonda de egress escrita por el hijo native; ausente si la activity no usó red.
-export function readEgressProbe(path: string) {
-  try {
-    const { reachable, decided, positiveControl, probedAt } = JSON.parse(readFileSync(path, 'utf8'));
-    return { reachable, decided, positiveControl, probedAt };
-  } catch { return null; }
-}
 
 export function writeManifest(store: Store, changeId: string, stateDir = store.stateDir): void {
   if (!stateDir) return; // In-memory stores have no durable state directory.

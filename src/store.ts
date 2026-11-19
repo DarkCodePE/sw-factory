@@ -5,6 +5,7 @@ import { DEFAULT_DIGEST, resolveProfile } from './profile.ts';
 import { Database } from 'bun:sqlite';
 import { randomUUID } from 'node:crypto';
 import { userInfo } from 'node:os';
+import { closeSync, existsSync, fstatSync, openSync, readFileSync } from 'node:fs';
 import { dirname, resolve } from 'node:path';
 import { gitEvidence, writeManifest } from './manifest.ts';
 
@@ -266,7 +267,55 @@ export interface CreateWorkstreamInput {
 }
 
 export interface StoreOptions {
+  /** No crea esquema, no migra y SQLite rechaza toda escritura. */
+  readonly?: boolean;
   clock?: () => Date;
+}
+
+/**
+ * SQLite readonly puede crear WAL/SHM al leer una base WAL ya cerrada.
+ * Sin WAL tomamos una copia estable en memoria; con WAL usamos SQLite readonly
+ * y exigimos el índice existente. No se reinterpreta ni se ignora un WAL vivo.
+ */
+function openWalReadonly(path: string): Database {
+  if (!existsSync(`${path}-shm`)) throw new Error('WAL sin índice compartido: requiere recuperación por un escritor');
+  const db = new Database(path, { readonly: true, strict: true });
+  try {
+    // Fija el snapshot al abrir: el último escritor no puede retirar WAL/SHM
+    // entre la apertura y las consultas de esta petición. BEGIN es diferido y solo lee.
+    db.exec('PRAGMA busy_timeout = 5000');
+    db.exec('BEGIN');
+    db.query('SELECT name FROM sqlite_schema LIMIT 1').get();
+    return db;
+  } catch (error) { db.close(); throw error; }
+}
+
+function openReadonlyDatabase(path: string): Database {
+  if (existsSync(`${path}-wal`)) {
+    return openWalReadonly(path);
+  }
+  const fd = openSync(path, 'r');
+  try {
+    const before = fstatSync(fd, { bigint: true });
+    if (!before.isFile()) throw new Error('La base no es un fichero regular');
+    const bytes = readFileSync(fd);
+    const after = fstatSync(fd, { bigint: true });
+    // Una escritura/checkpoint durante la copia exige otra apertura, sin reparar el estado.
+    if (before.size !== after.size || before.mtimeNs !== after.mtimeNs || before.ctimeNs !== after.ctimeNs) {
+      throw new Error('La base cambió durante la lectura; vuelve a intentarlo');
+    }
+    if (existsSync(`${path}-wal`)) {
+      return openWalReadonly(path);
+    }
+    // deserialize necesita formato rollback en la copia: no hay WAL que reproducir.
+    // Solo se cambian estos dos bytes de la copia, nunca los de la base original.
+    if (bytes.length >= 100 && bytes.subarray(0, 16).toString() === 'SQLite format 3\0') {
+      bytes[18] = 1; bytes[19] = 1;
+    }
+    const db = Database.deserialize(bytes, { readonly: true, strict: true });
+    db.exec('PRAGMA busy_timeout = 5000');
+    return db;
+  } finally { closeSync(fd); }
 }
 
 export class Store {
@@ -280,8 +329,9 @@ export class Store {
     this.stateDir = path === ':memory:' ? undefined : dirname(resolve(path));
     this.clock = options?.clock ?? (() => new Date());
     this.dbPath = path;
-    this.db = new Database(path, { create: true, strict: true });
-    this.db.exec('PRAGMA journal_mode = WAL; PRAGMA foreign_keys = ON; PRAGMA busy_timeout = 5000;');
+    this.db = options?.readonly ? openReadonlyDatabase(path) : new Database(path, { create: true, strict: true });
+    if (options?.readonly) return;
+    this.db.exec('PRAGMA busy_timeout = 5000; PRAGMA journal_mode = WAL; PRAGMA foreign_keys = ON;');
     this.db.exec(SCHEMA);
     this.migrate();
   }
@@ -1276,10 +1326,18 @@ export class Store {
         activityId && this.isTerminal(this.getActivity(activityId).status))) writeManifest(this, changeId);
   }
 
-  listEvents(workstream: string, limit = 50): Row[] {
+  listEvents(workstream: string, limit = 50, changeId?: string): Row[] {
     const ws = this.getWorkstream(workstream);
-    return (
-      this.db.query('SELECT * FROM events WHERE workstream_id = ? ORDER BY id DESC LIMIT ?').all(ws.id, limit) as Row[]
-    ).reverse();
+    const changeFilter = changeId === undefined ? '' : ' AND change_id = ?';
+    const params = changeId === undefined ? [ws.id, limit] : [ws.id, changeId, limit];
+    return (this.db.query(`SELECT * FROM events WHERE workstream_id = ?${changeFilter} ORDER BY id DESC LIMIT ?`)
+      .all(...params) as Row[]).reverse();
+  }
+
+  /** Cuenta sin cargar cuerpos; acompaña la página acotada de la timeline. */
+  countEvents(workstream: string, changeId: string): number {
+    const ws = this.getWorkstream(workstream);
+    return (this.db.query('SELECT COUNT(*) AS n FROM events WHERE workstream_id = ? AND change_id = ?')
+      .get(ws.id, changeId) as { n: number }).n;
   }
 }
