@@ -342,5 +342,5 @@ test('T75: el enlace de acceso por 127.0.0.1 no canjea ni consume el token', asy
 test('T75: assertLoopback acepta loopback y falla cerrado con un host que no resuelve', async () => {
   await assertLoopback('localhost');
   await expect(assertLoopback('fab-x.invalid')).rejects.toThrow('no resuelve a loopback');
-  await expect(assertLoopback('8.8.8.8')).rejects.toThrow('no resuelve a loopback'); // literal: resuelve, pero fuera de loopback
+  await expect(assertLoopback('1.1.1.1')).rejects.toThrow('no resuelve a loopback'); // literal: resuelve, pero fuera de loopback
 });
