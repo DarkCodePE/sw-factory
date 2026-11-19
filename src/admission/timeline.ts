@@ -23,17 +23,13 @@ type Row = Record<string, unknown>;
 const str = (v: unknown): string | null => (v == null ? null : String(v));
 const num = (v: unknown): number | null => (v == null ? null : Number(v));
 
-export function changeTimeline(db: Database, changeId: string, _now: string): Timeline {
+export function changeTimeline(db: Database, changeId: string): Timeline {
   const tables = new Set((db.query("SELECT name FROM sqlite_master WHERE type = 'table'").all() as { name: string }[]).map(r => r.name));
   if (!tables.has('adm_sessions')) return { state: 'sin_tablas', turns: [], segments: [], sessions: [], omitted: 0 };
 
   const sessions = (db.query('SELECT generation, status, lost_reason FROM adm_sessions WHERE change_id = ? ORDER BY generation, id').all(changeId) as Row[])
     .map(r => ({ generation: Number(r.generation), status: String(r.status), lostReason: str(r.lost_reason) }));
   const questions = db.query('SELECT q.*, a.completed_at FROM adm_questions q LEFT JOIN activities a ON a.id = q.activity_id WHERE q.change_id = ? ORDER BY q.asked_at').all(changeId) as Row[];
-  // Fin de la espera: respuesta; si venció o se canceló, cuando la activity se cerró; si sigue abierta, null.
-  const waitEnd = (q: Row): string | null => str(q.answered_at) ?? (q.status === 'expired' || q.status === 'canceled' ? str(q.completed_at) : null);
-  const waits: Segment[] = questions.map(q => ({ kind: 'espera_persona', from: String(q.asked_at), to: waitEnd(q) }));
-
   let rows: Row[] = [], omitted = 0;
   if (tables.has('adm_turns')) {
     const total = Number((db.query('SELECT count(*) AS n FROM adm_turns WHERE change_id = ?').get(changeId) as { n: number }).n);
@@ -42,12 +38,22 @@ export function changeTimeline(db: Database, changeId: string, _now: string): Ti
       LEFT JOIN activities a ON a.id = t.activity_id LEFT JOIN adm_sessions s ON s.session_id = t.session_id
       WHERE t.change_id = ? ORDER BY t.started_at DESC, t.rowid DESC LIMIT ?`).all(changeId, TURN_LIMIT) as Row[]).reverse();
   }
-  if (rows.length === 0) return { state: 'sin_turnos', turns: [], segments: waits, sessions, omitted: 0 };
+  // Fin de la espera: respuesta; si venció o se canceló, cuando la activity se cerró, pero nunca después de que empiece
+  // el turno siguiente de esa activity (su `completed_at` es único y puede ser posterior); si sigue abierta, null.
+  const waitEnd = (q: Row): string | null => {
+    if (q.answered_at != null) return String(q.answered_at);
+    if (q.status !== 'expired' && q.status !== 'canceled') return null;
+    const nextStart = rows.find(n => n.activity_id === q.activity_id && String(n.started_at) > String(q.asked_at))?.started_at;
+    const ends = [str(q.completed_at), str(nextStart)].filter((x): x is string => x != null);
+    return ends.length ? ends.reduce((m, x) => (x < m ? x : m)) : null;
+  };
+  const mkWaits = (): Segment[] => questions.map(q => ({ kind: 'espera_persona', from: String(q.asked_at), to: waitEnd(q) }));
+  if (rows.length === 0) return { state: 'sin_turnos', turns: [], segments: mkWaits(), sessions, omitted: 0 };
 
   const noteRows = tables.has('change_notes')
     ? db.query('SELECT id, body, actor, attempt_id FROM change_notes WHERE change_id = ? AND delivered_at IS NOT NULL ORDER BY created_at').all(changeId) as Row[] : [];
   const turns: TurnView[] = rows.map((r, i) => {
-    const attemptId = String(r.attempt_id), next = rows[i + 1];
+    const attemptId = String(r.attempt_id);
     const rep = db.query('SELECT state, summary FROM adm_reports WHERE attempt_id = ? ORDER BY id DESC LIMIT 1').get(attemptId) as Row | null;
     // La pregunta de un turno es la que se hizo desde que empezó hasta que empezó el siguiente turno de su activity.
     const q = questions.find(x => x.activity_id === r.activity_id && String(x.asked_at) >= String(r.started_at)
@@ -64,7 +70,7 @@ export function changeTimeline(db: Database, changeId: string, _now: string): Ti
 
   const segments: Segment[] = [];
   const firstStart = turns[0]!.startedAt;
-  segments.push(...waits.filter(w => w.from >= firstStart));
+  segments.push(...mkWaits().filter(w => w.from >= firstStart));
   rows.forEach((r, i) => {
     const next = rows[i + 1], nextStart = next ? String(next.started_at) : null, started = String(r.started_at), ended = str(r.ended_at);
     if (ended) segments.push({ kind: 'trabajo', from: started, to: ended });
@@ -72,8 +78,10 @@ export function changeTimeline(db: Database, changeId: string, _now: string): Ti
     else { segments.push({ kind: 'interrumpido', from: started, to: nextStart }); return; } // sin fin no hay tramo de cola ni bloqueo
     if (r.outcome === 'blocked') { segments.push({ kind: 'bloqueo', from: ended!, to: nextStart }); return; }
     const q = turns[i]!.question, qRow = q && questions.find(x => x.id === q.id);
-    const from = qRow ? waitEnd(qRow) : r.outcome === 'done' || r.outcome === 'awaiting' || next ? ended : null;
-    if (from && (nextStart || qRow)) segments.push({ kind: 'cola', from, to: nextStart });
+    const from = qRow ? waitEnd(qRow) : ended;
+    // Pregunta vencida sin turno posterior: el change queda bloqueado, no hay nada en cola.
+    if (qRow?.status === 'expired' && !nextStart && from) segments.push({ kind: 'bloqueo', from, to: null });
+    else if (from && (nextStart || qRow)) segments.push({ kind: 'cola', from, to: nextStart });
   });
   segments.sort((a, b) => (a.from < b.from ? -1 : a.from > b.from ? 1 : 0));
   return { state: 'ok', turns, segments, sessions, omitted };
