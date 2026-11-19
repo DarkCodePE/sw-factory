@@ -121,11 +121,11 @@ test('H3: la pregunta se asigna al turno de su activity que la hizo, no a otra a
 
 test('H4: solo las notas entregadas de este change y de ese intento', () => {
   const s = setup(); s.sess(1); s.turn('t1', 1, 'fresh', '10:00', '10:10', 'done'); s.turn('t2', 1, 'retry', '11:00', '11:10', 'done');
-  s.adm.db.exec(`CREATE TABLE change_notes (id TEXT, change_id TEXT, body TEXT, actor TEXT, attempt_id TEXT, delivered_at TEXT, created_at TEXT);
-    INSERT INTO change_notes VALUES ('n1','${s.change.id}','uno','dueño','t1','${d('10:00')}','${d('09:00')}'),
+  const other = s.store.createChange(s.change.workstreamId, 'otro', 'd').id;
+  s.adm.db.exec(`INSERT INTO change_notes (id, change_id, body, actor, attempt_id, delivered_at, created_at) VALUES ('n1','${s.change.id}','uno','dueño','t1','${d('10:00')}','${d('09:00')}'),
       ('n2','${s.change.id}','sin entregar','dueño','t1',NULL,'${d('09:01')}'),
       ('n3','${s.change.id}','tres','dueño','t2','${d('11:00')}','${d('09:02')}'),
-      ('n4','otro','ajena','dueño','t1','${d('10:00')}','${d('09:03')}')`);
+      ('n4','${other}','ajena','dueño','t1','${d('10:00')}','${d('09:03')}')`);
   const t = changeTimeline(s.store.db, s.change.id);
   expect(t.turns.map(x => x.notes.map(n => n.id))).toEqual([['n1'], ['n3']]);
 });
