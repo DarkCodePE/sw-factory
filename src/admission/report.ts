@@ -2,7 +2,8 @@
 // Sirve para responder con datos: (a) ¿se verifica bien la etiqueta?, (b) ¿sale el 403 (rol `unknown`)?, (c) ¿llega tarde `labeled`?
 import type { AdmissionDb } from './db.ts';
 import { DEFAULT_POLICY } from './gate.ts';
-import { isTerminalChange, type ChangeStatus } from '../store.ts';
+import type { ChangeStatus } from '../store.ts';
+import { isTerminalForMandate } from './mandate.ts';
 
 export type Report = {
   sources: { source: string; cursor: string | null; lastPoll: string | null; lastPollEvents: number | null }[];
@@ -47,8 +48,8 @@ export function buildReport(adm: AdmissionDb): Report {
   for (const d of reasons) {
     const e = d.event;
     const change = changes.get(d.thread_id);
-    const changeStatus = change && (!isTerminalChange(change.status) || d.decided_at < change.updated_at) ? change.status : undefined;
-    if (changeStatus && d.reasons[0] === 'thread-already-admitted' && !stopsLost.has(d.thread_id)) {
+    const changeStatus = change && (!isTerminalForMandate(change.status) || d.decided_at < change.updated_at) ? change.status : undefined;
+    if (changeStatus && ['thread-already-admitted', 'would_revoke'].includes(d.reasons[0]) && !stopsLost.has(d.thread_id)) {
       const policy = JSON.parse(d.policy) as { triggerLabel?: string };
       const labelPresent = (e.labels ?? []).some((label: string) => label.toLowerCase() === policy.triggerLabel?.toLowerCase());
       if (e.state === 'closed' || !labelPresent) stopsLost.set(d.thread_id, {

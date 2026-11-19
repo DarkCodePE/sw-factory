@@ -1,6 +1,6 @@
 // Condición de salida de la fase 2 (06 §7): la costura completa con un fallo inyectado en cada una de las 12 fronteras del 07 §6.
 // Las fronteras 3, 7, 8, 10 y parte de la 4 y la 11 viven junto a la pieza que las cruza (se citan en el informe); aquí van el resto.
-import { afterEach, expect, test } from 'bun:test';
+import { afterEach, expect, spyOn, test } from 'bun:test';
 import { CrashInjected } from '../src/admission/effects.ts';
 import type { RawComment } from './helpers/admission.ts';
 import { future, once, rig } from './helpers/auto.ts';
@@ -120,4 +120,148 @@ test('12: respuesta de alguien sin rol, anterior a la pregunta, de un bot o de l
   comments.push({ id: 5, issue: 7, login: 'alice', created_at: '2026-01-11T02:00:00Z', body: 'verde' });
   await t.cycle(); await t.pool(backend);
   expect(backend.turns[1]!.prompt).toBe('verde');
+});
+
+async function admittedChange(verify?: string[]) {
+  t = rig({ verify }); t.issues.push(labeled()); await t.cycle();
+  return t.store.listChanges(t.ws.id)[0]!;
+}
+function removeLabel() {
+  Object.assign(t.issues[0]!, { labels: [], updated_at: '2026-01-08T00:00:00Z' });
+}
+
+test('13: mandate-revoked cae dentro de la transacción: revocación y cierre se recuperan juntos', async () => {
+  const c = await admittedChange();
+  removeLabel();
+  let injected = false;
+  let observed: { inTransaction: boolean; revokedAt: string | null; changeStatus: string } | undefined;
+  await t.cycle({ crash: p => {
+    if (p !== 'mandate-revoked' || injected) return;
+    injected = true;
+    observed = {
+      inTransaction: t.adm.db.inTransaction,
+      revokedAt: (t.adm.db.query('SELECT revoked_at FROM adm_thread_signals').get() as { revoked_at: string | null }).revoked_at,
+      changeStatus: t.store.getChange(c.id).status,
+    };
+    throw new CrashInjected(p);
+  }, maxAttempts: 1 });
+  expect(injected).toBe(true);
+  expect(observed).toEqual({ inTransaction: true, revokedAt: expect.any(String), changeStatus: 'pending' });
+  expect(t.store.getChange(c.id).status).toBe('pending');
+  expect(t.adm.db.query('SELECT revoked_at FROM adm_thread_signals').get()).toEqual({ revoked_at: null });
+  // Recuperación del efecto tras la caída, sin fabricar un trigger nuevo.
+  t.adm.db.query("UPDATE adm_effects SET status='pending', attempts=0 WHERE status='dead'").run();
+  await t.cycle();
+  expect(t.store.getChange(c.id).status).toBe('canceled');
+  expect(t.adm.db.query('SELECT revoked_at FROM adm_thread_signals').get()).not.toEqual({ revoked_at: null });
+  expect(n("SELECT COUNT(*) n FROM events WHERE message='change canceled'")).toBe(1);
+});
+
+test('14: revocar con pregunta pendiente de publicar cancela la pregunta antes del Outbox', async () => {
+  const c = await admittedChange();
+  await t.pool(fakeLive([ASK]));
+  expect(act().status).toBe('waiting_reply');
+  expect(n("SELECT COUNT(*) n FROM adm_effects WHERE kind='reply' AND status='pending'")).toBe(1);
+  removeLabel(); await t.cycle();
+  expect(t.store.getChange(c.id).status).toBe('canceled');
+  expect(act().status).toBe('canceled');
+  expect(n("SELECT COUNT(*) n FROM adm_questions WHERE status='canceled'")).toBe(1);
+  expect(t.run.posts).toEqual([]);
+  expect(n("SELECT COUNT(*) n FROM adm_effects WHERE kind='reply' AND status='done'")).toBe(1);
+});
+
+async function openChannelPr(crash?: (p: import('../src/admission/effects.ts').CrashPoint) => void) {
+  const { connectorsMain } = await import('../src/connectors/cli.ts');
+  const { createGhGateway } = await import('../src/connectors/github.ts');
+  const c = t.store.listChanges(t.ws.id)[0]!;
+  const commands: string[][] = [];
+  let created = false;
+  const run: import('../src/connectors/github.ts').CommandRunner = async cmd => {
+    commands.push(cmd);
+    if (cmd[0] === 'git') return { code: 0, stdout: cmd[1] === 'rev-list' ? '1' : '', stderr: '' };
+    if (cmd.includes('create')) { created = true; return { code: 0, stdout: 'https://github.com/owner/project/pull/12', stderr: '' }; }
+    if (cmd.includes('view')) return created
+      ? { code: 0, stdout: JSON.stringify({ number: 12, url: 'https://github.com/owner/project/pull/12', headRefName: c.branch, baseRefName: 'main', state: 'OPEN' }), stderr: '' }
+      : { code: 1, stdout: '', stderr: 'no pull requests found' };
+    throw new Error('Comando no esperado');
+  };
+  const errors: string[] = [];
+  const open = (fail = crash) => connectorsMain('pr', ['open', c.id, '--repo', 'owner/project'], {
+    store: t.store, prs: createGhGateway({ run }), run, env: {}, crash: fail, log: () => {}, error: s => errors.push(s),
+  });
+  return { open, commands, errors };
+}
+function implementChannel() {
+  for (let i = 0; i < 2; i++) {
+    const a = t.store.claimActivity(t.ws.id, 'impl')!;
+    t.store.completeActivity(a.id, 'impl', 'STATUS: done');
+  }
+  const c = t.store.listChanges(t.ws.id)[0]!;
+  t.store.setChangeBranch(c.id, 'fab/test');
+  return t.store.getChange(c.id);
+}
+
+test('15: caída después de gh pr create: repetir fab pr repara el enlace sin crear otro PR', async () => {
+  await admittedChange(); const c = implementChannel();
+  const { open, commands } = await openChannelPr(once('pr-created'));
+  expect(await open()).toBe(1);
+  expect(commands.filter(cmd => cmd.includes('create'))).toHaveLength(1);
+  const { ThreadLinks } = await import('../src/admission/links.ts');
+  const links = new ThreadLinks(t.adm);
+  expect(links.changeOf('github:owner/project#12')).toBeUndefined();
+  expect(await open(() => {})).toBe(0);
+  expect(commands.filter(cmd => cmd.includes('create'))).toHaveLength(1);
+  expect(links.changeOf('github:owner/project#12')).toBe(c.id);
+  expect(await open(() => {})).toBe(0);
+  expect(links.threadsOf(c.id)).toHaveLength(2);
+});
+
+test('respuesta triage en el PR creado por fab contesta y reanuda la pregunta del issue', async () => {
+  await admittedChange(['true']); const c = implementChannel();
+  const { open, errors } = await openChannelPr();
+  expect(await open()).toBe(0);
+  expect(errors).toEqual([]);
+  t.store.requestValidation(c.id, ['qa']);
+  const gate = t.store.claimActivity(t.ws.id, 'review')!;
+  t.store.blockActivity(gate.id, 'review', 'revisar implementación');
+  t.store.retryChange(c.id);
+  const backend = fakeLive([ASK, DONE]);
+  await t.pool(backend); await t.cycle();
+  expect(t.run.posts[0]?.issue).toBe(7);
+  const comments: RawComment[] = [
+    { id: 21, issue: 12, login: 'outsider', created_at: '2026-01-11T00:00:00Z', body: 'no' },
+    { id: 22, issue: 12, login: 'maint', created_at: '2026-01-11T01:00:00Z', body: 'verde en el PR' },
+  ];
+  const { fakeGh } = await import('./helpers/admission.ts');
+  await t.cycle({ run: fakeGh(t.issues, { comments, roles: { maint: 'triage', outsider: 'read' }, self: 'fab-bot' }) });
+  expect(t.adm.db.query('SELECT status, answer, answered_by FROM adm_questions').get()).toEqual({ status: 'answered', answer: 'verde en el PR', answered_by: 'maint' });
+  await t.pool(backend);
+  expect(backend.turns[1]!.prompt).toBe('verde en el PR');
+});
+
+
+test('revocar durante un turno vivo: el siguiente latido aborta y no se aplica su pregunta tardía', async () => {
+  const c = await admittedChange();
+  const interval = globalThis.setInterval;
+  let beat: (() => void) | undefined;
+  const timer = spyOn(globalThis, 'setInterval').mockImplementation(((fn: () => void, ms: number, ...args: unknown[]) => {
+    if (ms === 123456) beat = fn;
+    return interval(fn, ms, ...args);
+  }) as typeof setInterval);
+  let aborted = false;
+  try {
+    const backend = fakeLive([{ ...ASK, before: async turn => {
+      expect(turn.signal?.aborted).toBe(false);
+      removeLabel(); await t.cycle();
+      expect(t.store.getChange(c.id).status).toBe('canceled');
+      expect(beat).toBeDefined();
+      beat!();
+      aborted = turn.signal!.aborted;
+    } }]);
+    await t.pool(backend, { heartbeatMs: 123456 });
+    expect(aborted).toBe(true);
+    expect(t.store.listActivities({ changeId: c.id }).every(a => a.status === 'canceled')).toBe(true);
+    expect(n("SELECT COUNT(*) n FROM adm_questions WHERE status='open'")).toBe(0);
+    await t.cycle(); expect(t.run.posts).toEqual([]);
+  } finally { timer.mockRestore(); }
 });

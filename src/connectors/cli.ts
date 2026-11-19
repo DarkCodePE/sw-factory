@@ -1,6 +1,9 @@
 import { existsSync, mkdirSync } from 'node:fs';
 import { resolve } from 'node:path';
 import { parseArgs } from 'node:util';
+import { AdmissionDb, hasAdmission } from '../admission/db.ts';
+import { ThreadLinks, parseThread } from '../admission/links.ts';
+import type { CrashPoint } from '../admission/effects.ts';
 import { Store, StoreError, type Change } from '../store.ts';
 import { createGhGateway, repoSlugFromRemote, runCommand, validateBranch, validateRepo, type CommandRunner } from './github.ts';
 import { createJiraGateway, loadJiraEnv, validateJiraKey } from './jira.ts';
@@ -10,6 +13,7 @@ import { VALIDATOR_KINDS, type PullRequestGateway, type TicketGateway } from './
 
 export interface ConnectorDeps {
   store?: Store;
+  crash?: (point: CrashPoint) => void;
   links?: ChangeLinkStore;
   tickets?: TicketGateway;
   prs?: PullRequestGateway;
@@ -135,17 +139,28 @@ export async function connectorsMain(cmd: 'jira' | 'pr', argv: string[], deps: C
       log(`DRY-RUN · ${JSON.stringify(['git', 'push', '-u', 'origin', change.branch])}`);
       log(`DRY-RUN · ${JSON.stringify(['gh', 'pr', 'view', change.branch, '--repo', repo, '--json', 'number,url,headRefName,baseRefName,state'])}`);
       log(`DRY-RUN · si no existe: ${JSON.stringify(['gh', 'pr', 'create', '--repo', repo, '--head', change.branch, '--base', base, '--title', change.title, '--body-file', '<archivo temporal>', ...(values.draft ? ['--draft'] : [])])}\n${body}`);
-      if (linked?.source) log(`DRY-RUN · comentario en ${linked.source.key}: enlace al PR resultante\n${ticketComment('pr_opened', change, linked, 'PR: <URL resultante>')}`);
+      if (linked?.source?.system === 'jira') log(`DRY-RUN · comentario en ${linked.source.key}: enlace al PR resultante\n${ticketComment('pr_opened', change, linked, 'PR: <URL resultante>')}`);
       if (values.validate) log(`DRY-RUN · encolaría validadores: ${VALIDATOR_KINDS.join(', ')}`);
       return 0;
     }
     // Resolve Jira credentials before pushing, but publish only after persisting the PR.
-    if (linked?.source) getTickets();
+    if (linked?.source?.system === 'jira') getTickets();
     const pr = await getPrs().open({ cwd: ws.repo, repo, branch: change.branch, base, title: change.title, body, draft: values.draft === true });
     if (pr.repo !== repo || pr.branch !== change.branch) throw new Error('El PR recibido no corresponde al change');
+    deps.crash?.('pr-created');
     getLinks(true)!.setPullRequest(change.id, pr);
-    if (linked?.source) await getTickets().comment(linked.source.key, ticketComment('pr_opened', change, { ...linked, pr }));
-    log(`PR enlazado: ${pr.url}${linked?.source ? ` · HU ${linked.source.key} comentada` : ''}`);
+    if (hasAdmission(getStore())) {
+      const adm = new AdmissionDb(getStore()), threads = new ThreadLinks(adm);
+      const first = threads.threadsOf(change.id)[0];
+      const originRepo = first ? parseThread(first).repo : undefined;
+      if (originRepo && originRepo.toLowerCase() === pr.repo.toLowerCase()) adm.tx(() => {
+        const thread = `github:${originRepo}#${pr.number}`;
+        adm.db.query('INSERT OR IGNORE INTO adm_threads(id, source, first_seen) VALUES (?,?,?)').run(thread, `github:${originRepo}`, adm.iso());
+        threads.link(thread, change.id);
+      });
+    }
+    if (linked?.source?.system === 'jira') await getTickets().comment(linked.source.key, ticketComment('pr_opened', change, { ...linked, pr }));
+    log(`PR enlazado: ${pr.url}${linked?.source?.system === 'jira' ? ` · HU ${linked.source.key} comentada` : ''}`);
     if (values.validate) {
       const queued = getStore().requestValidation(change.id, [...VALIDATOR_KINDS]);
       log(`Validadores encolados: ${queued.length} (${VALIDATOR_KINDS.join(', ')}); ejecútalos con fab run`);

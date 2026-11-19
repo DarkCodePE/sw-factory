@@ -1,4 +1,6 @@
 import { afterEach, expect, test } from 'bun:test';
+import { AdmissionDb } from '../src/admission/db.ts';
+import { ThreadLinks } from '../src/admission/links.ts';
 import { Store, type Change } from '../src/store.ts';
 import { connectorsMain, type ConnectorDeps } from '../src/connectors/cli.ts';
 import { ChangeLinkStore } from '../src/connectors/links.ts';
@@ -161,4 +163,55 @@ test('top-level CLI dispatch exposes connector help without external I/O', async
     expect(code).toBe(0);
     expect(out).toContain('Conectores SDLC de fab');
   }
+});
+
+
+test('H6/M18: un PR sin hilo de origen no crea hilos ni vínculos de admisión', async () => {
+  const f = fixture(), change = implemented(f.store), adm = new AdmissionDb(f.store);
+  expect(await connectorsMain('pr', ['open', change.id], f.deps)).toBe(0);
+  expect(f.opened).toHaveLength(1);
+  expect(adm.db.query('SELECT * FROM adm_threads').all()).toEqual([]);
+  expect(adm.db.query('SELECT * FROM adm_thread_changes').all()).toEqual([]);
+});
+
+test('H6/M19: abrir un PR sin esquema de admisión no crea ninguna tabla adm_*', async () => {
+  const f = fixture(), change = implemented(f.store);
+  const tables = () => f.store.db.query("SELECT name FROM sqlite_master WHERE type='table' AND name GLOB 'adm_*'").all();
+  expect(tables()).toEqual([]);
+  expect(await connectorsMain('pr', ['open', change.id], f.deps)).toBe(0);
+  expect(f.opened).toHaveLength(1);
+  expect(tables()).toEqual([]);
+});
+
+function channelFixture() {
+  const f = fixture(), change = implemented(f.store), adm = new AdmissionDb(f.store);
+  const threads = new ThreadLinks(adm), origin = 'github:owner/project#7';
+  adm.db.query('INSERT INTO adm_threads VALUES (?,?,?)').run(origin, 'github:owner/project', adm.iso());
+  threads.link(origin, change.id);
+  return { ...f, change, adm, threads, origin };
+}
+
+test('H5: el PR de otro repo no se une al change de canal', async () => {
+  const f = channelFixture();
+  expect(await connectorsMain('pr', ['open', f.change.id, '--repo', 'other/repo'], f.deps)).toBe(0);
+  expect(f.opened).toHaveLength(1);
+  expect(f.threads.threadsOf(f.change.id)).toEqual([f.origin]);
+  expect(f.adm.db.query('SELECT id FROM adm_threads').all()).toEqual([{ id: f.origin }]);
+});
+
+test('N1: el PR conserva la grafía del primer hilo aunque --repo use mayúsculas', async () => {
+  const f = channelFixture();
+  expect(await connectorsMain('pr', ['open', f.change.id, '--repo', 'Owner/Project'], f.deps)).toBe(0);
+  expect(f.threads.changeOf('github:owner/project#3')).toBe(f.change.id);
+  expect(f.threads.changeOf('github:Owner/Project#3')).toBeUndefined();
+  expect(f.adm.db.query('SELECT source FROM adm_threads WHERE id=?').get('github:owner/project#3')).toEqual({ source: 'github:owner/project' });
+});
+
+test('H9: dry-run de origen GitHub no anuncia comentario Jira ni escribe', async () => {
+  const f = channelFixture();
+  expect(await connectorsMain('pr', ['open', f.change.id, '--dry-run'], f.deps)).toBe(0);
+  expect(f.output.join('\n')).not.toContain('DRY-RUN · comentario en');
+  expect(f.opened).toEqual([]);
+  expect(f.comments).toEqual([]);
+  expect(f.threads.threadsOf(f.change.id)).toEqual([f.origin]);
 });
