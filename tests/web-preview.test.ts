@@ -16,7 +16,7 @@ test('las vistas integradas comparten navegación y sesión; sus rutas nuevas so
     const files = readdirSync(dir).sort();
     const before = readFileSync(dbPath);
     server = startWeb(dir, 0, { write: true });
-    const base = `http://127.0.0.1:${server.port}`;
+    const base = `http://${server.host ?? "127.0.0.1"}:${server.port}`;
     const login = await fetch(server.loginUrl!, { redirect: 'manual' });
     expect(login.status).toBe(303);
     const cookie = login.headers.get('set-cookie')!.split(';')[0]!;

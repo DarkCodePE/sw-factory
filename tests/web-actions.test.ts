@@ -5,10 +5,11 @@ import { runInNewContext } from 'node:vm';
 import { Store } from '../src/store.ts';
 import { AdmissionDb } from '../src/admission/db.ts';
 import { startWeb } from '../src/web.ts';
+import { assertLoopback } from '../src/web-auth.ts';
 
 let dir: string, store: Store, server: ReturnType<typeof startWeb>, change: string, activity: string;
 let cookie: string, csrf: string;
-const req = (path: string, init?: RequestInit) => fetch(`http://127.0.0.1:${server.port}${path}`, { redirect: 'manual', ...init });
+const req = (path: string, init?: RequestInit) => fetch(`http://${server.host ?? "127.0.0.1"}:${server.port}${path}`, { redirect: 'manual', ...init });
 const html = async (path: string) => (await req(path, { headers: { cookie } })).text();
 const field = (page: string, name: string) => new RegExp(`name="${name}" value="([^"]+)"`).exec(page)?.[1] ?? '';
 async function login() {
@@ -19,7 +20,7 @@ async function login() {
   return r;
 }
 const post = (path: string, data: Record<string, string> = {}, headers: Record<string, string> = {}) => req(path, {
-  method: 'POST', headers: { cookie, origin: `http://127.0.0.1:${server.port}`, 'content-type': 'application/x-www-form-urlencoded', ...headers },
+  method: 'POST', headers: { cookie, origin: `http://${server.host ?? "127.0.0.1"}:${server.port}`, 'content-type': 'application/x-www-form-urlencoded', ...headers },
   body: new URLSearchParams({ csrf, ...data }),
 });
 const review = () => `/activities/${activity}/review`;
@@ -161,7 +162,7 @@ test('sondeo conserva borradores incluso tras perder el foco', async () => {
 
 test('CSRF ausente, cookie duplicada y Unicode inválido se rechazan sin excepción', async () => {
   await login();
-  expect((await req(review(), { method: 'POST', headers: { cookie, origin: `http://127.0.0.1:${server.port}`, 'content-type': 'application/x-www-form-urlencoded' }, body: 'decision=approve' })).status).toBe(403);
+  expect((await req(review(), { method: 'POST', headers: { cookie, origin: `http://${server.host ?? "127.0.0.1"}:${server.port}`, 'content-type': 'application/x-www-form-urlencoded' }, body: 'decision=approve' })).status).toBe(403);
   expect((await post(review(), {}, { cookie: `${cookie}; ${cookie}` })).status).toBe(401);
   expect((await post(review(), {}, { cookie: `fab_session=${'é'.repeat(64)}` })).status).toBe(401);
   expect((await req(`/auth?token=${'é'.repeat(64)}`)).status).toBe(401);
@@ -169,9 +170,9 @@ test('CSRF ausente, cookie duplicada y Unicode inválido se rechazan sin excepci
 test('el límite se aplica al stream sin Content-Length y con tipo parametrizado', async () => {
   await login();
   const body = new ReadableStream<Uint8Array>({ start(controller) { for (let i = 0; i < 17; i++) controller.enqueue(new Uint8Array(1024).fill(97)); controller.close(); } });
-  const r = await req(review(), { method: 'POST', headers: { cookie, origin: `http://localhost:${server.port}`, 'content-type': 'application/x-www-form-urlencoded; charset=UTF-8' }, body });
+  const r = await req(review(), { method: 'POST', headers: { cookie, origin: `http://${server.host}:${server.port}`, 'content-type': 'application/x-www-form-urlencoded; charset=UTF-8' }, body });
   expect(r.status).toBe(413); expect(store.getActivity(activity).reviewStatus).toBe('awaiting');
-  const accepted = await post(review(), { decision: 'comment', comment: 'a'.repeat(8192) }, { origin: `http://localhost:${server.port}`, 'content-type': 'application/x-www-form-urlencoded; charset=UTF-8' });
+  const accepted = await post(review(), { decision: 'comment', comment: 'a'.repeat(8192) }, { 'content-type': 'application/x-www-form-urlencoded; charset=UTF-8' });
   expect([accepted.status, await accepted.text()]).toEqual([303, '']);
 });
 test('reintento abandona espera y reinicia el tope de sesión, como la CLI', async () => {
@@ -236,7 +237,7 @@ test('H3: aviso solo tras POST de la sesión, una vez y sin marcador en la URL',
 });
 test('H5 M13: Origin con sufijo ajeno no pasa una comprobación por prefijo', async () => {
   await login();
-  for (const origin of [`http://127.0.0.1:${server.port}.evil.test`, `http://localhost:${server.port}.evil.test`]) {
+  for (const origin of [`http://${server.host ?? "127.0.0.1"}:${server.port}.evil.test`, `http://localhost:${server.port}.evil.test`]) {
     expect((await post(review(), { decision: 'approve' }, { origin })).status).toBe(403);
   }
   expect(store.getActivity(activity).reviewStatus).toBe('awaiting');
@@ -281,9 +282,92 @@ test('H5 M51: PUT, DELETE y PATCH autenticados no ejecutan acciones', async () =
   await login();
   const n = store.countEvents(store.getChange(change).workstreamId, change);
   for (const method of ['PUT', 'DELETE', 'PATCH']) {
-    const r = await req(review(), { method, headers: { cookie, origin: `http://127.0.0.1:${server.port}`, 'content-type': 'application/x-www-form-urlencoded' }, body: new URLSearchParams({ csrf, decision: 'approve' }) });
+    const r = await req(review(), { method, headers: { cookie, origin: `http://${server.host ?? "127.0.0.1"}:${server.port}`, 'content-type': 'application/x-www-form-urlencoded' }, body: new URLSearchParams({ csrf, decision: 'approve' }) });
     expect(r.status).toBe(405);
   }
   expect(store.getActivity(activity).reviewStatus).toBe('awaiting');
   expect(store.countEvents(store.getChange(change).workstreamId, change)).toBe(n);
+});
+
+test('T71c: ACTIONS tiene exactamente las acciones que ofrece la web', async () => {
+  const { ACTIONS } = await import('../src/web-actions.ts');
+  expect(Object.keys(ACTIONS).sort()).toEqual(['activities/review', 'activities/score', 'automations/disable', 'automations/enable', 'automations/run', 'changes/cancel', 'changes/note', 'changes/rename', 'changes/retry', 'questions/answer', 'scorers/backfill', 'signals/create', 'signals/ignore', 'signals/triage', 'workstreams/archive', 'workstreams/create', 'workstreams/settings', 'workstreams/state']);
+  for (const bad of ['merge', 'gate/allow', 'changes/merge']) expect(ACTIONS[bad]).toBeUndefined();
+});
+test('T71c: performAction fija el actor, valida la entrada y devuelve el destino', async () => {
+  const { performAction, InputError } = await import('../src/web-actions.ts');
+  const out = await performAction(dir, 'changes/rename', change, { title: 'Nuevo título' }, 'api:prueba');
+  expect(out).toEqual({ destination: `/changes/${change}`, result: 'ok' });
+  expect(store.getChange(change).title).toBe('Nuevo título');
+  expect(await performAction(dir, 'changes/rename', 'no-existe', { title: 'x' }, 'web')).toEqual({ destination: '/', result: 'not_found' });
+  await expect(performAction(dir, 'changes/rename', change, { title: '' }, 'web')).rejects.toBeInstanceOf(InputError);
+  await expect(performAction(dir, 'merge', change, {}, 'web')).rejects.toBeInstanceOf(InputError);
+  expect(process.env.FAB_ACTOR).toBeUndefined();
+});
+
+// T75 (F2 H1, D11 opción B): la sesión vive en un host único por arranque; otro servicio de loopback no la usa.
+const lo = (init: RequestInit & { headers?: Record<string, string> }, host: string, path = review()) =>
+  fetch(`http://127.0.0.1:${server.port}${path}`, { redirect: 'manual', ...init, headers: { host, ...init.headers } });
+test('T75: el host es fab-<aleatorio>.localhost, distinto en cada arranque, y la cookie es de ese host', async () => {
+  expect(server.host).toMatch(/^fab-[0-9a-f]{16}\.localhost$/);
+  expect(server.loginUrl).toStartWith(`http://${server.host}:${server.port}/auth?token=`);
+  const other = startWeb(dir, 0, { write: true }); other.stop(true);
+  expect(other.host).not.toBe(server.host);
+  expect((await login()).headers.get('set-cookie')).not.toMatch(/Domain=/i); // host-only: el navegador no la envía a 127.0.0.1
+});
+test('T75: ataque de H1 — un servicio en 127.0.0.1:<otro puerto> que reenvía la cookie no ve la página ni aprueba', async () => {
+  await login();
+  const asLoopback = `127.0.0.1:${server.port}`;
+  for (const host of [asLoopback, `localhost:${server.port}`]) {
+    const page = await lo({ headers: { cookie } }, host, `/activities/${activity}`);
+    expect(page.status).toBe(403); expect(await page.text()).not.toContain(csrf);
+    const approve = await lo({ method: 'POST', headers: { cookie, origin: `http://${host}`, 'content-type': 'application/x-www-form-urlencoded' }, body: new URLSearchParams({ csrf, decision: 'approve' }) }, host);
+    expect(approve.status).toBe(403);
+  }
+  expect(store.getActivity(activity).reviewStatus).toBe('awaiting');
+});
+test('T75: Origin solo acepta el host único; los antiguos 127.0.0.1 y localhost dan 403', async () => {
+  await login();
+  for (const origin of [`http://127.0.0.1:${server.port}`, `http://localhost:${server.port}`, `http://${server.host}:${server.port + 1}`, `https://${server.host}:${server.port}`, `http://${server.host}`]) {
+    expect((await post(review(), { decision: 'approve' }, { origin })).status).toBe(403);
+  }
+  expect(store.getActivity(activity).reviewStatus).toBe('awaiting');
+  expect((await post(review(), { decision: 'approve' })).status).toBe(303);
+});
+test('T75: el enlace de acceso por 127.0.0.1 no canjea ni consume el token', async () => {
+  const url = new URL(server.loginUrl!);
+  expect((await lo({}, `127.0.0.1:${server.port}`, url.pathname + url.search)).status).toBe(403);
+  expect((await login()).status).toBe(303);
+});
+test('T75: assertLoopback acepta loopback y falla cerrado con un host que no resuelve', async () => {
+  await assertLoopback('localhost');
+  await expect(assertLoopback('fab-x.invalid')).rejects.toThrow('no resuelve a loopback');
+  await expect(assertLoopback('1.1.1.1')).rejects.toThrow('no resuelve a loopback'); // literal: resuelve, pero fuera de loopback
+});
+
+test('T71c-H1: con un campo repetido gana el primero (confirm=no&confirm=yes no cancela)', async () => {
+  await login();
+  const body = (c: string) => `csrf=${csrf}&${c}`;
+  const r = await req(`/changes/${change}/cancel`, { method: 'POST', headers: { cookie, origin: `http://${server.host}:${server.port}`, 'content-type': 'application/x-www-form-urlencoded' }, body: body('confirm=no&confirm=yes') });
+  expect(r.status).toBe(400);
+  expect(store.getChange(change).status).not.toBe('canceled');
+  const ok = await req(`/changes/${change}/cancel`, { method: 'POST', headers: { cookie, origin: `http://${server.host}:${server.port}`, 'content-type': 'application/x-www-form-urlencoded' }, body: body('confirm=yes&confirm=no') });
+  expect(ok.status).toBe(303); expect(store.getChange(change).status).toBe('canceled');
+});
+
+test('T75-H2: el filtro de Host rechaza otro nombre .localhost y el host único con otro puerto', async () => {
+  const get = (host: string) => fetch(`http://127.0.0.1:${server.port}/`, { headers: { host } });
+  expect((await get(`${server.host}:${server.port}`)).status).toBe(200);
+  for (const h of [`otro.localhost:${server.port}`, `${server.host}:${server.port + 1}`, `${server.host}`, `127.0.0.1:${server.port}`, `localhost:${server.port}`, `${server.host}.evil.test:${server.port}`])
+    expect((await get(h)).status).toBe(403);
+});
+test('T75-H3: assertLoopback exige que todas las direcciones sean de loopback y webMain falla cerrado si no resuelve', async () => {
+  await assertLoopback('x', async () => [{ address: '127.0.0.1' }, { address: '::1' }]);
+  await expect(assertLoopback('x', async () => [{ address: '127.0.0.1' }, { address: '10.0.0.5' }])).rejects.toThrow('no resuelve a loopback');
+  await expect(assertLoopback('x', async () => [])).rejects.toThrow('no resuelve a loopback');
+  await expect(assertLoopback('x', async () => { throw new Error('dns'); })).rejects.toThrow('no resuelve a loopback');
+  const { webMain } = await import('../src/web.ts');
+  const err = console.error; console.error = () => {};
+  try { expect(await webMain(['--port', '0', '--write'], dir, async () => [{ address: '8.8.8.8' }])).toBe(1); }
+  finally { console.error = err; }
 });

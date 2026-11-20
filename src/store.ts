@@ -161,6 +161,9 @@ export interface Change {
   updatedAt: string;
 }
 
+export type ChangeSource = 'cli' | 'channel' | 'jira';
+export interface ChangeSummary extends Change { source: ChangeSource | null; creator: string | null }
+
 export interface ChangeNote {
   id: string;
   changeId: string;
@@ -171,8 +174,6 @@ export interface ChangeNote {
   attemptId: string | null;
   deliveredAt: string | null;
 }
-export type ChangeSource = 'cli' | 'channel' | 'jira';
-export interface ChangeSummary extends Change { source: ChangeSource | null; creator: string | null }
 
 export interface Activity {
   id: string;
@@ -667,6 +668,19 @@ export class Store {
     return this.getWorkstream(id);
   }
 
+  /** Asigna un perfil al workstream (T58). `expected` es el digest vigente que vio quien pide el cambio; el evento guarda anterior y nuevo. */
+  assignProfile(idOrSlug: string, digest: string, expected: string): void {
+    try { resolveProfile(this.stateDir, digest); } catch (e) { throw new StoreError('invalid_input', (e as Error).message); }
+    this.withRetry(() => {
+      const ws = this.getWorkstream(idOrSlug);
+      const current = ws.profile ?? DEFAULT_DIGEST;
+      if (current !== expected || current === digest) throw new StoreError('conflict', 'el perfil vigente cambió o ya es ese');
+      const r = this.db.query('UPDATE workstreams SET profile = ? WHERE id = ? AND COALESCE(profile, ?) = ?').run(digest === DEFAULT_DIGEST ? null : digest, ws.id, DEFAULT_DIGEST, expected);
+      if (r.changes !== 1) throw new StoreError('conflict', 'el perfil vigente cambió');
+      this.event(ws.id, 'info', `perfil asignado: ${current} → ${digest}`);
+    });
+  }
+
   setVerifySetupHash(id: string, hash: string): void {
     this.withRetry(() => this.db.query('UPDATE workstreams SET verify_setup_hash = ? WHERE id = ?').run(hash, id));
   }
@@ -694,6 +708,29 @@ export class Store {
         .run(next, ws.id, ws.state);
       if (res.changes !== 1) throw new StoreError('conflict', `workstream ${ws.slug} changed concurrently`);
       this.event(ws.id, 'info', `workstream ${ws.state} -> ${next}`);
+    });
+    return this.getWorkstream(ws.id);
+  }
+
+  /** Ajustes editables desde la web (D-F): objetivo, concurrencia y tope. Un evento por valor con el anterior. */
+  updateWorkstreamSettings(idOrSlug: string, input: { goal?: string; workerConcurrency?: number; taskLimit?: number }): Workstream {
+    const ws = this.getWorkstream(idOrSlug);
+    const goal = input.goal?.trim();
+    if (goal !== undefined && (!goal || goal.length > 2000)) throw new StoreError('invalid_input', 'goal: 1-2000 caracteres');
+    for (const [name, v, max] of [['worker_concurrency', input.workerConcurrency, 16], ['task_limit', input.taskLimit, 1000]] as const) {
+      if (v !== undefined && (!Number.isInteger(v) || v < 1 || v > max)) throw new StoreError('invalid_input', `${name}: entero entre 1 y ${max}`);
+    }
+    const changes: [string, string, string | number, string | number][] = [];
+    if (goal !== undefined && goal !== ws.goal) changes.push(['goal', 'goal', ws.goal, goal]);
+    if (input.workerConcurrency !== undefined && input.workerConcurrency !== ws.workerConcurrency) changes.push(['worker_concurrency', 'worker_concurrency', ws.workerConcurrency, input.workerConcurrency]);
+    if (input.taskLimit !== undefined && input.taskLimit !== ws.taskLimit) changes.push(['task_limit', 'task_limit', ws.taskLimit, input.taskLimit]);
+    this.withRetry(() => {
+      for (const [column, label, before, after] of changes) {
+        const res = this.db.query(`UPDATE workstreams SET ${column} = ? WHERE id = ? AND ${column} = ?`).run(after, ws.id, before);
+        if (res.changes !== 1) throw new StoreError('conflict', `workstream ${ws.slug} changed concurrently`);
+        const show = (v: string | number) => typeof v === 'string' ? JSON.stringify(v.length > 200 ? `${v.slice(0, 200)}…` : v) : v;
+        this.event(ws.id, 'info', `workstream ${ws.slug}: ${label} ${show(before)} -> ${show(after)}`);
+      }
     });
     return this.getWorkstream(ws.id);
   }
@@ -1722,6 +1759,19 @@ export class Store {
       }
       this.setChangeStatus(changeId, outcome);
       this.event(c.workstreamId, 'info', `change ${outcome}`, changeId);
+      return this.getChange(changeId);
+    }).immediate());
+  }
+
+  /** Cambia el título; el evento conserva el anterior. Título de 1 a 200 caracteres. */
+  renameChange(changeId: string, title: string): Change {
+    const next = title.trim();
+    if (!next || next.length > 200) throw new StoreError('invalid_input', 'el título debe tener entre 1 y 200 caracteres');
+    return this.withRetry(() => this.db.transaction(() => {
+      const c = this.getChange(changeId);
+      if (c.title === next) return c;
+      this.db.query('UPDATE changes SET title = ?, updated_at = ? WHERE id = ?').run(next, this.now(), changeId);
+      this.event(c.workstreamId, 'info', `título cambiado: "${c.title}" -> "${next}"`, changeId);
       return this.getChange(changeId);
     }).immediate());
   }

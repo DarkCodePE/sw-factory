@@ -11,6 +11,7 @@ import { AGENT_NAMES } from './agents.ts';
 import { agentsMain } from './agents-verify.ts';
 import { loadMcpRegistry, mcpListMain, McpRegistryError } from './mcp-registry.ts';
 import { profileMain } from './profile-cli.ts';
+import { exportDefinition, importDefinition } from './definition.ts';
 import { benchMain } from './bench-cli.ts';
 import { improveMain } from './improve-cli.ts';
 import { abortOnSigint, scoreMain } from './scorers-cli.ts';
@@ -107,6 +108,7 @@ const HELP = `fab — agente de código y fábrica de software local
   fab runner serve --root <dir>   lado runner (lo arranca sshd por el comando forzado)
   fab ws runner <ws> <nombre> | --none   asigna o quita el runner del workstream
   fab profile export [--out f] | import <f> | inspect <digest> | list   perfiles de instrucciones inmutables por digest
+  fab definition export <slug> <dir> | import <dir> --repo <path> [--slug <slug>]   definición como árbol de ficheros (sin rutas ni valores de entorno)
   fab api-key create --name <n> --scope read|decide | list | revoke <id|nombre>   claves de la API local (la clave se muestra una vez)
   fab ws state <slug> <active|paused|archived>
   fab signal add <slug> <title> [--body <text>]
@@ -131,6 +133,7 @@ const HELP = `fab — agente de código y fábrica de software local
   fab worktree repair <changeId> [--discard]  repara preparación; conserva la rama
   fab retry <changeId>          re-encola un bloqueo, fallo o validador agotado
   fab reject <changeId>         cancela el change y borra su worktree
+  fab note <changeId> <texto>   nota del dueño: se entrega al empezar el siguiente turno de trabajo; no lanza ni interrumpe nada
   fab events <slug>
   fab exec [prompt]             agente propio; fab exec --help para opciones
   fab doctor                    estado del sandbox, del runtime de Script y de la búsqueda
@@ -252,6 +255,7 @@ async function main(argv: string[]): Promise<number> {
       'verify-setup': { type: 'string', multiple: true },
       'protect-none': { type: 'boolean' },
       profile: { type: 'string' },
+      slug: { type: 'string' },
       allow: { type: 'string', multiple: true },
       import: { type: 'string' },
       none: { type: 'boolean' },
@@ -332,6 +336,16 @@ async function main(argv: string[]): Promise<number> {
           console.log(`${upd.slug} runner: ${upd.runner ?? 'ninguno'}`);
           if (name && store.getRunner(name).kind === 'ssh') console.log(`aviso: ${CODE_LEAVES_WARNING} ${store.getRunner(name).target}.`);
         } else throw new StoreError('invalid_input', 'fab ws create|list|state|env|mcp|runner');
+        return 0;
+      }
+      case 'definition': {
+        if (sub === 'export' && rest[0] && rest[1]) {
+          const files = exportDefinition(store, STATE_DIR, rest[0], resolve(rest[1]));
+          console.log(`definición de ${rest[0]} exportada a ${rest[1]} (${files.length} ficheros)`);
+        } else if (sub === 'import' && rest[0] && values.repo) {
+          const r = importDefinition(store, STATE_DIR, resolve(rest[0]), resolve(values.repo), values.slug);
+          console.log(`workstream ${r.slug} creado en draft con perfil ${r.digest}${r.skills.length ? `; skills del árbol (no se escriben en el repo): ${r.skills.join(', ')}` : ''}`);
+        } else throw new StoreError('invalid_input', 'usage: fab definition export <slug> <dir> | import <dir> --repo <path> [--slug <slug>]');
         return 0;
       }
       case 'signal': {
@@ -473,6 +487,18 @@ async function main(argv: string[]): Promise<number> {
         console.log(`change ${short(c.id)}: ${a.kind} re-encolada`);
         return 0;
       }
+      case 'note': {
+        const c = findByPrefix(allChanges(store), sub ?? '', 'change');
+        if (!rest.length) { // sin texto: lista las notas con su estado de entrega
+          const notes = store.listChangeNotes(c.id);
+          if (!notes.length) console.log(`change ${short(c.id)}: sin notas`);
+          for (const n of notes) console.log(`${short(n.id)}  ${n.actor}  ${n.deliveredAt ? `entregada ${n.deliveredAt}` : 'pendiente'}  ${n.body.replace(/\s+/g, ' ').slice(0, 80)}`);
+          return 0;
+        }
+        const n = store.addChangeNote(c.id, rest.join(' '));
+        console.log(`change ${short(c.id)}: nota ${short(n.id)} registrada; se entrega en el siguiente turno`);
+        return 0;
+      }
       case 'reject': {
         const c = findByPrefix(allChanges(store), sub ?? '', 'change');
         store.event(c.workstreamId, 'warning', 'reject solicitado', c.id);
@@ -514,7 +540,7 @@ function readNameList(path: string): string[] {
   return lines;
 }
 
-const COMMANDS = new Set(['worktree', 'ws', 'signal', 'triage', 'inbox', 'review', 'run', 'status', 'show', 'merge', 'retry', 'gate', 'reject', 'events', 'tui', 'doctor', 'agents', 'profile', 'improve', 'bench', 'score', 'automation', 'api-key', 'runner', 'resident', 'help']);
+const COMMANDS = new Set(['worktree', 'ws', 'definition', 'signal', 'triage', 'inbox', 'review', 'run', 'status', 'show', 'merge', 'retry', 'gate', 'reject', 'note', 'events', 'tui', 'doctor', 'agents', 'profile', 'improve', 'bench', 'score', 'automation', 'api-key', 'runner', 'resident', 'help']);
 
 // A forced exit is still needed for handles left by dependencies, but pipe
 // writes are asynchronous: wait for both write queues before terminating.
