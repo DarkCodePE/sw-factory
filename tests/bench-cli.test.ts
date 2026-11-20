@@ -97,3 +97,28 @@ test('add-task escribe el fichero nuevo y no toca la suite; sin --out falla', as
   expect(await run('add-task', c.id, '--id', 'n2', '--split', 'development')).toBe(1);
   expect(existsSync(o)).toBe(true);
 });
+
+test('--seed fija la semilla impresa y el orden; --confine queda guardado en las filas', async () => {
+  await create();
+  expect(await run('run', 'b1', '--split', 'development', '--seed', '3')).toBe(0);
+  expect(out.at(-1)).toContain('semilla 3');
+  const seeds = store.db.query<{ seed: number; confined: number }, []>("SELECT DISTINCT seed, confined FROM experiment_runs WHERE experiment_id = 'b1'").all();
+  expect(seeds).toEqual([{ seed: 3, confined: 0 }]);
+  if (!Bun.which('bwrap')) return;
+  await run('create', '--id', 'b2', '--suite', suite, '--variant', `base=${DEFAULT_DIGEST}@fake`, '--variant', `chall=${challenger}@fake`);
+  expect(await run('run', 'b2', '--split', 'development', '--seed', '3', '--confine')).toBe(0);
+  const order = (id: string) => store.db.query("SELECT task_id, arm FROM experiment_runs WHERE experiment_id = ? ORDER BY rowid").all(id);
+  expect(order('b2')).toEqual(order('b1')); // misma semilla, mismo orden
+  expect(store.db.query("SELECT DISTINCT confined FROM experiment_runs WHERE experiment_id = 'b2'").all()).toEqual([{ confined: 1 }]);
+}, 60_000);
+
+test('report imprime el error en una línea y sin caracteres de control', async () => {
+  await create();
+  store.db.query("UPDATE benchmarks SET status = 'failed', error = ? WHERE id = 'b1'").run('uno\x1b[31mrojo\nfalso: dos\r\x07');
+  expect(await run('report', 'b1')).toBe(0);
+  const text = out.join('\n');
+  expect(text).toContain('error: uno [31mrojo falso: dos');
+  out = [];
+  expect(text).not.toMatch(/[\x00-\x08\x0b-\x1f\x7f]/);
+  expect(text.split('\n')).toHaveLength(2); // cabecera + «sin corridas todavía»
+});

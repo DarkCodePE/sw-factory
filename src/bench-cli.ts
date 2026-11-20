@@ -15,6 +15,9 @@ export function parseVariant(raw: string): Variant {
   return { name: raw.slice(0, eq), profile: raw.slice(eq + 1, at), agent: raw.slice(at + 1) };
 }
 
+/** El error puede traer salida de un agente: una línea, sin caracteres de control. */
+const oneLine = (text: string) => text.replace(/[\x00-\x1f\x7f-\x9f]+/g, ' ').trim().slice(0, 300);
+
 const mean = (xs: number[]) => xs.reduce((a, b) => a + b, 0) / xs.length;
 
 /** Una sola fuente para la tabla y el JSON: los dos salen de aquí, así no pueden discrepar. */
@@ -39,7 +42,7 @@ export function benchmarkSummary(db: Database, id: string) {
 
 export function reportBenchmarkText(db: Database, id: string): string {
   const s = benchmarkSummary(db, id);
-  const lines = [`benchmark ${id}  estado ${s.status}  suite ${s.suite_digest.slice(0, 12)}${s.error ? `  error: ${s.error}` : ''}`];
+  const lines = [`benchmark ${id}  estado ${s.status}  suite ${s.suite_digest.slice(0, 12)}${s.error ? `  error: ${oneLine(s.error)}` : ''}`];
   if (!s.variants.length) return lines.concat('sin corridas todavía').join('\n');
   const head = ['variante', 'agente', 'n', 'éxito', 'diff medio', 'duración media s', 'coste medio USD'];
   const table = [head, ...s.variants.map(v => [v.variant, v.agent, String(v.n), v.success_rate.toFixed(3), v.mean_diff_lines.toFixed(1), (v.mean_duration_ms / 1000).toFixed(1),
