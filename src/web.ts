@@ -186,7 +186,8 @@ export function startWeb(stateDir: string, port = 4310, options: { write?: boole
         try { response = await webAction(req, stateDir, server.port!, auth, keyUsage); }
         catch { return respond('No se pudo registrar la acción.', 500, 'text/plain; charset=utf-8'); }
         for (const [key, value] of Object.entries(HEADERS)) if (!response.headers.has(key)) response.headers.set(key, value);
-        if (response.status >= 400) return actionErrorPage(response, req, url, openStore, shell);
+        // El editor de automations ya devuelve su propia página HTML de error (T86): no se envuelve de nuevo.
+        if (response.status >= 400 && !response.headers.get('Content-Type')?.startsWith('text/html')) return actionErrorPage(response, req, url, openStore, shell);
         return response;
       }
       if (req.method !== 'GET' && req.method !== 'HEAD') return respond('Método no permitido', 405, 'text/plain; charset=utf-8');
