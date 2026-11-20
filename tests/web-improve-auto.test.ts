@@ -196,3 +196,19 @@ test('T91-H4: asignar un perfil con otra política de automejora lo advierte; co
   expect(page2).toContain('Asignar al workstream');
   expect(page2).not.toContain('política de automejora distinta');
 });
+
+test('T91-H5: reenviar sin tocar un campo enmascarado conserva el secreto guardado; editarlo guarda el texto nuevo', async () => {
+  const secret = `usa ghp_${'a'.repeat(36)} para entrar`;
+  const p0 = loadProfile(dir, digest);
+  const withSecret = saveProfile(dir, { ...p0, autoImprove: { threshold: 0.5, window: 2, minScores: 2, scorers: ['tests'], instructions: secret } }).digest;
+  store.assignProfile(wsId, withSecret, digest);
+  await login();
+  const form = await html(page);
+  expect(form).not.toContain('ghp_'); // la página nunca enseña el secreto
+  const masked = /<textarea name="instructions"[^>]*>\n([^<]*)<\/textarea>/.exec(form)![1]!;
+  expect(masked).toContain('[REDACTED]');
+  const kept = loadProfile(dir, (await save({ previous: withSecret, instructions: masked })).digest);
+  expect(kept.autoImprove!.instructions).toBe(secret); // M18: no se pierde ni se guarda el texto enmascarado
+  const edited = loadProfile(dir, (await save({ previous: withSecret, instructions: `${masked} y más` })).digest);
+  expect(edited.autoImprove!.instructions).toBe(`${masked} y más`);
+});

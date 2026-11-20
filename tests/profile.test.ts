@@ -113,3 +113,12 @@ test('el digest y el sha de fab llegan a la activity y al run.json, y el prompt 
     expect(run.activities[0].fabSha).toBe('abc123');
   } finally { delete process.env.FAB_SHA; store.close(); }
 });
+
+test('T91-H5: autoImprove rechaza claves desconocidas y jueces repetidos', () => {
+  const scorer = { scope: 'implement', rubric: 'R', classes: [{ label: 'ok', score: 1 }, { label: 'mal', score: 0 }], passing: 0.5, sampling: 1 };
+  const base = { ...defaultProfile(), schemaVersion: 2 as const, harness: 'fake', scorers: { tests: scorer } };
+  const policy = { threshold: 0.5, window: 2, minScores: 2, scorers: ['tests'], instructions: '' };
+  expect(() => saveProfile(dir, { ...base, autoImprove: policy })).not.toThrow();
+  expect(() => saveProfile(dir, { ...base, autoImprove: { ...policy, extra: 1 } as never })).toThrow('clave desconocida');
+  expect(() => saveProfile(dir, { ...base, autoImprove: { ...policy, scorers: ['tests', 'tests'] } })).toThrow('sin repetir');
+});
