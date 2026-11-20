@@ -4,6 +4,7 @@ import { createHash } from 'node:crypto';
 import { existsSync, mkdirSync, readFileSync, readdirSync, renameSync, rmSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { AGENT_NAMES, MODEL_AGENTS } from './agents.ts';
+import { CONFINABLE_AGENTS } from './sandbox/confine.ts';
 import { COMMIT_LINE, DEFAULT_WORKER_TEMPLATES, type WorkerTemplates } from './prompts.ts';
 import { DEFAULT_VALIDATOR_TEMPLATES, type ValidatorTemplates } from './validators/prompts.ts';
 
@@ -21,13 +22,24 @@ export interface Profile {
   validators: ValidatorTemplates;
   /** Solo v2: adaptador y modelo por rol; cada rol y cada campo son opcionales. */
   roles?: Partial<Record<Role, RoleConfig>>;
+  /** Solo v2: jueces que clasifican ejecuciones terminadas. Son un aviso, nunca una puerta (T64). */
+  scorers?: Record<string, ScorerDef>;
 }
+
+export const SCORER_SCOPES = [...ROLES, 'change'] as const;
+export type ScorerScope = (typeof SCORER_SCOPES)[number];
+export interface ScorerClass { label: string; score: number }
+export interface ScorerDef { scope: ScorerScope; rubric: string; classes: ScorerClass[]; passing: number; sampling: number; harness?: string; model?: string }
 
 const MAX_TEMPLATE = 32 * 1024;
 const WORKER_KEYS = ['rules', 'investigate', 'implement'];
 const VALIDATOR_KEYS = ['rules', 'code_review', 'security_audit', 'qa'];
 const TOP_KEYS = ['schemaVersion', 'harness', 'model', 'repo', 'worker', 'validators'];
-const TOP_KEYS_V2 = [...TOP_KEYS, 'roles'];
+const TOP_KEYS_V2 = [...TOP_KEYS, 'roles', 'scorers'];
+const SCORER_NAME_RE = /^[a-z0-9][a-z0-9-]{0,40}$/;
+const CLASS_LABEL_RE = /^[a-z0-9_-]{1,24}$/;
+const MAX_SCORERS = 8;
+const unit = (n: unknown): n is number => typeof n === 'number' && n >= 0 && n <= 1;
 // El primer carácter no puede ser `-`: el modelo viaja como elemento de argv y no debe leerse como flag.
 const MODEL_RE = /^[A-Za-z0-9][A-Za-z0-9._:/@-]{0,127}$/;
 
@@ -58,6 +70,40 @@ function templates(raw: unknown, keys: string[], where: string): void {
   }
 }
 
+function validateScorers(raw: unknown, profileHarness: string, modelOk: (m: unknown, adapter: string, where: string) => void): void {
+  if (!raw || typeof raw !== 'object' || Array.isArray(raw)) throw new Error('perfil inválido: scorers debe ser un objeto');
+  const entries = Object.entries(raw);
+  if (entries.length > MAX_SCORERS) throw new Error(`perfil inválido: scorers admite como mucho ${MAX_SCORERS} jueces`);
+  for (const [name, def] of entries) {
+    const at = `scorers.${name}`;
+    if (!SCORER_NAME_RE.test(name)) throw new Error(`perfil inválido: ${at} debe cumplir ${SCORER_NAME_RE}`);
+    if (!def || typeof def !== 'object' || Array.isArray(def)) throw new Error(`perfil inválido: ${at} debe ser un objeto`);
+    const d = def as Record<string, unknown>;
+    for (const k of Object.keys(d)) if (!['scope', 'rubric', 'classes', 'passing', 'sampling', 'harness', 'model'].includes(k)) throw new Error(`perfil inválido: clave desconocida ${at}.${k}`);
+    if (!(SCORER_SCOPES as readonly unknown[]).includes(d.scope)) throw new Error(`perfil inválido: ${at}.scope debe ser uno de ${SCORER_SCOPES.join(', ')}`);
+    if (typeof d.rubric !== 'string' || !d.rubric.trim()) throw new Error(`perfil inválido: ${at}.rubric debe ser un texto no vacío`);
+    if (d.rubric.length > MAX_TEMPLATE) throw new Error(`perfil inválido: ${at}.rubric supera ${MAX_TEMPLATE} caracteres`);
+    if (!Array.isArray(d.classes) || d.classes.length < 2 || d.classes.length > 7) throw new Error(`perfil inválido: ${at}.classes debe ser una lista de 2 a 7 clases`);
+    const seen = new Set<string>();
+    d.classes.forEach((c: unknown, i: number) => {
+      const cat = `${at}.classes[${i}]`;
+      if (!c || typeof c !== 'object' || Array.isArray(c)) throw new Error(`perfil inválido: ${cat} debe ser un objeto`);
+      const k = c as Record<string, unknown>;
+      for (const key of Object.keys(k)) if (key !== 'label' && key !== 'score') throw new Error(`perfil inválido: clave desconocida ${cat}.${key}`);
+      if (typeof k.label !== 'string' || !CLASS_LABEL_RE.test(k.label)) throw new Error(`perfil inválido: ${cat}.label debe cumplir ${CLASS_LABEL_RE}`);
+      if (seen.has(k.label)) throw new Error(`perfil inválido: ${at}.classes: etiqueta repetida ${k.label}`);
+      seen.add(k.label);
+      if (!unit(k.score)) throw new Error(`perfil inválido: ${cat}.score debe ser un número entre 0 y 1`);
+    });
+    for (const k of ['passing', 'sampling'] as const) if (!unit(d[k])) throw new Error(`perfil inválido: ${at}.${k} debe ser un número entre 0 y 1`);
+    // El juez corre siempre confinado: su adaptador (propio o el del perfil) debe poder confinarse.
+    if (d.harness !== undefined && typeof d.harness !== 'string') throw new Error(`perfil inválido: ${at}.harness debe ser un adaptador confinable (${CONFINABLE_AGENTS.join(', ')})`);
+    const adapter = d.harness ?? profileHarness;
+    if (typeof adapter !== 'string' || !AGENT_NAMES.includes(adapter) || !CONFINABLE_AGENTS.includes(adapter)) throw new Error(`perfil inválido: ${at}.harness debe ser un adaptador confinable (${CONFINABLE_AGENTS.join(', ')})`);
+    modelOk(d.model, adapter, `${at}.model`);
+  }
+}
+
 /** Valida esquema y plantillas. Lanza con un mensaje que nombra el campo. */
 export function validateProfile(raw: unknown): Profile {
   if (!raw || typeof raw !== 'object' || Array.isArray(raw)) throw new Error('perfil inválido: debe ser un objeto JSON');
@@ -67,12 +113,12 @@ export function validateProfile(raw: unknown): Profile {
   for (const k of Object.keys(o)) if (!(v2 ? TOP_KEYS_V2 : TOP_KEYS).includes(k)) throw new Error(`perfil inválido: clave desconocida ${k}`);
   if (typeof o.harness !== 'string' || !AGENT_NAMES.includes(o.harness)) throw new Error(`perfil inválido: harness debe ser uno de ${AGENT_NAMES.join(', ')}`);
   for (const k of ['model', 'repo'] as const) if (o[k] !== undefined && (typeof o[k] !== 'string' || !o[k])) throw new Error(`perfil inválido: ${k} debe ser un texto no vacío`);
+  const modelOk = (m: unknown, adapter: string, where: string) => {
+    if (m === undefined) return;
+    if (typeof m !== 'string' || !MODEL_RE.test(m)) throw new Error(`perfil inválido: ${where} debe cumplir ${MODEL_RE}`);
+    if (!MODEL_AGENTS.includes(adapter)) throw new Error(`perfil inválido: ${where}: el adaptador ${adapter} no admite modelo`);
+  };
   if (v2) {
-    const modelOk = (m: unknown, adapter: string, where: string) => {
-      if (m === undefined) return;
-      if (typeof m !== 'string' || !MODEL_RE.test(m)) throw new Error(`perfil inválido: ${where} debe cumplir ${MODEL_RE}`);
-      if (!MODEL_AGENTS.includes(adapter)) throw new Error(`perfil inválido: ${where}: el adaptador ${adapter} no admite modelo`);
-    };
     modelOk(o.model, o.harness, 'model');
     if (o.roles !== undefined) {
       if (!o.roles || typeof o.roles !== 'object' || Array.isArray(o.roles)) throw new Error('perfil inválido: roles debe ser un objeto');
@@ -86,6 +132,7 @@ export function validateProfile(raw: unknown): Profile {
       }
     }
   }
+  if (v2 && o.scorers !== undefined) validateScorers(o.scorers, o.harness as string, modelOk);
   templates(o.worker, WORKER_KEYS, 'worker');
   templates(o.validators, VALIDATOR_KEYS, 'validators');
   const w = o.worker as Record<string, string>, v = o.validators as Record<string, string>;
