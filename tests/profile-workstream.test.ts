@@ -156,3 +156,37 @@ test('una pendiente nueva no continúa sesiones de otro tipo ni generaciones ant
   expect(store.getActivity(a.id).status).toBe('pending');
   expect(store.getWorkstream(ws).profile).toBe(digest);
 });
+
+test('T84-H3: el adaptador fallback exige confinamiento aunque todos los roles lo declaren y no haya canal', () => {
+  const all = save(v2({ roles: Object.fromEntries(ROLES.map(role => [role, { harness: 'claude' }])) }));
+  store.db.query('UPDATE workstreams SET profile = ? WHERE id = ?').run(all, ws);
+  expect(() => switchAgent('droid', 'claude', all)).toThrow(/fallback.*confinable/);
+  expect(store.getWorkstream(ws).agent).toBe('claude');
+});
+
+test('T84-H3: un adaptador previo obsoleto basta para rechazar el cambio, aunque el perfil coincida', () => {
+  expect(() => switchAgent('codex', 'native')).toThrow(/cambió/);
+  expect(store.getWorkstream(ws).agent).toBe('claude');
+});
+
+test('T84-H3: solo se restaura el perfil por defecto sobre uno corrupto; otro digest falla y no escribe', () => {
+  const corrupt = 'a'.repeat(64);
+  store.db.query('UPDATE workstreams SET profile = ? WHERE id = ?').run(corrupt, ws);
+  expect(() => store.assignProfile(ws, save(v2()), corrupt, 'claude')).toThrow(/corrupto/);
+  expect(store.getWorkstream(ws).profile).toBe(corrupt);
+});
+
+test('T84-H3: una sesión abierta de otro kind no cuenta como reanudación aunque comparta generación', () => {
+  const change = activeChange();
+  const a = store.listActivities({ changeId: change.id })[0]!;
+  const adm = new AdmissionDb(store);
+  const sessions = new SessionStore(adm);
+  const meta = { backend: 'claude', cwd: '/repo' };
+  const mine = sessions.begin(change.id, a.kind, meta);
+  adm.db.query("UPDATE adm_sessions SET status = 'closed' WHERE session_id = ?").run(mine.session.sessionId);
+  const other = sessions.begin(change.id, a.kind === 'implementation' ? 'investigation' : 'implementation', meta);
+  sessions.markLaunched(other.session.sessionId);
+  const digest = save(v2());
+  store.assignProfile(ws, digest, DEFAULT_DIGEST, 'claude');
+  expect(store.getWorkstream(ws).profile).toBe(digest);
+});
