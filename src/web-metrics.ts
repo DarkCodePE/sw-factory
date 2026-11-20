@@ -124,9 +124,11 @@ function metricsSummary(store: Store, stateDir: string, url: URL): { title: stri
     from = undefined;
     to = undefined;
   }
-  const range = rangeParam ?? (from || to ? 'custom' : '7');
+  let range = rangeParam ?? (from || to ? 'custom' : '7');
+  if (range === 'custom' && !from && !to) {
+    range = '7';
+  }
   if (!['7', '30', 'all', 'custom'].includes(range)) throw new URIError('Rango inválido');
-  if (range === 'custom' && !from && !to) throw new URIError('Rango inválido');
   const m = calculateMetrics(store, stateDir, { ws, range: range as MetricsRange, from, to });
   const link = (c: { id: string; title: string }) => `<a href="/changes/${encodeURIComponent(c.id)}">${esc(c.title)}</a>`;
   const groups = (name: string, rows: typeof m.cost.adapters, unit = 'Activities') => table(name, ['Grupo', 'Coste total', 'Subtotal medido', `${unit} sin coste medido`], rows.map(g => [esc(g.name), money(g.total), money(g.measured), String(g.unknown)]));

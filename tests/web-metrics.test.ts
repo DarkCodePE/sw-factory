@@ -337,14 +337,11 @@ test('T82-H1: el rango libre rechaza más de 366 días con 400', async () => {
   }
 });
 
-test('T82-H2: range=custom sin fechas y jueces con custom devuelven 400', async () => {
+test('T82-H2: calculateMetrics rechaza range=custom sin fechas y jueces rechaza custom', async () => {
   expect(() => calculateMetrics(store, dir, { range: 'custom' })).toThrow(URIError);
   const server = startWeb(dir, 0);
   try {
     const base = `http://127.0.0.1:${server.port}/metricas`;
-    const resCustomNoDates = await fetch(`${base}?ws=&range=custom&from=&to=`);
-    expect(resCustomNoDates.status).toBe(400);
-
     const resJuecesCustom = await fetch(`${base}?tab=jueces&range=custom`);
     expect(resJuecesCustom.status).toBe(400);
   } finally {
@@ -497,6 +494,21 @@ test('T82-H9: borde exacto de 366 días pasa y 367 días da 400; solo from no la
 
   // Solo from (sin to) de hace más de 366 días no se rechaza (la serie se acota a 90 días)
   expect(() => calculateMetrics(store, dir, { from: '2024-01-01', now })).not.toThrow();
+});
+
+test('T82-H10: range=custom sin fechas en la web se trata como rango por defecto en vez de 400', async () => {
+  const server = startWeb(dir, 0);
+  try {
+    const base = `http://127.0.0.1:${server.port}/metricas`;
+    const res = await fetch(`${base}?ws=&range=custom&from=&to=`);
+    expect(res.status).toBe(200);
+    const html = await res.text();
+    expect(html).toContain('form action="/metricas"');
+    expect(html).toContain('Últimos 7 días');
+  } finally {
+    server.stop(true);
+    store = new Store(join(dir, 'fabrica.db'));
+  }
 });
 
 test('T83-H1: repetir recordPrOpened no duplica el evento ni altera el conteo en metricsDailyPrs', () => {
