@@ -67,6 +67,12 @@
       "topic": "Web: H1 de F2 y archivado de workstreams",
       "decision": "F2 H1: opción B ya (sesión servida bajo un host único por arranque, fab-<aleatorio>.localhost:<puerto>, aceptado solo en Host y Origin), además del aviso A ya hecho. T60: archivar un workstream con changes en curso se permite, igual que en la CLI; la confirmación muestra cuántos hay.",
       "date": "2026-11-19"
+    },
+    {
+      "id": "D12",
+      "topic": "Decisiones tomadas en los arreglos de la tanda 4 (registro)",
+      "decision": "Runners: código de protocolo result_rejected cuando el sellado rechaza el árbol del agente; casa no reintenta (actualizar diseno/T74.md §4.2). Secretos: native y agy conservan siempre FABRICA_LLM_API_KEY, FABRICA_LLM_BASE_URL, FABRICA_LLM_MODEL y FABRICA_HOME en modo declarado. API (D11 ampliada): una clave decide no puede crear ni activar workstreams (ACTIONS api:false); sí ajustar y archivar. T72d H1: aplicada la opción 3 (test estructural de llamadores de confineAgent: agents.ts y runners/serve.ts); la opción 1 queda como T98. Web: cancelar desde la web cubre failed, blocked y quarantined como fab reject.",
+      "date": "2026-11-20"
     }
   ],
   "tasks": [
