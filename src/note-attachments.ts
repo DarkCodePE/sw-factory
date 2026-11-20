@@ -9,7 +9,7 @@ export const NOTE_ATTACHMENT_EXTENSIONS = ['.txt', '.md', '.log', '.json', '.csv
 
 export interface NoteAttachment { name: string; bytes: Uint8Array }
 export interface NoteAttachmentMeta { name: string; size: number }
-export interface NoteAttachmentTarget { cwd: string; persistentMounts?: string[] }
+export interface NoteAttachmentTarget { cwd?: string; persistentMounts?: string[]; /** Inventario de escritura calculado fuera de la transacción. */ inventory?: string[] }
 
 export const NOTE_ATTACHMENT_WAIT = {
   remote: 'El runner asignado es remoto.',
@@ -83,33 +83,42 @@ export function assertPrivateNoteDatabase(dbPath: string): void {
   } catch { throw new Error(NOTE_ATTACHMENT_STATE[reason]); }
 }
 
-/** Reutiliza el inventario de Git por checkout y cubre los directorios persistentes de fab. Solo lectura. */
-export function assertNoteAttachmentMounts(dbPath: string, repos: string[], target?: NoteAttachmentTarget): void {
-  const state = dirname(resolve(dbPath));
-  const check = (path: string) => {
-    if (withinMount(state, path)) throw new Error(PRIVATE_STATE);
-  };
+/**
+ * Inventario de escritura: reutiliza el de Git por checkout. Lanza `git`, así que se calcula fuera de la
+ * transacción. Un repo que ya no existe no puede montarse y no cuenta (otro workstream no bloquea el resto).
+ */
+export function noteAttachmentInventory(repos: string[], target?: NoteAttachmentTarget): string[] {
+  const paths = new Set<string>();
   try {
     for (const repo of new Set(repos)) {
-      // Un repo que ya no existe no puede montarse: otro workstream no bloquea los adjuntos del resto.
-      try { realpathSync(repo); }
+      let real: string;
+      try { real = realpathSync(repo); }
       catch (error) { if (missing(error)) continue; throw error; }
-      for (const path of writableMounts(repo)) check(path);
+      for (const path of writableMounts(repo)) paths.add(path);
       const list = Bun.spawnSync(['git', '-C', repo, 'worktree', 'list', '--porcelain', '-z']);
       if (list.exitCode !== 0) throw new Error();
       for (const entry of list.stdout.toString().split('\0')) {
         if (!entry.startsWith('worktree ')) continue;
-        const worktree = entry.slice('worktree '.length);
         // El registro de Git puede conservar worktrees eliminados; sus git dirs comunes ya se comprobaron.
-        let real: string;
-        try { real = realpathSync(worktree); }
+        let worktree: string;
+        try { worktree = realpathSync(entry.slice('worktree '.length)); }
         catch (error) { if (missing(error)) continue; throw error; }
-        if (real !== realpathSync(repo)) for (const path of writableMounts(real)) check(path);
+        if (worktree !== real) for (const path of writableMounts(worktree)) paths.add(path);
       }
     }
-    if (target) for (const path of writableMounts(target.cwd)) check(path);
+    if (target?.cwd) for (const path of writableMounts(target.cwd)) paths.add(path);
+  } catch { throw new Error(NOTE_ATTACHMENT_STATE.git); }
+  return [...paths];
+}
+
+/** Solo lectura y sin procesos: compara el estado con el inventario y con los directorios persistentes de fab. */
+export function assertNoteAttachmentMounts(dbPath: string, repos: string[], target?: NoteAttachmentTarget): void {
+  const state = dirname(resolve(dbPath));
+  const inventory = target?.inventory ?? noteAttachmentInventory(repos, target);
+  try {
+    for (const path of inventory) if (withinMount(state, path)) throw new Error();
     for (const path of [join(state, 'worktrees'), join(state, 'live'), ...(target?.persistentMounts ?? [])]) {
-      try { check(realpathSync(path)); }
+      try { if (withinMount(state, realpathSync(path))) throw new Error(); }
       catch (error) { if (!missing(error)) throw error; }
     }
   } catch { throw new Error(NOTE_ATTACHMENT_STATE.mounts); }

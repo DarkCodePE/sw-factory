@@ -5,6 +5,7 @@ import { userInfo } from 'node:os';
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { Store } from '../src/store.ts';
+import { reserveTurnPrompt } from '../src/note-delivery.ts';
 import { assertNoteAttachmentMounts, assertPrivateNoteDatabase } from '../src/note-attachments.ts';
 
 const at = '2026-11-19T18:00:00.000Z';
@@ -328,4 +329,19 @@ test('T96-H2: el repo ausente de otro workstream no bloquea los adjuntos, y uno 
   expect(writer.addChangeNote(id, 'con otro repo ausente', attachment()).attachment?.name).toBe('datos.txt');
   const a = writer.listActivities({ changeId: id })[0]!;
   expect(writer.reserveNotes(id, a.id, 'intento', { cwd }).map(n => n.attachmentBytes !== undefined)).toEqual([true, true]);
+}));
+
+test('T96-H7: Git no corre dentro de la transacción del alta ni de la reserva', () => privateNotes((writer, id, cwd) => {
+  const spawn = Bun.spawnSync, inTx: boolean[] = [];
+  Bun.spawnSync = ((...args: Parameters<typeof Bun.spawnSync>) => { inTx.push(writer.db.inTransaction); return spawn(...args); }) as typeof Bun.spawnSync;
+  try {
+    writer.addChangeNote(id, 'con archivo', attachment());
+    const a = writer.listActivities({ changeId: id })[0]!;
+    // El turno vivo envuelve la reserva en su propia transacción: el inventario se prepara antes.
+    const route = { cwd, confine: true, adapter: 'claude', promptStdin: true };
+    const out = reserveTurnPrompt(writer, a, 'intento', route, notes => notes.map(n => n.body).join());
+    expect(out.hasAttachments).toBe(true);
+    expect(inTx.length).toBeGreaterThan(2);
+  } finally { Bun.spawnSync = spawn; }
+  expect(inTx.filter(Boolean)).toEqual([]);
 }));

@@ -13,7 +13,7 @@ import { isSessionLoss, reconstructPrompt, SessionStore, supersede } from '../ad
 import { TurnStore, type TurnReason } from '../admission/turns.ts';
 import { evidencePath } from '../evidence.ts';
 import { atomicEvidence } from '../manifest.ts';
-import { reserveTurnPrompt } from '../note-delivery.ts';
+import { prepareNoteTarget, reserveTurnPrompt } from '../note-delivery.ts';
 import { notesBlock, type WorkerTemplates } from '../prompts.ts';
 import { hostDir, type EnvDecl } from '../sandbox/confine.ts';
 import { scrubValues } from '../sandbox/env.ts';
@@ -100,12 +100,14 @@ export async function runLiveActivity(store: Store, adm: AdmissionDb, a: Activit
     try {
       // La reserva va antes de marcar la sesión: si falla (contención), no queda una sesión lanzada que nunca existió.
       const attemptId = randomUUID();
+      const mounts = [join(ctx.stateDir, 'live'), ...(ctx.claudeProjects ? [ctx.claudeProjects] : [])];
+      const prepared = prepareNoteTarget(store, a.changeId, { cwd: ctx.cwd, persistentMounts: mounts });
       const { prompt, reserved, hasAttachments } = store.withRetry(() => {
         const historical = reason === 'reconstructed' ? store.listHistoricalNoteBodies(a.changeId) : [];
         return reserveTurnPrompt(store, a, attemptId, {
           cwd: ctx.cwd, confine: ctx.confine && ctx.backend.confinable, adapter: ctx.backend.name,
           promptStdin: ctx.backend.promptStdin,
-          persistentMounts: [join(ctx.stateDir, 'live'), ...(ctx.claudeProjects ? [ctx.claudeProjects] : [])],
+          persistentMounts: mounts, prepared,
         }, notes => reason === 'reconstructed'
           ? reconstructPrompt(store, adm, a.id, {
             worktree: ctx.cwd, branch: ctx.branch, factoryCommits: ctx.factoryCommits, templates: ctx.templates,

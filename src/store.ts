@@ -12,7 +12,7 @@ import { gitEvidence, writeManifest } from './manifest.ts';
 import { lastDue, parseCron } from './cron.ts';
 import {
   assertNoteAttachmentMounts, assertPrivateNoteDatabase, NOTE_ATTACHMENT_HISTORY_MAX, NOTE_ATTACHMENT_MAX,
-  NOTE_ATTACHMENT_REMOTE, NOTE_ATTACHMENT_WAIT, validateNoteAttachment, type NoteAttachment, type NoteAttachmentMeta, type NoteAttachmentTarget, type NoteAttachmentWait,
+  NOTE_ATTACHMENT_REMOTE, NOTE_ATTACHMENT_WAIT, noteAttachmentInventory, validateNoteAttachment, type NoteAttachment, type NoteAttachmentMeta, type NoteAttachmentTarget, type NoteAttachmentWait,
 } from './note-attachments.ts';
 
 import {
@@ -1166,12 +1166,26 @@ export class Store {
     catch (error) { return (error as Error).message; }
   }
 
+  /**
+   * Git corre aquí, antes de abrir la transacción IMMEDIATE del alta o de la reserva: dentro solo se compara
+   * el inventario con el estado. Si falla, dentro se repite y falla cerrado.
+   */
+  prepareNoteDelivery(target?: NoteAttachmentTarget): NoteAttachmentTarget {
+    try { return { ...target, inventory: noteAttachmentInventory(this.listWorkstreams().map(ws => ws.repo), target) }; }
+    catch { return { ...target }; }
+  }
+
+  hasPendingNoteAttachments(changeId: string): boolean {
+    return !!this.db.query(`SELECT 1 FROM change_notes WHERE change_id = ? AND delivered_at IS NULL AND NOT ${PLAIN_NOTE} LIMIT 1`).get(changeId);
+  }
+
   assertNoteAttachmentState(target?: NoteAttachmentTarget): void {
     assertPrivateNoteDatabase(this.dbPath);
     assertNoteAttachmentMounts(this.dbPath, this.listWorkstreams().map(ws => ws.repo), target);
   }
 
   addChangeNote(changeId: string, body: string, attachment?: NoteAttachment): ChangeNote {
+    const prepared = attachment !== undefined ? this.prepareNoteDelivery() : undefined;
     return this.withRetry(() => {
       const change = this.getChange(changeId);
       if (isTerminalChange(change.status)) {
@@ -1192,7 +1206,7 @@ export class Store {
         if (this.noteRunnerIsRemote(change.workstreamId)) {
           throw new StoreError('invalid_input', NOTE_ATTACHMENT_REMOTE);
         }
-        try { this.assertNoteAttachmentState(); }
+        try { this.assertNoteAttachmentState(prepared); }
         catch (error) { throw new StoreError('invalid_input', (error as Error).message); }
         const { pending, total } = this.db.query<{ pending: number; total: number }, [string]>(`
           SELECT COALESCE(SUM(CASE WHEN delivered_at IS NULL THEN length(attachment_bytes) ELSE 0 END), 0) AS pending,
