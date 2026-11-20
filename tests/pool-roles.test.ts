@@ -4,6 +4,7 @@ import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
 import { AdmissionDb } from '../src/admission/db.ts';
 import { ThreadLinks } from '../src/admission/links.ts';
+import { ReportStore } from '../src/admission/reports.ts';
 import { savePins } from '../src/agents-verify.ts';
 import { activityLog, runDirectory } from '../src/manifest.ts';
 import { runPool, type PoolOptions } from '../src/pool.ts';
@@ -153,4 +154,47 @@ test('T57d: la rama viva elige el backend resuelto por el rol', async () => {
   expect(claude.turns).toHaveLength(1);
   expect(fake.turns).toHaveLength(0);
   expect(activity('investigation')).toMatchObject({ agent: 'claude', error: 'backend de rol' });
+});
+
+// ---- arreglos tras verificación (T57 verif H1, H4, H5) ----
+
+test('T57 H1: con perfil v1 una activity bloqueada antes de lanzar conserva profile_digest', async () => {
+  const { ws, change, pool, digest } = setup({ ...defaultProfile(), harness: 'native' }, 'native');
+  const inv = store.claimActivity(ws.id, 'fixture')!;
+  store.completeActivity(inv.id, 'fixture', 'spec sintética');
+  const adm = new AdmissionDb(store), thread = 'github:demo/t57#2';
+  adm.db.query('INSERT INTO adm_threads(id, source, first_seen) VALUES (?,?,?)').run(thread, 'github:demo/t57', 'x');
+  new ThreadLinks(adm).link(thread, change.id);
+  const bin = stubBinary('bwrap');
+  await withEnv({ PATH: `${bin}:${process.env.PATH}`, FABRICA_HOME: dir }, () =>
+    pool({ live: true, liveBackends: { native: fakeLive([], { name: 'native' }) } }));
+  const impl = store.listActivities({ changeId: change.id }).at(-1)!;
+  expect(impl).toMatchObject({ kind: 'implementation', status: 'blocked', error: expect.stringContaining('CHANNEL_NOT_CONFINABLE'), profileDigest: digest });
+});
+
+test('T57 H4: un report huérfano conserva la procedencia, y sin agent (fila anterior a T57) usa el adaptador resuelto', async () => {
+  for (const legacy of [false, true]) {
+    const { change, pool, activity } = setup(v2({}));
+    const a = activity('investigation');
+    if (!legacy) store.setActivityProvenance(a.id, 'previo', null, { agent: 'claude', model: 'm1' });
+    const adm = new AdmissionDb(store);
+    new ReportStore(adm).recorder(a.id, 'att-huerfano')({ state: 'blocked', summary: 'huérfano' });
+    const backend = fakeLive([]);
+    await withEnv({ FABRICA_HOME: dir }, () => pool({ live: true, liveBackends: { fake: backend } }));
+    expect(backend.turns).toHaveLength(0);
+    const after = store.listActivities({ changeId: change.id }).find(x => x.id === a.id)!;
+    const meta = JSON.parse(readFileSync(join(runDirectory(dir, change.id), a.id + '.json'), 'utf8'));
+    expect(after).toMatchObject(legacy ? { agent: null, model: null } : { agent: 'claude', model: 'm1' });
+    expect(meta).toMatchObject(legacy ? { adapter: 'fake', model: null } : { adapter: 'claude', model: 'm1' });
+    store.close(); rmSync(join(dir, 'fabrica.db'), { force: true }); store = new Store(join(dir, 'fabrica.db'));
+  }
+});
+
+test('T57 H5c: el aislamiento de la metadata sale del adaptador del rol, no del workstream', async () => {
+  const { pool, change, activity } = setup(v2({ investigate: { harness: 'fake' }, implement: { harness: 'fake' } }), 'native');
+  await pool();
+  const impl = activity('implementation');
+  const meta = JSON.parse(readFileSync(join(runDirectory(dir, change.id), impl.id + '.json'), 'utf8'));
+  expect(meta.adapter).toBe('fake');
+  expect(meta.isolation.adapter).toBe('fake');
 });
