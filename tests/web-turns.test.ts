@@ -7,9 +7,6 @@ import { AdmissionDb } from '../src/admission/db.ts';
 import { Store } from '../src/store.ts';
 import { startWeb } from '../src/web.ts';
 
-const T_SCHEMA = `CREATE TABLE adm_turns (attempt_id TEXT PRIMARY KEY, activity_id TEXT NOT NULL, change_id TEXT NOT NULL, session_id TEXT NOT NULL,
-  generation INTEGER NOT NULL, plan TEXT NOT NULL, question_id TEXT, started_at TEXT NOT NULL, ended_at TEXT, outcome TEXT, exit_code INTEGER,
-  duration_ms INTEGER, cost_usd REAL, log TEXT)`; // esquema §2.1; la tabla real es de T54a
 const d = (hm: string) => `2026-11-19T${hm}:00.000Z`;
 const TOKEN = 'ghp_' + 'a'.repeat(36);
 const EVIL = `<script>alert(1)</script> "q" ${TOKEN}`;
@@ -57,7 +54,7 @@ test('adm_sessions sin adm_turns: aviso de turnos no medidos y la tabla no se cr
 });
 
 test('una fila por turno, etiquetas de plan, sesión perdida y «No medido» en coste y duración nulos', async () => {
-  new AdmissionDb(store); store.db.exec(T_SCHEMA);
+  new AdmissionDb(store);
   session(1, 'lost', 'boom'); session(2, 'open', null);
   turn('t1', 1, 'fresh', '10:00', '10:10', 'awaiting', { cost: 0.5 });
   turn('t2', 1, 'answer', '11:00', '11:20', 'done');
@@ -76,7 +73,7 @@ test('una fila por turno, etiquetas de plan, sesión perdida y «No medido» en 
 });
 
 test('A1: texto de pregunta, respuesta, report y motivo se escapa y se redacta', async () => {
-  new AdmissionDb(store); store.db.exec(T_SCHEMA);
+  new AdmissionDb(store);
   session(1, 'lost', EVIL); session(2, 'open', null);
   turn('t1', 1, 'fresh', '10:00', '10:10', 'awaiting'); turn('t2', 2, 'reconstructed', '11:00', '11:10', 'done');
   store.db.query("INSERT INTO adm_questions(id, activity_id, change_id, text, status, asked_at, answered_at, answer, answered_by) VALUES ('q1',?,?,?,?,?,?,?,?)")
@@ -90,7 +87,7 @@ test('A1: texto de pregunta, respuesta, report y motivo se escapa y se redacta',
 });
 
 test('la CSP no cambia y la sección no añade script ni estilo en línea', async () => {
-  new AdmissionDb(store); store.db.exec(T_SCHEMA); session(1, 'open', null); turn('t1', 1, 'fresh', '10:00', '10:10', 'done');
+  new AdmissionDb(store); session(1, 'open', null); turn('t1', 1, 'fresh', '10:00', '10:10', 'done');
   start();
   const r = await get(`/changes/${change}`);
   expect(r.headers.get('content-security-policy')).toBe("default-src 'none'; script-src 'self'; style-src 'self'; connect-src 'self'; img-src 'none'; font-src 'none'; base-uri 'none'; form-action 'self'; frame-ancestors 'none'");
@@ -99,7 +96,7 @@ test('la CSP no cambia y la sección no añade script ni estilo en línea', asyn
 });
 
 test('A4: 500 turnos muestran 200 y «Se omiten 300»', async () => {
-  new AdmissionDb(store); store.db.exec(T_SCHEMA); session(1, 'open', null);
+  new AdmissionDb(store); session(1, 'open', null);
   const ins = store.db.query('INSERT INTO adm_turns(attempt_id, activity_id, change_id, session_id, generation, plan, started_at, ended_at, outcome, duration_ms) VALUES (?,?,?,?,?,?,?,?,?,?)');
   for (let i = 0; i < 500; i++) { const t = new Date(Date.UTC(2026, 10, 1) + i * 1000).toISOString(); ins.run(`t${i}`, act, change, 's1', 1, 'answer', t, t, 'done', 1); }
   start();
@@ -115,7 +112,7 @@ function plantLog(name: string, text: string) {
 const logUrl = (id: string) => `/changes/${change}/turns/${id}/log`;
 
 test('A3: el log del turno se sirve como texto plano, redactado; sin log o turno ajeno: 404', async () => {
-  new AdmissionDb(store); store.db.exec(T_SCHEMA); session(1, 'open', null);
+  new AdmissionDb(store); session(1, 'open', null);
   turn('t1', 1, 'fresh', '10:00', '10:10', 'done', { log: `${act}.t-t1.log` });
   plantLog(`${act}.t-t1.log`, `salida <b>x</b> ${TOKEN}`);
   start();
@@ -132,7 +129,7 @@ test('A3: el log del turno se sirve como texto plano, redactado; sin log o turno
 });
 
 test('A3: symlink en la hoja no filtra el contenido; ids con «/» o «.» dan 400', async () => {
-  new AdmissionDb(store); store.db.exec(T_SCHEMA); session(1, 'open', null);
+  new AdmissionDb(store); session(1, 'open', null);
   turn('t1', 1, 'fresh', '10:00', '10:10', 'done', { log: 'x' });
   writeFileSync(join(dir, 'canario.txt'), 'CANARIO-SECRETO');
   mkdirSync(join(dir, 'runs', change), { recursive: true });
@@ -146,7 +143,7 @@ test('A3: symlink en la hoja no filtra el contenido; ids con «/» o «.» dan 4
 });
 
 test('con la base en readonly la ruta del log no escribe nada', async () => {
-  new AdmissionDb(store); store.db.exec(T_SCHEMA); session(1, 'open', null);
+  new AdmissionDb(store); session(1, 'open', null);
   turn('t1', 1, 'fresh', '10:00', '10:10', 'done', { log: 'x' }); plantLog(`${act}.t-t1.log`, 'ok');
   start();
   const before = readdirSync(dir).sort();
@@ -157,7 +154,7 @@ test('con la base en readonly la ruta del log no escribe nada', async () => {
 
 // ---- ronda web: T54c H1-H5 ----
 test('T54c-H1/H2: tramos con duración, «No medido», numeración con omitidos y escape de notas, plan y tipo', async () => {
-  new AdmissionDb(store); store.db.exec(T_SCHEMA); session(1, 'open', null);
+  new AdmissionDb(store); session(1, 'open', null);
   const ins = store.db.query('INSERT INTO adm_turns(attempt_id, activity_id, change_id, session_id, generation, plan, started_at, ended_at, outcome, duration_ms) VALUES (?,?,?,?,?,?,?,?,?,?)');
   for (let i = 0; i < 300; i++) { const t = new Date(Date.UTC(2026, 10, 1) + i * 1000).toISOString(); ins.run(`n${i}`, act, change, 's1', 1, 'answer', t, t, 'done', 1); }
   turn('z1', 1, 'fresh', '10:00', '10:10', 'awaiting');
@@ -175,7 +172,7 @@ test('T54c-H1/H2: tramos con duración, «No medido», numeración con omitidos 
   expect(h).not.toContain('<script>alert');
 });
 test('T54c-H3: un log de más de 256 KiB se sirve con el aviso de recorte', async () => {
-  new AdmissionDb(store); store.db.exec(T_SCHEMA); session(1, 'open', null);
+  new AdmissionDb(store); session(1, 'open', null);
   turn('t1', 1, 'fresh', '10:00', '10:10', 'done', { log: `${act}.t-t1.log` });
   plantLog(`${act}.t-t1.log`, 'x'.repeat(300 * 1024));
   start();
@@ -184,7 +181,7 @@ test('T54c-H3: un log de más de 256 KiB se sirve con el aviso de recorte', asyn
   expect(body.length).toBeLessThan(300 * 1024);
 });
 test('T54c-H4: coste no numérico, duración negativa o fecha ilegible dan «No medido», no NaN', async () => {
-  new AdmissionDb(store); store.db.exec(T_SCHEMA); session(1, 'open', null);
+  new AdmissionDb(store); session(1, 'open', null);
   turn('t1', 1, 'fresh', '10:00', '10:10', 'done', { dur: -5 });
   store.db.query("UPDATE adm_turns SET cost_usd = 'abc' WHERE attempt_id = 't1'").run();
   turn('t2', 1, 'answer', '11:00', '11:10', 'done');
@@ -195,7 +192,7 @@ test('T54c-H4: coste no numérico, duración negativa o fecha ilegible dan «No 
   expect(h).toContain('Hecho · No medido · No medido</summary>');
 });
 test('T54c-H5: con adm_turns vacía no dice «anteriores a esta versión»', async () => {
-  new AdmissionDb(store); store.db.exec(T_SCHEMA); session(1, 'open', null);
+  new AdmissionDb(store); session(1, 'open', null);
   start();
   const h = await page();
   expect(h).toContain('Aún no hay turnos registrados');
