@@ -218,6 +218,7 @@ export async function judge(store: Store, stateDir: string, row: Row, o: Pick<Ru
   const dir = join(stateDir, 'scores', row.id);
   try {
     const repo = join(dir, 'repo'); // cwd desechable y vacío: nada del change queda montado (I4)
+    rmSync(dir, { recursive: true, force: true }); // un intento anterior caído pudo dejar aquí un symlink que decide qué monta el sandbox (H1)
     mkdirSync(repo, { recursive: true, mode: 0o700 });
     const init = Bun.spawnSync(['git', ...GIT_SAFE_FLAGS, 'init', '-q', repo], { stdout: 'pipe', stderr: 'pipe' });
     if (init.exitCode !== 0) return { status: 'failed', error: 'git init falló' };
@@ -261,8 +262,10 @@ export async function runPending(store: Store, stateDir: string, opts: RunPendin
     if (r.status === 'done') out.done++; else if (r.status === 'failed') out.failed++;
     opts.log?.(`juez ${row.scorer} → ${r.status === 'done' ? r.label : r.status}`);
     if (r.status === 'done' && !r.passed) {
-      const def = resolveProfile(stateDir, row.profile_digest).profile.scorers![row.scorer]!;
-      try { store.event(row.workstream_id, 'warning', `aviso de juez ${row.scorer}: ${r.label} (${r.score} < ${def.passing})`, row.change_id, row.subject_activity_id); } catch { /* el aviso no es una puerta */ }
+      try {
+        const def = resolveProfile(stateDir, row.profile_digest).profile.scorers![row.scorer]!;
+        store.event(row.workstream_id, 'warning', `aviso de juez ${row.scorer}: ${r.label} (${r.score} < ${def.passing})`, row.change_id, row.subject_activity_id);
+      } catch { opts.log?.(`juez ${row.scorer}: no se pudo emitir el aviso`); /* el aviso no es una puerta */ }
     }
   }
   return out;

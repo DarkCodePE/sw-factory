@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, expect, test } from 'bun:test';
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import type { AgentRun } from '../src/agents.ts';
@@ -260,3 +260,82 @@ test('I1: scorers.ts solo llama a Store.event y a lectores/transacción', () => 
 });
 
 test('ensureSchema es idempotente', () => { ensureSchema(store.db); ensureSchema(store.db); expect(rows()).toEqual([]); });
+
+// ---- arreglos tras verificación (T64c) ---------------------------------------------------------
+
+const bwrapOk = !!Bun.which('bwrap');
+const withEnv = async (k: string, v: string, f: () => Promise<void>) => { const o = process.env[k]; process.env[k] = v; try { await f(); } finally { if (o === undefined) delete process.env[k]; else process.env[k] = o; } };
+const touched = (d: string, prefix: string) => (existsSync(d) ? readdirSync(d) : []).filter((n) => n.startsWith(prefix));
+
+test('H1: un directorio del juez que sobrevivió a una caída no decide qué monta el sandbox', async () => {
+  if (!bwrapOk) return;
+  const victim = join(dir, 'victima');
+  Bun.spawnSync(['git', 'init', '-q', victim]);
+  const { ws } = seed(profile({ a: def() }));
+  enqueueSampled(store, dir, ws.id);
+  const stale = join(dir, 'scores', rows()[0].id, 'repo');
+  mkdirSync(stale, { recursive: true });
+  symlinkSync(join(victim, '.git'), join(stale, '.git')); // lo que dejó el juez anterior
+  await withEnv('FABRICA_FAKE_TOUCH', join(victim, '.git', 'hooks', 'PWNED'), async () => { await runPending(store, dir); });
+  expect(touched(join(victim, '.git', 'hooks'), 'PWNED')).toEqual([]);
+  expect(rows()[0]).toMatchObject({ status: 'failed', error: 'invalid_output' }); // el juez corrió de verdad
+});
+
+test('H2: el juez corre confinado: no escribe en el repo del workstream', async () => {
+  if (!bwrapOk) return;
+  const { ws } = seed(profile({ a: def() }));
+  enqueueSampled(store, dir, ws.id);
+  await withEnv('FABRICA_FAKE_TOUCH', join(repo, 'fuera'), async () => { await runPending(store, dir); });
+  expect(rows()[0]).toMatchObject({ status: 'failed', error: 'invalid_output' }); // corrió
+  expect(touched(repo, 'fuera')).toEqual([]);
+});
+
+test('H4: si el perfil desaparece antes del aviso, la pasada sigue y lo dice', async () => {
+  const digest = profile({ a: def() });
+  const { ws } = seed(digest);
+  enqueueSampled(store, dir, ws.id);
+  const logs: string[] = [];
+  const o = launcher((p) => { rmSync(join(dir, 'profiles', `${digest}.json`), { force: true }); return out('mal')(p); });
+  expect(await runPending(store, dir, { ...o, log: (m) => logs.push(m) })).toEqual({ ran: 1, done: 1, failed: 0 });
+  expect(rows()[0]).toMatchObject({ status: 'done', passed: 0 });
+  expect(logs.some((m) => /no se pudo emitir el aviso/.test(m))).toBe(true);
+});
+
+test('H5a: score igual a passing aprueba (frontera >=)', async () => {
+  const { ws } = seed(profile({ a: def({ passing: 0.5, classes: [{ label: 'medio', score: 0.5 }, { label: 'mal', score: 0 }] }) }));
+  enqueueSampled(store, dir, ws.id);
+  await runPending(store, dir, launcher(out('medio')));
+  expect(rows()[0]).toMatchObject({ status: 'done', score: 0.5, passed: 1 });
+});
+
+test('H5b: un validador sin veredicto no es sujeto; con veredicto sí', () => {
+  const { ws, impl } = seed(profile({ a: def() }));
+  store.db.query(`UPDATE activities SET kind='validation', validator='qa', review_status=NULL WHERE id=?`).run(impl.id);
+  expect(subjectsFor(store, ws.id).map((s) => s.scope)).not.toContain('qa');
+  store.db.query(`UPDATE activities SET review_status='approved' WHERE id=?`).run(impl.id);
+  expect(subjectsFor(store, ws.id).map((s) => s.scope).sort()).toEqual(['investigate', 'qa']);
+});
+
+test('H5c: el diff se recorta a 64 KiB y git corre sin hooks ni diff externo', async () => {
+  const { ws, c } = seed(profile({ a: def() }));
+  enqueueSampled(store, dir, ws.id);
+  const base = git('rev-parse', 'HEAD');
+  writeFileSync(join(repo, 'grande.txt'), 'x'.repeat(200 * 1024) + '\n'); git('add', '.'); git('commit', '-qm', 'grande');
+  store.setChangeBase(c.id, base);
+  mkdirSync(runDirectory(dir, c.id), { recursive: true });
+  writeFileSync(join(runDirectory(dir, c.id), 'run.json'), JSON.stringify({ head: git('rev-parse', 'HEAD') }));
+  const calls: { prompt: string; cwd: string; adapter: string }[] = [];
+  await runPending(store, dir, launcher(out('ok'), calls));
+  expect(calls[0]!.prompt).toContain('[recortado]');
+  expect(calls[0]!.prompt.length).toBeLessThan(80 * 1024);
+  expect(readFileSync(join(import.meta.dir, '../src/scorers.ts'), 'utf8')).toMatch(/'git', '-C', [^\]]*\.\.\.GIT_SAFE_FLAGS, 'diff', '--no-ext-diff', '--no-textconv'/);
+});
+
+test('H5d: abortar devuelve la fila a pending, no la deja failed', async () => {
+  const { ws } = seed(profile({ a: def() }));
+  enqueueSampled(store, dir, ws.id);
+  const ac = new AbortController();
+  const r = await runPending(store, dir, { signal: ac.signal, launch: async () => { ac.abort(); return { ok: false, output: '', exitCode: 1, durationMs: 1, status: { kind: 'done', reason: '' } } as AgentRun; } });
+  expect(r.ran).toBe(0);
+  expect(rows()[0]).toMatchObject({ status: 'pending', lease_expires_at: null });
+});
