@@ -295,3 +295,13 @@ test('T94-H1: un validador hostil no inyecta marcado por el href del rol', async
   expect(await get(`/changes/${c.id}`)).not.toContain('<img src=x id=INY>');
   expect(await get(`/activities/${a.id}`)).not.toContain('<img src=x id=INY>');
 });
+
+test('T94-H3: en solo lectura Perfiles trae (sin plantillas) el ancla a la que apunta el enlace al rol', async () => {
+  const c = store.createChange(ws, 'R', 'd'); const a = store.listActivities({ changeId: c.id })[0]!;
+  store.db.query("UPDATE activities SET kind='implementation' WHERE id=?").run(a.id);
+  server = startWeb(dir, 0);
+  const link = /href="(\/perfiles\?ws=uno)#(f-worker\.implement)"/.exec(await get(`/changes/${c.id}`))!;
+  const page = await get(link[1]!);
+  expect(page).toContain(`id="${link[2]}"`);
+  expect(page).not.toContain('<form action="/perfiles/guardar"'); expect(page).not.toContain('<textarea'); // T58: sin plantillas en solo lectura
+});

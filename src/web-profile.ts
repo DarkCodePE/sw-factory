@@ -47,7 +47,8 @@ export function profilesPage(store: Store, stateDir: string, url: URL, escape: E
     } catch { saved = '<p class="notice">El perfil guardado no está disponible.</p>'; }
   }
   const write = csrf ? `<form action="/perfiles/guardar" method="post" class="web-action">${hidden}${areas}<button>Guardar como perfil nuevo</button><p class="muted">No modifica el perfil vigente ni los ficheros existentes: crea otro con su propio digest. Adaptador, modelo y roles se conservan; las aprobaciones no se editan aquí.</p></form>`
-    : '<p class="muted">Escritura no habilitada: abre fab web con --write.</p>';
+    // Solo lectura: no se muestra ninguna plantilla (T58), pero cada rol lleva el ancla a la que apunta el enlace de la activity.
+    : `<p class="muted">Escritura no habilitada: abre fab web con --write.</p><ul class="roles">${FIELDS.map(([name, label]) => `<li id="f-${name}">${label}</li>`).join('')}</ul>`;
   const restore = csrf && current.digest !== DEFAULT_DIGEST ? `<section><h2>Valores por defecto</h2>${confirmForm(DEFAULT_DIGEST, current.digest, 'Restaurar valores por defecto', 'Vuelve al perfil por defecto de fab.')}</section>` : '';
   return { title: 'Perfiles', body: `${picker}<p>Perfil vigente: <code>${escape(current.digest)}</code> · ${selected.profile ? 'Fijado' : 'Por defecto'}</p>${masked ? '<p class="notice">Se ocultó texto con aspecto de secreto; reescríbelo antes de guardar.</p>' : ''}${saved}<section><h2>Plantillas</h2>${write}</section>${restore}` };
 }
