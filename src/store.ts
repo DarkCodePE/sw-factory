@@ -106,6 +106,9 @@ export interface Change {
   updatedAt: string;
 }
 
+export type ChangeSource = 'cli' | 'channel' | 'jira';
+export interface ChangeSummary extends Change { source: ChangeSource | null; creator: string | null }
+
 export interface Activity {
   id: string;
   workstreamId: string;
@@ -575,6 +578,26 @@ export class Store {
     return (this.db.query('SELECT * FROM changes WHERE workstream_id = ? ORDER BY created_at').all(ws.id) as Row[]).map(
       toChange
     );
+  }
+
+  /**
+   * Changes con su fuente y su creador, en consultas de conjunto (sin N+1) y sin crear tablas: sirve a un Store readonly.
+   * Fuente: `jira`, `channel` (GitHub/admisión) o `cli` (signal triada a mano); `null` si no se puede saber.
+   * Creador: actor del primer evento del change; `null` si no hay eventos.
+   */
+  changeIndex(workstream?: string): ChangeSummary[] {
+    const ws = workstream ? this.getWorkstream(workstream) : undefined;
+    const has = (t: string) => this.db.query("SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = ?").get(t) !== null;
+    const source = new Map<string, ChangeSource>();
+    const mark = (sql: string, map: (r: Row) => ChangeSource) => { for (const r of this.db.query(sql).all() as Row[]) source.set(r.change_id as string, map(r)); };
+    mark('SELECT change_id FROM signals WHERE change_id IS NOT NULL', () => 'cli');
+    if (has('adm_thread_changes')) mark('SELECT change_id FROM adm_thread_changes', () => 'channel');
+    if (has('change_links')) mark('SELECT change_id, source_system FROM change_links WHERE source_system IS NOT NULL', r => r.source_system === 'jira' ? 'jira' : 'channel');
+    if (has('jira_imports')) mark('SELECT s.change_id FROM jira_imports i JOIN signals s ON s.id = i.signal_id WHERE s.change_id IS NOT NULL', () => 'jira');
+    const creator = new Map((this.db.query('SELECT change_id, actor FROM events WHERE id IN (SELECT MIN(id) FROM events WHERE change_id IS NOT NULL GROUP BY change_id)').all() as Row[])
+      .map(r => [r.change_id as string, (r.actor as string | null) ?? null]));
+    const rows = (ws ? this.db.query('SELECT * FROM changes WHERE workstream_id = ? ORDER BY created_at').all(ws.id) : this.db.query('SELECT * FROM changes ORDER BY created_at').all()) as Row[];
+    return rows.map(r => ({ ...toChange(r), source: source.get(r.id as string) ?? null, creator: creator.get(r.id as string) ?? null }));
   }
 
   setChangeBranch(changeId: string, branch: string): void {
@@ -1332,6 +1355,34 @@ export class Store {
     const params = changeId === undefined ? [ws.id, limit] : [ws.id, changeId, limit];
     return (this.db.query(`SELECT * FROM events WHERE workstream_id = ?${changeFilter} ORDER BY id DESC LIMIT ?`)
       .all(...params) as Row[]).reverse();
+  }
+
+  /** Cohorte acotada para métricas; solo SELECT, sin cargar cuerpos de eventos. */
+  metricsCohort(workstream: string | undefined, since: string | null, until: string, limit: number): { changes: Change[]; total: number } {
+    const wsId = workstream ? this.getWorkstream(workstream).id : null;
+    const where = '(? IS NULL OR workstream_id = ?) AND (? IS NULL OR julianday(created_at) >= julianday(?)) AND julianday(created_at) <= julianday(?)';
+    const params = [wsId, wsId, since, since, until];
+    const total = (this.db.query(`SELECT COUNT(*) AS n FROM changes WHERE ${where}`).get(...params) as { n: number }).n;
+    const changes = (this.db.query(`SELECT * FROM changes WHERE ${where} ORDER BY julianday(created_at) DESC, id LIMIT ?`)
+      .all(...params, limit) as Row[]).map(toChange);
+    return { changes, total };
+  }
+
+  /** Hitos y acciones humanas registrados. No interpreta texto de issues; ignora el agotamiento de reintentos de un validador (su cuarentena, bloqueo y reintento humano sí cuentan). */
+  metricsEvents(changeIds: string[], until: string): Array<{ changeId: string; reviewAt: string | null; decisionAt: string | null; terminalAt: string | null; reviews: number; answers: number; retries: number }> {
+    if (!changeIds.length) return [];
+    const review = "(message = 'change_review approved' OR message LIKE 'change_review approved:%' OR message = 'change_review commented' OR message LIKE 'change_review commented:%' OR message = 'change_review declined' OR message LIKE 'change_review declined:%' OR message = 'investigation approved' OR message LIKE 'investigation approved:%' OR message = 'investigation commented' OR message LIKE 'investigation commented:%' OR message = 'investigation declined' OR message LIKE 'investigation declined:%')";
+    const terminal = "(message IN ('change completed','change canceled','change_review declined','investigation declined') OR message LIKE 'change_review declined:%' OR message LIKE 'investigation declined:%' OR message LIKE 'blocked:%' OR message LIKE 'quarantined:%' OR message GLOB 'change_review failed permanently:*' OR message GLOB 'investigation failed permanently:*' OR message GLOB 'implementation failed permanently:*' OR message GLOB 'steward failed permanently:*' OR message GLOB 'gates failed permanently:*')";
+    return this.db.query(`SELECT change_id AS changeId,
+      MIN(CASE WHEN message = 'investigation awaiting spec review' THEN created_at END) AS reviewAt,
+      MIN(CASE WHEN ${review} THEN created_at END) AS decisionAt,
+      MIN(CASE WHEN ${terminal} THEN created_at END) AS terminalAt,
+      SUM(CASE WHEN ${review} THEN 1 ELSE 0 END) AS reviews,
+      SUM(CASE WHEN message GLOB 'human reply received (question *); re-queued' THEN 1 ELSE 0 END) AS answers,
+      SUM(CASE WHEN message GLOB 'change retried (*)' THEN 1 ELSE 0 END) AS retries
+      FROM events WHERE change_id IN (${changeIds.map(() => '?').join(',')}) AND julianday(created_at) <= julianday(?)
+      AND (message NOT GLOB '* failed permanently:*' OR activity_id NOT IN (SELECT id FROM activities WHERE validator IS NOT NULL)) GROUP BY change_id`)
+      .all(...changeIds, until) as ReturnType<Store['metricsEvents']>;
   }
 
   /** Cuenta sin cargar cuerpos; acompaña la página acotada de la timeline. */

@@ -1,0 +1,78 @@
+[
+  {
+    "width": 1440,
+    "theme": "light",
+    "dom": {
+      "width": 1440,
+      "scrollWidth": 1440,
+      "theme": "light",
+      "scripts": 0,
+      "colors": {
+        "text": "rgb(37, 42, 38)",
+        "background": "rgb(250, 249, 246)"
+      },
+      "tables": 7,
+      "svg": 2
+    },
+    "console": "",
+    "errors": ""
+  },
+  {
+    "width": 1440,
+    "theme": "dark",
+    "dom": {
+      "width": 1440,
+      "scrollWidth": 1440,
+      "theme": "dark",
+      "scripts": 0,
+      "colors": {
+        "text": "rgb(230, 233, 226)",
+        "background": "rgb(25, 30, 27)"
+      },
+      "tables": 7,
+      "svg": 2
+    },
+    "console": "",
+    "errors": ""
+  },
+  {
+    "width": 390,
+    "theme": "light",
+    "dom": {
+      "width": 390,
+      "scrollWidth": 390,
+      "theme": "light",
+      "scripts": 0,
+      "colors": {
+        "text": "rgb(37, 42, 38)",
+        "background": "rgb(250, 249, 246)"
+      },
+      "tables": 7,
+      "svg": 2
+    },
+    "console": "",
+    "errors": ""
+  },
+  {
+    "width": 390,
+    "theme": "dark",
+    "dom": {
+      "width": 390,
+      "scrollWidth": 390,
+      "theme": "dark",
+      "scripts": 0,
+      "colors": {
+        "text": "rgb(230, 233, 226)",
+        "background": "rgb(25, 30, 27)"
+      },
+      "tables": 7,
+      "svg": 2
+    },
+    "console": "",
+    "errors": ""
+  },
+  {
+    "filterURL": "http://127.0.0.1:37953/metricas?ws=motor&range=7\n",
+    "filtered": "Métricas\n\nTiempo e intervención humana. Coste con su cobertura de medición.\n\nWorkstream\nTodos\nmotor\ncanal\nChanges creados en\nÚltimos 7 días\nÚltimos 30 días\nTodo el historial\nActualizar\n\n4 changes · Calculado: 2026-11-19T17:47:21.494Z. El rango selecciona changes por fecha de creación; sus métricas incluyen todo su recorrido registrado hasta esta consulta.\n\nTiempo de ciclo\n\nTiempo desde la creación del change hasta cada hito. Solo se incluyen fechas válidas registradas. p90: rango más próximo.\n\nDuraciones acumuladas desde la creación\nHito\tMediana\tp90\tMuestras\tNo medido\nPrimera activity\t1 h\t1 h\t4\t0\nPrimera revisión pedida\t2 h\t2 h\t4\t0\nPrimera decisión humana\t3 h\t3 h\t4\t0\nPrimer estado terminal registrado\t6 h\t6 h\t1\t3\nFuentes y límites de los tramos\nVolumen de trabajo\ncompleted\n1\nin_progress\n2\nin_review\n1\nChanges por estado actual\nEstado\tChanges\ncompleted\t1\nin_progress\t2\nin_review\t1\ninvestigation\n4\nActivities de la cohorte por tipo\nTipo\tActivities\ninvestigation\t4\nCoste\nTotal: No medido\nSubtotal medido: 0.50 USD\n1 changes sin coste completo medido\n\nUn intento desconocido deja el total como «No medido». El subtotal incluye solo changes con coste completo. La atribución por adaptador o modelo exige evidencia de ejecución; la configuración actual del workstream no prueba la histórica.\n\nTop 10 de changes con coste completo medido\nChange\tCoste\nPrueba sintética 5: ejecución\t0.25 USD\nPrueba sintética 3: entrega\t0.15 USD\nPrueba sintética 2: ejecución\t0.10 USD\nCoste por adaptador registrado\nGrupo\tCoste total\tSubtotal medido\tActivities sin coste medido\nclaude\tNo medido\t0.10 USD\t1\nnative\t0.40 USD\t0.40 USD\t0\nCoste por modelo registrado\nGrupo\tCoste total\tSubtotal medido\tActivities sin coste medido\nNo medido\tNo medido\t0.50 USD\t1\n\nLa evidencia habitual no registra el modelo. Con varios intentos no se atribuye su coste al último adaptador o modelo. En las agrupaciones, el subtotal suma solo activities con coste completo y puede diferir del subtotal por change.\n\nIntervenciones humanas por change\n\nAcciones observadas en events: decisiones de revisión, respuestas recibidas y reintentos explícitos. No incluye los reintentos automáticos. Cero significa que no hay eventos de esas acciones; no garantiza que el registro histórico esté completo.\n\nAcciones humanas registradas\nChange\tDecisiones\tRespuestas\tReintentos\tTotal\nPrueba sintética 2: ejecución\t1\t0\t0\t1\nPrueba sintética 3: entrega\t1\t0\t0\t1\nPrueba sintética 5: ejecución\t1\t1\t1\t3\nPrueba sintética 6: entrega\t1\t0\t0\t1\n"
+  }
+]
