@@ -75,7 +75,9 @@ function writeTurnLog(ctx: LiveActivityCtx, a: Activity, attemptId: string, run:
 
 /** Un turno: sesión escrita antes de lanzar (S2), `onReport` durable (S6) y resultado por precedencia del report (T26). */
 export async function runLiveActivity(store: Store, adm: AdmissionDb, a: Activity, ctx: LiveActivityCtx): Promise<{ run: AgentRun; outcome?: LiveOutcome }> {
-  const sessions = new SessionStore(adm), reports = new ReportStore(adm), turns = new TurnStore(adm);
+  const sessions = new SessionStore(adm), reports = new ReportStore(adm), turns = new TurnStore(adm, (op, error) => { // telemetría: nunca relanza el turno, pero deja constancia (si el evento también falla, se pierde)
+    try { store.event(a.workstreamId, 'warning', `no se pudo registrar el turno (${op}): ${(error as Error).message.slice(0, 200)}`, a.changeId, a.id); } catch { /* sin más recurso */ }
+  });
   const all = store.listActivities({ changeId: a.changeId });
   const plan = planTurn(adm, a, { history: all.slice(0, all.findIndex(x => x.id === a.id)) });
   if (plan.action === 'apply-report') { // S4: el turno huérfano ya había informado: se aplica el report, no se reejecuta ni se lanza nada
