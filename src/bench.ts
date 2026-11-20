@@ -109,6 +109,7 @@ async function scoreRuns(db: Database, stateDir: string, id: string, judgeProfil
   const defs = Object.entries(resolveProfile(stateDir, judgeProfile).profile.scorers ?? {}).filter(([, d]) => d.scope === 'implement' || d.scope === 'change');
   const runs = db.query<{ rowid: number; batch: string; task_id: string; repeat: number; arm: string; change_id: string }, [string]>(
     'SELECT rowid, batch, task_id, repeat, arm, change_id FROM experiment_runs WHERE experiment_id = ? AND change_id IS NOT NULL ORDER BY rowid').all(id);
+  const scored = new Set(db.query<{ run_rowid: number; scorer: string }, [string]>('SELECT run_rowid, scorer FROM benchmark_scores WHERE benchmark_id = ?').all(id).map(r => `${r.run_rowid}\0${r.scorer}`));
   const save = db.query('INSERT OR IGNORE INTO benchmark_scores (benchmark_id, run_rowid, scorer, label, score, passed, cost_usd, error) VALUES (?,?,?,?,?,?,?,?)');
   for (const run of runs) {
     if (!live()) return;
@@ -122,6 +123,7 @@ async function scoreRuns(db: Database, stateDir: string, id: string, judgeProfil
     try {
       for (const [scorer, def] of defs) {
         if (!live()) return;
+        if (scored.has(`${run.rowid}\0${scorer}`)) continue; // ya puntuado antes de la caída
         const meter: Meter = {};
         const out = failure || !arm ? null : await judge(arm, armState, { id: randomUUID(), scorer, profile_digest: judgeProfile, scope: def.scope,
           subject_activity_id: subject!, change_id: run.change_id, workstream_id: '', attempts: 1 }, { launch: o.launch }, meter, stateDir);
@@ -135,10 +137,10 @@ async function scoreRuns(db: Database, stateDir: string, id: string, judgeProfil
   }
 }
 
-// resume: retoma un benchmark que quedó en `running` porque su proceso murió. No puede distinguirlo de uno vivo: lo decide quien llama.
+// resume: retoma un benchmark que quedó en `running` o `scoring` porque su proceso murió. No puede distinguirlo de uno vivo: lo decide quien llama.
 export async function runBenchmark(db: Database, stateDir: string, id: string, o: Omit<RunOptions, 'agent'> & { launch?: Launch; resume?: boolean }): Promise<{ seed: number; runs: number }> {
   const benchmark = getBenchmark(db, id);
-  const resuming = !!o.resume && benchmark.status === 'running';
+  const resuming = !!o.resume && (benchmark.status === 'running' || benchmark.status === 'scoring');
   if (benchmark.status !== 'pending' && !resuming) throw invalidState(id, benchmark.status, 'ejecutar');
   if (!SPLITS.includes(o.split)) throw bad(`split debe ser ${SPLITS.join('|')}`);
   if (!Number.isSafeInteger(o.repeats) || o.repeats < 1) throw bad('--repeats debe ser un entero ≥ 1');
@@ -157,6 +159,8 @@ export async function runBenchmark(db: Database, stateDir: string, id: string, o
   const variants = JSON.parse(benchmark.variants) as Variant[];
   const jobs = planJobs(tasks, variants, o.repeats, seed);
   if (done.n > jobs.length) throw bad(`--repeats da ${jobs.length} trabajos y el benchmark ya tiene ${done.n} filas`);
+  // En `scoring` la ejecución ya terminó: solo se retoma la puntuación.
+  if (benchmark.status === 'scoring' && done.n !== jobs.length) throw bad(`--repeats da ${jobs.length} trabajos y el benchmark ya tiene ${done.n} filas`);
   if (!resuming) {
     const claimed = db.query("UPDATE benchmarks SET status = 'running' WHERE id = ? AND status = 'pending'").run(id);
     if (claimed.changes !== 1) throw invalidState(id, getBenchmark(db, id).status, 'ejecutar');
@@ -219,7 +223,7 @@ export async function runBenchmark(db: Database, stateDir: string, id: string, o
     const failure = workers.find(worker => worker.status === 'rejected');
     if (failure) throw failure.reason;
     if (infrastructureError !== null && running()) throw new Error(infrastructureError);
-    if (benchmark.judge_profile && running() && db.query("UPDATE benchmarks SET status = 'scoring' WHERE id = ? AND status = 'running'").run(id).changes) {
+    if (benchmark.judge_profile && (benchmark.status === 'scoring' || running() && db.query("UPDATE benchmarks SET status = 'scoring' WHERE id = ? AND status = 'running'").run(id).changes)) {
       await scoreRuns(db, stateDir, id, benchmark.judge_profile, o, () => status.get(id)?.status === 'scoring');
     }
     finish.run('complete', new Date().toISOString(), null, id);

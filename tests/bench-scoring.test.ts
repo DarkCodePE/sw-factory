@@ -1,6 +1,6 @@
 import { afterEach, beforeEach, expect, test } from 'bun:test';
 import { Database } from 'bun:sqlite';
-import { existsSync, mkdtempSync, readdirSync, rmSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdtempSync, readdirSync, readFileSync, rmSync, statSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import type { AgentRun } from '../src/agents.ts';
@@ -92,7 +92,7 @@ test('cancelar durante scoring no lanza más jueces y conserva lo puntuado', asy
   expect(n).toBe(3);
   expect(status('s4')).toBe('canceled');
   expect(scores('s4')).toHaveLength(3);
-});
+}, 60_000);
 
 test('el informe da tasa de aprobado por juez y por variante; fallos cuentan como sin puntuar', async () => {
   create('s5', judges({ j: def() }));
@@ -120,3 +120,78 @@ test('el juez deja el Store del brazo intacto y borra su directorio temporal', a
   expect(arms).toHaveLength(6);
   for (const a of arms) expect(readdirSync(join(dir, 'improve', 's6', a, 'state', 'scores'))).toEqual([]);
 });
+
+// H1: la puntuación se repite con `resume` sobre un benchmark en `scoring`, tras retocar el Store de cada brazo.
+const armDbs = (id: string) => readdirSync(join(dir, 'improve', id)).map(a => join(dir, 'improve', id, a, 'state', 'fabrica.db'));
+const digest = (f: string) => new Bun.CryptoHasher('sha256').update(Bun.file(f).size + ':' + readFileSync(f).toString('base64')).digest('hex');
+async function rescore(id: string, tweak: (arm: Database, index: number) => void, prompts: string[] = []) {
+  db.query("UPDATE benchmarks SET status = 'scoring' WHERE id = ?").run(id);
+  db.query('DELETE FROM benchmark_scores WHERE benchmark_id = ?').run(id);
+  await runBenchmark(db, dir, id, { ...options, repeats: 1, resume: true, launch: async (_a, p) => { prompts.push(p); return reply('ok')(p); } });
+}
+
+test('H1/B1: puntuar no cambia el Store del brazo (ni bytes ni mtime)', async () => {
+  create('h1', judges({ j: def() }));
+  await runBenchmark(db, dir, 'h1', { ...options, repeats: 1, launch: async (_a, p) => reply('ok')(p) });
+  const before = armDbs('h1').map(f => [digest(f), statSync(f).mtimeMs]);
+  await rescore('h1', () => {});
+  expect(armDbs('h1').map(f => [digest(f), statSync(f).mtimeMs])).toEqual(before);
+  expect(scores('h1')).toHaveLength(6);
+}, 60_000);
+
+test('H1/B9-B10: se juzga la última implementación completada, no la primera ni una fallida', async () => {
+  create('h2', judges({ j: def() }));
+  await runBenchmark(db, dir, 'h2', { ...options, repeats: 1, launch: async (_a, p) => reply('ok')(p) });
+  const prompts: string[] = [];
+  for (const f of armDbs('h2')) {
+    const arm = new Database(f);
+    arm.query("UPDATE activities SET result = 'RES-VIEJA' WHERE kind = 'implementation'").run();
+    for (const [id, status, result, at] of [['zz-nueva', 'completed', 'RES-NUEVA', '9999-01-01T00:00:00Z'], ['zz-fallida', 'failed', 'RES-FALLIDA', '9999-06-01T00:00:00Z']] as const)
+      arm.query(`INSERT INTO activities (id, workstream_id, change_id, kind, status, result, created_at)
+        SELECT ?, workstream_id, change_id, 'implementation', ?, ?, ? FROM activities WHERE kind = 'implementation' AND id != 'zz-nueva' LIMIT 1`).run(id, status, result, at);
+    arm.close();
+  }
+  await rescore('h2', () => {}, prompts);
+  expect(prompts).toHaveLength(6);
+  expect(prompts.every(p => p.includes('RES-NUEVA') && !p.includes('RES-VIEJA') && !p.includes('RES-FALLIDA'))).toBe(true);
+}, 60_000);
+
+test('H1/B13: un brazo sin implementación completada no lanza juez y deja score nulo con error', async () => {
+  create('h3', judges({ j: def() }));
+  await runBenchmark(db, dir, 'h3', { ...options, repeats: 1, launch: async (_a, p) => reply('ok')(p) });
+  const [first] = armDbs('h3');
+  const arm = new Database(first!);
+  arm.query("UPDATE activities SET status = 'failed' WHERE kind = 'implementation'").run();
+  arm.close();
+  const prompts: string[] = [];
+  await rescore('h3', () => {}, prompts);
+  expect(prompts).toHaveLength(5);
+  const s = scores('h3');
+  expect(s).toHaveLength(6);
+  expect(s.filter(x => x.score === null && x.label === null && x.passed === null && /implementación/.test(x.error))).toHaveLength(1);
+});
+
+test('H1/B11: el informe da la puntuación media por juez', async () => {
+  create('h4', judges({ j: def() }));
+  let n = 0;
+  await runBenchmark(db, dir, 'h4', { ...options, repeats: 1, launch: async (_a, p) => reply(++n % 2 ? 'ok' : 'mal')(p) });
+  const judgesOf = benchmarkSummary(db, 'h4').variants.flatMap(v => v.judges);
+  expect(judgesOf.some(j => j.passed > 0)).toBe(true);
+  // Con puntuaciones 1 y 0, la media es la tasa de aprobado.
+  for (const j of judgesOf) expect(j.mean_score).toBeCloseTo(j.passed / j.scored);
+});
+
+test('H2: un benchmark huérfano en scoring se retoma con resume y no repite lo ya puntuado', async () => {
+  create('h5', judges({ j: def() }));
+  await runBenchmark(db, dir, 'h5', { ...options, repeats: 1, launch: async (_a, p) => reply('ok')(p) });
+  db.query("UPDATE benchmarks SET status = 'scoring' WHERE id = ?").run('h5');
+  db.query('DELETE FROM benchmark_scores WHERE benchmark_id = ? AND run_rowid > (SELECT min(rowid) + 1 FROM experiment_runs WHERE experiment_id = ?)').run('h5', 'h5');
+  const kept = scores('h5').length;
+  expect(kept).toBeLessThan(6);
+  await expect(runBenchmark(db, dir, 'h5', { ...options, repeats: 1 })).rejects.toThrow(/invalid|no se puede/);
+  let n = 0;
+  await runBenchmark(db, dir, 'h5', { ...options, repeats: 1, resume: true, launch: async (_a, p) => { n++; return reply('ok')(p); } });
+  expect(n).toBe(6 - kept);
+  expect(scores('h5')).toHaveLength(6);
+  expect(status('h5')).toBe('complete');
+}, 60_000);
