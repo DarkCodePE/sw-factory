@@ -31,6 +31,7 @@ export function checkReport(input: LiveReport): string | null {
 export const claudeLive: LiveBackend = {
   name: 'claude',
   confinable: true,
+  promptStdin: getAgent('claude').promptStdin,
   async run(turn: LiveTurn) {
     const sessionId = turn.sessionId ?? turn.newSessionId ?? randomUUID();
     const reports: LiveReport[] = [];

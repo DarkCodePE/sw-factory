@@ -13,6 +13,7 @@ import { isSessionLoss, reconstructPrompt, SessionStore, supersede } from '../ad
 import { TurnStore, type TurnReason } from '../admission/turns.ts';
 import { evidencePath } from '../evidence.ts';
 import { atomicEvidence } from '../manifest.ts';
+import { reserveTurnPrompt } from '../note-delivery.ts';
 import { notesBlock, type WorkerTemplates } from '../prompts.ts';
 import { hostDir, type EnvDecl } from '../sandbox/confine.ts';
 import { scrubValues } from '../sandbox/env.ts';
@@ -99,8 +100,18 @@ export async function runLiveActivity(store: Store, adm: AdmissionDb, a: Activit
     try {
       // La reserva va antes de marcar la sesión: si falla (contención), no queda una sesión lanzada que nunca existió.
       const attemptId = randomUUID();
-      const notes = store.reserveNotes(a.changeId, a.id, attemptId);
-      const reserved = notes.length;
+      const { prompt, reserved, hasAttachments } = store.withRetry(() => {
+        const historical = reason === 'reconstructed' ? store.listHistoricalNoteBodies(a.changeId) : [];
+        return reserveTurnPrompt(store, a, attemptId, {
+          cwd: ctx.cwd, confine: ctx.confine && ctx.backend.confinable, adapter: ctx.backend.name,
+          promptStdin: ctx.backend.promptStdin,
+          persistentMounts: [join(ctx.stateDir, 'live'), ...(ctx.claudeProjects ? [ctx.claudeProjects] : [])],
+        }, notes => reason === 'reconstructed'
+          ? reconstructPrompt(store, adm, a.id, {
+            worktree: ctx.cwd, branch: ctx.branch, factoryCommits: ctx.factoryCommits, templates: ctx.templates,
+          }, notes, historical) + LIVE_RULES
+          : basePrompt + notesBlock(notes) + (reason === 'fresh' || notes.length ? LIVE_RULES : ''));
+      });
       const { session, turn } = sessions.begin(a.changeId, a.kind, meta);
       ctx.crash?.('session-written');
       sessions.markLaunched(session.sessionId); // A8: antes de lanzar, no en onSpawn
@@ -108,12 +119,6 @@ export async function runLiveActivity(store: Store, adm: AdmissionDb, a: Activit
         attemptId, activityId: a.id, changeId: a.changeId, sessionId: session.sessionId,
         generation: session.generation, plan: reason, questionId,
       });
-      // La reconstrucción repite también las notas ya entregadas; las recién reservadas salen de la reserva.
-      const prompt = reason === 'reconstructed'
-        ? reconstructPrompt(store, adm, a.id, {
-          worktree: ctx.cwd, branch: ctx.branch, factoryCommits: ctx.factoryCommits, templates: ctx.templates,
-        }) + LIVE_RULES
-        : basePrompt + notesBlock(notes) + (reason === 'fresh' || reserved ? LIVE_RULES : '');
       ctx.crash?.('session-launched');
       const record = reports.recorder(a.id, attemptId, ctx.crash);
       let result;
@@ -136,7 +141,7 @@ export async function runLiveActivity(store: Store, adm: AdmissionDb, a: Activit
         outcome: outcome?.kind ?? 'no_report', exitCode: result.exitCode, durationMs: result.durationMs,
         costUsd: result.usage?.costUsd, log: writeTurnLog(ctx, a, attemptId, result),
       });
-      const confirm = reserved > 0 && !ctx.signal.aborted;
+      const confirm = reserved > 0 && !ctx.signal.aborted && (!hasAttachments || result.exitCode === 0);
       if (questionId || confirm) adm.tx(() => {
         if (questionId) markAnswerDelivered(adm, questionId);
         if (confirm) store.confirmNotes(attemptId);

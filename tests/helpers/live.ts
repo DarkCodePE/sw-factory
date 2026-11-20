@@ -27,7 +27,7 @@ export type FakeLive = LiveBackend & { turns: LiveTurn[]; known: Set<string>; st
  */
 export function fakeLive(steps: FakeStep[], over: Partial<Pick<LiveBackend, 'name' | 'confinable'>> = {}): FakeLive {
   const known = new Set<string>(), turns: LiveTurn[] = [];
-  const backend: FakeLive = { name: over.name ?? 'fake', confinable: over.confinable ?? true, turns, known, steps,
+  const backend: FakeLive = { name: over.name ?? 'fake', confinable: over.confinable ?? true, promptStdin: true, turns, known, steps,
     async run(turn): Promise<LiveTurnResult> {
       turns.push(turn);
       const step = steps[Math.min(turns.length - 1, steps.length - 1)] ?? {};

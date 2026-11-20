@@ -11,6 +11,15 @@ export interface NoteAttachment { name: string; bytes: Uint8Array }
 export interface NoteAttachmentMeta { name: string; size: number }
 export interface NoteAttachmentTarget { cwd: string; persistentMounts?: string[] }
 
+export const NOTE_ATTACHMENT_WAIT = {
+  remote: 'El runner asignado es remoto.',
+  transport: 'El turno necesita confinamiento local y una entrada de prompt apta.',
+  state: 'La base debe estar en estado privado, fuera de montajes escribibles.',
+  size: 'El prompt con adjuntos supera 128 KiB.',
+  invalid: 'El adjunto almacenado no supera la validación de texto.',
+} as const;
+export type NoteAttachmentWait = keyof typeof NOTE_ATTACHMENT_WAIT;
+
 const utf8 = new TextDecoder('utf-8', { fatal: true, ignoreBOM: true });
 
 export function decodeNoteAttachment(bytes: Uint8Array): string {

@@ -27,7 +27,7 @@ beforeEach(() => {
 });
 afterEach(() => { store.close(); rmSync(dir, { recursive: true, force: true }); });
 
-function setup() {
+function setup(confine = false) {
   const ws = store.createWorkstream({ slug: 'live-notes', goal: 'goal', repo, agent: 'fake',
     requireApproval: false, requireChangeApproval: false });
   store.setWorkstreamState(ws.id, 'active');
@@ -37,7 +37,7 @@ function setup() {
   const run = async (backend: ReturnType<typeof fakeLive>, crash?: (point: CrashPoint) => void) => {
     const activity = store.claimActivity(ws.id, 'worker')!;
     await processActivity(store, activity, 'worker', {
-      workstream: ws.id, stateDir, live: true, liveBackends: { fake: backend }, log: () => {}, crash,
+      workstream: ws.id, stateDir, live: true, confine, liveBackends: { fake: backend }, log: () => {}, crash,
     });
     return store.getActivity(activity.id);
   };
@@ -47,7 +47,7 @@ function setup() {
   const runAbortable = async (backend: ReturnType<typeof fakeLive>, abortController: AbortController) => {
     const activity = store.claimActivity(ws.id, 'worker')!;
     await processActivity(store, activity, 'worker', {
-      workstream: ws.id, stateDir, live: true, liveBackends: { fake: backend }, log: () => {},
+      workstream: ws.id, stateDir, live: true, confine, liveBackends: { fake: backend }, log: () => {},
     }, abortController);
     return store.getActivity(activity.id);
   };
@@ -213,4 +213,98 @@ test('si falla la reserva no queda sesión marcada ni se gasta una generación (
   expect(backend.turns).toHaveLength(0);
   expect(adm.db.query('SELECT COUNT(*) AS n FROM adm_sessions WHERE launched_at IS NOT NULL').get()).toEqual({ n: 0 });
   expect(adm.db.query('SELECT COUNT(*) AS n FROM adm_turns').get()).toEqual({ n: 0 });
+});
+
+const file = (text: string) => ({ name: 'datos.txt', bytes: new TextEncoder().encode(text) });
+
+test('reconstrucción: solo bytes de la reserva, cuerpos entregados y ninguna nota posterior al snapshot', async () => {
+  const { change, run, reply } = setup(true);
+  const historical = store.addChangeNote(change.id, 'Cuerpo histórico', file('PRIMER-ARCHIVO'));
+  const backend = fakeLive([{ reports: [ASK] }, { reports: [DONE] }]);
+  const waiting = await run(backend);
+  expect(backend.turns[0]!.prompt).toContain('PRIMER-ARCHIVO');
+  expect(store.listChangeNotes(change.id)[0]).toMatchObject({ id: historical.id, deliveredAt: expect.any(String) });
+  const pending = store.addChangeNote(change.id, 'Cuerpo pendiente', file('SEGUNDO-ARCHIVO'));
+  reply(waiting.questionId!);
+  backend.known.clear();
+  let added = false;
+  expect((await run(backend, point => {
+    if (point === 'session-written' && backend.turns.length === 2 && !added) {
+      added = true;
+      store.addChangeNote(change.id, 'LLEGÓ DESPUÉS DE RESERVAR', file('ARCHIVO-TARDÍO'));
+    }
+  })).status).toBe('completed');
+  const rebuilt = backend.turns[2]!.prompt;
+  expect(rebuilt).toContain(historical.body);
+  expect(rebuilt).not.toContain('PRIMER-ARCHIVO');
+  expect(rebuilt.split('SEGUNDO-ARCHIVO')).toHaveLength(2);
+  expect(rebuilt.split(pending.body)).toHaveLength(2);
+  expect(rebuilt).not.toContain('LLEGÓ DESPUÉS DE RESERVAR');
+  expect(rebuilt).not.toContain('ARCHIVO-TARDÍO');
+  expect(store.listChangeNotes(change.id).map(n => n.deliveredAt !== null)).toEqual([true, true, false]);
+});
+
+test('un prompt grande aplaza el adjunto y deduplica el motivo hasta que cambia la condición', async () => {
+  const { change, ws, run, reply } = setup(true);
+  const txt = 'ü'.repeat(32768);
+  store.db.query('UPDATE workstreams SET goal = ? WHERE id = ?').run('é'.repeat(65536), ws.id);
+  const pending = store.addChangeNote(change.id, 'ARCHIVO PENDIENTE', file(txt));
+  const plain = store.addChangeNote(change.id, 'TEXTO QUE SÍ VIAJA');
+  const backend = fakeLive([{ reports: [ASK] }, { reports: [DONE] }]);
+  const waiting = await run(backend);
+  expect(backend.turns[0]!.prompt).toContain(plain.body);
+  expect(backend.turns[0]!.prompt).not.toContain(pending.body);
+  expect(store.listChangeNotes(change.id)[0]).toEqual(pending);
+  const deferred = () => store.listEvents(ws.id).filter(e => e.severity === 'warning' && String(e.message).includes('Adjuntos pendientes'));
+  expect(deferred()).toHaveLength(1);
+  reply(waiting.questionId!);
+  expect((await run(backend)).status).toBe('completed');
+  expect(backend.turns[1]!.prompt).toContain(txt);
+  expect(store.listChangeNotes(change.id).every(n => n.deliveredAt !== null)).toBe(true);
+  expect(deferred()).toHaveLength(1);
+});
+
+test('un turn vivo abortado con archivo queda pendiente sin confirmación durable', async () => {
+  const { change, runAbortable } = setup(true);
+  const n = store.addChangeNote(change.id, 'Nota abortada', file('ARCHIVO ABORTADO'));
+  const controller = new AbortController();
+  const backend = fakeLive([{ reports: [DONE], before: () => controller.abort() }]);
+  await runAbortable(backend, controller);
+  expect(backend.turns[0]!.prompt).toContain('ARCHIVO ABORTADO');
+  expect(store.listChangeNotes(change.id)[0]).toMatchObject({ id: n.id, attemptId: backend.turns[0]!.attemptId, deliveredAt: null });
+});
+
+test('reconstruir sin confinamiento tampoco incluye el cuerpo pendiente de un adjunto inelegible', async () => {
+  const { change, run, reply } = setup();
+  const backend = fakeLive([{ reports: [ASK] }, { reports: [DONE] }]);
+  const waiting = await run(backend);
+  const pending = store.addChangeNote(change.id, 'CUERPO INELEGIBLE', file('ARCHIVO INELEGIBLE'));
+  const legacy = store.addChangeNote(change.id, 'TEXTO SIN ARCHIVO');
+  reply(waiting.questionId!);
+  backend.known.clear();
+  expect((await run(backend)).status).toBe('completed');
+  const rebuilt = backend.turns[2]!.prompt;
+  expect(rebuilt.split(legacy.body)).toHaveLength(2);
+  expect(rebuilt).not.toContain(pending.body);
+  expect(rebuilt).not.toContain('ARCHIVO INELEGIBLE');
+  expect(store.listChangeNotes(change.id)[0]).toEqual(pending);
+  const warnings = store.listEvents(store.getChange(change.id).workstreamId).filter(e => String(e.message).startsWith('Adjuntos pendientes:'));
+  expect(warnings).toHaveLength(1); // El intento de reanudación y el reconstruido vieron la misma condición.
+});
+
+test('una caída antes de lanzar no consume el archivo reservado y el siguiente intento lo confirma', async () => {
+  const { change, ws, run, recover } = setup(true);
+  const n = store.addChangeNote(change.id, 'Nota de caída', file('ARCHIVO HUÉRFANO'));
+  const backend = fakeLive([{ reports: [DONE] }]);
+  await expect(run(backend, point => { if (point === 'session-launched') throw new CrashInjected(point); })).rejects.toThrow(CrashInjected);
+  const orphan = store.listChangeNotes(change.id)[0];
+  expect(orphan).toMatchObject({ id: n.id, attemptId: expect.any(String), deliveredAt: null });
+  expect(backend.turns).toHaveLength(0);
+  recover();
+  expect((await run(backend)).status).toBe('completed');
+  const used = backend.turns.at(-1)!;
+  expect(used.prompt).toContain('ARCHIVO HUÉRFANO');
+  expect(used.attemptId).not.toBe(orphan!.attemptId);
+  expect(store.listChangeNotes(change.id)[0]).toMatchObject({ attemptId: used.attemptId, deliveredAt: expect.any(String) });
+  expect(store.listEvents(ws.id).filter(e => String(e.message).includes('entregada (turno'))).toHaveLength(1);
 });

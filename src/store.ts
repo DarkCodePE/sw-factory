@@ -12,7 +12,7 @@ import { gitEvidence, writeManifest } from './manifest.ts';
 import { lastDue, parseCron } from './cron.ts';
 import {
   assertNoteAttachmentMounts, assertPrivateNoteDatabase, NOTE_ATTACHMENT_HISTORY_MAX, NOTE_ATTACHMENT_MAX,
-  validateNoteAttachment, type NoteAttachment, type NoteAttachmentMeta, type NoteAttachmentTarget,
+  NOTE_ATTACHMENT_WAIT, validateNoteAttachment, type NoteAttachment, type NoteAttachmentMeta, type NoteAttachmentTarget, type NoteAttachmentWait,
 } from './note-attachments.ts';
 
 import {
@@ -181,6 +181,12 @@ export interface ChangeNote {
 }
 
 export interface ReservedChangeNote extends ChangeNote { attachmentBytes?: Uint8Array }
+export type HistoricalNoteBody = Pick<ChangeNote, 'id' | 'body' | 'createdAt'>;
+type NoteDelivery = (NoteAttachmentTarget & { fits?: (notes: ReservedChangeNote[]) => boolean })
+  | { blockedBy: 'remote' | 'transport' };
+const PLAIN_NOTE = '(attachment_name IS NULL AND attachment_bytes IS NULL)';
+const ATTACHMENT_EVENT = 'Adjuntos pendientes: ';
+const ATTACHMENT_READY = 'Adjuntos aptos para este turno.';
 
 export interface Activity {
   id: string;
@@ -1180,7 +1186,8 @@ export class Store {
         if (this.noteRunnerIsRemote(change.workstreamId)) {
           throw new StoreError('invalid_input', 'Los adjuntos requieren un workstream local. El runner asignado es remoto.');
         }
-        this.assertNoteAttachmentState();
+        try { this.assertNoteAttachmentState(); }
+        catch (error) { throw new StoreError('invalid_input', (error as Error).message); }
         const { pending, total } = this.db.query<{ pending: number; total: number }, [string]>(`
           SELECT COALESCE(SUM(CASE WHEN delivered_at IS NULL THEN length(attachment_bytes) ELSE 0 END), 0) AS pending,
             COALESCE(SUM(length(attachment_bytes)), 0) AS total FROM change_notes WHERE change_id = ?
@@ -1215,33 +1222,70 @@ export class Store {
     return rows.map(toChangeNote);
   }
 
-  reserveNotes(changeId: string, activityId: string, attemptId: string, target?: NoteAttachmentTarget): ReservedChangeNote[] {
+  listHistoricalNoteBodies(changeId: string): HistoricalNoteBody[] {
+    return this.db.query<HistoricalNoteBody, [string]>(`SELECT id, body, created_at AS createdAt
+      FROM change_notes WHERE change_id = ? AND (${PLAIN_NOTE} OR delivered_at IS NOT NULL)
+      ORDER BY created_at, rowid`).all(changeId);
+  }
+
+  noteAttachmentWait(changeId: string): string | undefined {
+    const last = this.db.query<{ message: string }, [string, string, string]>(`SELECT message FROM events
+      WHERE change_id = ? AND (message LIKE ? OR message = ?) ORDER BY id DESC LIMIT 1`)
+      .get(changeId, ATTACHMENT_EVENT + '%', ATTACHMENT_READY)?.message;
+    return Object.values(NOTE_ATTACHMENT_WAIT).find(reason => ATTACHMENT_EVENT + reason === last);
+  }
+
+  reserveNotes(changeId: string, activityId: string, attemptId: string, delivery?: NoteDelivery): ReservedChangeNote[] {
     return this.withRetry(() => {
-      const plain = '(attachment_name IS NULL AND attachment_bytes IS NULL)';
-      let filter = plain;
-      if (target && this.db.query(`SELECT 1 FROM change_notes WHERE change_id = ? AND delivered_at IS NULL AND NOT ${plain}`).get(changeId)) {
-        const change = this.getChange(changeId);
-        if (!this.noteRunnerIsRemote(change.workstreamId)) {
-          try {
-            this.assertNoteAttachmentState(target);
-            filter = `(${plain} OR (attachment_name IS NOT NULL AND attachment_bytes IS NOT NULL))`;
-          } catch { /* Un estado que dejó de ser apto conserva completas las notas con adjunto. */ }
+      const reserve = (filter: string) => {
+        // Una reserva sin confirmar puede pertenecer a un intento interrumpido.
+        this.db.query(`UPDATE change_notes SET activity_id = ?, attempt_id = ?
+          WHERE change_id = ? AND delivered_at IS NULL AND ${filter}`).run(activityId, attemptId, changeId);
+        return this.db.query<Row, [string, string, string]>(`SELECT * FROM change_notes
+          WHERE change_id = ? AND activity_id = ? AND attempt_id = ? AND delivered_at IS NULL AND ${filter}
+          ORDER BY created_at, rowid`).all(changeId, activityId, attemptId);
+      };
+      const pending = this.db.query(`SELECT 1 FROM change_notes WHERE change_id = ? AND delivered_at IS NULL AND NOT ${PLAIN_NOTE}`).get(changeId);
+      if (!pending) return reserve(PLAIN_NOTE).map(toChangeNote);
+
+      const { workstreamId } = this.getChange(changeId);
+      const previous = this.noteAttachmentWait(changeId);
+      const reason = (wait: NoteAttachmentWait) => {
+        if (previous !== NOTE_ATTACHMENT_WAIT[wait]) {
+          this.event(workstreamId, 'warning', ATTACHMENT_EVENT + NOTE_ATTACHMENT_WAIT[wait], changeId, activityId);
         }
+        return reserve(PLAIN_NOTE).map(toChangeNote);
+      };
+      if (this.noteRunnerIsRemote(workstreamId) || (delivery && 'blockedBy' in delivery && delivery.blockedBy === 'remote')) return reason('remote');
+      if (!delivery || 'blockedBy' in delivery) return reason('transport');
+      const activity = this.getActivity(activityId);
+      if (activity.changeId !== changeId || activity.validator ||
+          (activity.kind !== 'investigation' && activity.kind !== 'implementation')) return reason('transport');
+      try { this.assertNoteAttachmentState(delivery); }
+      catch { return reason('state'); }
+
+      // El savepoint descarta la reserva provisional si el turno no puede llevar los adjuntos.
+      // Solo se leen BLOB de notas vinculadas a este intento y dentro de la misma transacción.
+      const tooLarge = new Error(), invalidFile = new Error();
+      try {
+        const notes = this.db.transaction(() => {
+          const batch = reserve('1 = 1').map(row => {
+            if (row.attachment_name === null && row.attachment_bytes === null) return toChangeNote(row);
+            const bytes = row.attachment_bytes;
+            if (typeof row.attachment_name !== 'string' || !(bytes instanceof Uint8Array)
+              || validateNoteAttachment({ name: row.attachment_name, bytes })) throw invalidFile;
+            return { ...toChangeNote({ ...row, attachment_size: bytes.byteLength }), attachmentBytes: bytes };
+          });
+          if (delivery.fits && !delivery.fits(batch)) throw tooLarge;
+          return batch;
+        })();
+        if (previous) this.event(workstreamId, 'info', ATTACHMENT_READY, changeId, activityId);
+        return notes;
+      } catch (error) {
+        if (error === tooLarge) return reason('size');
+        if (error === invalidFile) return reason('invalid');
+        throw error;
       }
-      // Una reserva sin confirmar puede pertenecer a un intento interrumpido.
-      this.db.query(`UPDATE change_notes SET activity_id = ?, attempt_id = ?
-        WHERE change_id = ? AND delivered_at IS NULL AND ${filter}`).run(activityId, attemptId, changeId);
-      const rows = this.db.query<Row, [string, string, string]>(`SELECT * FROM change_notes
-        WHERE change_id = ? AND activity_id = ? AND attempt_id = ? AND delivered_at IS NULL AND ${filter}
-        ORDER BY created_at, rowid`).all(changeId, activityId, attemptId);
-      return rows.map(row => {
-        const bytes = row.attachment_bytes;
-        const note = toChangeNote({ ...row, attachment_size: bytes instanceof Uint8Array ? bytes.byteLength : null });
-        if (!note.attachment || !(bytes instanceof Uint8Array)) return note;
-        const invalid = validateNoteAttachment({ name: note.attachment.name, bytes });
-        if (invalid) throw new StoreError('invalid_input', invalid);
-        return { ...note, attachmentBytes: bytes };
-      });
     });
   }
 
