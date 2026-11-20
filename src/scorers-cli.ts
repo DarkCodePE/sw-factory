@@ -7,6 +7,13 @@ import { StoreError, type Store } from './store.ts';
 const USAGE = 'fab score run <ws> [--once] [--max N] [--budget-usd X] [--agent <n>] | add <activity> --scorer <n> | list <ws> [--change <id>] [--json] | backfill <ws> [--since <iso>] [--scorer <n>] [--yes]';
 const PASS_MS = 30_000;
 
+/** Cada Ctrl-C aborta (`on`, no `once`): un segundo no mata el proceso antes del `finally` de `judge`, que borra el directorio desechable (H1). Devuelve cómo soltar el manejador. */
+export function abortOnSigint(ac: AbortController): () => void {
+  const h = () => ac.abort();
+  process.on('SIGINT', h);
+  return () => { process.off('SIGINT', h); };
+}
+
 const sleep = (ms: number, signal: AbortSignal) => new Promise<void>((res) => {
   const t = setTimeout(res, ms);
   signal.addEventListener('abort', () => { clearTimeout(t); res(); }, { once: true });

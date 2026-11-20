@@ -159,7 +159,7 @@ export function backfillCandidates(store: Store, stateDir: string, wsId: string,
   return out;
 }
 
-/** Vista previa de puntuar ejecuciones pasadas. El coste sale de las puntuaciones ya hechas del juez; sin historial es null («No medido»), nunca 0. */
+/** Vista previa de puntuar ejecuciones pasadas. El coste sale de las puntuaciones ya hechas del juez; sin historial de algún juez el total es null («No medido»), nunca 0 ni suma parcial. */
 export function previewBackfill(store: Store, stateDir: string, wsId: string, opts: { since?: string; scorer?: string } = {}):
   { runs: number; byScorer: { scorer: string; runs: number; avgCostUsd: number | null }[]; estimatedUsd: number | null } {
   const cands = backfillCandidates(store, stateDir, wsId, opts);
@@ -167,8 +167,9 @@ export function previewBackfill(store: Store, stateDir: string, wsId: string, op
   for (const c of cands) counts.set(c.scorer, (counts.get(c.scorer) ?? 0) + 1);
   const avg = hasScores(store.db) ? store.db.query("SELECT AVG(cost_usd) AS a FROM scores WHERE scorer = ? AND status = 'done' AND cost_usd IS NOT NULL") : null;
   const byScorer = [...counts].map(([scorer, runs]) => ({ scorer, runs, avgCostUsd: (avg?.get(scorer) as { a: number | null } | null)?.a ?? null }));
-  const known = byScorer.filter((b) => b.avgCostUsd !== null);
-  return { runs: cands.length, byScorer, estimatedUsd: known.length ? known.reduce((s, b) => s + b.runs * b.avgCostUsd!, 0) : null };
+  // Un solo juez sin historial hace el total «No medido»: una suma parcial parecería el coste real.
+  const estimatedUsd = byScorer.length && byScorer.every((b) => b.avgCostUsd !== null) ? byScorer.reduce((s, b) => s + b.runs * b.avgCostUsd!, 0) : null;
+  return { runs: cands.length, byScorer, estimatedUsd };
 }
 
 /** Encola el rango como `backfill`; quien llama ya mostró la vista previa. */

@@ -3,7 +3,7 @@ import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { defaultProfile, saveProfile, type ScorerDef } from '../src/profile.ts';
-import { scoreMain } from '../src/scorers-cli.ts';
+import { abortOnSigint, scoreMain } from '../src/scorers-cli.ts';
 import { ensureSchema } from '../src/scorers.ts';
 import { Store } from '../src/store.ts';
 
@@ -113,4 +113,55 @@ test('argumentos inválidos: error claro y salida 1', async () => {
   expect((await cli('run', 'ws', '--agent', 'nope')).err).toContain('unknown agent');
   expect((await cli('nada')).code).toBe(1);
   expect((await cli('add', 'x')).err).toContain('--scorer');
+});
+
+test('H1: SIGINT aborta y el manejador sobrevive al primer Ctrl-C; al soltar no queda ninguno', () => {
+  const before = process.listenerCount('SIGINT');
+  const ac = new AbortController();
+  const dispose = abortOnSigint(ac);
+  process.emit('SIGINT');
+  expect(ac.signal.aborted).toBe(true);
+  // Con `once` el segundo Ctrl-C no tendría manejador y mataría el proceso sin pasar por el finally de judge.
+  expect(process.listenerCount('SIGINT')).toBe(before + 1);
+  dispose();
+  expect(process.listenerCount('SIGINT')).toBe(before);
+});
+
+test('H2: si a algún juez le falta historial, el total es «No medido», no una suma parcial', async () => {
+  seed({ j: def(), k: def({ scope: 'investigate' }) });
+  ensureSchema(store.db);
+  const hist = (id: string, status: string, cost: number) => store.db.query(`INSERT INTO scores (id, scorer, profile_digest, scope, subject_activity_id, change_id, workstream_id, round, origin, status, cost_usd, created_at)
+    VALUES (?,'j','x','implement',?,'h','h',0,'sample',?,?,'t')`).run(id, id, status, cost);
+  hist('h1', 'done', 0.25);
+  hist('h2', 'failed', 9); // una fila fallida no cuenta para la media (D10)
+  const out = (await cli('backfill', 'ws')).out;
+  expect(out).toContain('2 ejecuciones sin puntuar, coste estimado No medido');
+  expect(out).toContain('j: 1 × $0.2500');
+  expect(out).toContain('k: 1 × No medido');
+});
+
+test('H2: sin historial de ningún juez, el total no es 0', async () => {
+  seed({ j: def() });
+  expect((await cli('backfill', 'ws')).out).toContain('coste estimado No medido');
+});
+
+test('H3: list no enseña filas de otro workstream (D5)', async () => {
+  const a = seed({ j: def() });
+  const b = seed({ j: def() }, 'otro');
+  await cli('add', a.implId, '--scorer', 'j');
+  await cli('add', b.implId, '--scorer', 'j');
+  const out = (await cli('list', 'ws')).out;
+  expect(out).toContain(a.c.id);
+  expect(out).not.toContain(b.c.id);
+});
+
+test('H3: run sin --once termina al abortar la señal (D11)', async () => {
+  seed({});
+  const ac = new AbortController();
+  const log = spyOn(console, 'log').mockImplementation(() => {});
+  try {
+    const t = scoreMain(['run', 'ws'], store, dir, ac.signal);
+    setTimeout(() => ac.abort(), 0);
+    expect(await t).toBe(0);
+  } finally { log.mockRestore(); }
 });
