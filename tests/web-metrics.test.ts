@@ -270,14 +270,30 @@ test('T82: gráficos SVG de series temporales, números coinciden con la tabla y
   expect(html).not.toContain('<tr><th scope="row">2026-11-19</th><td>0</td></tr>');
   expect(html).toContain('>hueco<');
   const m = calculateMetrics(store, dir, { from: '2026-11-17', to: '2026-11-19' });
-  expect(m.daily.changes[2]).toBeNull();
-  expect(m.daily.costs[2]).toBeNull();
-  expect(m.daily.interventions[2]).toBeNull();
-  // En coste para el día con coste desconocido (2026-11-18), la tabla tiene "No medido"
-  expect(html).toContain('<td>No medido</td>');
-  // En coste para 2026-11-17, el gráfico muestra 5.00 y la tabla 5.00 USD
-  expect(html).toContain('>5.00<');
-  expect(html).toContain('5.00 USD');
+  expect(m.daily.changes).toEqual([1, 1, null]);
+  expect(m.daily.costs).toEqual([5, null, null]);
+  expect(m.daily.interventions).toEqual([3, 3, null]);
+
+  // Tablas: valores por fila y día
+  expect(html).toContain('<tr><th scope="row">2026-11-17</th><td>1</td></tr>');
+  expect(html).toContain('<tr><th scope="row">2026-11-18</th><td>1</td></tr>');
+  expect(html).toContain('<tr><th scope="row">2026-11-17</th><td>5.00 USD</td></tr>');
+  expect(html).toContain('<tr><th scope="row">2026-11-18</th><td>No medido</td></tr>');
+  expect(html).toContain('<tr><th scope="row">2026-11-17</th><td>3</td></tr>');
+  expect(html).toContain('<tr><th scope="row">2026-11-18</th><td>3</td></tr>');
+
+  // SVG: valores exactos y huecos por gráfico
+  // Changes SVG
+  expect(html).toContain('<text x="58" y="20" text-anchor="middle" font-size="11" fill="currentColor">1</text>');
+  expect(html).toContain('<text x="114" y="20" text-anchor="middle" font-size="11" fill="currentColor">1</text>');
+  // Coste SVG
+  expect(html).toContain('<text x="58" y="20" text-anchor="middle" font-size="11" fill="currentColor">5.00</text>');
+  // Intervenciones SVG
+  expect(html).toContain('<text x="58" y="20" text-anchor="middle" font-size="11" fill="currentColor">3</text>');
+  expect(html).toContain('<text x="114" y="20" text-anchor="middle" font-size="11" fill="currentColor">3</text>');
+  // Hueco presente en día 19 (y día 18 en coste)
+  expect(html).toContain('<text x="170" y="103" text-anchor="middle" font-size="11" fill="var(--muted, #888)">hueco</text>');
+  expect(html).toContain('<text x="114" y="103" text-anchor="middle" font-size="11" fill="var(--muted, #888)">hueco</text>');
 
   expect(html).toContain('2026-11-17');
   expect(html).toContain('2026-11-18');
