@@ -217,3 +217,14 @@ test('adm_hook_deliveries conserva el check constraint original sin rejected', (
       .run('del-invalid', 'issues', now, 100, 'rejected');
   }).toThrow(/CHECK constraint failed/);
 });
+
+test('la web no anuncia su propio puerto como url de destino del webhook', async () => {
+  store = new Store(join(dir, 'fabrica.db'));
+  new AdmissionDb(store);
+  server = startWeb(dir, 0);
+
+  const html = await getHtml('/webhooks');
+  // No debe anunciar el puerto de la web porque el receptor escucha en --hook-port
+  expect(html).not.toContain(`http://127.0.0.1:${server.port}/github`);
+  expect(html).toContain('--hook-port');
+});

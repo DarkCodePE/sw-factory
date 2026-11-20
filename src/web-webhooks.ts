@@ -114,14 +114,14 @@ export function webhooksPage(store: Store, url: URL, escape: Escape): { title: s
           <tbody>
             <tr>
               <td><strong>GitHub (avisos)</strong></td>
-              <td><code>http://127.0.0.1:${escape(url.port || '4310')}/github</code></td>
+              <td><code>POST /github</code> (puerto configurado con <code>--hook-port</code> del residente)</td>
               <td><code>issues</code>, <code>issue_comment</code></td>
               <td>Aviso (wake sin datos)</td>
             </tr>
           </tbody>
         </table>
       </div>
-      <p class="muted">Alta, rotación y túnel viven fuera de la web (D-K, §4). Solo lectura.</p>
+      <p class="muted">El receptor escucha en el puerto fijado por <code>--hook-port</code> en el residente (no en el puerto de la web). Alta, rotación y túnel viven fuera de la web (D-K, §4). Solo lectura.</p>
     </section>
 
     <section>
