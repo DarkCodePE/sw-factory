@@ -519,11 +519,13 @@ export class Store {
   private readonly terminalEvidence = new Set<string>();
   readonly clock: () => Date;
   readonly dbPath: string;
+  private readonly readonly: boolean;
 
   constructor(path: string, options?: StoreOptions) {
     this.stateDir = path === ':memory:' ? undefined : dirname(resolve(path));
     this.clock = options?.clock ?? (() => new Date());
     this.dbPath = path;
+    this.readonly = !!options?.readonly;
     this.db = options?.readonly ? openReadonlyDatabase(path) : new Database(path, { create: true, strict: true });
     if (options?.readonly) return;
     this.db.exec('PRAGMA busy_timeout = 5000; PRAGMA journal_mode = WAL; PRAGMA foreign_keys = ON;');
@@ -604,7 +606,18 @@ export class Store {
   close(): void {
     // Refresh cleanup observations after callers remove a terminal change worktree.
     try { for (const id of this.terminalEvidence) writeManifest(this, id); }
-    finally { this.db.close(); }
+    finally { this.closeDatabase(); }
+  }
+
+  /**
+   * Bun solo finaliza al cerrar las consultas que siguen en su caché; las expulsadas dejan la conexión viva («zombi») hasta un GC,
+   * y su checkpoint reescribiría la base después de close(). Se vuelca el WAL antes y se fuerza el GC si queda rastro.
+   */
+  private closeDatabase(): void {
+    if (this.readonly) { this.db.close(); return; }
+    try { this.db.exec('PRAGMA wal_checkpoint(PASSIVE)'); } catch { /* sin checkpoint, el cierre sigue */ }
+    this.db.close();
+    if (existsSync(`${this.dbPath}-wal`)) Bun.gc(true);
   }
 
   // ---- workstreams -------------------------------------------------------
