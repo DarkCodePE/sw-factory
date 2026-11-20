@@ -20,6 +20,9 @@ import { PROFILE_BODY_LIMIT, ProfileInputError, profileAction } from './web-prof
 import { enqueueBackfill, enqueueManual, ensureSchema, previewBackfill } from './scorers.ts';
 import { archiveWorkstream, createWorkstream, workstreamSettings, workstreamState, wsFields } from './web-ws.ts';
 
+import { scheduleExpr } from './cron.ts';
+import { automationEditor, automationEditorPath, automationErrorDocument } from './web-automations.ts';
+
 // Cancelar vale para todo change que no haya terminado bien o por decisión: igual que `fab reject`, también limpia failed, blocked y quarantined.
 const FINAL_STATUSES = ['completed', 'canceled', 'declined'];
 const escape = (s: string) => redact(s).replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[c]!);
@@ -78,9 +81,9 @@ export class InputError extends Error {
 
 type Raw = Record<string, string | undefined>;
 type Outcome = { destination: string; result: string; repo?: string };
-type Action = { path: RegExp; /** false: solo la web con sesión; la API con clave no la expone (decisión del dueño sobre H1). */ api?: false; input: (raw: Raw) => Raw; run: (store: Store, id: string, input: Raw, out: Outcome, actor: string, stateDir: string) => void };
+type Action = { path: RegExp; automationForm?: 'create' | 'update' | 'delete'; /** false: solo la web con sesión; la API con clave no la expone (decisión del dueño sobre H1). */ api?: false; input: (raw: Raw) => Raw; run: (store: Store, id: string, input: Raw, out: Outcome, actor: string, stateDir: string) => void };
 
-type WebResponseAction = { path: RegExp; api: false; respond: (stateDir: string, id: string, form: URLSearchParams, usage: ApiKeyUsage) => Response };
+type WebResponseAction = { path: RegExp; automationForm?: undefined; api: false; respond: (stateDir: string, id: string, form: URLSearchParams, usage: ApiKeyUsage) => Response };
 
 const text = (raw: Raw, key: string) => raw[key] ?? '';
 const limit = (value: string, max = 8192) => { if (Buffer.byteLength(value) > max) throw new InputError(413, 'El texto supera 8 KiB.'); };
@@ -98,6 +101,44 @@ const findSignal = (store: Store, id: string) => {
   if (s.status !== 'new') throw new StoreError('conflict', 'señal ya resuelta');
   return s;
 };
+
+// URL-encoded: cada LF puede convertirse en %0D%0A. Deja margen para los demás campos.
+const AUTOMATION_FORM_LIMIT = 56 * 1024;
+const AUTOMATION_BODY_LIMIT = 8 * 1024;
+const AUTOMATION_CRON_LIMIT = 256;
+const automationFields = ['name', 'schedule', 'cron', 'at', 'weekday', 'title', 'body'];
+const automationConfirmation = ['confirm', 'revision'];
+const lf = (value: string) => value.replace(/\r\n?/g, '\n');
+
+function automationInput(mode: NonNullable<Action['automationForm']>, raw: Raw): Raw {
+  const allowed = mode === 'create' ? ['ws', ...automationFields]
+    : mode === 'update' ? [...automationFields, ...automationConfirmation] : automationConfirmation;
+  if (Object.keys(raw).some(key => !allowed.includes(key))) throw new InputError(400, 'El formulario contiene campos inesperados.');
+  if (mode !== 'create') {
+    if (raw.confirm !== 'yes') throw new InputError(400, mode === 'update' ? 'Confirma la edición.' : 'Confirma el borrado.');
+    if (!/^[a-f0-9]{64}$/.test(raw.revision ?? '')) throw new InputError(400, 'Falta la revisión. Recarga el formulario.');
+  }
+  if (mode === 'delete') return { revision: raw.revision };
+  if (mode === 'create' && !/^[\w-]{1,100}$/.test(raw.ws ?? '')) throw new InputError(400, 'Elige un workstream.');
+  const body = lf(raw.body ?? '');
+  limit(body, AUTOMATION_BODY_LIMIT);
+  if (!raw.name || !raw.title || !body || !raw.schedule) throw new InputError(400, 'Completa el nombre, el horario, el título y el cuerpo.');
+  if (Buffer.byteLength(lf(raw.cron ?? '')) > AUTOMATION_CRON_LIMIT) throw new InputError(400, 'La expresión cron supera 256 bytes.');
+  const at = raw.at || undefined, weekday = raw.weekday || undefined;
+  let cron: string;
+  if (raw.schedule === 'cron') {
+    if (at || weekday) throw new InputError(400, 'Para el modo cron, completa solo la expresión cron.');
+    cron = lf(raw.cron ?? '');
+  } else {
+    if (raw.cron) throw new InputError(400, 'Para un horario fijo, deja vacía la expresión cron.');
+    try {
+      cron = scheduleExpr({ every: raw.schedule, at, weekday });
+    } catch {
+      throw new InputError(400, 'Revisa el horario UTC. Usa :MM para cada hora, HH:MM para diario y HH:MM y día para semanal.');
+    }
+  }
+  return { ws: raw.ws, name: raw.name, title: lf(raw.title), body, cron, revision: raw.revision, schedule: raw.schedule };
+}
 
 // Registro único de acciones: los formularios de la web y, después, la API pasan por aquí.
 export const ACTIONS: Record<string, Action | WebResponseAction> = {
@@ -266,6 +307,41 @@ export const ACTIONS: Record<string, Action | WebResponseAction> = {
       store.ignoreSignal(id); store.event(s.workstreamId, 'info', `signal ignorada: ${s.title}`);
     },
   },
+  'automations/create': {
+    api: false, automationForm: 'create', path: /^\/(automations)\/create$/,
+    input: raw => automationInput('create', raw),
+    run: (store, _id, input, out) => {
+      out.destination = '/automations';
+      const { ws, name, cron, title, body } = input;
+      try { store.createAutomation({ workstream: ws!, name: name!, cron: cron!, title: title!, body: body! }); }
+      catch (error) {
+        if (error instanceof StoreError && error.code === 'not_found') throw new InputError(400, 'Elige un workstream existente.');
+        throw error;
+      }
+    },
+  },
+  'automations/update': {
+    api: false, automationForm: 'update', path: route('automations', 'update'),
+    input: raw => automationInput('update', raw),
+    run: (store, id, input, out) => {
+      out.destination = '/automations';
+      const before = store.getAutomation(id);
+      // HTML normaliza los saltos de línea. Si el texto visible coincide, conserva el original.
+      const restore = (field: 'title' | 'body' | 'cron') => input[field] === lf(before[field]) ? before[field] : input[field]!;
+      store.updateAutomation(id, input.revision!, {
+        name: input.name!, title: restore('title'), body: restore('body'),
+        cron: input.schedule === 'cron' ? restore('cron') : input.cron!,
+      });
+    },
+  },
+  'automations/delete': {
+    api: false, automationForm: 'delete', path: route('automations', 'delete'),
+    input: raw => automationInput('delete', raw),
+    run: (store, id, input, out) => {
+      out.destination = '/automations';
+      store.deleteAutomation(id, input.revision!);
+    },
+  },
   // Las automations ignoran title y body: la señal lleva el texto que guardó el dueño (A5).
   'automations/run': {
     path: route('automations', 'run'),
@@ -337,6 +413,17 @@ export async function performAction(stateDir: string, name: string, id: string, 
     if (out.repo) { await writer.waitForRelease(id); await removeWorktree(out.repo, stateDir, id); }
   } catch (error) {
     if (error instanceof InputError) throw error;
+    if (action.automationForm) {
+      if (error instanceof StoreError) {
+        if (error.code === 'not_found') throw new InputError(404, 'Automation no encontrada.');
+        if (error.code === 'conflict' || error.code === 'limit_reached') throw new InputError(409, error.message);
+        if (error.code === 'invalid_input') {
+          const message = redact(error.message).replace(/[\p{Cc}\p{Cf}]/gu, ' ').slice(0, 320);
+          throw new InputError(400, message);
+        }
+      }
+      throw new InputError(500, 'No se pudo registrar la acción.');
+    }
     out.result = error instanceof StoreError && messages[error.code] ? error.code : 'error';
   } finally { store?.close(); }
   return out;
@@ -345,34 +432,64 @@ export async function performAction(stateDir: string, name: string, id: string, 
 async function readForm(req: Request, limit = 16384): Promise<URLSearchParams> {
   if (req.headers.get('content-type')?.split(';')[0]?.trim().toLowerCase() !== 'application/x-www-form-urlencoded') throw new InputError(415, 'Solo se admite application/x-www-form-urlencoded.');
   if (Number(req.headers.get('content-length')) > limit) throw new InputError(413, 'El cuerpo es demasiado grande.');
-  // Bun limita la recepción a 16 KiB antes de materializar el cuerpo (startWeb).
-  let body: ArrayBuffer;
-  try { body = await req.arrayBuffer(); }
-  catch (error) {
+  // También se acota lo recibido cuando no hay Content-Length.
+  const reader = req.body?.getReader();
+  if (!reader) return new URLSearchParams();
+  const chunks: Uint8Array[] = [];
+  let bytes = 0;
+  try {
+    for (;;) {
+      const { value, done } = await reader.read();
+      if (done) break;
+      bytes += value.byteLength;
+      // Se descarta el resto sin guardarlo: cancelar antes dejaba la conexión persistente con bytes sin leer.
+      if (bytes <= limit) chunks.push(value);
+    }
+    if (bytes > limit) throw new InputError(413, 'El cuerpo es demasiado grande.');
+  } catch (error) {
     if (error instanceof Error && error.name === 'RequestBodyTooLarge') throw new InputError(413, 'El cuerpo es demasiado grande.');
     throw error;
+  } finally { reader.releaseLock(); }
+  return new URLSearchParams(Buffer.concat(chunks, bytes).toString('utf8'));
+}
+
+function automationFailure(stateDir: string, mode: NonNullable<Action['automationForm']>, id: string, csrf: string, fields: Raw, error: InputError): Response {
+  const reload = mode === 'create' ? '/automations/nueva' : automationEditorPath(id);
+  let body: string | undefined;
+  if (error.status === 400 && mode !== 'delete') {
+    const reader = new Store(join(stateDir, 'fabrica.db'), { readonly: true });
+    try {
+      const automation = mode === 'update' ? reader.getAutomation(id) : undefined;
+      body = automationEditor(reader, csrf, { automation, values: fields, error: error.message }).body;
+    } catch (cause) {
+      if (!(cause instanceof StoreError && cause.code === 'not_found')) throw cause;
+      error = new InputError(404, 'Automation no encontrada.');
+    } finally { reader.close(); }
   }
-  if (body.byteLength > limit) throw new InputError(413, 'El cuerpo es demasiado grande.');
-  return new URLSearchParams(Buffer.from(body).toString('utf8'));
+  return new Response(automationErrorDocument(error.message, error.status === 404 ? '/automations' : reload, body), {
+    status: error.status, headers: { 'Content-Type': 'text/html; charset=utf-8', 'Referrer-Policy': 'same-origin' },
+  });
 }
 
 export async function webAction(req: Request, stateDir: string, port: number, auth: WebAuth, usage: ApiKeyUsage): Promise<Response> {
-  if (!auth.sessionCsrf(req)) return new Response('Se necesita una sesión local.', { status: 401 });
+  const csrf = auth.sessionCsrf(req);
+  if (!csrf) return new Response('Se necesita una sesión local.', { status: 401 });
   if (req.headers.get('origin') !== `http://${auth.host}:${port}`) return new Response('Origin rechazado.', { status: 403 });
-  let destination = '/'; let result = 'ok';
+  let destination = '/'; let result = 'ok'; let id = '';
+  const pathname = new URL(req.url).pathname;
+  const profilePath = /^\/perfiles\/(guardar|asignar)$/.exec(pathname);
+  const name = Object.keys(ACTIONS).find(n => ACTIONS[n]!.path.test(pathname));
+  const action = name ? ACTIONS[name] : undefined;
+  const fields: Raw = Object.create(null);
   try {
-    const profilePath = /^\/perfiles\/(guardar|asignar)$/.exec(new URL(req.url).pathname);
-    const form = await readForm(req, profilePath ? PROFILE_BODY_LIMIT : 16384);
+    const form = await readForm(req, profilePath ? PROFILE_BODY_LIMIT : action?.automationForm ? AUTOMATION_FORM_LIMIT : 16384);
     if (!auth.validCsrf(req, form.get('csrf') ?? '')) return new Response('CSRF rechazado.', { status: 403 });
     if (profilePath) {
       ({ destination, result } = profileAction(stateDir, profilePath[1] as 'guardar' | 'asignar', form));
       auth.rememberNotice(req, destination.split('?')[0]!, result);
       return new Response(null, { status: 303, headers: { Location: destination } });
     }
-    const pathname = new URL(req.url).pathname;
-    const name = Object.keys(ACTIONS).find(n => ACTIONS[n]!.path.test(pathname));
-    if (!name) return new Response('Acción no encontrada.', { status: 404 });
-    const action = ACTIONS[name]!;
+    if (!name || !action) return new Response('Acción no encontrada.', { status: 404 });
     const raw = action.path.exec(pathname)![1] ?? '';
     if ('respond' in action) {
       const response = action.respond(stateDir, raw, form, usage);
@@ -380,14 +497,25 @@ export async function webAction(req: Request, stateDir: string, port: number, au
       if (response.status === 303 && location) auth.rememberNotice(req, location, 'ok');
       return response;
     }
-    const id = name.endsWith('/create') ? '' : decodeURIComponent(raw);
-    if (id && !/^[\w-]+$/.test(id)) throw new InputError(400, 'Identificador inválido.');
-    // Con claves repetidas gana la primera, como form.get.
-    const fields: Raw = {};
-    for (const [k, v] of form) if (!(k in fields)) fields[k] = v;
+    id = name.endsWith('/create') ? '' : decodeURIComponent(raw);
+    if (id && !/^[\w-]+$/.test(id)) return new Response('Identificador inválido.', { status: 400 });
+    let repeated = false;
+    // Las acciones anteriores conservan el primer valor. En los editores importa cada campo.
+    for (const [k, v] of form) {
+      if (k in fields) repeated = true;
+      else fields[k] = v;
+    }
+    if (action.automationForm) {
+      delete fields.csrf;
+      if (repeated) throw new InputError(400, 'El formulario contiene campos repetidos.');
+    }
     ({ destination, result } = await performAction(stateDir, name, id, fields, 'web'));
   } catch (error) {
-    if (error instanceof InputError) return new Response(error.message, { status: error.status, headers: error.status === 413 ? { Connection: 'close' } : {} });
+    if (error instanceof InputError) {
+      if (action?.automationForm && (id || action.automationForm === 'create') && [400, 404, 409].includes(error.status))
+        return automationFailure(stateDir, action.automationForm, id, csrf, fields, error);
+      return new Response(error.message, { status: error.status, headers: error.status === 413 ? { Connection: 'close' } : {} });
+    }
     if (error instanceof ProfileInputError) return new Response(error.message, { status: 400 });
     if (error instanceof URIError) return new Response('Identificador inválido.', { status: 400 });
     result = 'error';

@@ -9,6 +9,7 @@ import { userInfo } from 'node:os';
 import { closeSync, existsSync, fstatSync, openSync, readFileSync } from 'node:fs';
 import { dirname, resolve } from 'node:path';
 import { gitEvidence, writeManifest } from './manifest.ts';
+import { redact } from './evidence.ts';
 import { lastDue, parseCron } from './cron.ts';
 
 import {
@@ -128,6 +129,39 @@ export interface Automation {
   lastDueAt: string | null;
   lastResult: AutomationResult | null;
   lastSignalId: string | null;
+}
+
+type AutomationFields = Pick<Automation, 'name' | 'cron' | 'title' | 'body'>;
+const AUTOMATION_FIELDS = ['name', 'cron', 'title', 'body'] as const;
+
+export function automationRevision(a: Automation): string {
+  return createHash('sha256').update(JSON.stringify([a.id, a.name, a.cron, a.title, a.body, a.enabled])).digest('hex');
+}
+
+function validateAutomation({ name, cron, title, body }: AutomationFields): void {
+  if (!/^[a-z0-9][a-z0-9-]{0,40}$/.test(name)) {
+    throw new StoreError('invalid_input', 'nombre de automation inválido');
+  }
+  if (!title || [...title].length > 200) {
+    throw new StoreError('invalid_input', 'el título debe tener entre 1 y 200 caracteres');
+  }
+  if (!body || Buffer.byteLength(body, 'utf8') > 8192) {
+    throw new StoreError('invalid_input', 'el cuerpo debe ocupar entre 1 y 8192 bytes');
+  }
+  try {
+    parseCron(cron);
+  } catch (error) {
+    throw new StoreError('invalid_input', (error as Error).message);
+  }
+}
+
+function automationAuditValue(value: string): string {
+  if (Buffer.byteLength(value) > 8192) return '[OMITIDO: más de 8 KiB]';
+  const sanitized = redact(value
+    .replace(/-----BEGIN (?:[A-Z]+ )?PRIVATE KEY-----[\s\S]*$/g, '[REDACTED]')
+    // Conserva la clave y omite el resto de la línea, incluidos valores con espacios.
+    .replace(/(\b(?:[\w-]*(?:api[_-]?key|token|secret|password|credential)[\w-]*|authorization|(?:set-)?cookie)["']?[^\S\r\n]*[:=])\s*[^\r\n]*/gi, '$1 [REDACTED]'));
+  return new TextDecoder().decode(Buffer.from(sanitized).subarray(0, 8192), { stream: true });
 }
 
 type AutomationRun =
@@ -897,22 +931,9 @@ export class Store {
 
   // ---- automations -------------------------------------------------------
 
-  createAutomation(input: { workstream: string; name: string; cron: string; title: string; body: string }): Automation {
+  createAutomation(input: AutomationFields & { workstream: string }): Automation {
     const { workstream, name, cron, title, body } = input;
-    if (!/^[a-z0-9][a-z0-9-]{0,40}$/.test(name)) {
-      throw new StoreError('invalid_input', 'nombre de automation inválido');
-    }
-    if (!title || [...title].length > 200) {
-      throw new StoreError('invalid_input', 'el título debe tener entre 1 y 200 caracteres');
-    }
-    if (!body || Buffer.byteLength(body, 'utf8') > 8192) {
-      throw new StoreError('invalid_input', 'el cuerpo debe ocupar entre 1 y 8192 bytes');
-    }
-    try {
-      parseCron(cron);
-    } catch (error) {
-      throw new StoreError('invalid_input', (error as Error).message);
-    }
+    validateAutomation(input);
     return this.withRetry(() => {
       const ws = this.getWorkstream(workstream);
       const existing = this.db.query<{ name: string }, [string]>(
@@ -935,12 +956,58 @@ export class Store {
 
   listAutomations(workstream?: string): Automation[] {
     const workstreamId = workstream === undefined ? undefined : this.getWorkstream(workstream).id;
-    // El lector puede abrir una base anterior a la migración.
-    if (!this.db.query("SELECT 1 FROM sqlite_schema WHERE type = 'table' AND name = 'automations'").get()) return [];
+    if (!this.hasAutomations()) return [];
     const rows = workstreamId === undefined
       ? this.db.query('SELECT * FROM automations ORDER BY created_at, name').all()
       : this.db.query('SELECT * FROM automations WHERE workstream_id = ? ORDER BY created_at, name').all(workstreamId);
     return (rows as Row[]).map(toAutomation);
+  }
+
+  // El lector puede abrir una base anterior a la migración.
+  private hasAutomations(): boolean {
+    return !!this.db.query("SELECT 1 FROM sqlite_schema WHERE type = 'table' AND name = 'automations'").get();
+  }
+
+  getAutomation(id: string): Automation {
+    const row = this.hasAutomations() ? this.db.query<Row, [string]>('SELECT * FROM automations WHERE id = ?').get(id) : null;
+    return this.requireAutomation(id, row);
+  }
+
+  private automationForWrite(id: string, expected: string | undefined): Automation {
+    const automation = this.getAutomation(id);
+    if (expected !== undefined && automationRevision(automation) !== expected) {
+      throw new StoreError('conflict', 'La automation cambió. Recarga el formulario.');
+    }
+    return automation;
+  }
+
+  updateAutomation(id: string, expected: string, input: AutomationFields): Automation {
+    return this.withRetry(() => {
+      const before = this.automationForWrite(id, expected);
+      validateAutomation(input);
+      const changed = AUTOMATION_FIELDS.filter(key => before[key] !== input[key]);
+      if (!changed.length) return before;
+      if (before.name !== input.name && this.db.query('SELECT 1 FROM automations WHERE workstream_id = ? AND name = ?')
+        .get(before.workstreamId, input.name)) {
+        throw new StoreError('conflict', 'Ya existe una automation con ese nombre en el workstream.');
+      }
+      const row = this.db.query<Row, [string, string, string, string, string | null, string]>(
+        'UPDATE automations SET name = ?, cron = ?, title = ?, body = ?, last_due_at = ? WHERE id = ? RETURNING *',
+      ).get(input.name, input.cron, input.title, input.body,
+        before.cron === input.cron ? before.lastDueAt : this.automationFloor(before.lastDueAt), id);
+      this.auditAutomation(before, 'editada', changed);
+      return this.requireAutomation(id, row);
+    });
+  }
+
+  private automationFloor(previous: string | null): string {
+    const now = this.now();
+    return previous && Date.parse(previous) > Date.parse(now) ? previous : now;
+  }
+
+  private auditAutomation(a: Automation, action: 'editada' | 'borrada', fields: readonly (keyof AutomationFields)[]): void {
+    const previous = Object.fromEntries(fields.map(key => [key, automationAuditValue(a[key])]));
+    this.event(a.workstreamId, 'info', `automation ${automationAuditValue(a.name)} ${action} ${JSON.stringify({ id: a.id, previous })}`);
   }
 
   private requireAutomation(id: string, row: Row | null): Automation {
@@ -950,21 +1017,22 @@ export class Store {
 
   setAutomationEnabled(id: string, enabled: boolean): Automation {
     return this.withRetry(() => {
-      const row = this.db.query<Row, [number, string, number, string]>(
+      const now = this.now();
+      const row = this.db.query<Row, [number, string, string, number, string]>(
         // Al reactivar, el suelo pasa a ahora: lo que venció durante la pausa no se recupera.
-        'UPDATE automations SET last_due_at = CASE WHEN ? = 1 AND enabled = 0 THEN ? ELSE last_due_at END, enabled = ? WHERE id = ? RETURNING *',
-      ).get(Number(enabled), this.now(), Number(enabled), id);
+        'UPDATE automations SET last_due_at = CASE WHEN ? = 1 AND enabled = 0 THEN CASE WHEN julianday(last_due_at) > julianday(?) THEN last_due_at ELSE ? END ELSE last_due_at END, enabled = ? WHERE id = ? RETURNING *',
+      ).get(Number(enabled), now, now, Number(enabled), id);
       const automation = this.requireAutomation(id, row);
       this.event(automation.workstreamId, 'info', `automation ${automation.name} ${enabled ? 'activada' : 'pausada'}`);
       return automation;
     });
   }
 
-  deleteAutomation(id: string): void {
+  deleteAutomation(id: string, expected?: string): void {
     this.withRetry(() => {
-      const row = this.db.query<Row, [string]>('DELETE FROM automations WHERE id = ? RETURNING *').get(id);
-      const automation = this.requireAutomation(id, row);
-      this.event(automation.workstreamId, 'info', `automation ${automation.name} borrada`);
+      const automation = this.automationForWrite(id, expected);
+      this.db.query('DELETE FROM automations WHERE id = ?').run(id);
+      this.auditAutomation(automation, 'borrada', AUTOMATION_FIELDS);
     });
   }
 
