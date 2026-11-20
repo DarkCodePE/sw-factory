@@ -141,3 +141,11 @@ test('P2-H3: pwd, db_pwd y env.MYSQL_PWD se redactan también en la evidencia JS
   expect(redactField('db_pwd', V)).toBe('[REDACTED]'); expect(redactField('cwd', 'x')).toBe('x');
   expect(redact('pwd: /repo')).toBe('pwd: /repo');
 });
+
+test('P2-H4: claves de más de 64 caracteres y `tokenized` no abren fugas', () => {
+  expect(redact(`${'A'.repeat(70)}_TOKEN=${V}`)).not.toContain(V);
+  expect(redact(`TOKEN_${'A'.repeat(70)}=${V}`)).not.toContain(V);
+  expect(redact(`tokenized=${V}`)).not.toContain(V);
+  expect(redact(`--${'a'.repeat(70)}-token ${V}`)).not.toContain(V);
+  expect(redact('tokenizer: wordpiece')).toBe('tokenizer: wordpiece');
+});
