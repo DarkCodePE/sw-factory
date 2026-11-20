@@ -442,3 +442,23 @@ test('T96-H6: la entrega solo lleva archivos con adaptador confinable, entrada p
   expect([sent({ adapter: 'sin-confinar' }, 'a'), sent({ promptStdin: false }, 'b'), sent({ confine: false }, 'c')]).toEqual([false, false, false]);
   expect(sent({}, 'd')).toBe(true);
 }));
+
+test('T96-H9: un repo que ya no es repo Git, o que es un fichero, no bloquea los adjuntos de los demás workstreams', () => privateNotes((writer, id, cwd) => {
+  const plain = join(dirname(cwd), 'sin-git'); mkdirSync(plain);
+  const file = join(dirname(cwd), 'fichero'); writeFileSync(file, 'x');
+  writer.createWorkstream({ slug: 'sin-git', goal: 'g', repo: plain });
+  writer.createWorkstream({ slug: 'colgado', goal: 'g', repo: join(file, 'repo') }); // cuelga de un fichero: ENOTDIR
+  expect(writer.addChangeNote(id, 'con repos raros', attachment()).attachment?.name).toBe('datos.txt');
+}));
+
+test('T96-H10: el aviso de ancestro nombra el directorio que falla y el de ficheros habla de permisos', () => {
+  const dir = mkdtempSync(join(tmpdir(), 'fab-anc-'));
+  try {
+    const loose = join(dir, 'suelto'); mkdirSync(loose); chmodSync(loose, 0o775); // escribible por el grupo: no es privado
+    const state = join(loose, 'estado'); mkdirSync(state, { mode: 0o700 });
+    expect(() => assertPrivateNoteDatabase(join(state, 'fabrica.db'))).toThrow(`Directorio: ${loose}`);
+    writeFileSync(join(state, 'fabrica.db'), 'x', { mode: 0o664 });
+    chmodSync(loose, 0o700);
+    expect(() => assertPrivateNoteDatabase(join(state, 'fabrica.db'))).toThrow('chmod 600');
+  } finally { rmSync(dir, { recursive: true, force: true }); }
+});

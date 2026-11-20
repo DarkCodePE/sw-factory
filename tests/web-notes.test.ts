@@ -274,3 +274,12 @@ test('T96-H5: el texto de la nota que imita una cabecera de archivo no se confun
   expect(notes()[0]!.attachment).toBeUndefined();
   expect((await upload([...base(), { name: 'attachment', value: '', filename: 'vacio.txt' }])).status).toBe(400);
 });
+
+test('T96-H10: el aviso de ancestro con su ruta se muestra escapado y una ruta con marcado se descarta', async () => {
+  const { actionNotice } = await import('../src/web-actions.ts');
+  const { NOTE_ATTACHMENT_STATE, ANCESTOR_PATH_PREFIX } = await import('../src/note-attachments.ts');
+  const ok = actionNotice(`${NOTE_ATTACHMENT_STATE.ancestor}${ANCESTOR_PATH_PREFIX}/home/dueño-x/estado`.replace('dueño-x', 'dueno'));
+  expect(ok).toContain('Directorio: /home/dueno/estado');
+  expect(actionNotice(`${NOTE_ATTACHMENT_STATE.ancestor}${ANCESTOR_PATH_PREFIX}/tmp/<img src=x onerror=alert(1)>`)).toBe('');
+  expect(actionNotice(`${NOTE_ATTACHMENT_STATE.ancestor} Otra cosa: /tmp`)).toBe('');
+});

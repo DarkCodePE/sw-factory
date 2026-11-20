@@ -4,7 +4,7 @@ import { join } from 'node:path';
 import { isRunnerName, Store, StoreError, WorkstreamBusyError } from './store.ts';
 import { AGENT_NAMES } from './agents.ts';
 import { AUTO_INSTRUCTIONS_MAX, isProfileDigest } from './profile.ts';
-import { assertPrivateNoteDatabase, NOTE_ATTACHMENT_REMOTE, NOTE_ATTACHMENT_STATE, validateNoteAttachment, type NoteAttachment } from './note-attachments.ts';
+import { ANCESTOR_PATH_PREFIX, assertPrivateNoteDatabase, NOTE_ATTACHMENT_REMOTE, NOTE_ATTACHMENT_STATE, validateNoteAttachment, type NoteAttachment } from './note-attachments.ts';
 import { linkTriagedSignal } from './admission/apply.ts';
 import { removeWorktree } from './worktrees.ts';
 import { SIGNAL_BODY_MAX, SIGNAL_TITLE_MAX } from './web-signals.ts';
@@ -48,8 +48,11 @@ const runnerErrors: Record<string, string> = {
 };
 // Textos fijos del Store (sin datos de la petición) que la página enseña tal cual para que el dueño sepa qué corregir.
 const FIXED_NOTICES = new Set<string>([NOTE_ATTACHMENT_REMOTE, ...Object.values(NOTE_ATTACHMENT_STATE)]);
+// El aviso de ancestro añade la ruta que falla (T96-H10): solo se acepta ASCII visible sin marcado, y se escapa al mostrarla.
+const ANCESTOR_NOTICE = new RegExp(`^${NOTE_ATTACHMENT_STATE.ancestor.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}${ANCESTOR_PATH_PREFIX}[\\w@%+=:,./ -]{1,300}$`);
+const isFixedNotice = (text: string) => FIXED_NOTICES.has(text) || ANCESTOR_NOTICE.test(text);
 export function actionNotice(result?: string): string {
-  const message = messages[result ?? ''] ?? (FIXED_NOTICES.has(result ?? '') ? result : undefined);
+  const message = messages[result ?? ''] ?? (isFixedNotice(result ?? '') ? escape(result!) : undefined);
   return message ? `<p class="notice" role="status">${message}</p>` : '';
 }
 
@@ -486,7 +489,7 @@ export async function performAction(stateDir: string, name: string, id: string, 
       }
       throw new InputError(500, 'No se pudo registrar la acción.');
     }
-    out.result = error instanceof StoreError && error.code === 'invalid_input' && FIXED_NOTICES.has(error.message) ? error.message
+    out.result = error instanceof StoreError && error.code === 'invalid_input' && isFixedNotice(error.message) ? error.message
       : error instanceof WorkstreamBusyError ? 'workstream_busy'
       : error instanceof StoreError && messages[error.code] ? error.code : 'error';
   } finally { store?.close(); }

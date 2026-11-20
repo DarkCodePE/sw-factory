@@ -45,11 +45,12 @@ const PRIVATE_STATE = 'Los adjuntos requieren una base y sidecars regulares en u
 export const NOTE_ATTACHMENT_STATE = {
   mode: 'Los adjuntos requieren un estado privado: el directorio de estado de fab debe ser 0700 (ejecuta chmod 700 sobre él; los estados nuevos ya se crean así).',
   ancestor: 'Un directorio superior al estado permite escribir a otros usuarios o es un enlace, y los adjuntos requieren un estado privado: quita ese permiso o mueve el estado con FABRICA_HOME.',
-  files: 'La base de fab o sus sidecars no son ficheros regulares propios y sin enlaces, y los adjuntos requieren un estado privado.',
+  files: 'La base de fab o sus sidecars no son ficheros regulares propios, sin enlaces y sin permiso de escritura para otros (una base 664 no vale: ejecuta chmod 600 sobre ella), y los adjuntos requieren un estado privado.',
   mounts: 'El estado de fab cae dentro de un repo, un git dir, un worktree o un montaje persistente, y los adjuntos requieren un estado privado fuera de montajes escribibles.',
   git: 'No se pudo inventariar los repos de los workstreams con Git: los adjuntos requieren un estado privado fuera de montajes escribibles.',
 } as const;
 
+export const ANCESTOR_PATH_PREFIX = ' Directorio: ';
 export const NOTE_ATTACHMENT_REMOTE = 'Los adjuntos requieren un workstream local. El runner asignado es remoto.';
 
 function missing(error: unknown): boolean {
@@ -80,7 +81,10 @@ export function assertPrivateNoteDatabase(dbPath: string): void {
       catch (error) { if (suffix && missing(error)) continue; throw error; }
       if (!st.isFile() || st.uid !== uid || st.nlink !== 1 || (st.mode & 0o022)) throw new Error();
     }
-  } catch { throw new Error(NOTE_ATTACHMENT_STATE[reason]); }
+  } catch {
+    // T96-H10: el aviso de ancestro nombra el directorio que falla (ruta local del dueño; la web la acepta solo si es ASCII sin marcado).
+    throw new Error(reason === 'ancestor' ? `${NOTE_ATTACHMENT_STATE.ancestor}${ANCESTOR_PATH_PREFIX}${path}` : NOTE_ATTACHMENT_STATE[reason]);
+  }
 }
 
 /**
@@ -93,8 +97,14 @@ export function noteAttachmentInventory(repos: string[], target?: NoteAttachment
     for (const repo of new Set(repos)) {
       let real: string;
       try { real = realpathSync(repo); }
-      catch (error) { if (missing(error)) continue; throw error; }
-      for (const path of writableMounts(repo)) paths.add(path);
+      catch (error) { if (missing(error) || (error as NodeJS.ErrnoException)?.code === 'ENOTDIR') continue; throw error; }
+      try { for (const path of writableMounts(repo)) paths.add(path); }
+      catch {
+        // T96-H9: un repo que ya no es repo Git no tiene git dirs ni worktrees que inventariar; su propia ruta sigue contando como montaje.
+        const probe = Bun.spawnSync(['git', '-C', real, 'rev-parse', '--git-dir']);
+        if (probe.exitCode !== 0 && /not a git repository|not a directory/i.test(probe.stderr.toString())) { paths.add(real); continue; }
+        throw new Error();
+      }
       const list = Bun.spawnSync(['git', '-C', repo, 'worktree', 'list', '--porcelain', '-z']);
       if (list.exitCode !== 0) throw new Error();
       for (const entry of list.stdout.toString().split('\0')) {
