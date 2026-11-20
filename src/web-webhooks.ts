@@ -61,7 +61,7 @@ export function webhooksPage(store: Store, url: URL, escape: Escape): { title: s
       <td><code>${escape(d.delivery_id)}</code></td>
       <td>${escape(d.event)}</td>
       <td><time>${escape(d.received_at)}</time></td>
-      <td>${d.bytes} B</td>
+      <td>${escape(d.bytes)} B</td>
       <td><span class="status ${statusClass(d.result)}">${escape(label)}</span></td>
       <td><small class="muted">Sin cuerpo</small></td>
     </tr>`;

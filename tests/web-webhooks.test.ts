@@ -340,3 +340,19 @@ test('muestra aviso de total cuando hay mas de 200 entregas registradas', async 
   const html = await getHtml('/webhooks');
   expect(html).toContain('200 de 230');
 });
+
+test('escapa el campo bytes de una entrega si contiene caracteres HTML', async () => {
+  store = new Store(join(dir, 'fabrica.db'));
+  const adm = new AdmissionDb(store);
+  const now = new Date().toISOString();
+
+  // SQLite admite texto en columnas INTEGER; probar valor con etiquetas
+  const payload = '<img src=x onerror=alert(1)>';
+  adm.db.query('INSERT INTO adm_hook_deliveries (delivery_id, event, received_at, bytes, result) VALUES (?, ?, ?, ?, ?)')
+    .run('del-xss-bytes', 'issues', now, payload as unknown as number, 'woke');
+
+  server = startWeb(dir, 0);
+  const html = await getHtml('/webhooks');
+  expect(html).not.toContain(payload);
+  expect(html).toContain('&lt;img src=x onerror=alert(1)&gt;');
+});
