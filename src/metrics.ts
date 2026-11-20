@@ -29,8 +29,12 @@ function validateDay(d: string): void {
 export function calculateMetrics(store: Store, stateDir: string, options: { ws?: string; range?: MetricsRange | string; from?: string; to?: string; now?: number } = {}) {
   const now = options.now ?? Date.now();
   let range = options.range;
-  const from = options.from?.trim() || undefined;
-  const to = options.to?.trim() || undefined;
+  let from = options.from?.trim() || undefined;
+  let to = options.to?.trim() || undefined;
+  if (range !== undefined && range !== 'custom' && (from !== undefined || to !== undefined)) {
+    from = undefined;
+    to = undefined;
+  }
 
   if (from !== undefined) validateDay(from);
   if (to !== undefined) validateDay(to);

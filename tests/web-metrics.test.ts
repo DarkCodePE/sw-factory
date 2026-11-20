@@ -366,6 +366,18 @@ test('T82-H4: change creado en el límite de since entra en la serie diaria para
   expect(m.daily.changes[dayIndex]).toBe(1);
 });
 
+test('T82-H5: elegir rango preset con fechas en la URL vacía fechas y respeta el preset; día sin changes muestra Sin datos en coste', () => {
+  seed(1, null, 'uno', '2026-11-18T10:00:00Z');
+  const { body: html } = metricsPage(store, dir, new URL('http://127.0.0.1:4310/metricas?range=30&from=2026-11-17&to=2026-11-18'));
+  expect(html).toContain('<option value="30" selected>Últimos 30 días</option>');
+  expect(html).toContain('<input name="from" type="date" value="">');
+  expect(html).toContain('<input name="to" type="date" value="">');
+
+  const { body: htmlCustom } = metricsPage(store, dir, new URL('http://127.0.0.1:4310/metricas?from=2026-11-17&to=2026-11-19'));
+  expect(htmlCustom).toContain('<tr><th scope="row">2026-11-18</th><td>No medido</td></tr>');
+  expect(htmlCustom).toContain('<tr><th scope="row">2026-11-19</th><td>Sin datos</td></tr>');
+});
+
 test('T83-H1: repetir recordPrOpened no duplica el evento ni altera el conteo en metricsDailyPrs', () => {
   const c = store.createChange('uno', 'Change con PR repetido', '');
   store.recordPrOpened(c.id, 'https://github.com/org/repo/pull/1');

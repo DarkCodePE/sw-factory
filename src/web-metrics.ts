@@ -118,8 +118,12 @@ export function metricsPage(store: Store, stateDir: string, url: URL, csrf?: str
 function metricsSummary(store: Store, stateDir: string, url: URL): { title: string; body: string } {
   const ws = url.searchParams.get('ws') || undefined;
   const rangeParam = url.searchParams.get('range');
-  const from = url.searchParams.get('from')?.trim() || undefined;
-  const to = url.searchParams.get('to')?.trim() || undefined;
+  let from = url.searchParams.get('from')?.trim() || undefined;
+  let to = url.searchParams.get('to')?.trim() || undefined;
+  if (rangeParam && rangeParam !== 'custom' && (from || to)) {
+    from = undefined;
+    to = undefined;
+  }
   const range = rangeParam ?? (from || to ? 'custom' : '7');
   if (!['7', '30', 'all', 'custom'].includes(range)) throw new URIError('Rango inválido');
   if (range === 'custom' && !from && !to) throw new URIError('Rango inválido');
