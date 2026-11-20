@@ -548,6 +548,13 @@ export async function runPool(store: Store, opts: PoolOptions): Promise<void> {
         throw err;
       }
       if (recovered) log(`recovered ${recovered} orphaned activities`);
+      // T68d: solo crea señales (nunca activities); el triage sigue siendo del dueño.
+      // Aislada: un fallo (contención o no) de una función auxiliar no puede parar el reclamo ni terminar el pool.
+      try {
+        for (const r of store.fireDueAutomations(ws.id)) log(`automation ${r.id.slice(0, 8)}: ${r.result}`);
+      } catch (err) {
+        if (!isBusyError(err)) log(`automation: ${(err as Error).message}`);
+      }
 
       let current: Workstream;
       try {
