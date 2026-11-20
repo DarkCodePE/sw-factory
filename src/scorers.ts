@@ -201,7 +201,7 @@ export interface RunPendingOpts {
   launch?: Launch;
 }
 
-const defaultLaunch: Launch = (adapter, prompt, cwd, model, signal) =>
+export const defaultLaunch: Launch = (adapter, prompt, cwd, model, signal) =>
   runAgent(getAgent(adapter), prompt, cwd, TIMEOUT_MS, { confine: true, readOnly: true, signal, ...(model ? { model } : {}) });
 
 /** `profileDir` es donde vive el perfil del juez (por defecto `stateDir`); un benchmark juzga el Store de un brazo con el perfil del benchmark. */
