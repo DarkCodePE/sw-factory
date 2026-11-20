@@ -57,6 +57,23 @@ CREATE TABLE IF NOT EXISTS adm_sessions (
   status TEXT NOT NULL DEFAULT 'open' CHECK (status IN ('open','lost','closed')), launched_at TEXT, lost_reason TEXT, created_at TEXT NOT NULL,
   cap_from INTEGER, -- generación desde la que cuenta el tope (A6): un reintento humano lo reinicia
   UNIQUE (change_id, kind, generation));
+-- Un intento por lanzamiento del pool (T54a). Si el pool cae, ended_at conserva NULL.
+CREATE TABLE IF NOT EXISTS adm_turns (
+  attempt_id TEXT PRIMARY KEY,
+  activity_id TEXT NOT NULL,
+  change_id TEXT NOT NULL,
+  session_id TEXT NOT NULL,
+  generation INTEGER NOT NULL,
+  plan TEXT NOT NULL CHECK (plan IN ('fresh','answer','retry','orphan','reconstructed')),
+  question_id TEXT,
+  started_at TEXT NOT NULL,
+  ended_at TEXT,
+  outcome TEXT CHECK (outcome IN ('done','blocked','awaiting','no_report','error','session_lost')),
+  exit_code INTEGER,
+  duration_ms INTEGER,
+  cost_usd REAL,
+  log TEXT);
+CREATE INDEX IF NOT EXISTS adm_turns_change ON adm_turns(change_id, started_at);
 CREATE UNIQUE INDEX IF NOT EXISTS adm_questions_open ON adm_questions(activity_id) WHERE status = 'open';`;
 
 export class AdmissionDb {
