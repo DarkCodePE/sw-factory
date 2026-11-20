@@ -22,6 +22,8 @@ const messages: Record<string, string> = {
   ok: 'Acción registrada.', conflict: 'conflict: el estado cambió o la acción ya se aplicó. Revisa el estado actual.',
   invalid_transition: 'invalid_transition: esta acción no corresponde al estado actual.',
   limit_reached: 'limit_reached: el change ya tiene 20 notas sin entregar.',
+  skipped_open: 'Saltada: ya hay una señal o un change abierto de esta automation; no se creó ninguna señal.',
+  skipped_inactive: 'Saltada: el workstream no está activo; no se creó ninguna señal.',
   not_found: 'not_found: no se encontró el registro.', invalid_input: 'invalid_input: revisa los datos de la acción.',
   error: 'No se pudo registrar la acción. Revisa el estado antes de volver a intentarlo.',
 };
@@ -220,7 +222,12 @@ export const ACTIONS: Record<string, Action> = {
   'automations/run': {
     path: route('automations', 'run'),
     input: raw => (limit(text(raw, 'body'), SIGNAL_BODY_MAX), {}),
-    run: (store, id, _input, out) => { out.destination = '/automations'; store.runAutomationNow(id); },
+    run: (store, id, _input, out) => {
+      out.destination = '/automations';
+      // T68e-H1: una vez saltada no se creó señal, y el aviso no puede decir «Acción registrada».
+      const r = store.runAutomationNow(id).result;
+      if (r !== 'created') out.result = r;
+    },
   },
   'automations/enable': {
     path: route('automations', 'enable'),

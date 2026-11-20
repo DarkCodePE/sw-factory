@@ -344,3 +344,13 @@ test('T75: assertLoopback acepta loopback y falla cerrado con un host que no res
   await expect(assertLoopback('fab-x.invalid')).rejects.toThrow('no resuelve a loopback');
   await expect(assertLoopback('1.1.1.1')).rejects.toThrow('no resuelve a loopback'); // literal: resuelve, pero fuera de loopback
 });
+
+test('T71c-H1: con un campo repetido gana el primero (confirm=no&confirm=yes no cancela)', async () => {
+  await login();
+  const body = (c: string) => `csrf=${csrf}&${c}`;
+  const r = await req(`/changes/${change}/cancel`, { method: 'POST', headers: { cookie, origin: `http://${server.host}:${server.port}`, 'content-type': 'application/x-www-form-urlencoded' }, body: body('confirm=no&confirm=yes') });
+  expect(r.status).toBe(400);
+  expect(store.getChange(change).status).not.toBe('canceled');
+  const ok = await req(`/changes/${change}/cancel`, { method: 'POST', headers: { cookie, origin: `http://${server.host}:${server.port}`, 'content-type': 'application/x-www-form-urlencoded' }, body: body('confirm=yes&confirm=no') });
+  expect(ok.status).toBe(303); expect(store.getChange(change).status).toBe('canceled');
+});

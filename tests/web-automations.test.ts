@@ -79,3 +79,27 @@ test('workstream no activo: el resultado se muestra como saltada y no hay señal
   await post(`/automations/${auto}/run`);
   expect(counts()[0]).toBe(0); expect(await html('/automations')).toContain('workstream no activo');
 });
+
+test('T68e-H1: una ejecución saltada avisa «Saltada» y no «Acción registrada»; la creada sí', async () => {
+  await login();
+  const a = await html((await post(`/automations/${auto}/run`)).headers.get('location')!);
+  expect(a).toContain('Acción registrada.');
+  const b = await html((await post(`/automations/${auto}/run`)).headers.get('location')!);
+  expect(b).toContain('Saltada: ya hay una señal'); expect(b).not.toContain('Acción registrada.');
+  store.setWorkstreamState('prueba', 'paused');
+  store.db.query("UPDATE signals SET status='ignored'").run();
+  const c = await html((await post(`/automations/${auto}/run`)).headers.get('location')!);
+  expect(c).toContain('Saltada: el workstream no está activo');
+  expect(counts()[0]).toBe(1);
+});
+test('T68e-H2: filtro ?ws=, etiqueta Activa/Pausada y cron escapado', async () => {
+  const otro = store.createWorkstream({ slug: 'otro', goal: 'g', repo: dir });
+  store.createAutomation({ workstream: 'otro', name: 'ajena', cron: '0 1 * * *', title: 't', body: 'b' });
+  store.setAutomationEnabled(auto, false);
+  await login();
+  const todo = await html('/automations');
+  expect(todo).toContain('diaria'); expect(todo).toContain('ajena'); expect(todo).toContain('Pausada'); expect(todo).toContain('Activa');
+  const filtrada = await html('/automations?ws=otro');
+  expect(filtrada).toContain('ajena'); expect(filtrada).not.toContain('diaria'); expect(filtrada).not.toContain('Pausada');
+  void otro;
+});

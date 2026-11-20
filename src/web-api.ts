@@ -53,6 +53,7 @@ async function mutate(req: Request, path: string, stateDir: string, actor: strin
   try {
     const out = await performAction(stateDir, name, id, body as Record<string, string>, actor);
     if (out.result === 'ok') return json(200, { ok: true, data: { destination: out.destination } });
+    if (out.result.startsWith('skipped_')) return json(200, { ok: true, data: { destination: out.destination, skipped: out.result } });
     return out.result === 'error' ? fail(500, 'error', 'error interno') : fail(STATUS[out.result] ?? 500, out.result, 'la acción no se pudo aplicar');
   } catch (e) {
     if (e instanceof InputError) return fail(e.status, e.status === 413 ? 'payload_too_large' : 'invalid_input', e.message);
