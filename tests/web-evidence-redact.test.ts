@@ -204,3 +204,15 @@ test('P3-H3: cada regla de RULES, con entradas derivadas de ella misma, crece co
   });
   expect(lentas).toEqual([]);
 }, 180_000);
+
+test('P3-H4: los casos que no afirmaban ahora llevan valor y las defensas sin cobertura mueren', () => {
+  // `-u` con valor tras `|` y `||`: el corte de comando debe respetarse.
+  for (const t of ['curl https://x.test | sort -u f', 'curl https://x.test || tar -u f']) expect(redact(t)).toBe(t);
+  // Flag con sufijo largo, y un segundo BEGIN dentro de un bloque.
+  expect(redact(`--token-${'a'.repeat(100)} ${V}`)).not.toContain(V);
+  expect(redact('antes -----BEGIN PRIVATE KEY-----\nx\n-----BEGIN PRIVATE KEY-----\ny\n-----END PRIVATE KEY----- después')).toBe('antes [REDACTED] después');
+  expect(redact('-----BEGIN PRIVATE KEY-----\nx\n-----END PRIVATE KEY-----\nmedio\n-----BEGIN PRIVATE KEY-----\ny\n-----END PRIVATE KEY-----')).toBe('[REDACTED]\nmedio\n[REDACTED]');
+  expect(redact('-----BEGIN PRIVATE KEY-----\nsin cierre')).toBe('-----BEGIN PRIVATE KEY-----\nsin cierre');
+  // `pwd` solo como nombre exacto o sufijo `_pwd`.
+  expect(redactField('pwdx', 'ok')).toBe('ok'); expect(redactField('upwd', 'ok')).toBe('ok'); expect(redactField('cwd', 'ok')).toBe('ok'); expect(redactField('PWD', V)).toBe('[REDACTED]');
+});
