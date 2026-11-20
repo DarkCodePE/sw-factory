@@ -13,7 +13,7 @@ export interface JiraConfig {
   acceptanceField?: string;
 }
 
-function hostname(value: string): string {
+export function hostname(value: string): string {
   try {
     const url = new URL(value.includes('://') ? value : `https://${value}`);
     if (url.protocol !== 'https:' || url.username || url.password || url.pathname !== '/' || url.search || url.hash) throw new Error();

@@ -161,8 +161,10 @@ export interface Change {
   updatedAt: string;
 }
 
-export type ChangeSource = 'cli' | 'channel' | 'jira';
-export interface ChangeSummary extends Change { source: ChangeSource | null; creator: string | null }
+export type ChangeSource = 'cli' | 'channel' | 'jira' | 'automation';
+/** `agents` y `roles` salen de las activities; vacíos = «No medido». `roles` es el validador o, si no hay, el tipo. */
+export interface ChangeSummary extends Change { source: ChangeSource | null; creator: string | null; activityCount: number; agents: string[]; roles: string[] }
+export interface ChangeLinks { source?: { system: string; key: string; url: string }; pr?: { repo: string; number: number; url: string } }
 
 export interface ChangeNote {
   id: string;
@@ -1075,7 +1077,35 @@ export class Store {
     const ws = workstream ? this.getWorkstream(workstream) : undefined;
     const rows = (ws ? this.db.query('SELECT * FROM changes WHERE workstream_id = ? ORDER BY created_at').all(ws.id) : this.db.query('SELECT * FROM changes ORDER BY created_at').all()) as Row[];
     const { source, creator } = this.resolveChangeAttribution();
-    return rows.map(r => ({ ...toChange(r), source: source.get(r.id as string) ?? null, creator: creator.get(r.id as string) ?? null }));
+    const cols = (t: string) => new Set((this.db.query(`PRAGMA table_info(${t})`).all() as Row[]).map(r => r.name as string));
+    const count = new Map<string, number>(); const agents = new Map<string, Set<string>>(); const roles = new Map<string, Set<string>>();
+    const add = (m: Map<string, Set<string>>, id: string, v: unknown) => { if (typeof v === 'string' && v) m.set(id, (m.get(id) ?? new Set()).add(v)); };
+    const hasAgent = cols('activities').has('agent');
+    for (const r of this.db.query('SELECT change_id, COUNT(*) AS n FROM activities GROUP BY change_id').all() as Row[]) count.set(r.change_id as string, r.n as number);
+    // Sin agregar con GROUP_CONCAT: un adaptador con coma en el nombre se partiría.
+    for (const r of this.db.query(`SELECT DISTINCT change_id, ${hasAgent ? 'agent' : 'NULL'} AS agent, COALESCE(validator, kind) AS role FROM activities`).all() as Row[]) {
+      add(agents, r.change_id as string, r.agent); add(roles, r.change_id as string, r.role);
+    }
+    return rows.map(r => ({ ...toChange(r), source: source.get(r.id as string) ?? null, creator: creator.get(r.id as string) ?? null,
+      activityCount: count.get(r.id as string) ?? 0, agents: [...(agents.get(r.id as string) ?? [])].sort(), roles: [...(roles.get(r.id as string) ?? [])].sort() }));
+  }
+
+  /** Fuente y PR del change, sin crear tablas (sirve a un Store readonly). Los valores son datos no confiables. */
+  changeLinks(changeId: string): ChangeLinks {
+    const has = (t: string) => this.db.query("SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = ?").get(t) !== null;
+    const out: ChangeLinks = {};
+    const row = has('change_links') ? this.db.query('SELECT * FROM change_links WHERE change_id = ?').get(changeId) as Row | null : null;
+    if (row?.source_system && row.source_key && row.source_url) out.source = { system: String(row.source_system), key: String(row.source_key), url: String(row.source_url) };
+    // Una base anterior a T49 puede tener `jira_imports` sin `source_url`; el Store de solo lectura no la migra.
+    else if (has('jira_imports') && (this.db.query('PRAGMA table_info(jira_imports)').all() as Row[]).some(c => c.name === 'source_url')) {
+      const i = this.db.query('SELECT i.issue_key, i.source_url FROM jira_imports i JOIN signals s ON s.id = i.signal_id WHERE s.change_id = ?').get(changeId) as Row | null;
+      if (i?.source_url) out.source = { system: 'jira', key: String(i.issue_key), url: String(i.source_url) };
+    }
+    try {
+      const pr = row?.pr_json ? JSON.parse(String(row.pr_json)) as Record<string, unknown> : null;
+      if (pr && typeof pr.url === 'string' && typeof pr.number === 'number') out.pr = { repo: String(pr.repo ?? ''), number: pr.number, url: pr.url };
+    } catch { /* pr_json corrupto: el bloque no se muestra */ }
+    return out;
   }
 
   /** Resuelve fuente y creador para un conjunto de changes acotado (o todos si se omite). */
@@ -1091,6 +1121,8 @@ export class Store {
       for (const r of this.db.query(sql).all(...sqlParams) as Row[]) source.set(r.change_id as string, map(r));
     };
     mark(`SELECT change_id FROM signals WHERE change_id IS NOT NULL${filterAnd}`, params, () => 'cli');
+    // Las bases anteriores a T68 no tienen `signals.source`: un Store de solo lectura no puede migrarlas.
+    if ((this.db.query('PRAGMA table_info(signals)').all() as Row[]).some(r => r.name === 'source')) mark(`SELECT change_id FROM signals WHERE change_id IS NOT NULL AND source LIKE 'automation:%'${filterAnd}`, params, () => 'automation');
     if (has('adm_thread_changes')) mark(`SELECT change_id FROM adm_thread_changes${filter}`, params, () => 'channel');
     if (has('change_links')) mark(`SELECT change_id, source_system FROM change_links WHERE source_system IS NOT NULL${filterAnd}`, params, r => r.source_system === 'jira' ? 'jira' : 'channel');
     if (has('jira_imports')) {
