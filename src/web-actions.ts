@@ -10,7 +10,7 @@ import { redact } from './manifest.ts';
 import { AdmissionDb, hasAdmission } from './admission/db.ts';
 import { answerQuestion } from './admission/answers.ts';
 import { resetSessionCap } from './admission/sessions.ts';
-import { API_KEYS_PATH, API_KEY_CREATE_PATH, createApiKeyResponse, revokeApiKeyResponse } from './web-api-keys.ts';
+import { API_KEYS_PATH, API_KEY_CREATE_PATH, createApiKeyResponse, revokeApiKeyResponse, type ApiKeyUsage } from './web-api-keys.ts';
 import type { WebAuth } from './web-auth.ts';
 import { PROFILE_BODY_LIMIT, ProfileInputError, profileAction } from './web-profile.ts';
 import { enqueueBackfill, enqueueManual, ensureSchema, previewBackfill } from './scorers.ts';
@@ -76,7 +76,7 @@ type Raw = Record<string, string | undefined>;
 type Outcome = { destination: string; result: string; repo?: string };
 type Action = { path: RegExp; /** false: solo la web con sesión; la API con clave no la expone (decisión del dueño sobre H1). */ api?: false; input: (raw: Raw) => Raw; run: (store: Store, id: string, input: Raw, out: Outcome, actor: string, stateDir: string) => void };
 
-type WebResponseAction = { path: RegExp; api: false; respond: (stateDir: string, id: string, form: URLSearchParams) => Response };
+type WebResponseAction = { path: RegExp; api: false; respond: (stateDir: string, id: string, form: URLSearchParams, usage: ApiKeyUsage) => Response };
 
 const text = (raw: Raw, key: string) => raw[key] ?? '';
 const limit = (value: string, max = 8192) => { if (Buffer.byteLength(value) > max) throw new InputError(413, 'El texto supera 8 KiB.'); };
@@ -314,7 +314,7 @@ async function readForm(req: Request, limit = 16384): Promise<URLSearchParams> {
   return new URLSearchParams(Buffer.from(body).toString('utf8'));
 }
 
-export async function webAction(req: Request, stateDir: string, port: number, auth: WebAuth): Promise<Response> {
+export async function webAction(req: Request, stateDir: string, port: number, auth: WebAuth, usage: ApiKeyUsage): Promise<Response> {
   if (!auth.sessionCsrf(req)) return new Response('Se necesita una sesión local.', { status: 401 });
   if (req.headers.get('origin') !== `http://${auth.host}:${port}`) return new Response('Origin rechazado.', { status: 403 });
   let destination = '/'; let result = 'ok';
@@ -333,7 +333,7 @@ export async function webAction(req: Request, stateDir: string, port: number, au
     const action = ACTIONS[name]!;
     const raw = action.path.exec(pathname)![1] ?? '';
     if ('respond' in action) {
-      const response = action.respond(stateDir, raw, form);
+      const response = action.respond(stateDir, raw, form, usage);
       const location = response.headers.get('location');
       if (response.status === 303 && location) auth.rememberNotice(req, location, 'ok');
       return response;

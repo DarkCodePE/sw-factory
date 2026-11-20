@@ -5,6 +5,8 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { Store } from '../src/store.ts';
 import { startWeb } from '../src/web.ts';
+import { handleApi } from '../src/web-api.ts';
+import { ApiKeyUsage, revokeApiKeyResponse } from '../src/web-api-keys.ts';
 
 const list = '/config/claves-api';
 const create = `${list}/crear`;
@@ -22,9 +24,9 @@ const formHeaders = () => new Headers({ cookie, origin: origin(), 'content-type'
 const api = (key: string, path = '/workstreams', init?: RequestInit) => fetch(`http://127.0.0.1:${server.port}/api/v1${path}`, {
   ...init, headers: { Authorization: `Bearer ${key}`, ...init?.headers },
 });
-function boot(write: boolean) {
+function boot(write: boolean, clock?: () => Date) {
   server?.stop(true);
-  server = startWeb(dir, 0, { write });
+  server = startWeb(dir, 0, { write, clock });
 }
 async function login() {
   const response = await fetch(server.loginUrl!, { redirect: 'manual' });
@@ -189,4 +191,102 @@ test('la revocación no interpreta nombres ni ids codificados y el listado escap
   }
   expect((await post(revoke(name), { confirm: 'yes' })).status).toBe(404);
   expect(store.verifyApiKey(alias.key)?.id).toBe(alias.id);
+});
+
+const row = (page: string, name: string) => page.match(/<tr>[\s\S]*?<\/tr>/g)?.find(r => r.startsWith(`<tr><td>${name}</td>`)) ?? '';
+
+test('último uso solo registra 2xx, funciona en lectura y se pierde al reiniciar', async () => {
+  const reader = store.createApiKey('lector', 'read');
+  const owner = store.createApiKey('dueno', 'decide');
+  const ws = store.createWorkstream({ slug: 'prueba', goal: 'g', repo: '/repo' });
+  const change = store.createChange(ws.id, 'cambio', 'd');
+  const note = { method: 'POST', headers: { 'content-type': 'application/json' }, body: '{"body":"hola"}' };
+  const first = '2026-11-20T07:00:00.000Z';
+  const second = '2026-11-20T08:00:00.000Z';
+  let now = first;
+  let calls = 0;
+  const clock = () => { calls++; return new Date(now); };
+  boot(false, clock);
+  const paths = [store.dbPath, store.dbPath + '-wal'];
+  const before = paths.map(path => readFileSync(path));
+  expect((await api(reader.key)).status).toBe(200);
+  expect(calls).toBe(1);
+  for (const [i, path] of paths.entries()) expect(readFileSync(path).equals(before[i]!)).toBe(true);
+
+  boot(true, clock);
+  await login();
+  const initial = await (await get()).text();
+  expect(initial).toContain('Último uso en este arranque');
+  expect(row(initial, 'lector')).toContain('No medido');
+  expect(row(initial, 'dueno')).toContain('No medido');
+  expect((await api(reader.key)).status).toBe(200);
+  now = second;
+  expect((await api('fabk_invalida')).status).toBe(401);
+  expect((await api(reader.key, `/changes/${change.id}/note`, note)).status).toBe(403);
+  expect((await api(reader.key, '/sin-ruta')).status).toBe(404);
+  expect((await api(reader.key, '/workstreams', { method: 'HEAD' })).status).toBe(405);
+  expect((await api(owner.key, `/changes/${change.id}/note`, { ...note, body: '{' })).status).toBe(400);
+  expect(calls).toBe(2);
+  expect((await api(owner.key, `/changes/${change.id}/note`, note)).status).toBe(200);
+  expect(calls).toBe(3);
+  const observed = await (await get()).text();
+  expect(row(observed, 'lector')).toContain(`<time>${first}</time>`);
+  expect(row(observed, 'dueno')).toContain(`<time>${second}</time>`);
+  const revoked = await post(revoke(reader.id), { confirm: 'yes' });
+  expect(revoked.status).toBe(303);
+  expect(row(await (await get()).text(), 'lector')).not.toContain(first);
+
+  boot(true, clock);
+  await login();
+  expect(row(await (await get()).text(), 'dueno')).toContain('No medido');
+  expect(calls).toBe(3);
+});
+
+test('el registro descarta el uso más antiguo al entrar una clave de otro proceso', async () => {
+  const initial = '2026-11-20T07:00:00.000Z';
+  const latest = '2026-11-20T08:00:00.000Z';
+  let now = initial;
+  const keys = Array.from({ length: 20 }, (_, i) => store.createApiKey(`clave-${i}`, 'read'));
+  boot(true, () => new Date(now));
+  await login();
+  for (const { key } of keys) expect((await api(key)).status).toBe(200);
+  now = latest;
+  expect((await api(keys[0]!.key)).status).toBe(200);
+  const external = new Store(store.dbPath);
+  try {
+    external.revokeApiKey(keys[2]!.id);
+    expect((await api(external.createApiKey('nueva', 'read').key)).status).toBe(200);
+  } finally { external.close(); }
+  const page = await (await get()).text();
+  expect(row(page, 'clave-0')).toContain(`<time>${latest}</time>`);
+  expect(row(page, 'clave-1')).toContain('No medido');
+  expect(row(page, 'clave-2')).toContain('Revocada');
+  expect(row(page, 'clave-2')).not.toContain(initial);
+  expect(row(page, 'clave-3')).toContain(`<time>${initial}</time>`);
+  expect(row(page, 'nueva')).toContain(`<time>${latest}</time>`);
+});
+
+test('una mutación en curso puede terminar tras revocar sin recuperar el último uso', async () => {
+  const ws = store.createWorkstream({ slug: 'prueba', goal: 'g', repo: '/repo' });
+  const change = store.createChange(ws.id, 'cambio', 'd');
+  const { key, id } = store.createApiKey('dueno', 'decide');
+  const usage = new ApiKeyUsage(() => new Date('2026-11-20T07:00:00.000Z'));
+  const openReader = () => new Store(store.dbPath, { readonly: true });
+  const readUrl = new URL('http://127.0.0.1/api/v1/workstreams');
+  const auth = { Authorization: `Bearer ${key}` };
+  expect((await handleApi(new Request(readUrl, { headers: auth }), readUrl, openReader, { stateDir: dir }, usage)).status).toBe(200);
+  expect(usage.lastUse(id)).toBeDefined();
+
+  const url = new URL(`http://127.0.0.1/api/v1/changes/${change.id}/note`);
+  const { promise, resolve } = Promise.withResolvers<ArrayBuffer>();
+  const request = new Request(url, { method: 'POST', headers: { ...auth, 'Content-Type': 'application/json' } });
+  // El cuerpo se entrega después de que la API autorice el POST y se revoque la clave.
+  request.arrayBuffer = () => promise;
+  const response = handleApi(request, url, openReader, { stateDir: dir }, usage);
+  expect(revokeApiKeyResponse(dir, id, new URLSearchParams({ confirm: 'yes' }), usage).status).toBe(303);
+  expect(usage.lastUse(id)).toBeUndefined();
+  resolve(new TextEncoder().encode('{"body":"nota ya autorizada"}').buffer);
+  expect((await response).status).toBe(200);
+  expect(usage.lastUse(id)).toBeUndefined();
+  expect((await handleApi(new Request(readUrl, { headers: auth }), readUrl, openReader, { stateDir: dir }, usage)).status).toBe(401);
 });

@@ -22,7 +22,7 @@ import { workstreamsBody, wizardPage } from './web-ws.ts';
 import { changeStages } from './flow.ts';
 import { actionForms, actionNotice, webAction } from './web-actions.ts';
 import { WEB_ACTION_STYLE } from './web-actions-style.ts';
-import { API_KEYS_PATH, apiKeysPage } from './web-api-keys.ts';
+import { API_KEYS_PATH, ApiKeyUsage, apiKeysPage } from './web-api-keys.ts';
 import { handleApi, isApiPath } from './web-api.ts';
 import { FLOW_STYLE, flowPage } from './web-flow.ts';
 
@@ -114,8 +114,9 @@ function page(store: Store, stateDir: string, url: URL, csrf?: string): { title:
 
 const loopback = (port: number) => [`127.0.0.1:${port}`, `localhost:${port}`];
 
-export function startWeb(stateDir: string, port = 4310, options: { write?: boolean } = {}) {
+export function startWeb(stateDir: string, port = 4310, options: { write?: boolean; clock?: () => Date } = {}) {
   const auth = options.write ? new WebAuth() : undefined;
+  const keyUsage = new ApiKeyUsage(options.clock);
   const openStore = () => new Store(join(stateDir, 'fabrica.db'), { readonly: true });
   const initial = openStore();
   try { initial.listWorkstreams(); } finally { initial.close(); }
@@ -127,7 +128,7 @@ export function startWeb(stateDir: string, port = 4310, options: { write?: boole
       // Con escritura, las rutas con sesión solo se sirven en el host único; la API con clave no usa cookie y conserva loopback.
       const hosts = auth ? [`${auth.host}:${server.port}`, ...(isApiPath(url.pathname) ? loopback(server.port!) : [])] : loopback(server.port!);
       if (!hosts.includes(req.headers.get('host') ?? '')) return respond('Acceso denegado', 403, 'text/plain; charset=utf-8');
-      if (isApiPath(url.pathname)) return handleApi(req, url, openStore, auth ? { stateDir } : undefined);
+      if (isApiPath(url.pathname)) return handleApi(req, url, openStore, auth ? { stateDir } : undefined, keyUsage);
       const isMetrics = url.pathname === '/metricas';
       const isConfig = url.pathname === '/config';
       const isFlow = url.pathname === '/flujo';
@@ -140,7 +141,7 @@ export function startWeb(stateDir: string, port = 4310, options: { write?: boole
       const readOnlyRoute = isFlow || isMetrics || isConfig || isApiKeys || isExperiments || readAsset !== undefined;
       if (req.method === 'POST' && auth && !readOnlyRoute) {
         let response: Response;
-        try { response = await webAction(req, stateDir, server.port!, auth); }
+        try { response = await webAction(req, stateDir, server.port!, auth, keyUsage); }
         catch { return respond('No se pudo registrar la acción.', 500, 'text/plain; charset=utf-8'); }
         for (const [key, value] of Object.entries(HEADERS)) if (!response.headers.has(key)) response.headers.set(key, value);
         return response;
@@ -161,7 +162,7 @@ export function startWeb(stateDir: string, port = 4310, options: { write?: boole
         store = openStore();
         const log = turnLogRoute(store.db, stateDir, url.pathname);
         if (log) return respond(log.body, log.status, 'text/plain; charset=utf-8');
-        const content = keysCsrf ? apiKeysPage(store, escape, keysCsrf) : isMetrics ? metricsPage(store, stateDir, url, auth?.sessionCsrf(req)) : isConfig ? await configPage(store, stateDir, url, escape) : isProfiles ? profilesPage(store, stateDir, url, escape, auth?.sessionCsrf(req)) : isExperiments ? experimentsPage(store.db, url.pathname) : isFlow ? flowPage(store, url, escape) : page(store, stateDir, url, auth?.sessionCsrf(req));
+        const content = keysCsrf ? apiKeysPage(store, escape, keysCsrf, keyUsage) : isMetrics ? metricsPage(store, stateDir, url, auth?.sessionCsrf(req)) : isConfig ? await configPage(store, stateDir, url, escape) : isProfiles ? profilesPage(store, stateDir, url, escape, auth?.sessionCsrf(req)) : isExperiments ? experimentsPage(store.db, url.pathname) : isFlow ? flowPage(store, url, escape) : page(store, stateDir, url, auth?.sessionCsrf(req));
         if (!content) return respond('Página no encontrada', 404, 'text/plain; charset=utf-8');
         content.body = actionNotice(req.method === 'GET' ? auth?.takeNotice(req, url.pathname) : undefined) + content.body;
         const workstreams = store.listWorkstreams();

@@ -1,12 +1,51 @@
 // Administración de credenciales del dueño. El Store valida y persiste las claves.
 import { join } from 'node:path';
-import { Store, StoreError } from './store.ts';
+import { API_KEY_ACTIVE_LIMIT, Store, StoreError } from './store.ts';
 
 export const API_KEYS_PATH = '/config/claves-api';
 export const API_KEY_CREATE_PATH = `${API_KEYS_PATH}/crear`;
 const validId = (id: string) => /^[a-f0-9]{12}$/.test(id);
 
-export function apiKeysPage(store: Store, escape: (value: unknown) => string, csrf: string) {
+export class ApiKeyUsage {
+  private readonly observed = new Map<string, string>();
+  private readonly pending = new Map<string, { count: number; revoked: boolean }>();
+
+  constructor(private readonly clock = () => new Date()) {}
+
+  observe(id: string, response: Response): Response {
+    if (!response.ok) return response;
+    const time = this.clock().toISOString();
+    this.observed.delete(id);
+    this.observed.set(id, time);
+    if (this.observed.size > API_KEY_ACTIVE_LIMIT) this.observed.delete(this.observed.keys().next().value!);
+    return response;
+  }
+
+  async observeMutation(id: string, mutate: () => Promise<Response>): Promise<Response> {
+    const pending = this.pending.get(id) ?? { count: 0, revoked: false };
+    pending.count++;
+    this.pending.set(id, pending);
+    try {
+      const response = await mutate();
+      return pending.revoked ? response : this.observe(id, response);
+    } finally {
+      if (--pending.count === 0) this.pending.delete(id);
+    }
+  }
+
+  lastUse(id: string): string | undefined {
+    return this.observed.get(id);
+  }
+
+  forget(id: string): void {
+    this.observed.delete(id);
+    // Una mutación autorizada en curso puede terminar después de la revocación.
+    const pending = this.pending.get(id);
+    if (pending) pending.revoked = true;
+  }
+}
+
+export function apiKeysPage(store: Store, escape: (value: unknown) => string, csrf: string, usage: ApiKeyUsage) {
   const hidden = `<input type="hidden" name="csrf" value="${escape(csrf)}">`;
   const rows = store.listApiKeys().map(({ id, name, scope, createdAt, revokedAt }) => {
     const revoke = revokedAt === null && validId(id)
@@ -14,14 +53,17 @@ export function apiKeysPage(store: Store, escape: (value: unknown) => string, cs
           <label><input type="checkbox" name="confirm" value="yes" required> Confirmo revocar ${escape(name)}</label>
           <button>Revocar</button>
         </form>` : '';
+    if (revokedAt !== null) usage.forget(id); // También detecta revocaciones hechas desde la CLI.
+    const last = usage.lastUse(id);
     return `<tr><td>${escape(name)}</td><td><code>${escape(scope)}</code></td>
       <td><time>${escape(createdAt)}</time></td>
-      <td>${revokedAt === null ? 'Activa' : `Revocada · <time>${escape(revokedAt)}</time>`}</td><td>${revoke}</td></tr>`;
+      <td>${revokedAt === null ? 'Activa' : `Revocada · <time>${escape(revokedAt)}</time>`}</td>
+      <td>${last ? `<time>${escape(last)}</time>` : 'No medido'}</td><td>${revoke}</td></tr>`;
   }).join('');
   return { title: 'Claves API', body: `<p><a href="/config">Volver a Configuración</a></p>
     ${rows ? `<div class="table-wrap"><table><thead><tr>
       <th scope="col">Nombre</th><th scope="col">Ámbito</th><th scope="col">Creación</th>
-      <th scope="col">Estado</th><th scope="col">Acciones</th>
+      <th scope="col">Estado</th><th scope="col">Último uso en este arranque</th><th scope="col">Acciones</th>
     </tr></thead><tbody>${rows}</tbody></table></div>` : '<p class="empty">No hay claves API.</p>'}
     <section><h2>Crear clave API</h2>
       <form class="web-action" method="post" action="${API_KEY_CREATE_PATH}">${hidden}
@@ -71,11 +113,12 @@ export function createApiKeyResponse(stateDir: string, _id: string, form: URLSea
   });
 }
 
-export function revokeApiKeyResponse(stateDir: string, id: string, form: URLSearchParams): Response {
+export function revokeApiKeyResponse(stateDir: string, id: string, form: URLSearchParams, usage: ApiKeyUsage): Response {
   if (!validId(id)) return problem(400, 'Identificador de clave API inválido.');
   if (form.get('confirm') !== 'yes') return problem(400, 'Confirma la revocación.');
   return withKeyWriter(stateDir, store => {
     store.revokeApiKey({ id });
+    usage.forget(id);
     return new Response(null, { status: 303, headers: { Location: API_KEYS_PATH } });
   });
 }

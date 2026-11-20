@@ -134,6 +134,8 @@ type AutomationRun =
   | { result: 'created'; signalId: string }
   | { result: 'skipped_open' | 'skipped_inactive'; signalId?: never };
 
+export const API_KEY_ACTIVE_LIMIT = 20;
+
 type ApiKeyScope = 'read' | 'decide';
 
 interface ApiKeyIdentity {
@@ -1214,8 +1216,8 @@ export class Store {
       const { count } = this.db.query<{ count: number }, []>(
         'SELECT COUNT(*) AS count FROM api_keys WHERE revoked_at IS NULL',
       ).get()!;
-      if (count >= 20) {
-        throw new StoreError('limit_reached', 'ya hay 20 claves API activas');
+      if (count >= API_KEY_ACTIVE_LIMIT) {
+        throw new StoreError('limit_reached', `ya hay ${API_KEY_ACTIVE_LIMIT} claves API activas`);
       }
       const id = randomBytes(6).toString('hex');
       const secret = randomBytes(32).toString('base64url');
