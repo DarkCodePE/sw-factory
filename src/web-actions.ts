@@ -2,7 +2,7 @@
 import { createHash } from 'node:crypto';
 import { join } from 'node:path';
 import { Store, StoreError } from './store.ts';
-import { validateNoteAttachment, type NoteAttachment } from './note-attachments.ts';
+import { NOTE_ATTACHMENT_REMOTE, NOTE_ATTACHMENT_STATE, validateNoteAttachment, type NoteAttachment } from './note-attachments.ts';
 import { linkTriagedSignal } from './admission/apply.ts';
 import { removeWorktree } from './worktrees.ts';
 import { SIGNAL_BODY_MAX, SIGNAL_TITLE_MAX } from './web-signals.ts';
@@ -29,8 +29,10 @@ const messages: Record<string, string> = {
   not_found: 'not_found: no se encontró el registro.', invalid_input: 'invalid_input: revisa los datos de la acción.',
   error: 'No se pudo registrar la acción. Revisa el estado antes de volver a intentarlo.',
 };
+// Textos fijos del Store (sin datos de la petición) que la página enseña tal cual para que el dueño sepa qué corregir.
+const FIXED_NOTICES = new Set<string>([NOTE_ATTACHMENT_REMOTE, ...Object.values(NOTE_ATTACHMENT_STATE)]);
 export function actionNotice(result?: string): string {
-  const message = messages[result ?? ''];
+  const message = messages[result ?? ''] ?? (FIXED_NOTICES.has(result ?? '') ? result : undefined);
   return message ? `<p class="notice" role="status">${message}</p>` : '';
 }
 
@@ -54,7 +56,7 @@ export function actionForms(store: Store, url: URL, csrf?: string): string {
     if (waiting || ['failed', 'blocked', 'quarantined', 'implemented'].includes(c.status)) body += form(`/changes/${id}/retry`, `<input type="hidden" name="revision" value="${retryRevision(store, id)}"><button>Reintentar change</button><p class="muted">Reencola la última activity fallida; si espera una respuesta, abandona esa espera.</p>`);
     if (!store.isTerminalChange(c.status)) {
       const planned = activities.some(a => ['pending', 'in_progress', 'waiting_reply'].includes(a.status));
-      body += noteForm(id, hidden, planned, store.noteRunnerIsRemote(c.workstreamId));
+      body += noteForm(id, hidden, planned, store.noteRunnerIsRemote(c.workstreamId), store.noteAttachmentStateProblem(), escape);
     }
     if (!FINAL_STATUSES.includes(c.status)) body += form(`/changes/${id}/cancel`, `<fieldset><legend>Cancelar change</legend><label><input type="checkbox" name="confirm" value="yes" required> Confirmo: cancela el change y borra su worktree (igual que fab reject)</label><button>Cancelar change</button></fieldset>`);
     return `<section aria-label="Decisiones">${body}</section>`;
@@ -293,7 +295,8 @@ export async function performAction(stateDir: string, name: string, id: string, 
     finally { if (previous === undefined) delete process.env.FAB_ACTOR; else process.env.FAB_ACTOR = previous; }
     if (out.repo) { await writer.waitForRelease(id); await removeWorktree(out.repo, stateDir, id); }
   } catch (error) {
-    out.result = error instanceof StoreError && messages[error.code] ? error.code : 'error';
+    out.result = error instanceof StoreError && error.code === 'invalid_input' && FIXED_NOTICES.has(error.message) ? error.message
+      : error instanceof StoreError && messages[error.code] ? error.code : 'error';
   } finally { store?.close(); }
   return out;
 }

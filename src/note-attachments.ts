@@ -41,6 +41,16 @@ export function validateNoteAttachment(file: NoteAttachment): string | undefined
 }
 
 const PRIVATE_STATE = 'Los adjuntos requieren una base y sidecars regulares en un estado privado, fuera de montajes escribibles.';
+// Textos fijos, sin datos de la petición: la web los enseña tal cual para que el dueño sepa qué corregir.
+export const NOTE_ATTACHMENT_STATE = {
+  mode: 'Los adjuntos requieren un estado privado: el directorio de estado de fab debe ser 0700 (ejecuta chmod 700 sobre él; los estados nuevos ya se crean así).',
+  ancestor: 'Un directorio superior al estado permite escribir a otros usuarios o es un enlace, y los adjuntos requieren un estado privado: quita ese permiso o mueve el estado con FABRICA_HOME.',
+  files: 'La base de fab o sus sidecars no son ficheros regulares propios y sin enlaces, y los adjuntos requieren un estado privado.',
+  mounts: 'El estado de fab cae dentro de un repo, un git dir, un worktree o un montaje persistente, y los adjuntos requieren un estado privado fuera de montajes escribibles.',
+  git: 'No se pudo inventariar los repos de los workstreams con Git: los adjuntos requieren un estado privado fuera de montajes escribibles.',
+} as const;
+
+export const NOTE_ATTACHMENT_REMOTE = 'Los adjuntos requieren un workstream local. El runner asignado es remoto.';
 
 function missing(error: unknown): boolean {
   return (error as NodeJS.ErrnoException)?.code === 'ENOENT';
@@ -52,22 +62,25 @@ export function assertPrivateNoteDatabase(dbPath: string): void {
   const db = resolve(dbPath), state = dirname(db), uid = userInfo().uid;
   const root = parse(state).root;
   let path = root;
+  let reason: keyof typeof NOTE_ATTACHMENT_STATE = 'ancestor';
   try {
     for (const part of [null, ...state.slice(root.length).split(sep).filter(Boolean)]) {
       if (part !== null) path = join(path, part);
+      reason = path === state ? 'mode' : 'ancestor';
       const st = lstatSync(path);
       // /tmp es válido como ancestro si es de root y el sticky bit protege al directorio del dueño.
       const stickyRoot = path !== state && st.uid === 0 && (st.mode & 0o1000);
       if (!st.isDirectory() || (st.uid !== uid && st.uid !== 0) || ((st.mode & 0o022) && !stickyRoot)) throw new Error();
       if (path === state && (st.uid !== uid || (st.mode & 0o077))) throw new Error();
     }
+    reason = 'files';
     for (const suffix of ['', '-wal', '-shm', '-journal']) {
       let st;
       try { st = lstatSync(db + suffix); }
       catch (error) { if (suffix && missing(error)) continue; throw error; }
       if (!st.isFile() || st.uid !== uid || st.nlink !== 1 || (st.mode & 0o022)) throw new Error();
     }
-  } catch { throw new Error(PRIVATE_STATE); }
+  } catch { throw new Error(NOTE_ATTACHMENT_STATE[reason]); }
 }
 
 /** Reutiliza el inventario de Git por checkout y cubre los directorios persistentes de fab. Solo lectura. */
@@ -96,5 +109,5 @@ export function assertNoteAttachmentMounts(dbPath: string, repos: string[], targ
       try { check(realpathSync(path)); }
       catch (error) { if (!missing(error)) throw error; }
     }
-  } catch { throw new Error(PRIVATE_STATE); }
+  } catch { throw new Error(NOTE_ATTACHMENT_STATE.mounts); }
 }

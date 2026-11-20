@@ -231,10 +231,24 @@ test('T96d: la API con clave rechaza multipart y el campo attachment', async () 
   expect(notes()).toHaveLength(0);
 });
 
-test('T96d: un estado no privado rechaza el adjunto y no crea fila', async () => {
+test('T96-H1/H3: un estado no privado se avisa antes de guardar y el rechazo nombra la causa y el remedio', async () => {
   const { chmodSync } = await import('node:fs');
   chmodSync(dir, 0o755);
+  const page = await html();
+  expect(page).toContain('chmod 700'); expect(page).not.toContain('name="attachment"');
   expect((await upload([...base(), file()])).status).toBe(303);
   expect(notes()).toHaveLength(0);
-  expect(await html()).toContain('invalid_input');
+  expect(await html()).toContain('chmod 700');
+  chmodSync(dir, 0o700);
+  expect((await upload([...base(), file()])).status).toBe(303);
+  expect(notes()).toHaveLength(1);
+});
+
+test('T96-H3: un runner remoto rechaza la carga con su motivo, sin código genérico', async () => {
+  store.createRunner({ name: 'remoto', kind: 'ssh', target: 'runner-ssh' });
+  store.setWorkstreamRunner(store.getChange(change).workstreamId, 'remoto');
+  expect((await upload([...base(), file()])).status).toBe(303);
+  expect(notes()).toHaveLength(0);
+  const page = await html();
+  expect(page).toContain('El runner asignado es remoto.'); expect(page).not.toContain('revisa los datos de la acción');
 });

@@ -12,7 +12,7 @@ import { gitEvidence, writeManifest } from './manifest.ts';
 import { lastDue, parseCron } from './cron.ts';
 import {
   assertNoteAttachmentMounts, assertPrivateNoteDatabase, NOTE_ATTACHMENT_HISTORY_MAX, NOTE_ATTACHMENT_MAX,
-  NOTE_ATTACHMENT_WAIT, validateNoteAttachment, type NoteAttachment, type NoteAttachmentMeta, type NoteAttachmentTarget, type NoteAttachmentWait,
+  NOTE_ATTACHMENT_REMOTE, NOTE_ATTACHMENT_WAIT, validateNoteAttachment, type NoteAttachment, type NoteAttachmentMeta, type NoteAttachmentTarget, type NoteAttachmentWait,
 } from './note-attachments.ts';
 
 import {
@@ -1160,6 +1160,12 @@ export class Store {
     return runner !== null && this.getRunner(runner).kind === 'ssh';
   }
 
+  /** Comprobación barata (sin Git) del estado para avisar en la página antes de guardar. */
+  noteAttachmentStateProblem(): string | undefined {
+    try { assertPrivateNoteDatabase(this.dbPath); }
+    catch (error) { return (error as Error).message; }
+  }
+
   assertNoteAttachmentState(target?: NoteAttachmentTarget): void {
     assertPrivateNoteDatabase(this.dbPath);
     assertNoteAttachmentMounts(this.dbPath, this.listWorkstreams().map(ws => ws.repo), target);
@@ -1184,7 +1190,7 @@ export class Store {
         const invalid = validateNoteAttachment(attachment);
         if (invalid) throw new StoreError('invalid_input', invalid);
         if (this.noteRunnerIsRemote(change.workstreamId)) {
-          throw new StoreError('invalid_input', 'Los adjuntos requieren un workstream local. El runner asignado es remoto.');
+          throw new StoreError('invalid_input', NOTE_ATTACHMENT_REMOTE);
         }
         try { this.assertNoteAttachmentState(); }
         catch (error) { throw new StoreError('invalid_input', (error as Error).message); }
