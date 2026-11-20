@@ -182,3 +182,17 @@ test('T91-H3: unas instrucciones válidas de 8000 bytes en caracteres de dos byt
   expect(r.status).toBe(303);
   expect((await post({ instructions: 'ñ'.repeat(4097) })).status).toBe(400); // pasa el cuerpo y cae en el tope de 8192 bytes de la validación
 });
+
+test('T91-H4: asignar un perfil con otra política de automejora lo advierte; con la misma, no', async () => {
+  await login();
+  const saved = (await save()).digest;
+  const withPolicy = await html(`/perfiles?ws=prueba&digest=${saved}`);
+  expect(withPolicy).toContain('política de automejora distinta');
+  expect(withPolicy).toContain('(gasto)');
+  store.assignProfile(wsId, saved, digest);
+  const other = saveProfile(dir, { ...loadProfile(dir, saved), model: 'otro-modelo' }).digest; // misma política, otro perfil
+  expect(other).not.toBe(saved);
+  const page2 = await html(`/perfiles?ws=prueba&digest=${other}`);
+  expect(page2).toContain('Asignar al workstream');
+  expect(page2).not.toContain('política de automejora distinta');
+});

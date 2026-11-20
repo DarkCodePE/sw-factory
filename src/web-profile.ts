@@ -104,7 +104,10 @@ export function profilesPage(store: Store, stateDir: string, url: URL, escape: E
     try {
       const { profile } = resolveProfile(stateDir, d);
       const status = d === current.digest ? 'Es el vigente' : url.searchParams.get('nuevo') === '1' ? 'Nuevo' : 'Ya existía';
-      const assign = csrf && d !== current.digest ? confirmForm(d, current.digest, 'Asignar al workstream') : '';
+      // T91-H4: asignar un perfil con otra política de automejora cambia el umbral que decide cuándo se propone y se experimenta (gasto).
+      const policyChange = JSON.stringify(profile.autoImprove ?? null) !== JSON.stringify(current.profile.autoImprove ?? null)
+        ? '<p class="notice">Este perfil trae una política de automejora distinta de la vigente: cambia el umbral que decide cuándo se propone y se experimenta (gasto) si la automejora está habilitada.</p>' : '';
+      const assign = csrf && d !== current.digest ? policyChange + confirmForm(d, current.digest, 'Asignar al workstream') : '';
       saved = `<section><h2>Perfil guardado</h2><p><code>${d}</code> · ${status}</p>${d !== current.digest ? roleResolution(profile, selected.agent, escape) : ''}${assign}</section>`;
     } catch { saved = '<p class="notice">El perfil guardado no está disponible.</p>'; }
   }
