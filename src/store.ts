@@ -739,6 +739,10 @@ export class Store {
     return this.withRetry(() => {
       const row = this.db.query('UPDATE runners SET enabled = ? WHERE name = ? RETURNING *').get(Number(enabled), name) as Row | null;
       if (!row) throw new StoreError('not_found', `runner ${name} no encontrado`);
+      // Un evento exige un workstream: alta y borrado (un runner en uso no se borra) no tienen dónde anotarse; pausa y activación, en cada workstream que lo usa.
+      for (const w of this.db.query('SELECT id FROM workstreams WHERE runner = ?').all(name) as { id: string }[]) {
+        this.event(w.id, 'warning', `runner ${name} ${enabled ? 'activado' : 'pausado'}`);
+      }
       return toRunner(row);
     });
   }

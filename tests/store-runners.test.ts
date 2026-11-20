@@ -114,3 +114,14 @@ test('CLI: add, list, ws runner con aviso, rm en uso falla', () => {
   expect(fab('runner', 'rm', 'torre').exitCode).toBe(0);
   store = new Store(join(dir, 'fabrica.db'));
 });
+
+test('H6: pausar y activar un runner deja un evento en cada workstream que lo usa, y solo en esos', () => {
+  const a = ws(), b = store.createWorkstream({ slug: 'otro', goal: 'g', repo: dir });
+  store.createRunner({ name: 'torre', kind: 'ssh', target: 'torre' });
+  store.setWorkstreamRunner('w', 'torre');
+  store.setRunnerEnabled('torre', false);
+  store.setRunnerEnabled('torre', true);
+  const msgs = (id: string) => (store.db.query('SELECT message FROM events WHERE workstream_id = ? ORDER BY id').all(id) as { message: string }[]).map(e => e.message);
+  expect(msgs(a.id)).toEqual(expect.arrayContaining(['runner torre pausado', 'runner torre activado']));
+  expect(msgs(b.id).filter(m => m.includes('torre'))).toEqual([]);
+});
