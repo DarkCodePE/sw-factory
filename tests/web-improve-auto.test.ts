@@ -175,3 +175,10 @@ test('T91-H2: con el perfil vigente corrupto la página responde 200 con aviso y
   expect(body).toContain('no está disponible');
   expect(body).toContain('href="/perfiles?ws=prueba"');
 });
+
+test('T91-H3: unas instrucciones válidas de 8000 bytes en caracteres de dos bytes no se rechazan con 413', async () => {
+  await login();
+  const r = await post({ instructions: 'ñ'.repeat(4000) }); // 8000 bytes; URL-encoded, 24 000
+  expect(r.status).toBe(303);
+  expect((await post({ instructions: 'ñ'.repeat(4097) })).status).toBe(400); // pasa el cuerpo y cae en el tope de 8192 bytes de la validación
+});

@@ -3,7 +3,7 @@ import { createHash } from 'node:crypto';
 import { join } from 'node:path';
 import { isRunnerName, Store, StoreError, WorkstreamBusyError } from './store.ts';
 import { AGENT_NAMES } from './agents.ts';
-import { isProfileDigest } from './profile.ts';
+import { AUTO_INSTRUCTIONS_MAX, isProfileDigest } from './profile.ts';
 import { assertPrivateNoteDatabase, NOTE_ATTACHMENT_REMOTE, NOTE_ATTACHMENT_STATE, validateNoteAttachment, type NoteAttachment } from './note-attachments.ts';
 import { linkTriagedSignal } from './admission/apply.ts';
 import { removeWorktree } from './worktrees.ts';
@@ -120,6 +120,8 @@ const findSignal = (store: Store, id: string) => {
 // URL-encoded: cada LF puede convertirse en %0D%0A. Deja margen para los demás campos.
 const AUTOMATION_FORM_LIMIT = 56 * 1024;
 const AUTOMATION_BODY_LIMIT = 8 * 1024;
+// T91-H3: el tope de las instrucciones cuenta bytes y URL-encoded cada byte no ASCII ocupa hasta 3 («ñ» = %C3%B1 = 6 bytes por 2 bytes).
+const AUTOMEJORA_FORM_LIMIT = 3 * AUTO_INSTRUCTIONS_MAX + 4096;
 const AUTOMATION_CRON_LIMIT = 256;
 const automationFields = ['name', 'schedule', 'cron', 'at', 'weekday', 'title', 'body'];
 const automationConfirmation = ['confirm', 'revision'];
@@ -584,7 +586,7 @@ export async function webAction(req: Request, stateDir: string, port: number, au
   const action = name ? ACTIONS[name] : undefined;
   const fields: Raw = Object.create(null);
   try {
-    const { form, file } = await readForm(req, profilePath ? PROFILE_BODY_LIMIT : action?.automationForm ? AUTOMATION_FORM_LIMIT : 16384, name === 'changes/note');
+    const { form, file } = await readForm(req, profilePath ? PROFILE_BODY_LIMIT : action?.automationForm ? AUTOMATION_FORM_LIMIT : name === 'automejora/save' ? AUTOMEJORA_FORM_LIMIT : 16384, name === 'changes/note');
     if (!auth.validCsrf(req, form.get('csrf') ?? '')) return new Response('CSRF rechazado.', { status: 403 });
     const invalid = file && validateNoteAttachment(file);
     if (invalid) throw new InputError(400, invalid);
