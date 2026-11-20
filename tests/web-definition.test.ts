@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, expect, test } from 'bun:test';
-import { existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, statSync, writeFileSync } from 'node:fs';
 import { homedir, tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { exportDefinition } from '../src/definition.ts';
@@ -86,13 +86,23 @@ test('coincide exactamente con fab definition export y muestra el contenido de c
   expect(html).toContain('Árbol de definición · demo');
   expect(html).toContain(`Ficheros en el árbol: <strong>${exportedFiles.length}</strong>`);
 
-  // Cada fichero exportado debe figurar en la web con su ruta y su contenido idéntico
+  const unescapeHtml = (s: string) => s
+    .replace(/&quot;/g, '"')
+    .replace(/&#39;/g, "'")
+    .replace(/&lt;/g, '<')
+    .replace(/&gt;/g, '>')
+    .replace(/&amp;/g, '&');
+
+  // Cada fichero exportado debe figurar en la web con su ruta y su contenido íntegro idéntico
   for (const relPath of exportedFiles) {
     expect(html).toContain(`<code>${relPath}</code>`);
+    const fileId = `file-${encodeURIComponent(relPath)}`;
+    const articleRegex = new RegExp(`<article id="${fileId}"[\\s\\S]*?<pre tabindex="0"><code>([\\s\\S]*?)<\\/code><\\/pre>`);
+    const match = html.match(articleRegex);
+    expect(match).not.toBeNull();
+    const renderedContent = unescapeHtml(match![1]);
     const diskContent = readFileSync(join(exportTarget, relPath), 'utf8');
-    // El contenido escapado debe estar en el HTML
-    const sample = diskContent.slice(0, 40).replace(/"/g, '&quot;').trim();
-    if (sample) expect(html).toContain(sample);
+    expect(renderedContent).toBe(diskContent);
   }
 
   expect(html).toContain('skills/lint/SKILL.md');
@@ -105,16 +115,26 @@ test('el árbol no contiene rutas absolutas ni valores de entorno', async () => 
   seedWorkstream();
   server = startWeb(stateDir, 0);
 
-  const html = await getHtml('/definicion?ws=demo');
+  const CANARY_SECRET_ENV = 'CANARIO_ENVIROMENT_VALOR_SECRETO_987654321';
+  process.env.CANARY_SECRET_ENV = CANARY_SECRET_ENV;
+  try {
+    const html = await getHtml('/definicion?ws=demo');
 
-  // No debe contener rutas locales del host (repoDir, stateDir, ni dir)
-  expect(html).not.toContain(repoDir);
-  expect(html).not.toContain(stateDir);
-  expect(html).not.toContain(dir);
+    // No debe contener rutas locales del host (repoDir, stateDir, dir, homedir)
+    expect(html).not.toContain(repoDir);
+    expect(html).not.toContain(stateDir);
+    expect(html).not.toContain(dir);
+    expect(html).not.toContain(homedir());
 
-  // Solo nombres de variables de entorno en profile.json, nunca valores secretos
-  expect(html).toContain('GH_TOKEN');
-  expect(html).toContain('API_KEY');
+    // No debe contener valores de variables de entorno ni canarios
+    expect(html).not.toContain(CANARY_SECRET_ENV);
+
+    // Solo nombres de variables de entorno en profile.json, nunca valores secretos
+    expect(html).toContain('GH_TOKEN');
+    expect(html).toContain('API_KEY');
+  } finally {
+    delete process.env.CANARY_SECRET_ENV;
+  }
 });
 
 test('error al generar definicion no filtra rutas locales ni el directorio home en el html', async () => {
@@ -149,21 +169,39 @@ test('la página no escribe en disco', async () => {
   seedWorkstream();
   server = startWeb(stateDir, 0);
 
-  const getSnapshot = () => ({
-    stateFiles: readdirSync(stateDir).sort(),
-    repoFiles: readdirSync(repoDir).sort(),
-  });
+  const recursiveSnapshot = (baseDir: string): { path: string; size: number; mtime: number }[] => {
+    const results: { path: string; size: number; mtime: number }[] = [];
+    const walk = (curr: string, rel: string) => {
+      if (!existsSync(curr)) return;
+      for (const entry of readdirSync(curr, { withFileTypes: true })) {
+        const full = join(curr, entry.name);
+        const relPath = rel ? `${rel}/${entry.name}` : entry.name;
+        if (entry.isDirectory()) {
+          walk(full, relPath);
+        } else if (entry.isFile()) {
+          const s = statSync(full);
+          results.push({ path: relPath, size: s.size, mtime: s.mtimeMs });
+        }
+      }
+    };
+    walk(baseDir, '');
+    return results.sort((a, b) => a.path.localeCompare(b.path));
+  };
 
-  const before = getSnapshot();
+  const beforeState = recursiveSnapshot(stateDir);
+  const beforeRepo = recursiveSnapshot(repoDir);
 
   // Hacer múltiples peticiones
   await getHtml('/definicion');
   await getHtml('/definicion?ws=demo');
   await getHtml('/definicion?ws=demo#file-workstream.json');
 
-  const after = getSnapshot();
+  const afterState = recursiveSnapshot(stateDir);
+  const afterRepo = recursiveSnapshot(repoDir);
 
-  expect(after).toEqual(before);
+  expect(afterState).toEqual(beforeState);
+  expect(afterRepo).toEqual(beforeRepo);
+
   // Verificar que no se creó ninguna carpeta de exportación en stateDir ni repoDir
   expect(existsSync(join(stateDir, 'workstream.json'))).toBe(false);
   expect(existsSync(join(repoDir, 'workstream.json'))).toBe(false);
