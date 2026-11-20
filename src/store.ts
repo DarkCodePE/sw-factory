@@ -782,11 +782,11 @@ export class Store {
     return (this.db.query('SELECT * FROM runners ORDER BY name').all() as Row[]).map(toRunner);
   }
 
-  listRunnerSummaries(): Pick<Runner, 'name' | 'kind' | 'enabled'>[] {
+  listRunnerSummaries(): Pick<Runner, 'name' | 'kind' | 'enabled' | 'createdAt'>[] {
     if (!this.db.query("SELECT 1 FROM sqlite_schema WHERE type = 'table' AND name = 'runners'").get()) return [];
-    const rows = this.db.query('SELECT name, kind, enabled FROM runners ORDER BY name').all() as
-      { name: string; kind: Runner['kind']; enabled: number }[];
-    return rows.map(({ name, kind, enabled }) => ({ name, kind, enabled: enabled === 1 }));
+    const rows = this.db.query('SELECT name, kind, enabled, created_at FROM runners ORDER BY name').all() as
+      { name: string; kind: Runner['kind']; enabled: number; created_at: string }[];
+    return rows.map(r => ({ name: r.name, kind: r.kind, enabled: r.enabled === 1, createdAt: r.created_at }));
   }
 
   getRunner(name: string): Runner {
@@ -816,7 +816,7 @@ export class Store {
     }).immediate());
   }
 
-  setWorkstreamRunner(idOrSlug: string, name: string | null, selection?: { expected: string | null; confirmSsh: boolean }): Workstream {
+  setWorkstreamRunner(idOrSlug: string, name: string | null, selection?: { expected: string | null; confirmSsh: boolean; seen?: { kind: Runner['kind']; createdAt: string } }): Workstream {
     return this.withRetry(() => this.db.transaction(() => {
       const row = selection ? this.db.query('SELECT * FROM workstreams WHERE id = ?').get(idOrSlug) as Row | null : null;
       if (selection && !row) throw new StoreError('not_found', 'workstream no encontrado');
@@ -826,6 +826,10 @@ export class Store {
       }
       const runner = name === null ? null : this.getRunner(name);
       if (selection) {
+        // La fila que vio el dueño: un runner borrado y recreado (otro destino u otro tipo) no se asigna.
+        if (runner && (runner.kind !== selection.seen?.kind || runner.createdAt !== selection.seen.createdAt)) {
+          throw new StoreError('conflict', 'el runner cambió desde que se mostró');
+        }
         if (runner && !runner.enabled) throw new StoreError('conflict', 'el runner está pausado');
         if (runner?.kind === 'ssh' && !selection.confirmSsh) throw new StoreError('invalid_input', 'falta confirmar el envío al runner SSH');
         if (ws.runner === name) return ws;

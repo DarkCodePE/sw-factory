@@ -33,11 +33,12 @@ export function workstreamRunner(w: Workstream, runners: Runners, csrf?: string)
     `<option value="${escape(r.name)}"${r.name === w.runner ? ' selected' : ''}>${escape(r.name)} (${kindLabel(r.kind)})</option>`).join('');
   const unavailable = w.runner !== null && !available.some(r => r.name === w.runner)
     ? `<option value="${escape(w.runner)}" disabled selected>${label}</option>` : '';
+  const seen = available.map(r => hidden(`seen.${r.name}`, `${r.kind} ${r.createdAt}`)).join('');
   const ssh = available.some(r => r.kind === 'ssh')
     ? '<label><input type="checkbox" name="confirm_ssh" value="yes"> Si elijo SSH, acepto enviar código y prompt al runner remoto. La ejecución remota no admite <code>--live</code>.</label>' : '';
   return `${summary}<details><summary>Cambiar runner</summary>
     <form action="/workstreams/${encodeURIComponent(w.id)}/runner" method="post" class="web-action"><fieldset>
-      <legend>Runner para próximos turnos</legend>${hidden('csrf', csrf)}${hidden('expected', w.runner ?? '')}
+      <legend>Runner para próximos turnos</legend>${hidden('csrf', csrf)}${hidden('expected', w.runner ?? '')}${seen}
       <label>Runner<select name="runner"><option value=""${w.runner === null ? ' selected' : ''}>Predeterminado</option>${unavailable}${options}</select></label>
       <label><input type="checkbox" name="confirm" value="yes" required> Confirmo la selección del runner.</label>
       ${ssh}<button>Guardar runner</button>

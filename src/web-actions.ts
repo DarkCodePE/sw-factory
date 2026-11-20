@@ -278,15 +278,21 @@ export const ACTIONS: Record<string, Action> = {
     api: false,
     httpErrors: true,
     path: route('workstreams', 'runner'),
-    input: ({ runner, expected, confirm, confirm_ssh }) => {
-      if (runner === undefined || (runner !== '' && !isRunnerName(runner)) || expected === undefined || confirm !== 'yes') {
+    input: raw => {
+      const { runner, expected, confirm, confirm_ssh } = raw;
+      // «tipo alta»: lo que mostró el formulario de ese runner; `created_at` es ISO y no lleva espacios.
+      const seen = runner ? raw[`seen.${runner}`] ?? '' : '';
+      if (runner === undefined || (runner !== '' && !isRunnerName(runner)) || expected === undefined || confirm !== 'yes'
+        || (runner !== '' && !/^(ssh|local) \S+$/.test(seen))) {
         throw new InputError(400, 'Elige un runner y confirma la selección.');
       }
-      return { runner, expected, confirm_ssh };
+      return { runner, expected, confirm_ssh, seen };
     },
-    run: (store, id, { runner, expected, confirm_ssh }, out) => {
+    run: (store, id, { runner, expected, confirm_ssh, seen }, out) => {
       out.destination = '/workstreams';
-      store.setWorkstreamRunner(id, runner || null, { expected: expected || null, confirmSsh: confirm_ssh === 'yes' });
+      const [kind, createdAt] = seen!.split(' ');
+      store.setWorkstreamRunner(id, runner || null, { expected: expected || null, confirmSsh: confirm_ssh === 'yes',
+        seen: runner ? { kind: kind as 'ssh' | 'local', createdAt: createdAt! } : undefined });
     },
   },
   'runners/check': { path: RUNNER_CHECK_PATH, api: false, check: true },

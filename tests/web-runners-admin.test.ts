@@ -43,8 +43,9 @@ async function login() {
 const get = (url: string, method = 'GET', headers: Record<string, string> = { cookie }) => fetch(origin + url, { method, headers, redirect: 'manual' });
 const post = (url: string, fields: Record<string, string> = {}, headers: Record<string, string> = {}) =>
   fetch(origin + url, { method: 'POST', redirect: 'manual', headers: { cookie, origin, ...headers }, body: new URLSearchParams({ csrf, ...fields }) });
+const seenOf = (name: string) => { const r = store.getRunner(name); return `${r.kind} ${r.createdAt}`; };
 const assign = (runner: string, expected = '', fields: Record<string, string> = {}) =>
-  post(path(), { runner, expected, confirm: 'yes', ...fields });
+  post(path(), { runner, expected, confirm: 'yes', ...(runner && store.listRunnerSummaries().some(r => r.name === runner) ? { [`seen.${runner}`]: seenOf(runner) } : {}), ...fields });
 
 beforeEach(() => {
   dir = mkdtempSync(join(tmpdir(), 'fab-web-runners-admin-'));
@@ -236,7 +237,7 @@ test('asignación: dos formularios, confirmaciones, CAS con CLI, pausa, borrado 
   expect((await post(path(), { runner: 'casa', confirm: 'yes' })).status).toBe(400);
   expect((await assign('casa', first, { confirm: '' })).status).toBe(400);
   expect((await assign('torre', first)).status).toBe(400);
-  expect((await post('/workstreams/prueba/runner', { runner: 'casa', expected: '', confirm: 'yes' })).status).toBe(404);
+  expect((await post('/workstreams/prueba/runner', { runner: 'casa', expected: '', confirm: 'yes', 'seen.casa': seenOf('casa') })).status).toBe(404);
   const r = await assign('torre', first, { confirm_ssh: 'yes' });
   expect(r.status).toBe(303);
   expect(r.headers.get('location')).toBe('/workstreams');
@@ -250,8 +251,9 @@ test('asignación: dos formularios, confirmaciones, CAS con CLI, pausa, borrado 
   const beforePause = await form();
   store.setRunnerEnabled('torre2', false);
   expect((await assign('torre2', beforePause, { confirm_ssh: 'yes' })).status).toBe(409);
+  const seenDos = seenOf('torre2');
   store.deleteRunner('torre2');
-  expect((await assign('torre2', beforePause, { confirm_ssh: 'yes' })).status).toBe(404);
+  expect((await assign('torre2', beforePause, { confirm_ssh: 'yes', 'seen.torre2': seenDos })).status).toBe(404);
   expect((await assign('', beforePause)).status).toBe(303);
   store.setWorkstreamState(workstream, 'archived');
   expect((await assign('casa')).status).toBe(409);
@@ -310,4 +312,34 @@ test('la activity iniciada conserva procedencia y el turno siguiente usa la nuev
   expect(next.changeId).toBe(change.id);
   await processActivity(store, next, 'worker-2', { ...opts, runnerTransport: () => { throw new Error('el turno local no abre transporte'); } });
   expect(store.getActivity(next.id)).toMatchObject({ status: 'completed', runner: 'casa' });
+});
+
+test('T85-H2: el formulario envía tipo y alta vistos y un runner recreado se rechaza', async () => {
+  boot();
+  await login();
+  const html = await (await get('/workstreams')).text();
+  for (const name of ['torre', 'torre2', 'casa']) {
+    expect(html).toContain(`name="seen.${name}" value="${seenOf(name)}"`);
+  }
+  expect(html).not.toContain('seen.en-pausa');
+  // Sin lo visto no se asigna: ni 303 ni cambio.
+  expect((await post(path(), { runner: 'casa', expected: '', confirm: 'yes' })).status).toBe(400);
+  expect((await post(path(), { runner: 'casa', expected: '', confirm: 'yes', 'seen.casa': 'basura' })).status).toBe(400);
+  // El dueño vio torre = SSH; la CLI lo borra y lo da de alta con otro destino.
+  const seen = seenOf('torre');
+  store.deleteRunner('torre');
+  await Bun.sleep(5);
+  store.createRunner({ name: 'torre', kind: 'ssh', target: 'alias-otro-host' });
+  const stale = await assign('torre', '', { 'seen.torre': seen, confirm_ssh: 'yes' });
+  expect(stale.status).toBe(409);
+  expect(store.getWorkstream(workstream).runner).toBeNull();
+  // Cambio de tipo: lo visto era Local y ahora es SSH, con la casilla SSH marcada.
+  const local = seenOf('casa');
+  store.deleteRunner('casa');
+  await Bun.sleep(5);
+  store.createRunner({ name: 'casa', kind: 'ssh', target: 'alias-casa' });
+  expect((await assign('casa', '', { 'seen.casa': local, confirm_ssh: 'yes' })).status).toBe(409);
+  expect(store.getWorkstream(workstream).runner).toBeNull();
+  // Con lo vigente sí se asigna.
+  expect((await assign('torre', '', { confirm_ssh: 'yes' })).status).toBe(303);
 });

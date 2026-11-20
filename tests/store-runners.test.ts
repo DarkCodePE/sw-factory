@@ -138,8 +138,8 @@ test('inventario público en lectura: proyecta campos y admite bases sin tabla s
     try { return reader.listRunnerSummaries(); } finally { reader.close(); }
   };
   expect(read()).toEqual([
-    { name: 'casa', kind: 'local', enabled: true },
-    { name: 'torre', kind: 'ssh', enabled: false },
+    { name: 'casa', kind: 'local', enabled: true, createdAt: store.getRunner('casa').createdAt },
+    { name: 'torre', kind: 'ssh', enabled: false, createdAt: store.getRunner('torre').createdAt },
   ]);
   store.db.exec('DROP TABLE runners');
   expect(read()).toEqual([]);
@@ -151,8 +151,10 @@ test('asignación web por id compara la selección antes del no-op y comprueba e
   store.createRunner({ name: 'torre', kind: 'ssh', target: 'alias-privado' });
   store.createRunner({ name: 'casa', kind: 'local' });
   const other = new Store(join(dir, 'fabrica.db'));
-  const select = (runner: string | null, expected: string | null, confirmSsh = false) =>
-    store.setWorkstreamRunner(w.id, runner, { expected, confirmSsh });
+  const select = (runner: string | null, expected: string | null, confirmSsh = false) => {
+    const r = runner ? store.getRunner(runner) : undefined;
+    return store.setWorkstreamRunner(w.id, runner, { expected, confirmSsh, seen: r && { kind: r.kind, createdAt: r.createdAt } });
+  };
   try {
     expect(code(() => store.setWorkstreamRunner(w.slug, 'casa', { expected: null, confirmSsh: false }))).toStartWith('not_found');
     expect(code(() => select('torre', null))).toStartWith('invalid_input');
