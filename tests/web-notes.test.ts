@@ -143,11 +143,12 @@ test('la vista escapa el nombre que guarda SQLite y muestra tamaño y estado, si
 
 // T96d: recepción multipart acotada.
 const origin = () => `http://${server.host ?? '127.0.0.1'}:${server.port}`;
-type Part = { name: string; value: string | Uint8Array; filename?: string; type?: string };
+type Part = { name: string; value: string | Uint8Array; filename?: string; type?: string; typeFirst?: boolean };
 function multipart(parts: Part[]): { body: Uint8Array<ArrayBuffer>; type: string } {
   const b = 'XBOUNDARYT96', enc = new TextEncoder(), out: Uint8Array[] = [];
   for (const p of parts) {
-    out.push(enc.encode(`--${b}\r\nContent-Disposition: form-data; name="${p.name}"${p.filename !== undefined ? `; filename="${p.filename}"` : ''}\r\n${p.type ? `Content-Type: ${p.type}\r\n` : ''}\r\n`));
+    const disposition = `Content-Disposition: form-data; name="${p.name}"${p.filename !== undefined ? `; filename="${p.filename}"` : ''}\r\n`, ctype = p.type ? `Content-Type: ${p.type}\r\n` : '';
+    out.push(enc.encode(`--${b}\r\n${p.typeFirst ? ctype + disposition : disposition + ctype}\r\n`));
     out.push(typeof p.value === 'string' ? enc.encode(p.value) : p.value, enc.encode('\r\n'));
   }
   out.push(enc.encode(`--${b}--\r\n`));
@@ -282,4 +283,14 @@ test('T96-H10: el aviso de ancestro con su ruta se muestra escapado y una ruta c
   expect(ok).toContain('Directorio: /home/dueno/estado');
   expect(actionNotice(`${NOTE_ATTACHMENT_STATE.ancestor}${ANCESTOR_PATH_PREFIX}/tmp/<img src=x onerror=alert(1)>`)).toBe('');
   expect(actionNotice(`${NOTE_ATTACHMENT_STATE.ancestor} Otra cosa: /tmp`)).toBe('');
+});
+
+test('T96-H11: un archivo vacío con nombre se rechaza con la cabecera Content-Type delante, y también con filename sin comillas', async () => {
+  const before = notes().length;
+  expect((await upload([...base(), { ...file('datos.txt', ''), typeFirst: true }])).status).toBe(400);
+  const { body, type } = multipart([...base(), file('datos.txt', '')]);
+  const raw = new TextDecoder().decode(body).replace('filename="datos.txt"', 'filename=datos.txt');
+  const r = await req(`/changes/${change}/note`, { method: 'POST', headers: { cookie, origin: origin(), 'content-type': type }, body: raw });
+  expect(r.status).toBe(400);
+  expect(notes()).toHaveLength(before);
 });

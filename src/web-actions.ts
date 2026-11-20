@@ -521,8 +521,11 @@ function attachmentPartNamed(body: Buffer, contentType: string): boolean {
   const boundary = /boundary=(?:"([^"]+)"|([^;\s]+))/i.exec(contentType);
   if (!boundary) return false;
   return body.toString('latin1').split(`--${boundary[1] ?? boundary[2]}`).some(part => {
+    // T96-H11: Content-Disposition puede ir tras otras cabeceras de la parte (p. ej. Content-Type) y el filename sin comillas también cuenta.
     const header = part.split('\r\n\r\n', 1)[0]!;
-    return /^\r\ncontent-disposition:[^\r\n]*name="attachment"/i.test(header) && /filename="[^"]/i.test(header);
+    if (!header.startsWith('\r\n')) return false;
+    const line = header.split('\r\n').find(l => /^content-disposition:/i.test(l));
+    return !!line && /[;\s]name="attachment"/i.test(line) && /filename=(?:"[^"]|[^";\s])/i.test(line);
   });
 }
 
