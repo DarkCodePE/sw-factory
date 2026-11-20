@@ -16,7 +16,7 @@ import { improveMain } from './improve-cli.ts';
 import { abortOnSigint, scoreMain } from './scorers-cli.ts';
 import { automationMain } from './automation-cli.ts';
 import { apiKeyMain } from './api-key-cli.ts';
-import { runnerMain } from './runner-cli.ts';
+import { CODE_LEAVES_WARNING, runnerMain, serveMain } from './runner-cli.ts';
 import type { ReviewDecision, WorkstreamState } from './enums.ts';
 import { runPool } from './pool.ts';
 import { Store, StoreError } from './store.ts';
@@ -102,6 +102,10 @@ const HELP = `fab — agente de código y fábrica de software local
   fab score add <activityId> --scorer <name> | list <slug> [--change <id>] [--json]
   fab score backfill <slug> [--since <iso>] [--scorer <name>] [--yes]   vista previa (nº y coste) y, con --yes, encola
   fab ws list
+  fab runner add <nombre> --ssh <alias> [--max-bundle-mb N] | --local [--confine]   runner remoto (el código sale de tu máquina) o local
+  fab runner list [--json] | enable <nombre> | disable <nombre> | rm <nombre> | check <nombre>
+  fab runner serve --root <dir>   lado runner (lo arranca sshd por el comando forzado)
+  fab ws runner <ws> <nombre> | --none   asigna o quita el runner del workstream
   fab profile export [--out f] | import <f> | inspect <digest> | list   perfiles de instrucciones inmutables por digest
   fab api-key create --name <n> --scope read|decide | list | revoke <id|nombre>   claves de la API local (la clave se muestra una vez)
   fab ws state <slug> <active|paused|archived>
@@ -170,7 +174,15 @@ async function main(argv: string[]): Promise<number> {
     const store = openStore();
     try { return apiKeyMain(argv.slice(1), store); } finally { store.close(); }
   }
-  if (argv[0] === 'runner') return runnerMain(argv.slice(1));
+  // `serve` es el lado runner: no abre el Store (el runner no tiene base, R1).
+  if (argv[0] === 'runner' && argv[1] === 'serve') return serveMain(argv.slice(2));
+  if (argv[0] === 'runner') {
+    const store = openStore();
+    try { return await runnerMain(argv.slice(1), store); } catch (err) {
+      console.error(err instanceof StoreError ? `error (${err.code}): ${err.message}` : `error: ${(err as Error).message}`);
+      return 1;
+    } finally { store.close(); }
+  }
   if (argv[0] === 'improve') {
     const store = openStore();
     try { return await improveMain(argv.slice(1), store, STATE_DIR); } finally { store.close(); }
@@ -313,7 +325,13 @@ async function main(argv: string[]): Promise<number> {
               if (!list.length) console.log('(vacía: modo declarado, sin nada permitido)');
             }
           }
-        } else throw new StoreError('invalid_input', 'fab ws create|list|state|env|mcp');
+        } else if (sub === 'runner') {
+          const [slug, name] = rest;
+          if (!slug || !!name === !!values.none) throw new StoreError('invalid_input', 'usage: fab ws runner <ws> <nombre> | --none');
+          const upd = store.setWorkstreamRunner(slug, name ?? null);
+          console.log(`${upd.slug} runner: ${upd.runner ?? 'ninguno'}`);
+          if (name && store.getRunner(name).kind === 'ssh') console.log(`aviso: ${CODE_LEAVES_WARNING} ${store.getRunner(name).target}.`);
+        } else throw new StoreError('invalid_input', 'fab ws create|list|state|env|mcp|runner');
         return 0;
       }
       case 'signal': {

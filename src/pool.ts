@@ -14,7 +14,8 @@ import { AdmissionDb, hasAdmission } from './admission/db.ts';
 import { CrashInjected, Effects, type CrashPoint } from './admission/effects.ts';
 import { planTurn } from './admission/recovery.ts';
 import { applyReport, closeWithReport, ReportStore } from './admission/reports.ts';
-import { assertConfinement, hostDir, type EnvDecl } from './sandbox/confine.ts';
+import { assertConfinement, CONFINABLE_AGENTS, hostDir, type EnvDecl } from './sandbox/confine.ts';
+import { RunnerError, runRemoteAgent, type RemoteDeps, type Transport } from './runners/client.ts';
 import { agentEnv, scrubValues } from './sandbox/env.ts';
 import { claudeMcpServers, loadMcpRegistry, McpRegistryError } from './mcp-registry.ts';
 import { backendOf, liveBackendFor, runLiveActivity } from './live/turn.ts';
@@ -22,7 +23,7 @@ import type { LiveOutcome } from './admission/reports.ts';
 import type { LiveBackend } from './live/contract.ts';
 import { buildWorkerPrompt, notesBlock } from './prompts.ts';
 import { fabSha, resolveProfile, resolveRole, roleOf, type RoleConfig } from './profile.ts';
-import { HEARTBEAT_INTERVAL_MS, isBusyError, LEASE_TTL_MS, type Activity, type Store, type Workstream } from './store.ts';
+import { HEARTBEAT_INTERVAL_MS, isBusyError, LEASE_TTL_MS, StoreError, type Activity, type Store, type Workstream } from './store.ts';
 import { buildValidatorPrompt } from './validators/prompts.ts';
 import { protectedIntegrity, purgeRegenerableCaches } from './validators/integrity.ts';
 import { parseVerdict } from './validators/verdict.ts';
@@ -81,6 +82,9 @@ export interface PoolOptions {
   liveBackends?: Record<string, LiveBackend>;
   /** Caída inyectada por un test en un punto del turno vivo; un `CrashInjected` sale del pool sin tocar la activity. */
   crash?: (point: CrashPoint) => void;
+  /** Transporte de los runners remotos; por defecto `ssh`. Para tests. */
+  runnerTransport?: Transport;
+  runnerDeps?: RemoteDeps;
   pollMs?: number;
   heartbeatMs?: number;
   leaseTtlMs?: number;
@@ -291,6 +295,13 @@ export async function processActivity(
       store.blockActivity(a.id, workerId, 'GATE_HEAD_CHANGED: validator requires the verified HEAD and a clean worktree');
       return;
     }
+    // T74f: runner del workstream. Sin runner todo sigue como antes; un runner desactivado bloquea, nunca cae a local (R9).
+    const runner = ws.runner ? store.getRunner(ws.runner) : null;
+    if (runner && !runner.enabled) {
+      store.blockActivity(a.id, workerId, `RUNNER_DISABLED: ${runner.name}`);
+      return;
+    }
+    const remote = runner?.kind === 'ssh' ? runner : null;
     let diffStat = '';
     if (a.validator) {
       try {
@@ -305,30 +316,51 @@ export async function processActivity(
       }
     }
     const agent = getAgent(adapter);
-    let agentCheck = agentChecks.get(adapter);
-    if (!agentCheck) {
+    // El binario del agente de un runner remoto lo comprueba el runner (`agent_missing`), no esta máquina.
+    let agentCheck = remote ? undefined : agentChecks.get(adapter);
+    if (!remote && !agentCheck) {
       agentCheck = verifyAgentStart(adapter);
       agentChecks.set(adapter, agentCheck);
       if (agentCheck.warning) log(agentCheck.warning);
     }
-    if (agentCheck.violation && !opts.acceptAgentBinaries) {
+    if (agentCheck?.violation && !opts.acceptAgentBinaries) {
       store.blockActivity(a.id, workerId, `AGENT_BINARY_MISMATCH: ${agentCheck.violation}`);
       return;
     }
-    const live = liveBackendFor(opts, adapter, a);
+    const live = remote ? undefined : liveBackendFor(opts, adapter, a); // un runner remoto corre de un disparo (T74 §1)
     const adm = live || hasAdmission(store) ? new AdmissionDb(store) : undefined;
     // T32/B1: el trabajo que entra por un canal es texto no confiable: va delimitado en el prompt y solo corre confinado.
     const channel = !!adm && isChannelChange(adm, change.id);
-    const confine = !!opts.confine || channel;
-    if (channel) {
+    const localConfine = runner?.kind === 'local' && runner.options.confine === true;
+    const confine = !!opts.confine || channel || localConfine;
+    if (channel && !remote) {
       try { assertConfinement(adapter); } catch (err) {
         store.blockActivity(a.id, workerId, `CHANNEL_NOT_CONFINABLE: ${(err as Error).message}`);
         log(`[${workerId}] ${a.kind} blocked: change de canal sin adaptador confinable (${adapter})`);
         return;
       }
+    } else if (localConfine) {
+      try { assertConfinement(adapter); } catch (err) {
+        store.blockActivity(a.id, workerId, `RUNNER_NOT_CONFINABLE: ${(err as Error).message}`);
+        log(`[${workerId}] ${a.kind} blocked: runner ${runner!.name} confina y el adaptador no puede (${adapter})`);
+        return;
+      }
+    }
+    if (remote) {
+      // Antes de conectar: nada sale de casa si el rol pide valores o servidores (R2, A15) o el adaptador no se confina (R3).
+      const cfg = role && !channel ? profile.roles?.[role] : undefined;
+      const refusal = !CONFINABLE_AGENTS.includes(adapter) ? 'RUNNER_REFUSED: not_confinable'
+        : cfg?.env?.length ? `ENV_NOT_REMOTE: ${cfg.env.join(', ')}`
+        : cfg?.mcp?.length ? `MCP_NOT_REMOTE: ${cfg.mcp.join(', ')}` : null;
+      if (refusal) {
+        store.blockActivity(a.id, workerId, refusal);
+        log(`[${workerId}] ${a.kind} blocked: ${refusal}`);
+        return;
+      }
     }
     // T72: lo declarado por el perfil dentro del tope del workstream; fuera del tope, se bloquea sin lanzar.
-    const access = resolveAccess({ ws, cfg: role ? profile.roles?.[role] : undefined, adapter, model, channel, confine, stateDir: opts.stateDir });
+    const access = remote ? { values: {}, meta: { env: [], mcp: [], missing: [] } } satisfies Access
+      : resolveAccess({ ws, cfg: role ? profile.roles?.[role] : undefined, adapter, model, channel, confine, stateDir: opts.stateDir });
     if ('block' in access) {
       store.blockActivity(a.id, workerId, access.block);
       log(`[${workerId}] ${a.kind} blocked: ${access.block}`);
@@ -346,7 +378,7 @@ export async function processActivity(
     const recoveringReport = !!live && !!adm && !!new ReportStore(adm).pending(a.id);
     const provenance = recoveringReport ? { adapter: a.agent ?? adapter, model: a.model } : { adapter, model };
     if (!recoveringReport) {
-      store.setActivityProvenance(a.id, profileDigest, fabSha(), { agent: adapter, model });
+      store.setActivityProvenance(a.id, profileDigest, fabSha(), { agent: adapter, model, runner: runner?.name ?? null });
       if (profile.schemaVersion === 2 && role && (adapter !== ws.agent || model !== null)) {
         store.event(ws.id, 'info', `rol ${role}: adaptador ${adapter}, modelo ${model ?? 'por defecto'} (perfil ${profileDigest.slice(0, 8)})`, change.id, a.id);
       }
@@ -357,9 +389,11 @@ export async function processActivity(
       mcpConfigPath = join(hostDir(join(resolve(opts.stateDir), 'live', change.id.slice(0, 8), 'mcp'), path), `mcp-${randomUUID()}.json`);
       writeFileSync(mcpConfigPath, JSON.stringify({ mcpServers: access.servers }), { mode: 0o600 });
     }
+    // Con runner remoto el agente trabaja en el clon del runner: el prompt no lleva la ruta de casa (T74 §3.3; el e2e con claude real se perdía buscándola).
+    const promptDir = remote ? '.' : path;
     const prompt = a.validator
-      ? buildValidatorPrompt(a.validator, { change, diffStat, base: 'main', branch, worktree: path, history, untrusted: channel || undefined }, profile.validators)
-      : buildWorkerPrompt({ workstream: ws, change, activity: a, history, worktree: path, branch, untrusted: channel || undefined }, { factoryCommits: agent.factoryCommits }, profile.worker);
+      ? buildValidatorPrompt(a.validator, { change, diffStat, base: 'main', branch, worktree: promptDir, history, untrusted: channel || undefined }, profile.validators)
+      : buildWorkerPrompt({ workstream: ws, change, activity: a, history, worktree: promptDir, branch, untrusted: channel || undefined }, { factoryCommits: agent.factoryCommits }, profile.worker);
     log(`[${workerId}] ${a.validator ?? a.kind} "${change.title}" -> ${adapter} in ${path}`);
     const readOnly = a.validator ? (a.validator !== 'qa') : (a.kind === 'investigation');
     const probeFile = `${runDirectory(opts.stateDir, change.id)}/${a.id}.egress.json`;
@@ -371,7 +405,8 @@ export async function processActivity(
     ] };
     // From launch onward the cost is unknown until the agent reports it.
     attemptCosts[attemptCosts.length - 1] = null;
-    atomicEvidence(meta, JSON.stringify({ ...pendingEvidence, ...provenance, ...accessMeta }));
+    let runnerMeta: Record<string, unknown> = runner ? { runner: { name: runner.name, kind: runner.kind } } : {};
+    atomicEvidence(meta, JSON.stringify({ ...pendingEvidence, ...provenance, ...accessMeta, ...runnerMeta }));
     const crash = (point: CrashPoint) => opts.crash?.(point);
     let outcome: LiveOutcome | undefined;
     let run: AgentRun;
@@ -394,7 +429,38 @@ export async function processActivity(
         notes = notesBlock(store.reserveNotes(change.id, a.id, attemptId));
         if (notes) notesAttemptId = attemptId;
       }
-      run = await runAgent(confine ? agent : captureAgent, prompt + notes, path, turnTimeoutMs(opts), {
+      if (remote) {
+        const head = gitEvidence(path, 'rev-parse', 'HEAD');
+        if (!head) throw new Error('no se pudo leer HEAD del worktree');
+        const attempt = a.retryCount + 1, jobId = `${a.id}-${attempt}`;
+        store.event(ws.id, 'info', `encargo enviado al runner ${remote.name} (${jobId})`, change.id, a.id);
+        try {
+          const done = await runRemoteAgent({ name: remote.name, target: remote.target! }, {
+            activityId: a.id, attempt, adapter, model, readOnly, expectChanges: !a.validator && a.kind === 'implementation',
+            prompt: prompt + notes, repo: ws.repo, worktree: path, head, base: baseSha, timeoutMs: turnTimeoutMs(opts) ?? 20 * 60_000,
+            ...(typeof remote.options.maxBundleMb === 'number' ? { maxBundleMb: remote.options.maxBundleMb } : {}),
+            repoKey: createHash('sha256').update(ws.id).digest('hex'), signal: abortController.signal,
+            onSpawn: pgid => store.setActivityAgentPgid(a.id, pgid),
+          }, opts.runnerTransport, opts.runnerDeps);
+          const { declared, ...rest } = done;
+          run = rest;
+          runnerMeta = { runner: { name: remote.name, kind: remote.kind, jobId, declared } };
+          const after = gitEvidence(path, 'rev-parse', 'HEAD');
+          if (after && after !== head) store.event(ws.id, 'info', `resultado del runner ${remote.name} importado (${after.slice(0, 8)})`, change.id, a.id);
+        } catch (err) {
+          if (!(err instanceof RunnerError)) throw err;
+          // R9: ningún fallo del runner vuelve a local. Solo códigos y nombres a la base y al log; nunca texto libre del runner.
+          if (abortController.signal.aborted || store.isTerminalChange(store.getChange(change.id).status)) { store.releaseActivity(a.id, workerId); return; }
+          if (err.code === 'RUNNER_BUSY') store.requeueActivity(a.id, workerId); // sin gastar reintento
+          else if (err.code === 'RUNNER_LOST') failLive(store, a.id, workerId, err.message);
+          else {
+            if (err.code === 'RUNNER_RESULT_REJECTED') store.event(ws.id, 'warning', `resultado del runner ${remote.name} rechazado (${jobId})`, change.id, a.id);
+            store.blockActivity(a.id, workerId, err.message);
+          }
+          log(`[${workerId}] ${a.validator ?? a.kind} runner ${remote.name}: ${err.code}`);
+          return;
+        }
+      } else run = await runAgent(confine ? agent : captureAgent, prompt + notes, path, turnTimeoutMs(opts), {
         confine,
         model: model ?? undefined,
         envDecl: access.decl, scrub, mcpConfig: mcpConfigPath,
@@ -414,7 +480,7 @@ export async function processActivity(
     }
     attemptCosts[attemptCosts.length - 1] = run.usage?.costUsd ?? null;
     atomicEvidence(meta, JSON.stringify({
-      ...provenance, ...accessMeta, isolation: confine ? 'bwrap-allowlist' : isolationFor(provenance.adapter ?? adapter), durationMs: run.durationMs, exitCode: run.exitCode, usage: run.usage ?? null,
+      ...provenance, ...accessMeta, ...runnerMeta, isolation: remote ? 'remote: declarado por el runner, no verificado' : confine ? 'bwrap-allowlist' : isolationFor(provenance.adapter ?? adapter), durationMs: run.durationMs, exitCode: run.exitCode, usage: run.usage ?? null,
       attemptCosts,
       egressProbe: adapter === 'native' ? readEgressProbe(probeFile) : null,
       // Keep only a declared final worker report, independently of later block/failure decisions; never diagnostics or an earlier attempt.
@@ -525,7 +591,7 @@ export async function processActivity(
         return;
       }
       // The commit is attributed to the factory and only records what the agent left on disk.
-      if (agent.factoryCommits) await commitWorktree(path, `${change.title}\n\nImplemented by ${adapter} (fab activity ${a.id.slice(0, 8)}).`);
+      if (agent.factoryCommits && !remote) await commitWorktree(path, `${change.title}\n\nImplemented by ${adapter} (fab activity ${a.id.slice(0, 8)}).`);
       const commits = await branchCommits(ws.repo, branch);
       if (commits.length === 0 && adapter !== 'fake') {
         failLive(store, a.id, workerId, 'implementation reported done but left no commits on the branch');
@@ -572,10 +638,14 @@ export async function runPool(store: Store, opts: PoolOptions): Promise<void> {
   const ws = store.getWorkstream(opts.workstream);
   // Conserva la comprobación inicial y reutilízala al comprobar cada adaptador por rol.
   const startupAdapter = opts.agentOverride ?? ws.agent;
-  const agentCheck = verifyAgentStart(startupAdapter);
-  const agentChecks = new Map([[startupAdapter, agentCheck]]);
-  if (agentCheck.violation && !opts.acceptAgentBinaries) throw new Error(agentCheck.violation);
-  if (agentCheck.warning) log(agentCheck.warning);
+  const remote = ws.runner ? store.getRunner(ws.runner).kind === 'ssh' : false;
+  // Un runner remoto corre de un disparo: la sesión del harness y el servidor de `report` no pueden cruzar la red (T74 §1).
+  if (opts.live && remote) throw new StoreError('invalid_input', `LIVE_NOT_REMOTE: el workstream usa el runner remoto ${ws.runner}; --live no es compatible`);
+  // El binario de un runner remoto lo comprueba el runner, no esta máquina.
+  const agentCheck = remote ? undefined : verifyAgentStart(startupAdapter);
+  const agentChecks = new Map<string, AgentStartCheck>(agentCheck ? [[startupAdapter, agentCheck]] : []);
+  if (agentCheck?.violation && !opts.acceptAgentBinaries) throw new Error(agentCheck.violation);
+  if (agentCheck?.warning) log(agentCheck.warning);
   if (opts.live && !backendOf(opts, startupAdapter)) log(`aviso: --live pero el adaptador «${startupAdapter}» no tiene backend vivo: depende del rol; las activities sin backend vivo correrán de un disparo, sin sesión reanudable`); // B4
   const adm = opts.live || hasAdmission(store) ? new AdmissionDb(store) : undefined; // una vez, no en cada vuelta del bucle (B3)
   const running = new Set<Promise<void>>();

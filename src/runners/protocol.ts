@@ -5,7 +5,7 @@ import { MODEL_RE } from '../profile.ts';
 import { CONFINABLE_AGENTS } from '../sandbox/confine.ts';
 
 const MiB = 1024 * 1024;
-const ERROR_CODES = ['not_confinable', 'busy', 'bad_request', 'unknown_adapter', 'agent_missing', 'internal'] as const;
+const ERROR_CODES = ['not_confinable', 'busy', 'bad_request', 'unknown_adapter', 'agent_missing', 'result_rejected', 'internal'] as const;
 export const LIMITS = {
   version: 1,
   lineBytes: MiB,
@@ -16,6 +16,8 @@ export const LIMITS = {
   haveMax: 64,
   timeoutMs: [1_000, 3_600_000] as const,
   messageChars: 2_000,
+  /** Por encima de esto el uso declarado por el runner no es creíble: se descarta (No medido) en vez de sumarse a las métricas. */
+  usageMax: { costUsd: 10_000, tokens: 1_000_000_000 },
   errorCodes: ERROR_CODES,
 };
 
@@ -54,7 +56,7 @@ const B64 = /^(?:[A-Za-z0-9+/]{4})*(?:[A-Za-z0-9+/]{2}==|[A-Za-z0-9+/]{3}=)?$/;
 
 const isObj = (x: unknown): x is Record<string, unknown> => typeof x === 'object' && x !== null && !Array.isArray(x);
 function keys(o: Record<string, unknown>, allowed: string[], where: string): void {
-  for (const k of Object.keys(o)) if (!allowed.includes(k)) fail(`${where}: clave desconocida ${JSON.stringify(k).slice(0, 40)}`);
+  for (const k of Object.keys(o)) if (!allowed.includes(k)) fail(`${where}: clave desconocida`);
   for (const k of allowed) if (!(k in o)) fail(`${where}: falta ${k}`);
 }
 const str = (x: unknown, re: RegExp, f: string): string => (typeof x === 'string' && re.test(x) ? x : fail(`${f} inválido`));
@@ -67,7 +69,9 @@ function usage(x: unknown): Usage | null {
   if (x === null) return null;
   if (!isObj(x)) return fail('usage inválido');
   keys(x, ['costUsd', 'inputTokens', 'outputTokens'], 'usage');
-  return { costUsd: nonNeg(x.costUsd, 'usage.costUsd'), inputTokens: nonNeg(x.inputTokens, 'usage.inputTokens'), outputTokens: nonNeg(x.outputTokens, 'usage.outputTokens') };
+  const u = { costUsd: nonNeg(x.costUsd, 'usage.costUsd'), inputTokens: nonNeg(x.inputTokens, 'usage.inputTokens'), outputTokens: nonNeg(x.outputTokens, 'usage.outputTokens') };
+  const max = LIMITS.usageMax;
+  return u.costUsd > max.costUsd || u.inputTokens > max.tokens || u.outputTokens > max.tokens ? null : u;
 }
 
 function agents(x: unknown): Record<string, { sha256: string }> {

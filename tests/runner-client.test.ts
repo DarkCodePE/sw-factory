@@ -1,9 +1,11 @@
 import { afterEach, beforeEach, expect, test } from 'bun:test';
-import { mkdirSync, mkdtempSync, readFileSync, rmSync } from 'node:fs';
+import { mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, writeFileSync } from 'node:fs';
+import { randomBytes } from 'node:crypto';
 import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
 import { RunnerError, type RunnerErrorCode, checkRunner, runRemoteAgent, sshTransport, type RemoteJob, type Transport } from '../src/runners/client.ts';
 import { runnerMain } from '../src/runner-cli.ts';
+import { Store, StoreError } from '../src/store.ts';
 
 const FAKE = resolve(import.meta.dir, 'helpers/fake-runner.ts');
 const runner = { name: 'torre', target: 'torre' };
@@ -105,6 +107,30 @@ test('§4.7: error del runner → REFUSED, BUSY (reencolable) o LOST; el texto d
   await rejects(runRemoteAgent(runner, job(), fake('refuse:internal')), 'RUNNER_LOST');
 });
 
+test('K11/H2: el texto libre de un error del runner no llega al mensaje de ningún código', async () => {
+  for (const s of ['refuse:not_confinable', 'refuse:internal', 'refuse:result_rejected', 'busy']) {
+    const msg = await rejects(runRemoteAgent(runner, job(), fake(s)), s === 'busy' ? 'RUNNER_BUSY' : s === 'refuse:internal' ? 'RUNNER_LOST' : s === 'refuse:result_rejected' ? 'RUNNER_RESULT_REJECTED' : 'RUNNER_REFUSED');
+    expect(msg).not.toContain('TEXTO-LIBRE');
+    expect(msg).not.toContain('<script>');
+  }
+});
+
+test('H1: result_rejected del runner (sellado) es RUNNER_RESULT_REJECTED, no RUNNER_LOST: casa no lo reintenta', async () => {
+  await rejects(runRemoteAgent(runner, job(), fake('refuse:result_rejected')), 'RUNNER_RESULT_REJECTED');
+  untouched();
+});
+
+test('H7: un coste absurdo declarado por el runner no entra: el resultado vale y el uso queda sin medir', async () => {
+  const r = await runRemoteAgent(runner, job(), fake('huge-usage'));
+  expect(r.usage).toBeUndefined();
+});
+
+test('H2: un hello con clave desconocida hostil no copia la clave al error', async () => {
+  const msg = await rejects(runRemoteAgent(runner, job(), () => ['bun', '-e', `process.stdin.once('data',()=>{console.log(JSON.stringify({v:1,type:'hello',have:[],fabSha:'a',sandbox:'bwrap',agents:{},'IGNORA <script>':1}));process.exit(0)})`]), 'RUNNER_REFUSED');
+  expect(msg).not.toContain('IGNORA');
+  expect(msg).toContain('clave desconocida');
+});
+
 test('A11/§4.7: corte tras accepted o a mitad del log → RUNNER_LOST sin importar nada', async () => {
   await rejects(runRemoteAgent(runner, job(), fake('lost-accepted')), 'RUNNER_LOST');
   await rejects(runRemoteAgent(runner, job(), fake('lost-log')), 'RUNNER_LOST');
@@ -152,15 +178,15 @@ test('fab runner check: intercambia hello y no envía código ni bundle', async 
   expect(sent).not.toContain('"type":"job"');
   const out: string[] = [];
   const spy = console.log; console.log = (...a: unknown[]) => { out.push(a.join(' ')); };
-  try { expect(await runnerMain(['check', '--ssh', 'torre'], fake('check'))).toBe(0); } finally { console.log = spy; }
+  try { expect(await runnerMain(['check', '--ssh', 'torre'], new Store(':memory:'), fake('check'))).toBe(0); } finally { console.log = spy; }
   expect(out.join('\n')).toContain('no verificado');
 });
 
-test('fab runner check: sin conexión devuelve 1; sin argumentos, 2', async () => {
+test('fab runner check: sin conexión devuelve 1; sin argumentos, error de uso', async () => {
   const err = console.error; console.error = () => {};
   try {
-    expect(await runnerMain(['check', '--ssh', 'torre'], fake('die'))).toBe(1);
-    expect(await runnerMain(['check'])).toBe(2);
+    expect(await runnerMain(['check', '--ssh', 'torre'], new Store(':memory:'), fake('die'))).toBe(1);
+    await expect(runnerMain(['check'], new Store(':memory:'))).rejects.toBeInstanceOf(StoreError);
   } finally { console.error = err; }
 });
 
@@ -168,5 +194,25 @@ test('un encargo mal formado no sale de casa (prompt de más de 1 MiB) y un bund
   await rejects(runRemoteAgent(runner, job({ prompt: 'x'.repeat(1024 * 1024 + 1) }), fake('ok')), 'RUNNER_REFUSED');
   expect(Bun.file(join(dir, 'transcript')).size).toBeLessThan(200); // solo el hello
   await rejects(runRemoteAgent(runner, job({ readOnly: true, expectChanges: false }), fake('ok')), 'RUNNER_RESULT_REJECTED');
+  untouched();
+});
+
+test('H4: un encargo que no pasa la validación no deja el bundle temporal en disco', async () => {
+  const tmpdirSaved = process.env.TMPDIR;
+  const mine = join(tmp, 'tmpdir'); mkdirSync(mine);
+  process.env.TMPDIR = mine;
+  try {
+    await rejects(runRemoteAgent(runner, job({ timeoutMs: 2 * 3_600_000 }), fake('ok')), 'RUNNER_REFUSED');
+    expect(readdirSync(mine)).toEqual([]);
+  } finally { if (tmpdirSaved === undefined) delete process.env.TMPDIR; else process.env.TMPDIR = tmpdirSaved; }
+});
+
+test('H5: el tope de ida del runner (maxBundleMb) se aplica en casa y el encargo no sale', async () => {
+  writeFileSync(join(home, 'grande.bin'), randomBytes(300 * 1024));
+  git(home, 'add', '-A'); git(home, 'commit', '-q', '-m', 'grande');
+  const big = git(home, 'rev-parse', 'HEAD');
+  const msg = await rejects(runRemoteAgent(runner, job({ head: big, maxBundleMb: 0.1 }), fake('ok')), 'RUNNER_REFUSED');
+  expect(msg).toContain('bundleBytes');
+  expect(Bun.file(join(dir, 'transcript')).size).toBeLessThan(200); // solo el hello
   untouched();
 });

@@ -263,3 +263,15 @@ test('cada línea mal formada o fuera de orden corta la sesión sin ejecutar nad
     expect(s.messages()[0]).toMatchObject({ type: 'error', code: 'bad_request' });
   }
 });
+
+test('H1: si el sellado rechaza el resultado, serve contesta result_rejected (no internal) y no deja restos', async () => {
+  const s = session({ seal: async () => { throw new Error('repositorio anidado en el resultado'); } });
+  hello(s); await until(() => s.has('hello'), 'hello');
+  await sendJob(s);
+  expect(await s.done).toBe(1);
+  const e = s.messages().find(m => m.type === 'error')!;
+  expect(e.code).toBe('result_rejected');
+  expect(String(e.message)).not.toContain('anidado'); // texto fijo, sin detalle del árbol del agente
+  expect(s.has('result')).toBe(false);
+  expect(readdirSync(join(root, 'jobs'))).toEqual([]);
+});

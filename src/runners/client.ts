@@ -7,7 +7,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { boundedAgentOutput, type AgentRun } from '../agents.ts';
 import { parseReportStatus } from '../prompts.ts';
-import { importResult, makeJobBundle } from './bundle.ts';
+import { discardBundle, importResult, makeJobBundle, type Bundle } from './bundle.ts';
 import { LIMITS, ProtocolError, decodeLine, encode, logBudget, type Message, type MessageType } from './protocol.ts';
 
 export type RunnerErrorCode = 'RUNNER_UNREACHABLE' | 'RUNNER_REFUSED' | 'RUNNER_BUSY' | 'RUNNER_LOST' | 'RUNNER_RESULT_REJECTED';
@@ -23,6 +23,8 @@ export interface RemoteRunner { name: string; /** Alias de ~/.ssh/config del due
 export interface RemoteJob {
   activityId: string; attempt: number; adapter: string; model: string | null; readOnly: boolean; expectChanges: boolean;
   prompt: string; repo: string; worktree: string; head: string; base: string; timeoutMs: number; repoKey: string;
+  /** Tope de ida en MiB del runner (`--max-bundle-mb`); el del protocolo (512 MiB) manda si es menor. */
+  maxBundleMb?: number;
   signal?: AbortSignal; onSpawn?: (pgid: number) => void;
 }
 export interface Declared { fabSha: string; agentSha256: string | null; sandbox: string }
@@ -130,6 +132,7 @@ const REFUSED: readonly string[] = ['not_confinable', 'unknown_adapter', 'agent_
 function runnerError(m: Extract<Message, { type: 'error' }>): RunnerError {
   if (m.code === 'busy') return new RunnerError('RUNNER_BUSY', 'el runner está ocupado');
   if (REFUSED.includes(m.code)) return new RunnerError('RUNNER_REFUSED', m.code);
+  if (m.code === 'result_rejected') return new RunnerError('RUNNER_RESULT_REJECTED', 'el runner no pudo sellar el resultado'); // determinista: no se reintenta
   return new RunnerError('RUNNER_LOST', `error ${m.code} del runner`); // internal: el intento se repite
 }
 
@@ -172,20 +175,22 @@ export async function runRemoteAgent(runner: RemoteRunner, job: RemoteJob, trans
   const budget = logBudget();
   const log: Buffer[] = [];
   let declared: Declared = { fabSha: '', agentSha256: null, sandbox: '' };
+  let bundle: Bundle | undefined;
   try {
     const hello = await handshake(s, job.repoKey);
     declared = { fabSha: hello.fabSha, agentSha256: hello.agents[job.adapter]?.sha256 ?? null, sandbox: hello.sandbox };
-    const bundle = await makeJobBundle(job.repo, job.head, hello.have);
+    bundle = await makeJobBundle(job.repo, job.head, hello.have);
     const prompt = Buffer.from(job.prompt);
     // Se valida lo que se va a enviar con las mismas reglas que aplicará el runner: un encargo mal formado no sale de casa.
     const jobLine = encode({
       v: 1, type: 'job', jobId, adapter: job.adapter, model: job.model, readOnly: job.readOnly, expectChanges: job.expectChanges,
       timeoutMs: job.timeoutMs, base: job.base, head: job.head, promptBytes: prompt.length, bundleBytes: bundle.bytes, bundleSha256: bundle.sha256,
     });
-    try { decodeLine(jobLine.trimEnd(), ['job'], 'home'); } catch (e) { throw new RunnerError('RUNNER_REFUSED', `encargo inválido: ${(e as Error).message}`); }
+    const maxBundleBytes = Math.min((job.maxBundleMb ?? Infinity) * 1024 * 1024, LIMITS.jobBundleBytes);
+    try { decodeLine(jobLine.trimEnd(), ['job'], 'home', { maxBundleBytes }); } catch (e) { throw new RunnerError('RUNNER_REFUSED', `encargo inválido: ${(e as Error).message}`); }
     // Si el runner contesta `error` y cierra a mitad, la escritura falla: lo que cuenta es lo que dijo.
     try { await sendJob(s, jobLine, prompt, bundle.path); } catch {}
-    rmSync(bundle.path, { force: true });
+    discardBundle(bundle); // ya salió: no se retiene hasta 512 MiB mientras corre el agente
 
     const accepted = await next(s, ['accepted'], 'job');
     if (accepted.type !== 'accepted' || accepted.jobId !== jobId) throw new RunnerError('RUNNER_RESULT_REJECTED', 'accepted con otro jobId');
@@ -215,6 +220,7 @@ export async function runRemoteAgent(runner: RemoteRunner, job: RemoteJob, trans
     if (s.cause === 'timeout' || s.cause === 'abort') return { ...failedRun(s.cause, start, Buffer.concat(log).toString('utf8'), 1), declared };
     throw e;
   } finally {
+    if (bundle) discardBundle(bundle); // también si el encargo no pasó la validación
     await s.close();
     rmSync(tmp, { recursive: true, force: true });
   }
