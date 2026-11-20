@@ -39,3 +39,11 @@ test('nota vacía: invalid_input', () => {
   const r = fab('note', id, '');
   expect(r.exitCode).not.toBe(0); expect(r.stderr.toString()).toContain('invalid_input');
 });
+
+test('T79: la ayuda de fab web documenta --write y --port 0 y no dice «solo lectura»', async () => {
+  const p = Bun.spawn([process.execPath, 'src/cli.ts', '--help'], { cwd: join(import.meta.dir, '..'), env: { ...process.env, FABRICA_HOME: '/nonexistent-fab-help' }, stdout: 'pipe', stderr: 'pipe', stdin: 'ignore' });
+  const out = await new Response(p.stdout).text(); expect(await p.exited).toBe(0);
+  const line = out.split('\n').filter(l => l.includes('fab web'));
+  expect(line.length).toBe(1); expect(line[0]).toContain('--write'); expect(line[0]).toContain('--port 0');
+  expect(line[0]).not.toMatch(/solo lectura/i);
+});
