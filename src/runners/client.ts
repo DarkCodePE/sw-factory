@@ -114,7 +114,8 @@ function openSession(runner: RemoteRunner, transport: Transport, deps: RemoteDep
   const cancel = arm(() => stop('timeout'), ms);
   return {
     proc, reader: new Reader(proc.stdout), get cause() { return cause; },
-    async send(data: string | Uint8Array) { proc.stdin.write(data); await proc.stdin.flush(); },
+    // Un pipe roto (EPIPE) solo dice que el otro extremo cerró: lo clasifica `next` al leer el EOF (UNREACHABLE en el hello, LOST después).
+    async send(data: string | Uint8Array) { try { proc.stdin.write(data); await proc.stdin.flush(); } catch {} },
     /** Cierra la sesión: el runner ve EOF, mata al agente y limpia; casa mata el grupo de `ssh`. */
     async close(): Promise<number> {
       try { proc.stdin.end(); } catch {}
