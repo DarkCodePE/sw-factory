@@ -26,3 +26,8 @@ test('T80: fab automation add --help responde con su ayuda y no abre el chat', a
   const { out, code } = await run('automation', 'add', '--help');
   expect(code).toBe(0); expect(out).toContain('fab automation add'); expect(out).toContain('--body-file');
 });
+
+test('T80-H1: -h corto también muestra la ayuda de automation', async () => {
+  const { out, code } = await run('automation', '-h');
+  expect(code).toBe(0); expect(out).toContain('fab automation add');
+});
