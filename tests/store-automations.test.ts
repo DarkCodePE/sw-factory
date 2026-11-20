@@ -179,6 +179,9 @@ test('filtra por workstream, omite automations pausadas y permite un disparo man
   now = '2026-11-20T07:30:00.000Z';
   expect(store.fireDueAutomations(workstreamId)).toEqual([]);
   expect(store.setAutomationEnabled(a.id, true).enabled).toBe(true);
+  // Lo que venció durante la pausa no se recupera: el siguiente vencimiento sí.
+  expect(store.fireDueAutomations(workstreamId)).toEqual([]);
+  now = '2026-11-21T07:30:00.000Z';
   expect(store.fireDueAutomations(workstreamId)[0]!.result).toBe('created');
   expect(store.listEvents(workstreamId, -1).map(e => e.message)).toContain('automation diaria pausada');
   expect(store.listEvents(workstreamId, -1).map(e => e.message)).toContain('automation diaria activada');
@@ -293,4 +296,52 @@ test('si falla el evento se revierten la señal y el avance, y el vencimiento se
   expect(store.listAutomations()).toEqual([a]);
   store.db.exec('DROP TRIGGER rechazar_evento');
   expect(store.fireDueAutomations()[0]!.result).toBe('created');
+});
+
+const raw = (db: Store) => (db as unknown as { db: Database }).db;
+
+test('una fila con horario o last_due_at ilegible no para a las demás y avisa una vez (H1, H3)', () => {
+  const bad = store.createAutomation({ ...template, name: 'a-rota' });
+  const badDate = store.createAutomation({ ...template, name: 'b-fecha' });
+  const good = store.createAutomation({ ...template, name: 'c-buena' });
+  raw(store).query('UPDATE automations SET cron = ? WHERE id = ?').run('*/5 7 * * *', bad.id);
+  raw(store).query('UPDATE automations SET last_due_at = ? WHERE id = ?').run('no-es-fecha', badDate.id);
+  now = due;
+  expect(store.fireDueAutomations()).toEqual([{ id: good.id, result: 'created', signalId: expect.any(String) }]);
+  store.fireDueAutomations();
+  const warnings = store.listEvents(workstreamId, -1).filter(e => e.severity === 'warning').map(e => e.message);
+  expect(warnings).toHaveLength(2);
+  expect(warnings[0]).toContain('automation a-rota: no se puede procesar');
+  expect(warnings[1]).toContain('automation b-fecha: no se puede procesar');
+});
+
+test('una automation pausada no dispara sin filtro de workstream ni si la pausan entre la lista y el lock (H4)', () => {
+  const a = store.createAutomation(template);
+  store.setAutomationEnabled(a.id, false);
+  now = '2026-11-20T08:00:00.000Z';
+  expect(store.fireDueAutomations()).toEqual([]);
+  store.setAutomationEnabled(a.id, true);
+  now = '2026-11-21T08:00:00.000Z';
+  const retry = store.withRetry.bind(store);
+  const spy = spyOn(store, 'withRetry').mockImplementationOnce(fn => {
+    store.setAutomationEnabled(a.id, false);
+    return retry(fn);
+  });
+  try {
+    expect(store.fireDueAutomations()).toEqual([]);
+  } finally {
+    spy.mockRestore();
+  }
+  expect(store.listSignals(workstreamId)).toEqual([]);
+});
+
+test('sin vencimiento no abre transacciones de escritura (H6)', () => {
+  store.createAutomation(template);
+  const spy = spyOn(store, 'withRetry');
+  try {
+    expect(store.fireDueAutomations()).toEqual([]);
+    expect(spy).not.toHaveBeenCalled();
+  } finally {
+    spy.mockRestore();
+  }
 });
