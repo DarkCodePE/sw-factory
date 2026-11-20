@@ -85,6 +85,11 @@ export function webhooksPage(store: Store, url: URL, escape: Escape): { title: s
       </div>`
     : `<p class="empty">${q ? 'Ninguna entrega coincide con la búsqueda.' : 'No hay entregas registradas.'}</p>`;
 
+  const totalCount = status.totalDeliveries;
+  const countLabel = totalCount > deliveries.length
+    ? (q ? `${filtered.length} de ${deliveries.length} mostradas (de ${totalCount} en total)` : `${deliveries.length} de ${totalCount}`)
+    : `${filtered.length}${q ? ` de ${deliveries.length}` : ''}`;
+
   const body = `<div class="config">
     <section>
       <h2>Estado del receptor</h2>
@@ -127,7 +132,8 @@ export function webhooksPage(store: Store, url: URL, escape: Escape): { title: s
     </section>
 
     <section>
-      <h2>Entregas registradas (${filtered.length}${q ? ` de ${deliveries.length}` : ''})</h2>
+      <h2>Entregas registradas (${countLabel})</h2>
+      ${totalCount > deliveries.length ? `<p class="muted">Mostrando las ${deliveries.length} entregas más recientes de ${totalCount} registradas en la base.</p>` : ''}
       <form class="filters" action="/webhooks" method="get">
         <label class="search">Buscar entregas
           <input type="search" name="q" placeholder="Por ID, evento o resultado" value="${escape(q)}">

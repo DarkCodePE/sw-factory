@@ -322,3 +322,21 @@ test('secreto de entorno menor a 16 caracteres se reporta como no configurado', 
   expect(html).toContain('Secreto en entorno (proceso web)');
   expect(html).toContain('No configurado');
 });
+
+test('muestra aviso de total cuando hay mas de 200 entregas registradas', async () => {
+  store = new Store(join(dir, 'fabrica.db'));
+  const adm = new AdmissionDb(store);
+  const now = new Date().toISOString();
+
+  // Insertar 230 entregas
+  adm.tx(() => {
+    for (let i = 1; i <= 230; i++) {
+      adm.db.query('INSERT INTO adm_hook_deliveries (delivery_id, event, received_at, bytes, result) VALUES (?, ?, ?, ?, ?)')
+        .run(`del-${i.toString().padStart(4, '0')}`, 'issues', now, 100, 'woke');
+    }
+  });
+
+  server = startWeb(dir, 0);
+  const html = await getHtml('/webhooks');
+  expect(html).toContain('200 de 230');
+});
