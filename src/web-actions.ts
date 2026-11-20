@@ -2,7 +2,7 @@
 import { createHash } from 'node:crypto';
 import { join } from 'node:path';
 import { Store, StoreError } from './store.ts';
-import { NOTE_ATTACHMENT_REMOTE, NOTE_ATTACHMENT_STATE, validateNoteAttachment, type NoteAttachment } from './note-attachments.ts';
+import { assertPrivateNoteDatabase, NOTE_ATTACHMENT_REMOTE, NOTE_ATTACHMENT_STATE, validateNoteAttachment, type NoteAttachment } from './note-attachments.ts';
 import { linkTriagedSignal } from './admission/apply.ts';
 import { removeWorktree } from './worktrees.ts';
 import { SIGNAL_BODY_MAX, SIGNAL_TITLE_MAX } from './web-signals.ts';
@@ -321,6 +321,16 @@ async function readBody(req: Request, limit: number): Promise<Buffer> {
   return Buffer.concat(chunks);
 }
 
+/** ¿La parte `attachment` trae un filename no vacío en su cabecera? Las cabeceras acaban en la primera línea en blanco de cada parte. */
+function attachmentPartNamed(body: Buffer, contentType: string): boolean {
+  const boundary = /boundary=(?:"([^"]+)"|([^;\s]+))/i.exec(contentType);
+  if (!boundary) return false;
+  return body.toString('latin1').split(`--${boundary[1] ?? boundary[2]}`).some(part => {
+    const header = part.split('\r\n\r\n', 1)[0]!;
+    return /^\r\ncontent-disposition:[^\r\n]*name="attachment"/i.test(header) && /filename="[^"]/i.test(header);
+  });
+}
+
 const NOTE_REQUEST_LIMIT = 80 * 1024;
 type RawFile = { name: string; bytes: Uint8Array };
 
@@ -338,9 +348,10 @@ async function readForm(req: Request, limit = 16384, multipart = false): Promise
       seen.add(key);
       if (key === 'attachment') {
         if (typeof value === 'string') throw new InputError(400, 'El adjunto debe ser un archivo.');
-        // El navegador manda una parte vacía sin nombre si no se eligió archivo. Bun pierde el nombre de un archivo vacío: se mira la cabecera.
+        // El navegador manda una parte vacía sin nombre si no se eligió archivo. Bun pierde el nombre de un archivo vacío:
+        // se mira la cabecera de la parte attachment (nunca el texto de otras partes).
         if (!value.name && value.size === 0) {
-          if (/name="attachment";\s*filename="[^"]/i.test(bytes.toString('latin1'))) throw new InputError(400, 'El adjunto debe ocupar entre 1 y 65 536 bytes.');
+          if (attachmentPartNamed(bytes, req.headers.get('content-type')!)) throw new InputError(400, 'El adjunto debe ocupar entre 1 y 65 536 bytes.');
           continue;
         }
         file = { name: value.name ?? '', bytes: new Uint8Array(await value.arrayBuffer()) };
