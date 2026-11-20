@@ -86,8 +86,8 @@ test('T53-H1/H2: la tabla cuenta changes reales y cada nodo enlaza a los changes
   seed({ verify: ['true'] }, ['uno', 'dos']);
   const store = new Store(join(dir, 'fabrica.db'));
   const ids = store.listChanges('demo').map(c => c.id);
-  store.db.query('DELETE FROM activities WHERE change_id = ?').run(ids[0]);
-  store.db.query("UPDATE changes SET status='declined' WHERE id = ?").run(ids[0]); // «Hecho: 1» con un declined
+  store.db.query('DELETE FROM activities WHERE change_id = ?').run(ids[0]!);
+  store.db.query("UPDATE changes SET status='declined' WHERE id = ?").run(ids[0]!); // «Hecho: 1» con un declined
   store.close();
   const html = await (await get('/flujo?ws=demo')).text();
   expect(html).toMatch(/<th scope="row">Revisión del change<\/th>[^]*?<td>1<\/td><\/tr>/); // recuento distinto de cero en la tabla

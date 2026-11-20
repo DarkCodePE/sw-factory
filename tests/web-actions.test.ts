@@ -354,3 +354,20 @@ test('T71c-H1: con un campo repetido gana el primero (confirm=no&confirm=yes no 
   const ok = await req(`/changes/${change}/cancel`, { method: 'POST', headers: { cookie, origin: `http://${server.host}:${server.port}`, 'content-type': 'application/x-www-form-urlencoded' }, body: body('confirm=yes&confirm=no') });
   expect(ok.status).toBe(303); expect(store.getChange(change).status).toBe('canceled');
 });
+
+test('T75-H2: el filtro de Host rechaza otro nombre .localhost y el host único con otro puerto', async () => {
+  const get = (host: string) => fetch(`http://127.0.0.1:${server.port}/`, { headers: { host } });
+  expect((await get(`${server.host}:${server.port}`)).status).toBe(200);
+  for (const h of [`otro.localhost:${server.port}`, `${server.host}:${server.port + 1}`, `${server.host}`, `127.0.0.1:${server.port}`, `localhost:${server.port}`, `${server.host}.evil.test:${server.port}`])
+    expect((await get(h)).status).toBe(403);
+});
+test('T75-H3: assertLoopback exige que todas las direcciones sean de loopback y webMain falla cerrado si no resuelve', async () => {
+  await assertLoopback('x', async () => [{ address: '127.0.0.1' }, { address: '::1' }]);
+  await expect(assertLoopback('x', async () => [{ address: '127.0.0.1' }, { address: '10.0.0.5' }])).rejects.toThrow('no resuelve a loopback');
+  await expect(assertLoopback('x', async () => [])).rejects.toThrow('no resuelve a loopback');
+  await expect(assertLoopback('x', async () => { throw new Error('dns'); })).rejects.toThrow('no resuelve a loopback');
+  const { webMain } = await import('../src/web.ts');
+  const err = console.error; console.error = () => {};
+  try { expect(await webMain(['--port', '0', '--write'], dir, async () => [{ address: '8.8.8.8' }])).toBe(1); }
+  finally { console.error = err; }
+});

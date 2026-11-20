@@ -173,14 +173,14 @@ export function startWeb(stateDir: string, port = 4310, options: { write?: boole
 
 const WRITE_WARNING = 'La sesión de escritura solo se sirve en el host fab-<aleatorio>.localhost de este arranque: abre el enlace tal cual, no sustituyas el host.';
 
-export async function webMain(args: string[], stateDir: string): Promise<number> {
+export async function webMain(args: string[], stateDir: string, resolve?: Parameters<typeof assertLoopback>[1]): Promise<number> {
   try {
     const { values } = parseArgs({ args, options: { port: { type: 'string' }, write: { type: 'boolean' }, help: { type: 'boolean', short: 'h' } } });
     if (values.help) { console.log('fab web [--port 4310] [--write] · web local, solo lectura por defecto; estado en FABRICA_HOME'); console.log(WRITE_WARNING); return 0; }
     const port = values.port === undefined ? 4310 : Number(values.port);
     if (!Number.isInteger(port) || port < 0 || port > 65535) throw new Error('Puerto inválido (0–65535)');
     const server = startWeb(stateDir, port, { write: values.write });
-    if (server.host) try { await assertLoopback(server.host); } catch (e) { server.stop(true); throw e; }
+    if (server.host) try { await assertLoopback(server.host, resolve); } catch (e) { server.stop(true); throw e; }
     console.log(`fab web · ${server.loginUrl ?? `http://127.0.0.1:${server.port}`} · ${values.write ? 'escritura habilitada; enlace de un solo uso' : 'solo lectura'}`);
     if (values.write) console.log(WRITE_WARNING);
     await new Promise<void>(resolve => {

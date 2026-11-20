@@ -46,9 +46,9 @@ export class WebAuth {
 }
 
 /** Falla cerrado si el sistema no resuelve `host` a loopback: sin eso la sesión de escritura no puede servirse. */
-export async function assertLoopback(host: string): Promise<void> {
+export async function assertLoopback(host: string, resolve: (host: string) => Promise<{ address: string }[]> = h => lookup(h, { all: true })): Promise<void> {
   let addresses: { address: string }[] = [];
-  try { addresses = await lookup(host, { all: true }); } catch { /* se informa abajo */ }
+  try { addresses = await resolve(host); } catch { /* se informa abajo */ }
   if (!addresses.length || !addresses.every(a => a.address === '::1' || a.address.startsWith('127.')))
     throw new Error(`${host} no resuelve a loopback en este sistema; fab web --write no puede aislar la sesión.`);
 }
