@@ -100,7 +100,7 @@ const PATOLOGICAS: Record<string, (n: number) => string> = {
   'token=': n => 'token='.repeat(n / 6), comillas: n => '"'.repeat(n), 'comilla escapada': n => '\\"'.repeat(n / 2), curl: n => 'curl '.repeat(n / 5), 'curl -x': n => 'curl -x '.repeat(n / 8),
   'url con :': n => 'http://a:a'.repeat(n / 10), 'url con :a:a': n => 'http://' + 'a:'.repeat(n / 2), 'PEM sin cierre': n => '-----BEGIN PRIVATE KEY-----\n'.repeat(n / 28),
   'authorization:': n => 'authorization:'.repeat(n / 14), 'authorization + espacios': n => 'authorization:' + ' '.repeat(n), 'pwd=': n => 'pwd='.repeat(n / 4), 'pass:': n => 'pass:'.repeat(n / 5),
-  '-eyJ': n => '-eyJ'.repeat(n / 4), 'eyJa-': n => 'eyJa-'.repeat(n / 5), Bearer: n => 'Bearer '.repeat(n / 7), letras: n => 'a'.repeat(n), jwt: n => 'eyJ' + 'a.'.repeat(n / 2), 'clave larga': n => 'a_'.repeat(n / 2) + 'token',
+  '-token': n => '-token'.repeat(n / 6), 'api-key-': n => 'api-key-'.repeat(n / 8), '-eyJ': n => '-eyJ'.repeat(n / 4), 'eyJa-': n => 'eyJa-'.repeat(n / 5), Bearer: n => 'Bearer '.repeat(n / 7), letras: n => 'a'.repeat(n), jwt: n => 'eyJ' + 'a.'.repeat(n / 2), 'clave larga': n => 'a_'.repeat(n / 2) + 'token',
   "password: '": n => "password: '".repeat(n / 11), 'valor con salto': n => 'password="a\n'.repeat(n / 12),
 };
 const mejor = (f: () => void) => { let t = Infinity; for (let i = 0; i < 2; i++) { const t0 = performance.now(); f(); t = Math.min(t, performance.now() - t0); } return t; };
@@ -160,4 +160,11 @@ test('P3-H1: un JWT normal se redacta entero; la cabecera acotada no deja salir 
   for (const jwt of [`eyJ${seg(36)}.${seg(120)}.${seg(43)}`, `eyJ${seg(1500)}.${seg(9000)}.${seg(86)}`]) {
     expect(redact(`Authorization-x ${jwt} fin`)).toBe('Authorization-x [REDACTED] fin');
   }
+});
+
+test('P3-H2: la regla de clave oculta el valor con cualquier prefijo y sufijo largos, y conserva el nombre', () => {
+  expect(redact(`${'A'.repeat(300)}_TOKEN=${V}`)).toBe(`${'A'.repeat(300)}_TOKEN=[REDACTED]`);
+  expect(redact(`TOKEN_${'A'.repeat(200)}=${V}`)).not.toContain(V);
+  expect(redact('db.password: "x y"')).toBe('db.password: "[REDACTED]"');
+  expect(redact('bypass_token = abc12345')).toBe('bypass_token = [REDACTED]');
 });

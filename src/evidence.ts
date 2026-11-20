@@ -122,7 +122,8 @@ export const RULES: Rule[] = [
   // `pass` solo como asignación o clave JSON; `pwd` también con `:`, salvo que el valor sea una ruta o `$(…)`. `pass: 12` o `PASS: tests/x` no son secretos.
   masked(new RegExp(String.raw`\b(pass["']?[ \t]*=[ \t]*|pass["']\s*:\s*)${VALUE}`, 'gi')),
   masked(new RegExp(String.raw`(?<![A-Za-z0-9])(pwd["']?[ \t]*[:=][ \t]*|pwd["']\s*:\s*)(?![/~.$])${VALUE}`, 'gi')),
-  masked(new RegExp(String.raw`\b([\w-]{0,256}?(?:${SECRET_WORDS})[\w-]{0,256}["']?\s*[:=]\s*)${VALUE}`, 'gi')),
+  // Sin prefijo capturado: el nombre de la clave que precede a la palabra queda en el texto, y no hay un recorrido por inicio.
+  masked(new RegExp(String.raw`((?:${SECRET_WORDS})[\w-]{0,256}["']?\s*[:=]\s*)${VALUE}`, 'gi')),
 ];
 
 export function redact(text: string): string {
