@@ -2,6 +2,7 @@
 // "Live" means resumable by session id, one turn per call: the pool's one-shot model is kept.
 // Design: techdocs/docs/investigacion/inspiracion/06-integracion-superagent-fab.md §5.2 (D2, D3, D4).
 import type { AgentRun } from '../agents.ts';
+import type { EnvDecl } from '../sandbox/confine.ts';
 
 /** What the agent reports through the fab's `report` MCP tool (D3). */
 export interface LiveReport {
@@ -31,6 +32,12 @@ export interface LiveTurn {
   claudeProjects?: string;
   /** Host dir for the per-turn MCP config, which carries the turn token (T41). Required (every turn): outside everything the sandbox mounts writable and with no symlink in its path, else the turn fails closed. */
   mcpConfigDir?: string;
+  /** Servidores MCP del rol (T72f), ya en el formato de `--mcp-config`, con las referencias `${NOMBRE}` sin resolver. Se suman al `fab` de este turno, que nunca se sustituye. */
+  mcpServers?: Record<string, unknown>;
+  /** Modo declarado (T72): qué variables recibe el proceso del turno. Ausente: modo anterior. */
+  envDecl?: EnvDecl;
+  /** Valores entregados, por nombre: se limpian de la salida del turno (S6). */
+  scrub?: Record<string, string>;
   onSpawn?: (pgid: number) => void;
   /**
    * Called synchronously for each valid report before the tool answers the agent (T16). It persists the report

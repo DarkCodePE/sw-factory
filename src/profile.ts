@@ -4,6 +4,7 @@ import { createHash } from 'node:crypto';
 import { existsSync, mkdirSync, readFileSync, readdirSync, renameSync, rmSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { AGENT_NAMES, MCP_AGENTS, MODEL_AGENTS } from './agents.ts';
+import { isForbiddenEnvName } from './mcp-registry.ts';
 import { CONFINABLE_AGENTS } from './sandbox/confine.ts';
 import { COMMIT_LINE, DEFAULT_WORKER_TEMPLATES, type WorkerTemplates } from './prompts.ts';
 import { DEFAULT_VALIDATOR_TEMPLATES, type ValidatorTemplates } from './validators/prompts.ts';
@@ -42,8 +43,6 @@ const CLASS_LABEL_RE = /^[a-z0-9_-]{1,24}$/;
 const MAX_SCORERS = 8;
 const ENV_NAME_RE = /^[A-Z_][A-Z0-9_]{0,63}$/;
 const MCP_NAME_RE = /^[a-z0-9][a-z0-9-]{0,40}$/;
-// Controlan el cargador, git o la propia fab: ningún perfil puede pedirlas.
-const ENV_FORBIDDEN = /^(PATH|HOME|TMPDIR|NODE_OPTIONS)$|^(LD_|BUN_|GIT_CONFIG|FAB_|FABRICA_)/;
 const MCP_RESERVED = 'fab';
 
 /** Lista de nombres sin repetir; cada rechazo nombra el campo. */
@@ -147,7 +146,7 @@ export function validateProfile(raw: unknown): Profile {
         for (const k of Object.keys(c)) if (!['harness', 'model', 'env', 'mcp'].includes(k)) throw new Error(`perfil inválido: clave desconocida roles.${role}.${k}`);
         if (c.harness !== undefined && (typeof c.harness !== 'string' || !AGENT_NAMES.includes(c.harness))) throw new Error(`perfil inválido: roles.${role}.harness debe ser uno de ${AGENT_NAMES.join(', ')}`);
         modelOk(c.model, c.harness ?? o.harness, `roles.${role}.model`);
-        if (c.env !== undefined) names(c.env, `roles.${role}.env`, 16, ENV_NAME_RE, n => ENV_FORBIDDEN.test(n) ? 'es un nombre prohibido (controla el cargador, git o la fab)' : null);
+        if (c.env !== undefined) names(c.env, `roles.${role}.env`, 16, ENV_NAME_RE, n => isForbiddenEnvName(n) ? 'es un nombre prohibido (controla el cargador, git o la fab)' : null);
         if (c.mcp !== undefined) {
           names(c.mcp, `roles.${role}.mcp`, 8, MCP_NAME_RE, n => n === MCP_RESERVED ? 'está reservado (servidor de report)' : null);
           const adapter = c.harness ?? (o.harness as string);

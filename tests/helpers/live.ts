@@ -18,7 +18,7 @@ export function claimed(handlers: Record<string, EffectHandler> = {}, opts: { cr
 // ---- backend vivo falso (T12) ----------------------------------------------------------------------------------------
 import { SessionNotFoundError, type LiveBackend, type LiveReport, type LiveTurn, type LiveTurnResult } from '../../src/live/contract.ts';
 
-export type FakeStep = { reports?: LiveReport[]; output?: string; before?: (turn: LiveTurn) => void | Promise<void>; error?: Error };
+export type FakeStep = { reports?: LiveReport[]; output?: string; status?: LiveTurnResult['status']; before?: (turn: LiveTurn) => void | Promise<void>; error?: Error };
 export type FakeLive = LiveBackend & { turns: LiveTurn[]; known: Set<string>; steps: FakeStep[] };
 
 /**
@@ -39,7 +39,7 @@ export function fakeLive(steps: FakeStep[], over: Partial<Pick<LiveBackend, 'nam
       if (step.error) throw step.error;
       const reports: LiveReport[] = [];
       for (const r of step.reports ?? []) { turn.onReport?.(r); reports.push(r); }
-      return { ok: true, output: step.output ?? 'fake live output', exitCode: 0, durationMs: 1, status: { kind: 'missing', reason: 'report has no STATUS line' },
+      return { ok: true, output: step.output ?? 'fake live output', exitCode: 0, durationMs: 1, status: step.status ?? { kind: 'missing', reason: 'report has no STATUS line' },
         stdout: '', stderr: '', sessionId, attemptId: turn.attemptId, reports };
     } };
   return backend;

@@ -209,3 +209,48 @@ describe.skipIf(process.env.FAB_LIVE_TEST !== '1')('live claude (real model)', (
     expect(`${t2.output}${t2.reports[0]!.summary}`).toContain('ÁMBAR-7');
   }, 300_000);
 });
+
+describe('T72f: servidores del rol en la configuración del turno', () => {
+  const CANARY = 'canario-mcp-7788';
+  const tracker = { type: 'sse', url: 'https://mcp.ejemplo.dev/sse', headers: { Authorization: 'Bearer ${TRACKER_TOKEN}' } };
+  const run = async (turn: Record<string, unknown>) => {
+    // El stand-in copia la configuración que recibe antes de que el turno la borre.
+    const f = fakeClaude(`for a in "$@"; do [ "$p" = 1 ] && cat "$a" > "${'$'}{0%/*}/cfg.json"; p=0; [ "$a" = --mcp-config ] && p=1; done\nprintenv TRACKER_TOKEN > "${'$'}{0%/*}/token"\necho '{"type":"result","result":"ok","session_id":"x"}'`);
+    const dir = mcpDir();
+    try {
+      Bun.spawnSync(['git', 'init', '-q', f.dir]);
+      const saved = process.env.TRACKER_TOKEN;
+      process.env.TRACKER_TOKEN = CANARY;
+      try { await claudeLive.run({ prompt: 'x', cwd: f.dir, attemptId: 'a', mcpConfigDir: dir, ...turn }); }
+      finally { if (saved === undefined) delete process.env.TRACKER_TOKEN; else process.env.TRACKER_TOKEN = saved; }
+      return { argv: readFileSync(join(f.dir, 'argv'), 'utf8'), cfg: JSON.parse(readFileSync(join(f.dir, 'cfg.json'), 'utf8')), token: readFileSync(join(f.dir, 'token'), 'utf8').trim(), left: readdirSync(dir) };
+    } finally { f.restore(); rmSync(f.dir, { recursive: true, force: true }); rmSync(join(dir, '..'), { recursive: true, force: true }); }
+  };
+  test('un solo --mcp-config con fab y los servidores del rol; referencias sin resolver, el valor solo por entorno (B7)', async () => {
+    const r = await run({ mcpServers: { tracker }, envDecl: { wsAllow: ['TRACKER_TOKEN'], channel: false, roleEnv: ['TRACKER_TOKEN'], mcpRequired: [] } });
+    expect(r.argv.split('\n').filter(a => a === '--mcp-config')).toHaveLength(1);
+    expect(r.argv.split('\n').filter(a => a === '--strict-mcp-config')).toHaveLength(1);
+    expect(Object.keys(r.cfg.mcpServers).sort()).toEqual(['fab', 'tracker']);
+    expect(r.cfg.mcpServers.tracker.headers.Authorization).toBe('Bearer ${TRACKER_TOKEN}');
+    expect(JSON.stringify(r.cfg) + r.argv).not.toContain(CANARY);
+    expect(r.token).toBe(CANARY);
+    expect(r.left).toEqual([]);
+  });
+  test('un change de canal (sin servidores del rol) lleva solo fab', async () => {
+    expect(Object.keys((await run({ mcpServers: {} })).cfg.mcpServers)).toEqual(['fab']);
+  });
+  test('un servidor del rol llamado fab no sustituye al del turno', async () => {
+    const r = await run({ mcpServers: { fab: { type: 'http', url: 'https://otro.dev/x' } } });
+    expect(r.cfg.mcpServers.fab.url).toMatch(/^http:\/\/127\.0\.0\.1:/);
+  });
+  test('B9: un symlink plantado en el directorio de la configuración hace fallar el turno cerrado, también con servidores del rol', async () => {
+    const f = fakeClaude('exit 0');
+    try {
+      Bun.spawnSync(['git', 'init', '-q', f.dir]);
+      const live = mkdtempSync(join(tmpdir(), 'live-sym-')), victim = mkdtempSync(join(tmpdir(), 'live-victim-'));
+      symlinkSync(victim, join(live, 'mcp'));
+      await expect(claudeLive.run({ prompt: 'x', cwd: f.dir, attemptId: 'a', mcpConfigDir: join(live, 'mcp'), mcpServers: { tracker } })).rejects.toThrow(/symlink/);
+      expect(readdirSync(victim)).toEqual([]);
+    } finally { f.restore(); }
+  });
+});

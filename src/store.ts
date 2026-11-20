@@ -2,6 +2,7 @@
 // Every lifecycle transition goes through a compare-and-set UPDATE so concurrent workers
 // cannot double-claim or overwrite each other's results.
 import { DEFAULT_DIGEST, resolveProfile } from './profile.ts';
+import { isForbiddenEnvName } from './mcp-registry.ts';
 import { Database } from 'bun:sqlite';
 import { createHash, randomBytes, randomUUID, timingSafeEqual } from 'node:crypto';
 import { userInfo } from 'node:os';
@@ -284,7 +285,6 @@ function toWorkstream(r: Row): Workstream {
 }
 
 const ENV_NAME = /^[A-Z_][A-Z0-9_]{0,63}$/;
-const ENV_FORBIDDEN = /^(PATH|HOME|TMPDIR|NODE_OPTIONS|LD_.*|BUN_.*|GIT_CONFIG.*|FAB_.*|FABRICA_.*)$/;
 const MCP_NAME = /^[a-z0-9][a-z0-9-]{0,40}$/;
 
 /** Reglas de nombres de T71 §4.2; el valor de una variable nunca entra aquí. */
@@ -297,7 +297,7 @@ function checkAllowNames(field: 'env_allow' | 'mcp_allow', names: string[]): voi
     const ok = typeof n === 'string' && (env ? ENV_NAME.test(n) : MCP_NAME.test(n));
     // No se repite el texto: una línea de --import podría ser un valor.
     if (!ok) throw new StoreError('invalid_input', `${field}: el nombre nº ${i + 1} no es válido`);
-    if (env && ENV_FORBIDDEN.test(n)) throw new StoreError('invalid_input', `${field}: ${n} está prohibido (controla el cargador, git o la fab)`);
+    if (env && isForbiddenEnvName(n)) throw new StoreError('invalid_input', `${field}: ${n} está prohibido (controla el cargador, git o la fab)`);
     if (!env && n === 'fab') throw new StoreError('invalid_input', `${field}: "fab" está reservado`);
   }
 }
