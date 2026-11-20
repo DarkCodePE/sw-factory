@@ -3,11 +3,12 @@
 // cannot double-claim or overwrite each other's results.
 import { DEFAULT_DIGEST, resolveProfile } from './profile.ts';
 import { Database } from 'bun:sqlite';
-import { randomUUID } from 'node:crypto';
+import { createHash, randomBytes, randomUUID, timingSafeEqual } from 'node:crypto';
 import { userInfo } from 'node:os';
 import { closeSync, existsSync, fstatSync, openSync, readFileSync } from 'node:fs';
 import { dirname, resolve } from 'node:path';
 import { gitEvidence, writeManifest } from './manifest.ts';
+import { lastDue, parseCron } from './cron.ts';
 
 import {
   type ActivityKind as BaseActivityKind,
@@ -90,7 +91,43 @@ export interface Signal {
   body: string;
   status: SignalStatus;
   changeId: string | null;
+  source: string | null;
   createdAt: string;
+}
+
+type AutomationResult = 'created' | 'skipped_open' | 'skipped_inactive';
+
+export interface Automation {
+  id: string;
+  workstreamId: string;
+  name: string;
+  cron: string;
+  title: string;
+  body: string;
+  enabled: boolean;
+  createdAt: string;
+  createdBy: string;
+  lastDueAt: string | null;
+  lastResult: AutomationResult | null;
+  lastSignalId: string | null;
+}
+
+type AutomationRun =
+  | { result: 'created'; signalId: string }
+  | { result: 'skipped_open' | 'skipped_inactive'; signalId?: never };
+
+type ApiKeyScope = 'read' | 'decide';
+
+interface ApiKeyIdentity {
+  id: string;
+  name: string;
+  scope: ApiKeyScope;
+}
+
+interface ApiKeyMetadata extends ApiKeyIdentity {
+  createdAt: string;
+  createdBy: string;
+  revokedAt: string | null;
 }
 
 export interface Change {
@@ -166,6 +203,28 @@ CREATE TABLE IF NOT EXISTS workstreams (
 CREATE TABLE IF NOT EXISTS signals (
   id TEXT PRIMARY KEY, workstream_id TEXT NOT NULL REFERENCES workstreams(id) ON DELETE CASCADE,
   title TEXT NOT NULL, body TEXT NOT NULL, status TEXT NOT NULL, change_id TEXT, created_at TEXT NOT NULL);
+CREATE TABLE IF NOT EXISTS automations (
+  id TEXT PRIMARY KEY,
+  workstream_id TEXT NOT NULL REFERENCES workstreams(id) ON DELETE CASCADE,
+  name TEXT NOT NULL,
+  cron TEXT NOT NULL,
+  title TEXT NOT NULL,
+  body TEXT NOT NULL,
+  enabled INTEGER NOT NULL DEFAULT 1,
+  created_at TEXT NOT NULL,
+  created_by TEXT NOT NULL,
+  last_due_at TEXT,
+  last_result TEXT,
+  last_signal_id TEXT,
+  UNIQUE (workstream_id, name));
+CREATE TABLE IF NOT EXISTS api_keys (
+  id TEXT PRIMARY KEY,
+  name TEXT NOT NULL UNIQUE,
+  scope TEXT NOT NULL CHECK (scope IN ('read','decide')),
+  hash TEXT NOT NULL,
+  created_at TEXT NOT NULL,
+  created_by TEXT NOT NULL,
+  revoked_at TEXT);
 CREATE TABLE IF NOT EXISTS changes (
   id TEXT PRIMARY KEY, workstream_id TEXT NOT NULL REFERENCES workstreams(id) ON DELETE CASCADE,
   title TEXT NOT NULL, description TEXT NOT NULL, status TEXT NOT NULL, branch TEXT,
@@ -226,7 +285,25 @@ function toSignal(r: Row): Signal {
     body: r.body as string,
     status: r.status as SignalStatus,
     changeId: (r.change_id as string | null) ?? null,
+    source: (r.source as string | null) ?? null,
     createdAt: r.created_at as string,
+  };
+}
+
+function toAutomation(r: Row): Automation {
+  return {
+    id: r.id as string,
+    workstreamId: r.workstream_id as string,
+    name: r.name as string,
+    cron: r.cron as string,
+    title: r.title as string,
+    body: r.body as string,
+    enabled: bool(r.enabled),
+    createdAt: r.created_at as string,
+    createdBy: r.created_by as string,
+    lastDueAt: r.last_due_at as string | null,
+    lastResult: r.last_result as AutomationResult | null,
+    lastSignalId: r.last_signal_id as string | null,
   };
 }
 
@@ -421,6 +498,8 @@ export class Store {
     this.addColumn('activities', 'model', 'TEXT');
     this.addColumn('activities', 'question_id', 'TEXT');
     this.addColumn('activities', 'wait_until', 'TEXT');
+    this.addColumn('signals', 'source', 'TEXT');
+    this.db.exec('CREATE INDEX IF NOT EXISTS idx_signals_source ON signals(source, status);');
     this.db.exec('CREATE INDEX IF NOT EXISTS idx_activities_lease ON activities(status, lease_expires_at);');
     const migrationTtl = new Date(this.clock().getTime() + LEASE_TTL_MS).toISOString();
     this.db
@@ -526,16 +605,20 @@ export class Store {
 
   // ---- signals -----------------------------------------------------------
 
-  addSignal(workstream: string, title: string, body: string): Signal {
-    const ws = this.getWorkstream(workstream);
-    const id = randomUUID();
-    this.withRetry(() => {
-      this.db
-        .query(`INSERT INTO signals (id, workstream_id, title, body, status, change_id, created_at)
-                VALUES (?,?,?,?,'new',NULL,?)`)
-        .run(id, ws.id, title, body, this.now());
-    });
-    return toSignal(this.db.query('SELECT * FROM signals WHERE id = ?').get(id) as Row);
+  addSignal(workstream: string, title: string, body: string, opts?: { source?: 'web' }): Signal {
+    const source = opts?.source;
+    if (source !== undefined && source !== 'web') {
+      throw new StoreError('invalid_input', 'origen de señal inválido');
+    }
+    return this.withRetry(() => this.#insertSignal(this.getWorkstream(workstream).id, title, body, source ?? null));
+  }
+
+  #insertSignal(workstreamId: string, title: string, body: string, source: string | null): Signal {
+    const row = this.db.query<Row, [string, string, string, string, string, string | null]>(
+      `INSERT INTO signals (id, workstream_id, title, body, status, change_id, created_at, source)
+       VALUES (?,?,?,?,'new',NULL,?,?) RETURNING *`,
+    ).get(randomUUID(), workstreamId, title, body, this.now(), source)!;
+    return toSignal(row);
   }
 
   listSignals(workstream: string, status?: SignalStatus): Signal[] {
@@ -570,6 +653,155 @@ export class Store {
       const res = this.db.query(`UPDATE signals SET status = ? WHERE id = ? AND status = 'new'`).run(status, signalId);
       if (res.changes !== 1) throw new StoreError('invalid_transition', `signal ${signalId} is not new`);
     });
+  }
+
+  // ---- automations -------------------------------------------------------
+
+  createAutomation(input: { workstream: string; name: string; cron: string; title: string; body: string }): Automation {
+    const { workstream, name, cron, title, body } = input;
+    if (!/^[a-z0-9][a-z0-9-]{0,40}$/.test(name)) {
+      throw new StoreError('invalid_input', 'nombre de automation inválido');
+    }
+    if (!title || [...title].length > 200) {
+      throw new StoreError('invalid_input', 'el título debe tener entre 1 y 200 caracteres');
+    }
+    if (!body || Buffer.byteLength(body, 'utf8') > 8192) {
+      throw new StoreError('invalid_input', 'el cuerpo debe ocupar entre 1 y 8192 bytes');
+    }
+    try {
+      parseCron(cron);
+    } catch (error) {
+      throw new StoreError('invalid_input', (error as Error).message);
+    }
+    return this.withRetry(() => {
+      const ws = this.getWorkstream(workstream);
+      const existing = this.db.query<{ name: string }, [string]>(
+        'SELECT name FROM automations WHERE workstream_id = ?',
+      ).all(ws.id);
+      if (existing.some(a => a.name === name)) {
+        throw new StoreError('conflict', `ya existe la automation ${name} en ${ws.slug}`);
+      }
+      if (existing.length >= 20) {
+        throw new StoreError('limit_reached', `el workstream ${ws.slug} tiene 20 automations`);
+      }
+      const row = this.db.query(
+        `INSERT INTO automations (id, workstream_id, name, cron, title, body, created_at, created_by)
+         VALUES (?,?,?,?,?,?,?,?) RETURNING *`,
+      ).get(randomUUID(), ws.id, name, cron, title, body, this.now(), process.env.FAB_ACTOR ?? userInfo().username) as Row;
+      this.event(ws.id, 'info', `automation ${name} creada (${cron})`);
+      return toAutomation(row);
+    });
+  }
+
+  listAutomations(workstream?: string): Automation[] {
+    const workstreamId = workstream === undefined ? undefined : this.getWorkstream(workstream).id;
+    // El lector puede abrir una base anterior a la migración.
+    if (!this.db.query("SELECT 1 FROM sqlite_schema WHERE type = 'table' AND name = 'automations'").get()) return [];
+    const rows = workstreamId === undefined
+      ? this.db.query('SELECT * FROM automations ORDER BY created_at, name').all()
+      : this.db.query('SELECT * FROM automations WHERE workstream_id = ? ORDER BY created_at, name').all(workstreamId);
+    return (rows as Row[]).map(toAutomation);
+  }
+
+  private requireAutomation(id: string, row: Row | null): Automation {
+    if (!row) throw new StoreError('not_found', `automation ${id} no encontrada`);
+    return toAutomation(row);
+  }
+
+  setAutomationEnabled(id: string, enabled: boolean): Automation {
+    return this.withRetry(() => {
+      const row = this.db.query<Row, [number, string, number, string]>(
+        // Al reactivar, el suelo pasa a ahora: lo que venció durante la pausa no se recupera.
+        'UPDATE automations SET last_due_at = CASE WHEN ? = 1 AND enabled = 0 THEN ? ELSE last_due_at END, enabled = ? WHERE id = ? RETURNING *',
+      ).get(Number(enabled), this.now(), Number(enabled), id);
+      const automation = this.requireAutomation(id, row);
+      this.event(automation.workstreamId, 'info', `automation ${automation.name} ${enabled ? 'activada' : 'pausada'}`);
+      return automation;
+    });
+  }
+
+  deleteAutomation(id: string): void {
+    this.withRetry(() => {
+      const row = this.db.query<Row, [string]>('DELETE FROM automations WHERE id = ? RETURNING *').get(id);
+      const automation = this.requireAutomation(id, row);
+      this.event(automation.workstreamId, 'info', `automation ${automation.name} borrada`);
+    });
+  }
+
+  fireDueAutomations(workstream?: string): ({ id: string } & AutomationRun)[] {
+    const now = this.clock();
+    const candidates = workstream === undefined
+      ? this.db.query<{ id: string }, []>('SELECT id FROM automations WHERE enabled = 1').all()
+      : this.db.query<{ id: string }, [string]>('SELECT id FROM automations WHERE enabled = 1 AND workstream_id = ?')
+        .all(this.getWorkstream(workstream).id);
+    const results: ({ id: string } & AutomationRun)[] = [];
+    const dueOf = (row: Row) => {
+      const a = toAutomation(row);
+      const floor = new Date(a.lastDueAt ?? a.createdAt);
+      if (Number.isNaN(floor.getTime())) throw new Error('last_due_at ilegible');
+      return lastDue(parseCron(a.cron), floor, now);
+    };
+    for (const { id } of candidates) {
+      let peek: Row | null = null;
+      try {
+        peek = this.db.query<Row, [string]>('SELECT * FROM automations WHERE id = ? AND enabled = 1').get(id);
+        // Sin vencimiento no se abre transacción de escritura.
+        if (!peek || !dueOf(peek)) continue;
+        const result = this.withRetry(() => {
+          // Releer la fila con el lock de escritura: otro proceso pudo dispararla, pausarla o borrarla.
+          const row = this.db.query<Row, [string]>('SELECT * FROM automations WHERE id = ? AND enabled = 1').get(id);
+          const due = row && dueOf(row);
+          return due ? this.fireAutomation(toAutomation(row), due.toISOString(), true) : null;
+        });
+        if (result) results.push({ id, ...result });
+      } catch (error) {
+        // Una fila rara no para a las demás; el aviso sale una vez por mensaje.
+        if (!peek) throw error;
+        const message = `automation ${String(peek.name)}: no se puede procesar (${(error as Error).message}), se salta`;
+        const seen = this.db.query('SELECT 1 FROM events WHERE workstream_id = ? AND message = ? LIMIT 1')
+          .get(String(peek.workstream_id), message);
+        if (!seen) this.event(String(peek.workstream_id), 'warning', message);
+      }
+    }
+    return results;
+  }
+
+  runAutomationNow(id: string): AutomationRun {
+    return this.withRetry(() => {
+      const row = this.db.query<Row, [string]>('SELECT * FROM automations WHERE id = ?').get(id);
+      const automation = this.requireAutomation(id, row);
+      return this.fireAutomation(automation, this.now(), false);
+    });
+  }
+
+  // El llamador mantiene el lock desde la lectura de la automation hasta el evento.
+  private fireAutomation(automation: Automation, at: string, scheduled: boolean): AutomationRun {
+    const { id, workstreamId, name, title, body } = automation;
+    const source = `automation:${id}`;
+    let run: AutomationRun;
+    let message: string;
+    if (this.getWorkstream(workstreamId).state !== 'active') {
+      run = { result: 'skipped_inactive' };
+      message = 'vez saltada, workstream no activo';
+    } else if (this.db.query(
+      `SELECT 1 FROM signals s LEFT JOIN changes c ON c.id = s.change_id
+       WHERE s.source = ? AND (s.status = 'new' OR (
+         s.status = 'triaged' AND c.status NOT IN (${TERMINAL_CHANGE_STATUSES.map(() => '?').join(',')}
+       ))) LIMIT 1`,
+    ).get(source, ...TERMINAL_CHANGE_STATUSES)) {
+      run = { result: 'skipped_open' };
+      message = 'vez saltada, hay una señal o un change abierto';
+    } else {
+      const signal = this.#insertSignal(workstreamId, `${title} (${at.slice(0, 10)})`, body, source);
+      run = { result: 'created', signalId: signal.id };
+      message = `señal ${signal.id.slice(0, 8)} creada${scheduled ? ` (vencía ${at})` : ''}`;
+    }
+    this.db.query(
+      `UPDATE automations SET last_due_at = COALESCE(?, last_due_at), last_result = ?,
+       last_signal_id = COALESCE(?, last_signal_id) WHERE id = ?`,
+    ).run(scheduled ? at : null, run.result, run.signalId ?? null, id);
+    this.event(workstreamId, 'info', `automation ${name}: ${message}`);
+    return run;
   }
 
   // ---- changes -----------------------------------------------------------
@@ -728,6 +960,73 @@ export class Store {
       }
       return notes.length;
     });
+  }
+
+  // ---- claves de API -----------------------------------------------------
+
+  createApiKey(name: string, scope: ApiKeyScope): { id: string; key: string } {
+    if (typeof name !== 'string' || !/^[a-z0-9][a-z0-9-]{0,40}$/.test(name)) {
+      throw new StoreError('invalid_input', 'nombre de clave API inválido');
+    }
+    if (scope !== 'read' && scope !== 'decide') {
+      throw new StoreError('invalid_input', 'ámbito de clave API inválido');
+    }
+    return this.withRetry(() => {
+      if (this.db.query('SELECT 1 FROM api_keys WHERE name = ?').get(name)) {
+        throw new StoreError('conflict', 'ya existe una clave API con ese nombre');
+      }
+      const { count } = this.db.query<{ count: number }, []>(
+        'SELECT COUNT(*) AS count FROM api_keys WHERE revoked_at IS NULL',
+      ).get()!;
+      if (count >= 20) {
+        throw new StoreError('limit_reached', 'ya hay 20 claves API activas');
+      }
+      const id = randomBytes(6).toString('hex');
+      const secret = randomBytes(32).toString('base64url');
+      const hash = createHash('sha256').update(secret).digest('hex');
+      this.db.query(
+        `INSERT INTO api_keys (id, name, scope, hash, created_at, created_by) VALUES (?,?,?,?,?,?)`,
+      ).run(id, name, scope, hash, this.now(), process.env.FAB_ACTOR ?? userInfo().username);
+      return { id, key: `fabk_${id}_${secret}` };
+    });
+  }
+
+  listApiKeys(): ApiKeyMetadata[] {
+    if (!this.hasApiKeysTable()) return [];
+    return this.db.query<ApiKeyMetadata, []>(
+      `SELECT id, name, scope, created_at AS createdAt, created_by AS createdBy, revoked_at AS revokedAt
+       FROM api_keys ORDER BY created_at, name`,
+    ).all();
+  }
+
+  revokeApiKey(idOrName: string): void {
+    this.withRetry(() => {
+      // Si un nombre coincide con el id de otra clave, el id tiene prioridad.
+      const { changes } = this.db.query(
+        `UPDATE api_keys SET revoked_at = COALESCE(revoked_at, ?)
+         WHERE id = (SELECT id FROM api_keys WHERE id = ? OR name = ? ORDER BY (id = ?) DESC LIMIT 1)`,
+      ).run(this.now(), idOrName, idOrName, idOrName);
+      if (changes === 0) throw new StoreError('not_found', 'clave API no encontrada');
+    });
+  }
+
+  verifyApiKey(key: string): ApiKeyIdentity | null {
+    const match = /^fabk_([a-f0-9]{12})_([A-Za-z0-9_-]{43})$/.exec(key);
+    if (!match || !this.hasApiKeysTable()) return null;
+    const [, id, secret] = match;
+    const row = this.db.query<ApiKeyIdentity & { hash: string }, [string]>(
+      'SELECT id, name, scope, hash FROM api_keys WHERE id = ? AND revoked_at IS NULL',
+    ).get(id!);
+    if (!row) return null;
+    const stored = Buffer.from(row.hash);
+    const candidate = Buffer.from(createHash('sha256').update(secret!).digest('hex'));
+    if (stored.length !== candidate.length || !timingSafeEqual(stored, candidate)) return null;
+    return { id: row.id, name: row.name, scope: row.scope };
+  }
+
+  private hasApiKeysTable(): boolean {
+    // Un lector puede abrir una base anterior a esta tabla sin migrarla.
+    return this.db.query("SELECT 1 FROM sqlite_schema WHERE type = 'table' AND name = 'api_keys'").get() !== null;
   }
 
   // ---- activities --------------------------------------------------------

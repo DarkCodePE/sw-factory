@@ -18,7 +18,7 @@ import { assertConfinement } from './sandbox/confine.ts';
 import { backendOf, liveBackendFor, runLiveActivity } from './live/turn.ts';
 import type { LiveOutcome } from './admission/reports.ts';
 import type { LiveBackend } from './live/contract.ts';
-import { buildWorkerPrompt } from './prompts.ts';
+import { buildWorkerPrompt, notesBlock } from './prompts.ts';
 import { fabSha, resolveProfile, resolveRole, roleOf } from './profile.ts';
 import { HEARTBEAT_INTERVAL_MS, isBusyError, LEASE_TTL_MS, type Activity, type Store, type Workstream } from './store.ts';
 import { buildValidatorPrompt } from './validators/prompts.ts';
@@ -316,6 +316,7 @@ export async function processActivity(
     const crash = (point: CrashPoint) => opts.crash?.(point);
     let outcome: LiveOutcome | undefined;
     let run: AgentRun;
+    let notesAttemptId: string | undefined;
     if (live) {
       ({ run, outcome } = await runLiveActivity(store, adm!, a, {
         backend: live, cwd: path, stateDir: opts.stateDir, profileDigest, model, prompt, timeoutMs: turnTimeoutMs(opts), signal: abortController.signal, confine,
@@ -326,16 +327,24 @@ export async function processActivity(
         templates: profile.worker, branch, factoryCommits: agent.factoryCommits,
       }));
       if (!confine) atomicEvidence(activityLog(opts.stateDir, change.id, a.id), `${run.stdout ?? ''}${run.stderr ?? ''}`);
-    } else run = await runAgent(confine ? agent : captureAgent, prompt, path, turnTimeoutMs(opts), {
-      confine,
-      model: model ?? undefined,
-      capturePath: confine ? activityLog(opts.stateDir, change.id, a.id) : undefined,
-      readOnly,
-      signal: abortController.signal,
-      onSpawn: (pgid) => {
-        store.setActivityAgentPgid(a.id, pgid);
-      },
-    });
+    } else {
+      let notes = '';
+      if (role === 'investigate' || role === 'implement') {
+        const attemptId = randomUUID();
+        notes = notesBlock(store.reserveNotes(change.id, a.id, attemptId));
+        if (notes) notesAttemptId = attemptId;
+      }
+      run = await runAgent(confine ? agent : captureAgent, prompt + notes, path, turnTimeoutMs(opts), {
+        confine,
+        model: model ?? undefined,
+        capturePath: confine ? activityLog(opts.stateDir, change.id, a.id) : undefined,
+        readOnly,
+        signal: abortController.signal,
+        onSpawn: (pgid) => {
+          store.setActivityAgentPgid(a.id, pgid);
+        },
+      });
+    }
 
     attemptCosts[attemptCosts.length - 1] = run.usage?.costUsd ?? null;
     atomicEvidence(meta, JSON.stringify({
@@ -398,8 +407,16 @@ export async function processActivity(
       log(`[${workerId}] ${a.kind} waiting for a human reply${r.state === 'awaiting' ? ` (${r.questionId})` : ''}`);
       return;
     }
-    // A5: con un turno vivo, el cierre y la marca del report como aplicado van en una sola transacción.
-    const close = <T>(fn: () => T): T => outcome ? closeWithReport(store, adm!, { activityId: a.id, workerId }, fn) : fn();
+    // Cierra junto con la marca del report vivo o con la confirmación de las notas de un disparo.
+    const close = (fn: () => Activity): Activity => {
+      if (outcome) return closeWithReport(store, adm!, { activityId: a.id, workerId }, fn);
+      if (!notesAttemptId) return fn();
+      return store.withRetry(() => {
+        const closed = fn();
+        store.confirmNotes(notesAttemptId);
+        return closed;
+      });
+    };
     if (run.status.kind === 'blocked') {
       close(() => store.blockActivity(a.id, workerId, run.status.reason));
       log(`[${workerId}] ${a.validator ?? a.kind} blocked: ${run.status.reason}`);

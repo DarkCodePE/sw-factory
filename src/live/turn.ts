@@ -13,7 +13,7 @@ import { isSessionLoss, reconstructPrompt, SessionStore, supersede } from '../ad
 import { TurnStore, type TurnReason } from '../admission/turns.ts';
 import { evidencePath } from '../evidence.ts';
 import { atomicEvidence } from '../manifest.ts';
-import type { WorkerTemplates } from '../prompts.ts';
+import { notesBlock, type WorkerTemplates } from '../prompts.ts';
 import { hostDir } from '../sandbox/confine.ts';
 import type { Activity, Store } from '../store.ts';
 import { claudeLive } from './claude.ts';
@@ -85,20 +85,29 @@ export async function runLiveActivity(store: Store, adm: AdmissionDb, a: Activit
     return { run: asRun({ ok: true, output: '', exitCode: 0, durationMs: 0, status: { kind: 'missing', reason: 'recuperado de un report guardado' } }, outcome), outcome };
   }
   const meta = { backend: ctx.backend.name, cwd: ctx.cwd, model: ctx.model ?? null, profileDigest: ctx.profileDigest };
-  let prompt = plan.action === 'fresh' ? ctx.prompt + LIVE_RULES : plan.prompt;
+  const basePrompt = plan.action === 'fresh' ? ctx.prompt : plan.prompt;
   let reason: TurnReason = plan.action === 'fresh' ? 'fresh' : plan.reason;
   const questionId = plan.action === 'resume' ? plan.questionId : undefined;
   reports.markApplied(a.id); // lo que quede pendiente es de un intento anterior ya resuelto; este turno produce el suyo
   for (;;) {
     try {
+      // La reserva va antes de marcar la sesión: si falla (contención), no queda una sesión lanzada que nunca existió.
+      const attemptId = randomUUID();
+      const notes = store.reserveNotes(a.changeId, a.id, attemptId);
+      const reserved = notes.length;
       const { session, turn } = sessions.begin(a.changeId, a.kind, meta);
       ctx.crash?.('session-written');
       sessions.markLaunched(session.sessionId); // A8: antes de lanzar, no en onSpawn
-      const attemptId = randomUUID();
       turns.begin({
         attemptId, activityId: a.id, changeId: a.changeId, sessionId: session.sessionId,
         generation: session.generation, plan: reason, questionId,
       });
+      // La reconstrucción repite también las notas ya entregadas; las recién reservadas salen de la reserva.
+      const prompt = reason === 'reconstructed'
+        ? reconstructPrompt(store, adm, a.id, {
+          worktree: ctx.cwd, branch: ctx.branch, factoryCommits: ctx.factoryCommits, templates: ctx.templates,
+        }) + LIVE_RULES
+        : basePrompt + notesBlock(notes) + (reason === 'fresh' || reserved ? LIVE_RULES : '');
       ctx.crash?.('session-launched');
       let result;
       try {
@@ -116,14 +125,17 @@ export async function runLiveActivity(store: Store, adm: AdmissionDb, a: Activit
         outcome: outcome?.kind ?? 'no_report', exitCode: result.exitCode, durationMs: result.durationMs,
         costUsd: result.usage?.costUsd, log: writeTurnLog(ctx, a, attemptId, result),
       });
-      if (questionId) markAnswerDelivered(adm, questionId); // H2: entregada solo cuando el turno que la lleva terminó con resultado; un fallo transitorio la reenvía
+      const confirm = reserved > 0 && !ctx.signal.aborted;
+      if (questionId || confirm) adm.tx(() => {
+        if (questionId) markAnswerDelivered(adm, questionId);
+        if (confirm) store.confirmNotes(attemptId);
+      });
       ctx.crash?.('turn-ended');
       return { run: asRun(result, outcome), outcome };
     } catch (error) {
       // S3: solo «sesión inexistente» o «backend/cwd/modelo/perfil distintos» cuentan como pérdida; el resto (red, límite, timeout) sube tal cual.
       if (!isSessionLoss(error)) throw error;
       supersede(store, adm, a, (error as Error).message, meta); // evento + tope; agotado lanza SessionLostExhaustedError
-      prompt = reconstructPrompt(store, adm, a.id, { worktree: ctx.cwd, branch: ctx.branch, factoryCommits: ctx.factoryCommits, templates: ctx.templates }) + LIVE_RULES;
       reason = 'reconstructed';
     }
   }
