@@ -97,6 +97,12 @@ test('§4.7: sin conexión o clave de host rechazada → RUNNER_UNREACHABLE y no
   untouched();
 });
 
+test('§4.7: un ssh que cierra su stdin y muere en el acto da RUNNER_UNREACHABLE, nunca un EPIPE crudo', async () => {
+  // Carrera de la CI: la escritura del hello llega con el pipe ya cerrado. Se repite para que el orden varíe.
+  for (let i = 0; i < 25; i++) await rejects(runRemoteAgent(runner, job(), () => ['sh', '-c', 'exec 0<&-; exit 255']), 'RUNNER_UNREACHABLE');
+  untouched();
+});
+
 test('A16: hello con otra versión → RUNNER_REFUSED', async () => {
   await rejects(runRemoteAgent(runner, job(), fake('v2')), 'RUNNER_REFUSED');
 });
