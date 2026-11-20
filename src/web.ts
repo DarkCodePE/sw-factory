@@ -17,7 +17,7 @@ import { metricsPage, METRICS_STYLE } from './web-metrics.ts';
 import { WebAuth, assertLoopback } from './web-auth.ts';
 import { turnsSection, notesSection, turnLogRoute } from './web-turns.ts';
 import { signalsView } from './web-signals.ts';
-import { automationsView } from './web-automations.ts';
+import { AUTOMATION_EDIT_ROUTE, AUTOMATION_EDITOR_JS, AUTOMATION_EDITOR_STYLE, automationEditor, automationsView } from './web-automations.ts';
 import { workstreamsBody, wizardPage } from './web-ws.ts';
 import { changeStages } from './flow.ts';
 import { actionForms, actionNotice, webAction } from './web-actions.ts';
@@ -35,6 +35,7 @@ const ui: Ui = { escape, badge, labels };
 const TIMELINE_LIMIT = 200;
 const POLL = `document.addEventListener('input',e=>{const f=e.target.closest('form[method=post]');if(f)f.setAttribute('data-dirty','');});setInterval(async()=>{if(document.querySelector('form[data-dirty]'))return;try{const r=await fetch(location.href,{cache:'no-store'});if(!r.ok)return;const doc=new DOMParser().parseFromString(await r.text(),'text/html');window.fabNotify?.(doc);if(document.querySelector('form[data-dirty]')||document.hidden||document.activeElement?.matches('input,select,textarea')||window.getSelection()?.toString()||document.querySelector('details[open]'))return;const old=document.querySelector('main'),next=doc.querySelector('main');if(next)window.fabPrepare?.(next);if(old&&next&&old.innerHTML!==next.innerHTML){old.replaceWith(next);}}catch{}},2000);`;
 const READ_ASSETS = new Map([
+  ['/automation-editor.js', { body: AUTOMATION_EDITOR_JS, type: 'text/javascript; charset=utf-8' }],
   ['/metrics.css', { body: METRICS_STYLE, type: 'text/css; charset=utf-8' }],
   ['/inbox.js', { body: INBOX_JS, type: 'text/javascript; charset=utf-8' }],
   ['/notify.js', { body: NOTIFY, type: 'text/javascript; charset=utf-8' }],
@@ -131,15 +132,20 @@ export function startWeb(stateDir: string, port = 4310, options: { write?: boole
       const isConfig = url.pathname === '/config';
       const isFlow = url.pathname === '/flujo';
       const isProfiles = url.pathname === '/perfiles';
-      const manual = isConfig || isProfiles; // sin sondeo: no pisar lo que se escribe
+      const automationEdit = AUTOMATION_EDIT_ROUTE.exec(url.pathname);
+      const automationCreate = url.pathname === '/automations/nueva';
+      const isAutomationEditor = automationCreate || !!automationEdit;
+      const manual = isConfig || isProfiles || isAutomationEditor; // sin sondeo: no pisar lo que se escribe
       const isExperiments = url.pathname === '/experimentos' || url.pathname.startsWith('/experimentos/');
       const readAsset = READ_ASSETS.get(url.pathname);
-      const readOnlyRoute = isFlow || isMetrics || isConfig || isExperiments || readAsset !== undefined;
+      const readOnlyRoute = isFlow || isMetrics || isConfig || isExperiments || isAutomationEditor || readAsset !== undefined;
       if (req.method === 'POST' && auth && !readOnlyRoute) {
         let response: Response;
         try { response = await webAction(req, stateDir, server.port!, auth); }
         catch { return respond('No se pudo registrar la acción.', 500, 'text/plain; charset=utf-8'); }
-        for (const [key, value] of Object.entries(HEADERS)) response.headers.set(key, value);
+        for (const [key, value] of Object.entries(HEADERS)) {
+          if (key !== 'Referrer-Policy' || !response.headers.has(key)) response.headers.set(key, value);
+        }
         return response;
       }
       if (req.method !== 'GET' && req.method !== 'HEAD') return respond('Método no permitido', 405, 'text/plain; charset=utf-8');
@@ -151,17 +157,22 @@ export function startWeb(stateDir: string, port = 4310, options: { write?: boole
           for (const [key, value] of Object.entries(HEADERS)) response.headers.set(key, value);
           return response;
         }
-        if (url.pathname === '/style.css') return respond(WEB_STYLE + WEB_ACTION_STYLE + FLOW_STYLE, 200, 'text/css; charset=utf-8');
+        if (url.pathname === '/style.css') return respond(WEB_STYLE + WEB_ACTION_STYLE + FLOW_STYLE + AUTOMATION_EDITOR_STYLE, 200, 'text/css; charset=utf-8');
         if (url.pathname === '/poll.js') return respond(POLL, 200, 'text/javascript; charset=utf-8');
         if (readAsset) return respond(readAsset.body, 200, readAsset.type);
+        const csrf = auth?.sessionCsrf(req);
+        if (isAutomationEditor && !csrf) return respond('Se necesita una sesión local.', 401, 'text/plain; charset=utf-8');
         store = openStore();
         const log = turnLogRoute(store.db, stateDir, url.pathname);
         if (log) return respond(log.body, log.status, 'text/plain; charset=utf-8');
-        const content = isMetrics ? metricsPage(store, stateDir, url, auth?.sessionCsrf(req)) : isConfig ? await configPage(store, stateDir, url, escape) : isProfiles ? profilesPage(store, stateDir, url, escape, auth?.sessionCsrf(req)) : isExperiments ? experimentsPage(store.db, url.pathname) : isFlow ? flowPage(store, url, escape) : page(store, stateDir, url, auth?.sessionCsrf(req));
+        const content = isAutomationEditor ? automationEditor(store, csrf!, {
+          automation: automationEdit ? store.getAutomation(automationEdit[1]!) : undefined,
+          values: automationCreate ? { ws: url.searchParams.get('ws') ?? undefined } : undefined,
+        }) : isMetrics ? metricsPage(store, stateDir, url, auth?.sessionCsrf(req)) : isConfig ? await configPage(store, stateDir, url, escape) : isProfiles ? profilesPage(store, stateDir, url, escape, auth?.sessionCsrf(req)) : isExperiments ? experimentsPage(store.db, url.pathname) : isFlow ? flowPage(store, url, escape) : page(store, stateDir, url, auth?.sessionCsrf(req));
         if (!content) return respond('Página no encontrada', 404, 'text/plain; charset=utf-8');
         content.body = actionNotice(req.method === 'GET' ? auth?.takeNotice(req, url.pathname) : undefined) + content.body;
         const workstreams = store.listWorkstreams();
-        return respond(`<!doctype html><html lang="es"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><title>${escape(content.title)} · fab</title><link rel="stylesheet" href="/style.css">${isMetrics ? '<link rel="stylesheet" href="/metrics.css">' : manual ? '' : '<script src="/poll.js" defer></script><script src="/inbox.js" defer></script><script src="/notify.js" defer></script>'}</head><body><a class="skip" href="#contenido">Saltar al contenido</a><aside><a class="brand" href="/">fab<span>Fábrica local</span></a><nav aria-label="Navegación principal"><a href="/"${url.pathname === '/' ? ' aria-current="page"' : ''}>Bandeja</a><a href="/changes"${url.pathname.startsWith('/changes') ? ' aria-current="page"' : ''}>Changes</a><a href="/signals"${url.pathname === '/signals' ? ' aria-current="page"' : ''}>Señales</a><a href="/automations"${url.pathname === '/automations' ? ' aria-current="page"' : ''}>Automations</a><a href="/workstreams"${url.pathname === '/workstreams' ? ' aria-current="page"' : ''}>Workstreams</a><a href="/flujo"${isFlow ? ' aria-current="page"' : ''}>Flujo</a><a href="/metricas"${isMetrics ? ' aria-current="page"' : ''}>Métricas</a><a href="/config"${isConfig ? ' aria-current="page"' : ''}>Configuración</a><a href="/perfiles"${isProfiles ? ' aria-current="page"' : ''}>Perfiles</a><a href="/experimentos"${isExperiments ? ' aria-current="page"' : ''}>Experimentos</a></nav><nav aria-label="Workstreams"><h2>Workstreams</h2>${workstreams.map(w => `<a href="/changes?ws=${enc(w.slug)}">${escape(w.slug)}</a>`).join('') || '<p>Sin workstreams</p>'}</nav><p class="local">${auth ? (auth.sessionCsrf(req) ? 'Escritura habilitada' : 'Escritura: abre el enlace de la terminal') : 'Solo lectura'}${isMetrics ? '<br>Actualización manual' : manual ? '' : '<br>Actualización cada 2 s'}</p>${isMetrics || manual ? '' : `<button type="button" id="${NOTIFY_ID}" hidden>Avisos: no</button>`}</aside><main id="contenido" data-inbox="${escape(JSON.stringify(inboxCounts(store.inbox().map(a => a.reviewStatus === 'awaiting' ? 'awaiting' : a.status), labels)))}"><header><h1>${escape(content.title)}</h1></header>${content.body}</main></body></html>`);
+        return respond(`<!doctype html><html lang="es"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><title>${escape(content.title)} · fab</title><link rel="stylesheet" href="/style.css">${isMetrics ? '<link rel="stylesheet" href="/metrics.css">' : isAutomationEditor ? '<script src="/automation-editor.js" defer></script>' : manual ? '' : '<script src="/poll.js" defer></script><script src="/inbox.js" defer></script><script src="/notify.js" defer></script>'}</head><body><a class="skip" href="#contenido">Saltar al contenido</a><aside><a class="brand" href="/">fab<span>Fábrica local</span></a><nav aria-label="Navegación principal"><a href="/"${url.pathname === '/' ? ' aria-current="page"' : ''}>Bandeja</a><a href="/changes"${url.pathname.startsWith('/changes') ? ' aria-current="page"' : ''}>Changes</a><a href="/signals"${url.pathname === '/signals' ? ' aria-current="page"' : ''}>Señales</a><a href="/automations"${(url.pathname === '/automations' || isAutomationEditor) ? ' aria-current="page"' : ''}>Automations</a><a href="/workstreams"${url.pathname === '/workstreams' ? ' aria-current="page"' : ''}>Workstreams</a><a href="/flujo"${isFlow ? ' aria-current="page"' : ''}>Flujo</a><a href="/metricas"${isMetrics ? ' aria-current="page"' : ''}>Métricas</a><a href="/config"${isConfig ? ' aria-current="page"' : ''}>Configuración</a><a href="/perfiles"${isProfiles ? ' aria-current="page"' : ''}>Perfiles</a><a href="/experimentos"${isExperiments ? ' aria-current="page"' : ''}>Experimentos</a></nav><nav aria-label="Workstreams"><h2>Workstreams</h2>${workstreams.map(w => `<a href="/changes?ws=${enc(w.slug)}">${escape(w.slug)}</a>`).join('') || '<p>Sin workstreams</p>'}</nav><p class="local">${auth ? (auth.sessionCsrf(req) ? 'Escritura habilitada' : 'Escritura: abre el enlace de la terminal') : 'Solo lectura'}${isMetrics ? '<br>Actualización manual' : manual ? '' : '<br>Actualización cada 2 s'}</p>${isMetrics || manual ? '' : `<button type="button" id="${NOTIFY_ID}" hidden>Avisos: no</button>`}</aside><main id="contenido" data-inbox="${escape(JSON.stringify(inboxCounts(store.inbox().map(a => a.reviewStatus === 'awaiting' ? 'awaiting' : a.status), labels)))}"><header><h1>${escape(content.title)}</h1></header>${content.body}</main></body></html>`);
       } catch (error) {
         if (error instanceof StoreError && error.code === 'not_found') return respond('Registro no encontrado', 404, 'text/plain; charset=utf-8');
         if (error instanceof URIError) return respond('Ruta inválida', 400, 'text/plain; charset=utf-8');

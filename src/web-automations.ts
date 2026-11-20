@@ -8,7 +8,7 @@ export function automationsView(store: Store, escape: (v: unknown) => string, cs
   const hidden = csrf ? `<input type="hidden" name="csrf" value="${csrf}">` : '';
   const form = (id: string, action: string, label: string) => `<form action="/automations/${id}/${action}" method="post" class="web-action">${hidden}<button>${label}</button></form>`;
   const create = `/automations/nueva${ws ? '?ws=' + encodeURIComponent(ws) : ''}`;
-  const rows = store.listAutomations(ws).map(a => `<tr><td>${escape(a.name)}<br><small>${escape(a.title)}</small></td><td>${escape(slugs.get(a.workstreamId) ?? '')}</td><td><code>${escape(a.cron)}</code> UTC</td><td>${a.enabled ? 'Activa' : 'Pausada'}</td><td>${a.lastResult ? escape(RESULTS[a.lastResult] ?? a.lastResult) : 'Sin ejecutar'}${a.lastDueAt ? `<br><small>${escape(a.lastDueAt)}</small>` : ''}${a.lastSignalId ? `<br><small>señal ${escape(a.lastSignalId.slice(0, 8))}</small>` : ''}</td>${csrf ? `<td class="action-buttons"><a href="/automations/${encodeURIComponent(a.id)}/editar">Editar</a>${form(encodeURIComponent(a.id), 'run', 'Ejecutar ahora')}${form(encodeURIComponent(a.id), a.enabled ? 'disable' : 'enable', a.enabled ? 'Pausar' : 'Activar')}</td>` : ''}</tr>`).join('');
+  const rows = store.listAutomations(ws).map(a => `<tr><td>${escape(a.name)}<br><small>${escape(a.title)}</small></td><td>${escape(slugs.get(a.workstreamId) ?? '')}</td><td><code>${escape(a.cron)}</code> UTC</td><td>${a.enabled ? 'Activa' : 'Pausada'}</td><td>${a.lastResult ? escape(RESULTS[a.lastResult] ?? a.lastResult) : 'Sin ejecutar'}${a.lastDueAt ? `<br><small>${escape(a.lastDueAt)}</small>` : ''}${a.lastSignalId ? `<br><small>señal ${escape(a.lastSignalId.slice(0, 8))}</small>` : ''}</td>${csrf ? `<td class="action-buttons"><a href="${automationEditorPath(a.id)}">Editar</a>${form(encodeURIComponent(a.id), 'run', 'Ejecutar ahora')}${form(encodeURIComponent(a.id), a.enabled ? 'disable' : 'enable', a.enabled ? 'Pausar' : 'Activar')}</td>` : ''}</tr>`).join('');
   return { title: 'Automations', body: `<p class="intro">Horarios que crean una señal con un texto fijo.</p>${csrf ? `<p><a href="${create}">Nueva automation</a></p><p class="muted">Ejecutar ahora crea una señal. No lanza trabajo: la señal espera tu triage.</p>` : '<p class="muted">Para ejecutar, activar o pausar, abre fab web --write con el enlace de la terminal.</p>'}${rows ? `<div class="table-wrap"><table><thead><tr><th>Nombre</th><th>Workstream</th><th>Horario</th><th>Estado</th><th>Último resultado</th>${csrf ? '<th>Acciones</th>' : ''}</tr></thead><tbody>${rows}</tbody></table></div>` : '<p class="empty">No hay automations.</p>'}` };
 }
 
@@ -79,16 +79,16 @@ export function automationEditor(store: Store, csrf: string, { automation, value
   // La primera línea en textarea se reserva para la normalización del parser HTML.
   const area = (key: 'title' | 'body' | 'cron', rows: number, required = true) =>
     `<textarea id="automation-${key}" name="${key}" rows="${rows}"${required ? ' required' : ''}>\n${value(key)}</textarea>`;
-  const deleteForm = automation
+  const deleteForm = automation && !error
     ? `<form action="${url}/delete" method="post" class="web-action">${token}${hidden('revision', revision)}
         <fieldset><legend>Borrar automation</legend><p>Se cancelan los próximos vencimientos. Las señales históricas se conservan.</p>
         ${confirm(automation.name, 'el borrado')}<button>Borrar automation</button></fieldset></form>` : '';
   return {
     title,
     body: `<p><a href="/automations">Volver a automations</a></p>
-      ${error ? `<p class="notice" role="alert">${html(error)}</p>` : ''}
+      ${error ? `<p class="notice" role="alert">${html(error)}</p>${automation ? `<p><a href="${automationEditorPath(automation.id)}">Recargar formulario</a></p>` : ''}` : ''}
       <form action="${url ? url + '/update' : '/automations/create'}" method="post" class="web-action">
-        ${token}${automation ? hidden('revision', values?.revision ?? revision) : ''}
+        ${token}${automation ? hidden('revision', values ? values.revision ?? '' : revision) : ''}
         <fieldset><legend>Configuración</legend>
           ${workstream}
           <label for="automation-name">Nombre</label>
@@ -117,4 +117,15 @@ export function automationEditor(store: Store, csrf: string, { automation, value
         </fieldset>
       </form>${deleteForm}`,
   };
+}
+
+export const automationEditorPath = (id: string) => `/automations/${encodeURIComponent(id)}/editar`;
+export const AUTOMATION_EDIT_ROUTE = /^\/automations\/([\w-]+)\/editar$/;
+
+export function automationErrorDocument(message: string, reload: string, editor?: string): string {
+  return `<!doctype html><html lang="es"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>Revisar automation · fab</title><link rel="stylesheet" href="/style.css"><script src="/automation-editor.js" defer></script></head>
+    <body><main class="automation-error"><h1>Revisar automation</h1>
+    ${editor ?? `<p class="notice" role="alert">${html(message)}</p><p><a href="${html(reload)}">${reload === '/automations' ? 'Volver a automations' : 'Recargar formulario'}</a></p>`}
+    </main></body></html>`;
 }
