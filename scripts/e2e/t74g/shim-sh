@@ -8,6 +8,6 @@ esac
 if [ "$1" = "-c" ]; then
   printf 'hola desde el runner\n' > RUNNER_E2E.txt
   env | sort > RUNNER_ENV.txt   # lo que el agente confinado ve
-  [ -n "$T74G_PAUSE" ] && sleep "$T74G_PAUSE"
+  [ -f PAUSE ] && sleep 8   # el repo trae PAUSE: ventana para cortar la conexión a mitad de la implementación
 fi
 exec /bin/sh "$@"
