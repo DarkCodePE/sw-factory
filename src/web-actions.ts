@@ -15,6 +15,8 @@ import { PROFILE_BODY_LIMIT, ProfileInputError, profileAction } from './web-prof
 import { enqueueBackfill, enqueueManual, ensureSchema, previewBackfill } from './scorers.ts';
 import { archiveWorkstream, createWorkstream, workstreamSettings, workstreamState, wsFields } from './web-ws.ts';
 
+// Cancelar vale para todo change que no haya terminado bien o por decisión: igual que `fab reject`, también limpia failed, blocked y quarantined.
+const FINAL_STATUSES = ['completed', 'canceled', 'declined'];
 const escape = (s: string) => redact(s).replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[c]!);
 const messages: Record<string, string> = {
   ok: 'Acción registrada.', conflict: 'conflict: el estado cambió o la acción ya se aplicó. Revisa el estado actual.',
@@ -49,8 +51,8 @@ export function actionForms(store: Store, url: URL, csrf?: string): string {
     if (!store.isTerminalChange(c.status)) {
       const planned = activities.some(a => ['pending', 'in_progress', 'waiting_reply'].includes(a.status));
       body += form(`/changes/${id}/note`, `<fieldset><legend>Nota para el agente</legend><label for="note-body">Nota (máximo 8 KiB)</label><textarea id="note-body" name="body" rows="4" maxlength="8192" required></textarea><button>Guardar nota</button><p class="muted">No lanza ni interrumpe nada. Se entrega al empezar el siguiente turno de trabajo, una sola vez.${planned ? '' : ' Ahora no hay ningún turno previsto.'} Enviar dos veces crea dos notas.</p></fieldset>`);
-      body += form(`/changes/${id}/cancel`, `<fieldset><legend>Cancelar change</legend><label><input type="checkbox" name="confirm" value="yes" required> Confirmo: cancela el change y borra su worktree (igual que fab reject)</label><button>Cancelar change</button></fieldset>`);
     }
+    if (!FINAL_STATUSES.includes(c.status)) body += form(`/changes/${id}/cancel`, `<fieldset><legend>Cancelar change</legend><label><input type="checkbox" name="confirm" value="yes" required> Confirmo: cancela el change y borra su worktree (igual que fab reject)</label><button>Cancelar change</button></fieldset>`);
     return `<section aria-label="Decisiones">${body}</section>`;
   }
   const a = store.getActivity(id);
@@ -136,7 +138,7 @@ export const ACTIONS: Record<string, Action> = {
     input: raw => { if (raw.confirm !== 'yes') throw new InputError(400, 'Confirma la cancelación.'); return {}; },
     run: (store, id, _input, out) => {
       const c = store.getChange(id); out.destination = `/changes/${id}`;
-      if (store.isTerminalChange(c.status)) throw new StoreError('invalid_transition', 'change terminal');
+      if (FINAL_STATUSES.includes(c.status)) throw new StoreError('invalid_transition', 'change terminal');
       store.event(c.workstreamId, 'warning', 'reject solicitado', id);
       store.closeChange(id, 'canceled'); out.repo = store.getWorkstream(c.workstreamId).repo;
     },

@@ -3,6 +3,8 @@ import { existsSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { Store, StoreError } from '../src/store.ts';
 import { ensureWorktree } from '../src/worktrees.ts';
+import { AdmissionDb } from '../src/admission/db.ts';
+import { ThreadLinks } from '../src/admission/links.ts';
 import { startWeb } from '../src/web.ts';
 
 let dir: string, repo: string, store: Store, server: ReturnType<typeof startWeb>, cookie: string, csrf: string, change: string;
@@ -114,4 +116,56 @@ test('Store.renameChange valida y no existe para cambios ajenos', () => {
   expect(() => store.renameChange(change, '')).toThrow(StoreError);
   expect(() => store.renameChange(change, 'x'.repeat(201))).toThrow(StoreError);
   expect(() => store.renameChange('nada', 'x')).toThrow(StoreError);
+});
+
+// ---- ronda web: T50/T51 H1-H5 ----
+test('T51-H1: cancelar con una activity en curso espera su liberación antes de borrar el worktree', async () => {
+  await login(); const { path } = await ensureWorktree(repo, dir, change);
+  const a = store.listActivities({ changeId: change })[0]!;
+  store.db.query("UPDATE activities SET status='in_progress', worker_id='w', lease_expires_at='2000-01-01T00:00:00.000Z' WHERE id=?").run(a.id);
+  expect((await post(`/changes/${change}/cancel`, { confirm: 'yes' })).status).toBe(303);
+  expect(store.getActivity(a.id).status).toBe('canceled'); // waitForRelease la liberó antes de borrar
+  expect(existsSync(path)).toBe(false);
+});
+test('T50-H2: triar una señal de canal desde la web une el hilo al change', async () => {
+  await login();
+  const s = store.addSignal('prueba', 'Del issue', 'cuerpo');
+  const adm = new AdmissionDb(store);
+  const T = 'github:o/r#7';
+  adm.db.query('INSERT INTO adm_threads(id, source, first_seen) VALUES (?,?,?)').run(T, 'github', '2026-01-01T00:00:00Z');
+  adm.db.query("INSERT INTO adm_thread_signals(thread_id, signal_id, scope, created_at) VALUES (?,?,?,?)").run(T, s.id, 'propose', '2026-01-01T00:00:00Z');
+  expect((await post(`/signals/${s.id}/triage`)).status).toBe(303);
+  const c = store.listChanges('prueba').find(x => x.title === 'Del issue')!;
+  expect(new ThreadLinks(adm).changeOf(T)).toBe(c.id);
+});
+test('T50-H3: la web cancela también failed, blocked y quarantined, como fab reject; los finales dan invalid_transition', async () => {
+  await login();
+  const ws = store.getWorkstream('prueba');
+  for (const status of ['failed', 'blocked', 'quarantined']) {
+    const c = store.createChange(ws.id, status, 'd');
+    store.db.query('UPDATE changes SET status=? WHERE id=?').run(status, c.id);
+    expect(await html(`/changes/${c.id}`)).toContain('/cancel');
+    expect(await html(`/changes/${c.id}`)).not.toContain('/note"'); // la nota sigue sin ofrecerse en terminales
+    expect((await post(`/changes/${c.id}/cancel`, { confirm: 'yes' })).status).toBe(303);
+    expect(store.getChange(c.id).status).toBe('canceled');
+  }
+  for (const status of ['completed', 'declined']) {
+    const c = store.createChange(ws.id, status, 'd');
+    store.db.query('UPDATE changes SET status=? WHERE id=?').run(status, c.id);
+    expect(await html(`/changes/${c.id}`)).not.toContain('/cancel');
+    expect(await html((await post(`/changes/${c.id}/cancel`, { confirm: 'yes' })).headers.get('location')!)).toContain('invalid_transition');
+    expect(store.getChange(c.id).status).toBe(status);
+  }
+});
+test('T50-H4: sin --write la página de señales con una señal pendiente no pinta Triar ni Ignorar', async () => {
+  store.addSignal('prueba', 'Pendiente', 'cuerpo');
+  server.stop(true); server = startWeb(dir, 0);
+  const page = await (await req('/signals')).text();
+  expect(page).toContain('Pendiente');
+  expect(page).not.toContain('/triage'); expect(page).not.toContain('/ignore'); expect(page).not.toContain('<form');
+});
+test('T50-H5: cancelar deja el evento «reject solicitado» con actor web', async () => {
+  await login();
+  await post(`/changes/${change}/cancel`, { confirm: 'yes' });
+  expect(events().some(e => e.message === 'reject solicitado' && e.actor === 'web' && e.change_id === change)).toBe(true);
 });
