@@ -103,14 +103,19 @@ export class AdmissionDb {
   /** Transacción IMMEDIATE con reintento, como el resto de escrituras de la base (Store.withRetry). */
   tx<T>(fn: () => T): T { return this.store.withRetry(fn); }
 
-  /** Registra un rechazo de webhook por falta de firma o firma inválida (T87-H1 Opción B). */
+  /** Registra un rechazo de webhook por falta de firma o firma inválida sin bloquear ni reintentar (T87-H10). */
   recordRejectedHook(nowIso?: string): void {
     const at = nowIso ?? this.iso();
-    this.tx(() => {
+    try {
+      this.db.exec('PRAGMA busy_timeout = 0');
       this.db.query(`INSERT INTO adm_hook_rejections (id, count, last_rejected_at)
         VALUES (1, 1, ?)
         ON CONFLICT(id) DO UPDATE SET count = count + 1, last_rejected_at = excluded.last_rejected_at`).run(at);
-    });
+    } catch {
+      // Falla abierto sin bloqueo: si la base está ocupada por otro proceso, no retrasar la respuesta 401
+    } finally {
+      try { this.db.exec('PRAGMA busy_timeout = 5000'); } catch {}
+    }
   }
 
   /** Consulta el recuento acumulado de rechazos de webhook y la fecha del último. */

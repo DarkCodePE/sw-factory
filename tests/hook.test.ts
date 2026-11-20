@@ -1,3 +1,4 @@
+import { Database } from 'bun:sqlite';
 import { createHmac } from 'node:crypto';
 import { afterEach, expect, test } from 'bun:test';
 import { residentMain } from '../src/admission/cli.ts';
@@ -52,6 +53,25 @@ test('B2: sin firma, sha1, hex de otra longitud, otro secreto o cuerpo alterado:
   expect(adm.getRejectedHooks().count).toBe(5);
   await post(); // entrega válida 202
   expect(adm.getRejectedHooks().count).toBe(5);
+});
+
+test('petición sin firma con base bloqueada por otro escritor responde 401 de inmediato sin dar 500', async () => {
+  const { post, store } = setup();
+  // Simular lock de escritura exclusivo sostenido por otro proceso / conexión
+  const blocker = new Database(store.dbPath);
+  blocker.exec('PRAGMA busy_timeout = 0;');
+  blocker.exec('BEGIN EXCLUSIVE');
+  try {
+    const t0 = Date.now();
+    const res = await post({ sig: null });
+    const duration = Date.now() - t0;
+
+    expect(res.status).toBe(401);
+    expect(duration).toBeLessThan(2000);
+  } finally {
+    try { blocker.exec('ROLLBACK'); } catch {}
+    blocker.close();
+  }
 });
 
 test('entrega válida: 202 sin cuerpo, una fila con solo metadatos y un despertar', async () => {

@@ -34,7 +34,7 @@ export function startHook(o: HookOptions): { port: number; hostname: string; sto
     const body = new Uint8Array(await req.arrayBuffer());
     if (body.length > MAX_BODY) return empty(413);
     if (!verifySignature(o.secret, body, req.headers.get('x-hub-signature-256'))) {
-      o.adm.recordRejectedHook(new Date(o.now()).toISOString());
+      try { o.adm.recordRejectedHook(new Date(o.now()).toISOString()); } catch {}
       return empty(401);
     }
     const id = req.headers.get('x-github-delivery') ?? '', event = req.headers.get('x-github-event') ?? '';
