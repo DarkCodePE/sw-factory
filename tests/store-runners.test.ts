@@ -175,3 +175,19 @@ test('asignación web por id compara la selección antes del no-op y comprueba e
     expect(store.getWorkstream(w.id).runner).toBeNull();
   } finally { other.close(); }
 });
+
+test('T85-H2: la selección compara el tipo y el alta vistos de la fila, cada uno por su lado', () => {
+  const w = ws();
+  store.createRunner({ name: 'casa', kind: 'local' });
+  const r = store.getRunner('casa');
+  const pick = (seen?: { kind: 'local' | 'ssh'; createdAt: string }) =>
+    () => store.setWorkstreamRunner(w.id, 'casa', { expected: null, confirmSsh: true, seen });
+  expect(code(pick())).toStartWith('conflict');
+  expect(code(pick({ kind: 'ssh', createdAt: r.createdAt }))).toStartWith('conflict');
+  expect(code(pick({ kind: 'local', createdAt: '2000-01-01T00:00:00.000Z' }))).toStartWith('conflict');
+  expect(store.getWorkstream(w.id).runner).toBeNull();
+  // Mismo alta, otro tipo (fila editada fuera de la fab): también se rechaza.
+  store.db.query("UPDATE runners SET kind = 'ssh', target = 'alias-privado' WHERE name = 'casa'").run();
+  expect(code(pick({ kind: 'local', createdAt: r.createdAt }))).toStartWith('conflict');
+  expect(store.setWorkstreamRunner(w.id, 'casa', { expected: null, confirmSsh: true, seen: { kind: 'ssh', createdAt: r.createdAt } }).runner).toBe('casa');
+});
