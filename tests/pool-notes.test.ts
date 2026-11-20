@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, expect, test } from 'bun:test';
-import { mkdtempSync, readdirSync, readFileSync, rmSync, statSync } from 'node:fs';
+import { mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, statSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { getAgent } from '../src/agents.ts';
@@ -209,4 +209,55 @@ test('si otro escritor asigna un runner SSH, su transporte recibe solo la nota d
   expect(wire).not.toContain(note.body);
   expect(wire).not.toContain('ARCHIVO-RESERVADO-T96');
   expect(store.listChangeNotes(change.id)).toEqual([note, expect.objectContaining({ id: plain.id, deliveredAt: expect.any(String) })]);
+});
+
+// T96-H6: cada condición de elegibilidad de un disparo, por separado.
+const kept = async (name: string, configure: () => void, options: Parameters<ReturnType<typeof setup>['run']>[0]) => {
+  const { change, run } = setup();
+  const file = store.addChangeNote(change.id, 'cuerpo ' + name, { name: 'datos.txt', bytes: new TextEncoder().encode('ARCHIVO-' + name) });
+  const plain = store.addChangeNote(change.id, 'texto ' + name);
+  let prompt = '';
+  configure();
+  const original = fake.command;
+  fake.command = (p, o) => { prompt = p; return output('STATUS: done'); };
+  expect((await run(options)).status).toBe('completed');
+  fake.command = original;
+  expect(prompt).toContain(plain.body);
+  expect(prompt).not.toContain('ARCHIVO-' + name);
+  expect(store.listChangeNotes(change.id)[0]).toEqual(file);
+};
+
+test('un disparo sin confinar conserva pendiente el archivo aunque el agente acepte stdin', () => kept('sin-confinar', () => { fake.promptStdin = true; }, {}));
+test('un disparo confinado con entrada por argv conserva pendiente el archivo', () => kept('argv', () => { delete fake.promptStdin; }, { confine: true }));
+
+test('un disparo cuyo estado cae en state/live conserva pendiente el archivo', async () => {
+  const nested = join(dir, 'st', 'live', 's');
+  mkdirSync(nested, { recursive: true, mode: 0o700 });
+  store.close();
+  store = new Store(join(nested, 'fab.db'), { clock: () => new Date('2026-01-01T00:00:00Z') });
+  const { change } = setup();
+  store.addChangeNote(change.id, 'cuerpo', { name: 'datos.txt', bytes: new TextEncoder().encode('ARCHIVO-LIVE') });
+  fake.promptStdin = true;
+  let prompt = '';
+  fake.command = p => { prompt = p; return output('STATUS: done'); };
+  const ws = store.listWorkstreams()[0]!;
+  const activity = store.claimActivity(ws.id, 'worker')!;
+  await processActivity(store, activity, 'worker', { workstream: ws.id, stateDir: join(dir, 'st'), log: () => {}, confine: true });
+  expect(prompt).not.toContain('ARCHIVO-LIVE');
+  expect(store.listChangeNotes(change.id)[0]!.deliveredAt).toBeNull();
+});
+
+test('notesBlock: el marcador interno es propio de cada archivo y el externo esquiva el contenido', () => {
+  const { change } = setup();
+  const at = (text: string) => ({ name: 'a.txt', bytes: new TextEncoder().encode(text) });
+  const note = (body: string, text: string) => ({ ...store.addChangeNote(change.id, body, at(text)), attachmentBytes: at(text).bytes });
+  const proposed = 'nonce-propuesto';
+  const block = promptModule.notesBlock([note('uno', `texto con ${proposed} dentro`), note('dos', 'otro')], proposed);
+  const outer = /<<<OWNER_NOTE (\S+)/.exec(block)![1]!;
+  const inner = [...block.matchAll(/<<<NOTE_ATTACHMENT (\S+)/g)].map(m => m[1]!);
+  expect(outer).not.toBe(proposed);
+  expect(inner).toHaveLength(2);
+  expect(new Set([outer, ...inner]).size).toBe(3);
+  for (const m of inner) expect(block.split(`NOTE_ATTACHMENT ${m}>>>`)).toHaveLength(2);
+  expect(block.split(`OWNER_NOTE ${outer}>>>`)).toHaveLength(2);
 });

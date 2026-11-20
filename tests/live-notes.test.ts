@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, expect, test } from 'bun:test';
-import { mkdtempSync, rmSync } from 'node:fs';
+import { mkdirSync, mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { answerQuestion } from '../src/admission/answers.ts';
@@ -307,4 +307,43 @@ test('una caída antes de lanzar no consume el archivo reservado y el siguiente 
   expect(used.attemptId).not.toBe(orphan!.attemptId);
   expect(store.listChangeNotes(change.id)[0]).toMatchObject({ attemptId: used.attemptId, deliveredAt: expect.any(String) });
   expect(store.listEvents(ws.id).filter(e => String(e.message).includes('entregada (turno'))).toHaveLength(1);
+});
+
+// T96-H6: cada condición que deja pendiente el archivo en un turno vivo.
+test('un turno vivo con salida distinta de cero no confirma el archivo aunque reporte done', async () => {
+  const { change, run } = setup(true);
+  store.addChangeNote(change.id, 'cuerpo', file('ARCHIVO SALIDA'));
+  const backend = fakeLive([{ reports: [DONE], exitCode: 1 }]);
+  await run(backend);
+  expect(backend.turns[0]!.prompt).toContain('ARCHIVO SALIDA');
+  expect(store.listChangeNotes(change.id)[0]!.deliveredAt).toBeNull();
+});
+
+test.each([
+  ['entrada por argv', { promptStdin: false }, true],
+  ['adaptador no confinable', { confinable: false }, true],
+  ['sin confinamiento', {}, false],
+] as const)('un turno vivo con %s conserva pendiente el archivo y entrega el texto', async (_name, over, confine) => {
+  const { change, run } = setup(confine);
+  const pending = store.addChangeNote(change.id, 'CUERPO CON ARCHIVO', file('ARCHIVO NO APTO'));
+  const plain = store.addChangeNote(change.id, 'TEXTO QUE VIAJA');
+  const backend = fakeLive([{ reports: [DONE] }], over);
+  await run(backend);
+  expect(backend.turns[0]!.prompt).toContain(plain.body);
+  expect(backend.turns[0]!.prompt).not.toContain('ARCHIVO NO APTO');
+  expect(backend.turns[0]!.prompt).not.toContain(pending.body);
+  expect(store.listChangeNotes(change.id)[0]).toEqual(pending);
+});
+
+test('un turno vivo cuyo estado cae en state/live conserva pendiente el archivo', async () => {
+  const nested = join(dir, 'state', 'live', 's');
+  mkdirSync(nested, { recursive: true, mode: 0o700 });
+  store.close();
+  store = new Store(join(nested, 'fab.db'), { clock: () => new Date('2026-01-01T00:00:00Z') });
+  const { change, run } = setup(true);
+  const pending = store.addChangeNote(change.id, 'CUERPO', file('ARCHIVO EN LIVE'));
+  const backend = fakeLive([{ reports: [DONE] }]);
+  await run(backend);
+  expect(backend.turns[0]!.prompt).not.toContain('ARCHIVO EN LIVE');
+  expect(store.listChangeNotes(change.id)[0]).toEqual(pending);
 });

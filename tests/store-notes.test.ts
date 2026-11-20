@@ -293,13 +293,14 @@ test('adjunto: reserva revalida permisos, destino y montaje persistente sin conf
 
 test('adjunto: la comprobación de estado es de lectura y rechaza enlaces y estado dentro de Git', () => privateNotes((writer, _id, cwd) => {
   const parent = dirname(cwd), victim = join(parent, 'victima');
-  writeFileSync(victim, 'intacto');
+  writeFileSync(victim, 'intacto', { mode: 0o600 });
+  chmodSync(victim, 0o600); // sin depender de la umask: así solo nlink o el enlace pueden rechazar
   const alias = join(parent, 'alias');
   symlinkSync(writer.stateDir!, alias);
   expect(() => assertPrivateNoteDatabase(join(alias, 'fabrica.db'))).toThrow(/estado privado/);
   for (const ext of ['', '-wal', '-shm', '-journal']) {
     const another = join(writer.stateDir!, 'otra.db');
-    if (ext) writeFileSync(another, 'base sintética');
+    if (ext) writeFileSync(another, 'base sintética', { mode: 0o600 });
     const link = another + ext;
     for (const create of [symlinkSync, linkSync]) {
       create(victim, link);
@@ -344,4 +345,100 @@ test('T96-H7: Git no corre dentro de la transacción del alta ni de la reserva',
     expect(inTx.length).toBeGreaterThan(2);
   } finally { Bun.spawnSync = spawn; }
   expect(inTx.filter(Boolean)).toEqual([]);
+}));
+
+const reasons = (writer: Store, id: string) => writer.listEvents(writer.getChange(id).workstreamId, -1, id).map(e => String(e.message));
+
+test('T96-H6: la reserva solo lleva adjuntos a investigación e implementación sin validador', () => privateNotes((writer, id, cwd) => {
+  writer.addChangeNote(id, 'texto');
+  writer.addChangeNote(id, 'archivo', attachment());
+  const a = writer.listActivities({ changeId: id })[0]!;
+  const set = (kind: string, validator: string | null) =>
+    writer.db.query('UPDATE activities SET kind = ?, validator = ? WHERE id = ?').run(kind, validator, a.id);
+  const delivered = (attempt: string) => writer.reserveNotes(id, a.id, attempt, { cwd }).map(n => n.attachmentBytes !== undefined);
+  set('change_review', null);
+  expect(delivered('revision')).toEqual([false]);
+  set('investigation', 'verifier');
+  expect(delivered('validador')).toEqual([false]);
+  set('implementation', null);
+  expect(delivered('implementa')).toEqual([false, true]);
+}));
+
+test('T96-H6: la reserva revalida el BLOB almacenado y deja la nota con archivo pendiente', () => privateNotes((writer, id, cwd) => {
+  const n = writer.addChangeNote(id, 'archivo', attachment());
+  writer.addChangeNote(id, 'texto');
+  const a = writer.listActivities({ changeId: id })[0]!;
+  for (const bytes of [Uint8Array.of(0, 1, 2), Uint8Array.of(0xff, 0xfe)]) {
+    writer.db.query('UPDATE change_notes SET attachment_bytes = ? WHERE id = ?').run(bytes, n.id);
+    expect(writer.reserveNotes(id, a.id, 'x' + bytes.length, { cwd }).map(note => note.body)).toEqual(['texto']);
+    expect(writer.listChangeNotes(id).find(note => note.id === n.id)).toMatchObject({ deliveredAt: null, activityId: null });
+  }
+  expect(writer.noteAttachmentWait(id)).toContain('validación');
+}));
+
+test('T96-H6: la reserva anuncia que los adjuntos vuelven a ser aptos una sola vez', () => privateNotes((writer, id, cwd) => {
+  writer.addChangeNote(id, 'archivo', attachment());
+  const a = writer.listActivities({ changeId: id })[0]!;
+  expect(writer.reserveNotes(id, a.id, 'sin-destino')).toEqual([]);
+  expect(reasons(writer, id).filter(m => m.startsWith('Adjuntos pendientes'))).toHaveLength(1);
+  expect(writer.reserveNotes(id, a.id, 'apto', { cwd })).toHaveLength(1);
+  expect(reasons(writer, id).filter(m => m === 'Adjuntos aptos para este turno.')).toHaveLength(1);
+}));
+
+test('T96-H6: el estado dentro de un worktree enlazado, del cwd, de state/live o de state/worktrees se rechaza', () => privateNotes((writer, _id, cwd) => {
+  const base = dirname(cwd);
+  expect(Bun.spawnSync(['git', '-C', cwd, '-c', 'user.name=t', '-c', 'user.email=t@t', 'commit', '--allow-empty', '-qm', 'i']).exitCode).toBe(0);
+  const linked = join(base, 'enlazado');
+  expect(Bun.spawnSync(['git', '-C', cwd, 'worktree', 'add', '-q', linked, '-b', 'rama-enlazada']).exitCode).toBe(0);
+  const inside = (root: string) => {
+    const db = join(root, 'privado', 'fabrica.db');
+    mkdirSync(dirname(db), { mode: 0o700 });
+    writeFileSync(db, 'base sintética', { mode: 0o600 });
+    return db;
+  };
+  // El repo principal está limpio: solo el worktree enlazado contiene el estado.
+  expect(() => assertNoteAttachmentMounts(inside(linked), [cwd])).toThrow(/montajes escribibles/);
+  // Sin repos configurados, el cwd del turno basta para rechazarlo.
+  const turn = join(base, 'turno');
+  mkdirSync(turn);
+  expect(Bun.spawnSync(['git', 'init', '-q', turn]).exitCode).toBe(0);
+  expect(() => assertNoteAttachmentMounts(inside(turn), [], { cwd: turn })).toThrow(/montajes escribibles/);
+  // state/live y state/worktrees que resuelven a un directorio que contiene el estado.
+  for (const name of ['live', 'worktrees']) {
+    const state = join(base, 'estado-' + name);
+    mkdirSync(state, { mode: 0o700 });
+    writeFileSync(join(state, 'fabrica.db'), 'base sintética', { mode: 0o600 });
+    expect(() => assertNoteAttachmentMounts(join(state, 'fabrica.db'), [cwd])).not.toThrow();
+    symlinkSync(base, join(state, name));
+    expect(() => assertNoteAttachmentMounts(join(state, 'fabrica.db'), [cwd])).toThrow(/montajes escribibles/);
+  }
+}));
+
+test('T96-H6: si git worktree list falla, el inventario falla cerrado', () => privateNotes((_writer, _id, cwd) => {
+  const db = join(dirname(cwd), 'estado-git', 'fabrica.db');
+  mkdirSync(dirname(db), { mode: 0o700 });
+  writeFileSync(db, 'base sintética', { mode: 0o600 });
+  expect(() => assertNoteAttachmentMounts(db, [cwd])).not.toThrow();
+  const spawn = Bun.spawnSync;
+  Bun.spawnSync = ((...args: Parameters<typeof Bun.spawnSync>) => {
+    const cmd = args[0] as string[] | { cmd: string[] };
+    const argv = Array.isArray(cmd) ? cmd : cmd.cmd;
+    return argv.includes('worktree') ? { exitCode: 1, stdout: Buffer.alloc(0), stderr: Buffer.alloc(0) } as ReturnType<typeof spawn> : spawn(...args);
+  }) as typeof Bun.spawnSync;
+  try { expect(() => assertNoteAttachmentMounts(db, [cwd])).toThrow(/Git/); }
+  finally { Bun.spawnSync = spawn; }
+}));
+
+test('T96-H6: una base en memoria nunca es un estado privado', () => {
+  expect(() => assertPrivateNoteDatabase(':memory:')).toThrow(/estado privado/);
+});
+
+test('T96-H6: la entrega solo lleva archivos con adaptador confinable, entrada por stdin y confinamiento', () => privateNotes((writer, id, cwd) => {
+  writer.addChangeNote(id, 'archivo', attachment());
+  const a = writer.listActivities({ changeId: id })[0]!;
+  const route = { cwd, confine: true, adapter: 'claude', promptStdin: true };
+  const build = (notes: { body: string }[]) => notes.map(n => n.body).join();
+  const sent = (over: Partial<typeof route>, attempt: string) => reserveTurnPrompt(writer, a, attempt, { ...route, ...over }, build).hasAttachments;
+  expect([sent({ adapter: 'sin-confinar' }, 'a'), sent({ promptStdin: false }, 'b'), sent({ confine: false }, 'c')]).toEqual([false, false, false]);
+  expect(sent({}, 'd')).toBe(true);
 }));
