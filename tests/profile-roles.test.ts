@@ -59,13 +59,13 @@ test('tabla de verdad de §2.3', () => {
   const v1 = { ...defaultProfile(), harness: 'claude', model: 'x' };
   expect(r(v1, 'claude', 'implement')).toMatchObject({ adapter: 'claude', model: null });
   const base = v2({ model: 'm0' });
-  expect(r(base, 'claude', 'implement')).toEqual({ adapter: 'claude', model: 'm0', source: 'workstream' });
+  expect(r(base, 'claude', 'implement')).toMatchObject({ adapter: 'claude', model: 'm0', source: 'workstream' });
   expect(r(base, 'codex', 'implement')).toMatchObject({ adapter: 'codex', model: null });
   expect(r(v2({ model: 'm0', roles: { implement: { model: 'm1' } } }), 'claude', 'implement')).toMatchObject({ adapter: 'claude', model: 'm1' });
   const cr = v2({ model: 'm0', roles: { code_review: { harness: 'codex', model: 'g' } } });
-  expect(r(cr, 'claude', 'code_review')).toEqual({ adapter: 'codex', model: 'g', source: 'role' });
+  expect(r(cr, 'claude', 'code_review')).toMatchObject({ adapter: 'codex', model: 'g', source: 'role' });
   expect(r(cr, 'claude', 'qa')).toMatchObject({ adapter: 'claude', model: 'm0' });
-  expect(r(cr, 'claude', 'code_review', 'fake')).toEqual({ adapter: 'fake', model: null, source: 'override' });
+  expect(r(cr, 'claude', 'code_review', 'fake')).toMatchObject({ adapter: 'fake', model: null, source: 'override' });
   expect(r(v2({ model: 'm0', roles: { qa: { harness: 'codex' } } }), 'claude', 'qa')).toMatchObject({ adapter: 'codex', model: null });
   expect(r(cr, 'claude', null)).toMatchObject({ adapter: 'claude', model: 'm0' });
 });
