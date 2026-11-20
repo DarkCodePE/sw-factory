@@ -337,6 +337,18 @@ test('T82-H2: range=custom sin fechas y jueces con custom devuelven 400', async 
   }
 });
 
+test('T83-H1: repetir recordPrOpened no duplica el evento ni altera el conteo en metricsDailyPrs', () => {
+  const c = store.createChange('uno', 'Change con PR repetido', '');
+  store.recordPrOpened(c.id, 'https://github.com/org/repo/pull/1');
+  store.recordPrOpened(c.id, 'https://github.com/org/repo/pull/1');
+  const evs = store.listEvents(c.workstreamId, 10, c.id).filter(e => typeof e.message === 'string' && e.message.startsWith('pr_opened:'));
+  expect(evs).toHaveLength(1);
+
+  const daily = store.metricsDailyPrs([c.id], new Date().toISOString());
+  const today = new Date().toISOString().slice(0, 10);
+  expect(daily.opened.get(today)).toBe(1);
+});
+
 test('T83: ciclo con PR (kickoff→PR, PR→primera revisión humana, PR→merge); tramos exactos con eventos sintéticos', () => {
   const c1 = store.createChange('uno', 'Change con PR', '');
   store.db.query("UPDATE changes SET created_at=?, status='completed' WHERE id=?").run('2026-11-18T00:00:00Z', c1.id);

@@ -2011,6 +2011,8 @@ export class Store {
   recordPrOpened(changeId: string, url: string): void {
     if (!url.startsWith('https://')) throw new StoreError('invalid_input', 'la URL del PR debe comenzar por https://');
     const c = this.getChange(changeId);
+    const existing = this.db.query("SELECT 1 FROM events WHERE change_id = ? AND message GLOB 'pr_opened: *'").get(changeId);
+    if (existing) return;
     this.event(c.workstreamId, 'info', `pr_opened: ${url}`, changeId);
   }
 
@@ -2057,10 +2059,10 @@ export class Store {
     if (!changeIds.length) return { opened: new Map(), merged: new Map() };
     const prOpen = "(message GLOB 'pr_opened: https://*' OR message GLOB 'pr_opened https://*' OR message GLOB 'pr opened: https://*')";
     const merge = "(message IN ('merge_completed','merged','change merged') OR message LIKE 'merge_completed:%' OR message LIKE 'merged:%')";
-    const openedRows = this.db.query(`SELECT substr(created_at, 1, 10) AS day, COUNT(*) AS n
+    const openedRows = this.db.query(`SELECT substr(created_at, 1, 10) AS day, COUNT(DISTINCT change_id) AS n
       FROM events WHERE change_id IN (${changeIds.map(() => '?').join(',')}) AND julianday(created_at) <= julianday(?)
       AND ${prOpen} GROUP BY substr(created_at, 1, 10)`).all(...changeIds, until) as Array<{ day: string; n: number }>;
-    const mergedRows = this.db.query(`SELECT substr(created_at, 1, 10) AS day, COUNT(*) AS n
+    const mergedRows = this.db.query(`SELECT substr(created_at, 1, 10) AS day, COUNT(DISTINCT change_id) AS n
       FROM events WHERE change_id IN (${changeIds.map(() => '?').join(',')}) AND julianday(created_at) <= julianday(?)
       AND ${merge} GROUP BY substr(created_at, 1, 10)`).all(...changeIds, until) as Array<{ day: string; n: number }>;
     return { opened: new Map(openedRows.map(r => [r.day, r.n])), merged: new Map(mergedRows.map(r => [r.day, r.n])) };

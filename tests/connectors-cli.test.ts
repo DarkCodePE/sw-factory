@@ -124,6 +124,8 @@ test('persist PR before Jira comment, then reuse it on retry after comment failu
   expect(await connectorsMain('pr', ['open', change.id], f.deps)).toBe(0);
   expect(f.opened).toHaveLength(2);
   expect(attempts).toBe(2);
+  const prEvents = f.store.listEvents(change.workstreamId, 50, change.id).filter(e => typeof e.message === 'string' && e.message.startsWith('pr_opened:'));
+  expect(prEvents).toHaveLength(1);
 });
 
 test('linked PR still pushes updated branch and reuses remote PR without create', async () => {
