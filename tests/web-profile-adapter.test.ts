@@ -123,3 +123,8 @@ test('ambas activaciones muestran el motivo durante trabajo vivo y guardar sigue
   expect(store.answerAwaiting(a.id, 'q')).toBe(true);
   await blocked();
 });
+
+test('T84-H4: sin trabajo vivo la página no sugiere un bloqueo', async () => {
+  await login();
+  expect(await view()).not.toContain('termine el trabajo vivo');
+});

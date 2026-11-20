@@ -27,7 +27,6 @@ const saveFields = ['csrf', 'ws', 'base', 'expectedAgent', 'mode', ...TEMPLATES.
 const ASSIGN_FIELDS = ['csrf', 'ws', 'previous', 'expectedAgent', 'digest', 'confirm'];
 const MASK = '[REDACTED]';
 const masked = (value: string) => redact(value) !== value;
-const changesPending = 'Puedes activar la configuración cuando termine el trabajo vivo. Las próximas activities usarán la configuración vigente.';
 
 function adapterOptions(agents: readonly string[], current: string | undefined, escape: Escape) {
   return agents.map(agent => `<option value="${escape(agent)}"${agent === current ? ' selected' : ''}>${escape(agent)}</option>`).join('');
@@ -90,7 +89,7 @@ export function profilesPage(store: Store, stateDir: string, url: URL, escape: E
   if (!selected) return { title: 'Perfiles', body: '<p class="empty">No hay workstreams.</p>' };
   const picker = `<form class="filters" action="/perfiles" method="get"><label>Workstream<select name="ws">${workstreams.map(w => `<option value="${escape(w.slug)}"${w.id === selected.id ? ' selected' : ''}>${escape(w.slug)}</option>`).join('')}</select></label><button>Ver</button></form>`;
   const hidden = `<input type="hidden" name="csrf" value="${escape(csrf)}"><input type="hidden" name="ws" value="${escape(selected.slug)}"><input type="hidden" name="expectedAgent" value="${escape(selected.agent)}">`;
-  const confirmForm = (digest: string, previous: string, label: string) => `<form action="/perfiles/asignar" method="post" class="web-action">${hidden}<input type="hidden" name="digest" value="${digest}"><input type="hidden" name="previous" value="${previous}"><p>${changesPending}</p><label><input type="checkbox" name="confirm" value="yes" required> Confirmo el cambio de perfil de <b>${escape(selected.slug)}</b></label><button>${label}</button></form>`;
+  const confirmForm = (digest: string, previous: string, label: string) => `<form action="/perfiles/asignar" method="post" class="web-action">${hidden}<input type="hidden" name="digest" value="${digest}"><input type="hidden" name="previous" value="${previous}"><label><input type="checkbox" name="confirm" value="yes" required> Confirmo el cambio de perfil de <b>${escape(selected.slug)}</b></label><button>${label}</button></form>`;
   const restoreForm = (previous: string) => csrf && previous !== DEFAULT_DIGEST && isProfileDigest(previous) ? `<section><h2>Valores por defecto</h2>${confirmForm(DEFAULT_DIGEST, previous, 'Restaurar valores por defecto')}</section>` : '';
   let current: ReturnType<typeof resolveProfile>;
   try { current = resolveProfile(stateDir, selected.profile); }
@@ -113,7 +112,7 @@ export function profilesPage(store: Store, stateDir: string, url: URL, escape: E
     <input type="hidden" name="csrf" value="${escape(csrf)}"><input type="hidden" name="previous" value="${escape(selected.agent)}">
     <input type="hidden" name="profileExpected" value="${current.digest}">
     <label>Nuevo adaptador<select name="agent" required>${adapterOptions(agents, selected.agent, escape)}</select></label>
-    <p>${changesPending}</p>
+    
     <label><input type="checkbox" name="confirm" value="yes" required> Confirmo el cambio de adaptador de <b>${escape(selected.slug)}</b></label>
     <button>Cambiar adaptador</button></form>` : '';
   return { title: 'Perfiles', body: `${picker}${saved}<section><h2>Perfil vigente</h2><p><code>${current.digest}</code> · ${selected.profile ? 'Fijado' : 'Por defecto'}</p>
