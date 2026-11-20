@@ -171,6 +171,54 @@ test('ignora directorios de skills que sean symlinks para evitar directory trave
   expect(html).not.toContain('contenido secreto exterior');
 });
 
+test('ignora skills si .agents es un symlink apuntando fuera del repo', async () => {
+  seedWorkstream();
+  const outside = join(dir, 'outside-agents');
+  mkdirSync(join(outside, 'skills', 'evil-agents-skill'), { recursive: true });
+  writeFileSync(join(outside, 'skills', 'evil-agents-skill', 'SKILL.md'), 'secreto en agents symlink');
+
+  rmSync(join(repoDir, '.agents'), { recursive: true, force: true });
+  symlinkSync(outside, join(repoDir, '.agents'));
+
+  server = startWeb(stateDir, 0);
+  const html = await getHtml('/definicion?ws=demo');
+
+  expect(html).not.toContain('evil-agents-skill');
+  expect(html).not.toContain('secreto en agents symlink');
+});
+
+test('ignora skills si .agents/skills es un symlink apuntando fuera del repo', async () => {
+  seedWorkstream();
+  const outsideSkills = join(dir, 'outside-skills-dir');
+  mkdirSync(join(outsideSkills, 'evil-skills-skill'), { recursive: true });
+  writeFileSync(join(outsideSkills, 'evil-skills-skill', 'SKILL.md'), 'secreto en skills symlink');
+
+  rmSync(join(repoDir, '.agents', 'skills'), { recursive: true, force: true });
+  symlinkSync(outsideSkills, join(repoDir, '.agents', 'skills'));
+
+  server = startWeb(stateDir, 0);
+  const html = await getHtml('/definicion?ws=demo');
+
+  expect(html).not.toContain('evil-skills-skill');
+  expect(html).not.toContain('secreto en skills symlink');
+});
+
+test('ignora archivo SKILL.md si la propia hoja es un symlink a un archivo exterior', async () => {
+  seedWorkstream();
+  const outsideFile = join(dir, 'outside-secret.md');
+  writeFileSync(outsideFile, 'secreto en hoja symlink');
+
+  const leafDir = join(repoDir, '.agents', 'skills', 'leaf-symlink-skill');
+  mkdirSync(leafDir, { recursive: true });
+  symlinkSync(outsideFile, join(leafDir, 'SKILL.md'));
+
+  server = startWeb(stateDir, 0);
+  const html = await getHtml('/definicion?ws=demo');
+
+  expect(html).not.toContain('leaf-symlink-skill');
+  expect(html).not.toContain('secreto en hoja symlink');
+});
+
 test('un fichero grande se trunca con aviso', async () => {
   seedWorkstream({ bigSkill: true });
   server = startWeb(stateDir, 0);
