@@ -122,12 +122,13 @@ test('H1: SIGINT aborta y el manejador sobrevive al primer Ctrl-C; al soltar no 
   const dispose = abortOnSigint(ac);
   const mine = process.listeners('SIGINT').filter(l => !before.has(l));
   expect(mine.length).toBe(1);
+  const h = mine[0]!;
   process.emit('SIGINT');
   expect(ac.signal.aborted).toBe(true);
   // Con `once` el segundo Ctrl-C no tendría manejador y mataría el proceso sin pasar por el finally de judge.
-  expect(process.listeners('SIGINT')).toContain(mine[0]);
+  expect(process.listeners('SIGINT')).toContain(h);
   dispose();
-  expect(process.listeners('SIGINT')).not.toContain(mine[0]);
+  expect(process.listeners('SIGINT')).not.toContain(h);
 });
 
 test('H2: si a algún juez le falta historial, el total es «No medido», no una suma parcial', async () => {
