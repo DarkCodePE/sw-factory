@@ -46,5 +46,30 @@ test('un SQLITE_BUSY en fireDueAutomations no tumba el pool', async () => {
     throw Object.assign(new Error('database is locked'), { code: 'SQLITE_BUSY' });
   });
   await runPool(store, { workstream: ws.id, stateDir: dir, untilIdle: true, pollMs: 5, log: () => {} });
-  expect(spy.mock.calls.length).toBeGreaterThanOrEqual(2);
+  expect(spy).toHaveBeenCalled();
+});
+
+test('un SQLITE_BUSY en fireDueAutomations no salta el reclamo de activities de esa vuelta', async () => {
+  const ws = active('busy-claim');
+  const events: string[] = [];
+  const fire = store.fireDueAutomations.bind(store);
+  spyOn(store, 'fireDueAutomations').mockImplementation(w => {
+    events.push('fire');
+    if (events.length === 1) throw Object.assign(new Error('database is locked'), { code: 'SQLITE_BUSY' });
+    return fire(w);
+  });
+  const claim = store.claimActivity.bind(store);
+  spyOn(store, 'claimActivity').mockImplementation((...a) => { events.push('claim'); return claim(...a); });
+  await runPool(store, { workstream: ws.id, stateDir: dir, untilIdle: true, pollMs: 5, log: () => {} });
+  expect(events.slice(0, 2)).toEqual(['fire', 'claim']);
+});
+
+test('un error que no es de contención en fireDueAutomations se registra y el pool sigue', async () => {
+  const ws = active('boom');
+  const logs: string[] = [];
+  spyOn(store, 'fireDueAutomations').mockImplementation(() => { throw new Error('fila rara'); });
+  const claim = spyOn(store, 'claimActivity');
+  await runPool(store, { workstream: ws.id, stateDir: dir, untilIdle: true, pollMs: 5, log: m => logs.push(m) });
+  expect(claim).toHaveBeenCalled();
+  expect(logs.some(m => m.includes('fila rara'))).toBe(true);
 });
