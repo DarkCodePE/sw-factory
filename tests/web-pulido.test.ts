@@ -267,3 +267,21 @@ test('T95-H1: jira_imports sin source_url no rompe el detalle del change', async
   const res = await fetch(`http://127.0.0.1:${server.port}/changes/${c.id}`);
   expect(res.status).toBe(200); expect(await res.text()).toContain('Vieja base');
 });
+
+function runPoll(body: string, before: string, after: string, extra: { active?: string } = {}) {
+  let tick: () => Promise<void> = async () => {};
+  const mkLink = (html: string) => ({ innerHTML: html });
+  const live = mkLink(before), next = mkLink(after);
+  const main = { innerHTML: 'a', replaceWith() { replaced++; } }; let replaced = 0;
+  const parsed = { querySelector: (s: string) => s === 'main' ? { innerHTML: 'a' } : s === 'nav a[href="/"]' ? next : null };
+  const doc = { addEventListener() {}, hidden: false, activeElement: extra.active ? { matches: (s: string) => s.includes(extra.active!) && !s.includes(`:not([${extra.active}])`) } : null,
+    querySelector: (s: string) => s === 'nav a[href="/"]' ? live : s === 'main' ? main : null };
+  const g = { fabNotify: undefined, getSelection: () => ({ toString: () => '' }) };
+  new Function('document', 'window', 'fetch', 'DOMParser', 'location', 'setInterval', 'Response', body)(doc, g, async () => ({ ok: true, text: async () => '' }), class { parseFromString() { return parsed; } }, { href: '/' }, (f: () => Promise<void>) => { tick = f; });
+  return { live, tick: () => tick(), replaced: () => replaced };
+}
+test('T94-H2: el sondeo actualiza el contador del menú aunque <main> no cambie', async () => {
+  server = startWeb(dir, 0);
+  const r = runPoll(await get('/poll.js'), 'Bandeja <strong>4</strong>', 'Bandeja <strong>5</strong>');
+  await r.tick(); expect(r.live.innerHTML).toBe('Bandeja <strong>5</strong>');
+});
