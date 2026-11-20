@@ -268,7 +268,7 @@ test('formatReport quita controles de cada línea sin permitir líneas falsas', 
   Object.assign(report.unlabeledTrusted[0]!, { url: dirty, thread: dirty, firstSeen: dirty, admittedAt: dirty });
   const output = formatReport(report);
   expect(output).not.toMatch(/[\x00-\x09\x0b-\x1f\x7f-\x9f]/);
-  expect(output.split('\n')).toHaveLength(22); // 7 cabeceras, 6 separadores y 9 filas, sin saltos procedentes de datos
+  expect(output.split('\n')).toHaveLength(25); // 8 cabeceras, 7 separadores y 10 filas (9 de datos y «sin avisos»), sin saltos procedentes de datos
   expect(output).toContain('valor[2JFALSA');
   expect(output).not.toContain('\nFALSA');
 });
