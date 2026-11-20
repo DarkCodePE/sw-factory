@@ -9,9 +9,9 @@ import { startWeb } from '../src/web.ts';
 
 let dir: string, store: Store, server: ReturnType<typeof startWeb> | undefined, cookie = '', csrf = '';
 const def = (extra: Partial<ScorerDef> = {}): ScorerDef => ({ scope: 'implement', rubric: 'Evalúa <b>bien</b>.', classes: [{ label: 'ok', score: 1 }, { label: 'mal', score: 0 }], passing: 0.5, sampling: 1, ...extra });
-const url = (p: string) => `http://127.0.0.1:${server!.port}${p}`;
+const url = (p: string) => `http://${server!.host ?? "127.0.0.1"}:${server!.port}${p}`;
 const html = async (p: string) => (await fetch(url(p), { headers: { cookie } })).text();
-const post = (p: string, data: Record<string, string>, headers: Record<string, string> = {}) => fetch(url(p), { method: 'POST', redirect: 'manual', headers: { cookie, origin: `http://127.0.0.1:${server!.port}`, 'content-type': 'application/x-www-form-urlencoded', ...headers }, body: new URLSearchParams({ csrf, ...data }) });
+const post = (p: string, data: Record<string, string>, headers: Record<string, string> = {}) => fetch(url(p), { method: 'POST', redirect: 'manual', headers: { cookie, origin: `http://${server!.host ?? "127.0.0.1"}:${server!.port}`, 'content-type': 'application/x-www-form-urlencoded', ...headers }, body: new URLSearchParams({ csrf, ...data }) });
 const hasTable = () => store.db.query("SELECT 1 FROM sqlite_master WHERE name='scores'").get() !== null;
 const rows = () => (hasTable() ? store.db.query('SELECT * FROM scores ORDER BY created_at, id').all() : []) as any[];
 
@@ -131,4 +131,42 @@ test('las escrituras exigen sesión, origin y CSRF; sin --write no hay botones',
   expect(h).toContain('Ejecuciones a puntuar'); expect(h).not.toContain('Encolar'); expect(h).toContain('fab web --write');
   expect(await html(`/activities/${impls[0]}`)).not.toContain('Encolar puntuación');
   expect((await fetch(url('/scorers/backfill'), { method: 'POST' })).status).toBe(405);
+});
+
+// ---- ronda web: T65 H1-H3 ----
+test('T65-H1: score, round y coste raros no rompen ni inyectan HTML en /metricas ni en la activity', async () => {
+  const { digest, impls } = seed(1); insertScore(digest, impls[0]!);
+  store.db.query("UPDATE scores SET score = '<img src=x onerror=1>', round = '<b>r</b>', cost_usd = 'abc'").run();
+  server = startWeb(dir, 0);
+  for (const p of ['/metricas?tab=jueces&range=all', `/activities/${impls[0]}`]) {
+    const r = await fetch(url(p));
+    expect(r.status).toBe(200);
+    const h = await r.text();
+    expect(h).not.toContain('<img src=x'); expect(h).not.toContain('<b>r</b>');
+    expect(h).toContain('&lt;img src=x onerror=1&gt;'); expect(h).toContain('No medido');
+  }
+});
+test('T65-H2: encolar por la web deja un evento con el actor', async () => {
+  const { impls } = seed(2); server = startWeb(dir, 0, { write: true }); await login();
+  const ev = () => store.db.query("SELECT actor, message FROM events WHERE message LIKE '%encolad%'").all() as { actor: string; message: string }[];
+  await post(`/activities/${impls[0]}/score`, { scorer: 'calidad' });
+  expect(ev()).toEqual([{ actor: 'web', message: expect.stringContaining('calidad') }]);
+  await post('/scorers/backfill', { ws: 'ws', since: '', scorer: '', skip: 'yes', expected: '1' });
+  expect(ev().map(e => e.actor)).toEqual(['web', 'web']);
+  expect(ev()[1]!.message).toContain('1 puntuaciones encoladas');
+});
+test('T65-H3: tasa «No medido» sin ejecuciones hechas, aprobada nula, rango en la vista previa y escape de juez y clase', async () => {
+  const { digest, impls } = seed(2);
+  insertScore(digest, impls[0]!, { status: 'pending', label: null, passed: null, cost: null });
+  insertScore(digest, impls[1]!, { passed: null, label: '<i>cls</i>' });
+  store.db.query("UPDATE scores SET scorer = '<u>juez</u>' WHERE subject_activity_id = ?").run(impls[1]!);
+  server = startWeb(dir, 0, { write: true }); await login();
+  const h = await html('/metricas?tab=jueces&range=all');
+  expect(h).toContain('<td>implement</td><td>No medido</td>'); // calidad: cero hechas → tasa «No medido», no 0 %
+  expect(h).toMatch(/<td>No medido<\/td><td>[\d.]+ USD<\/td>|No medido<\/td><td>0\.1000 USD/); // «Aprobada» nula
+  expect(h).not.toContain('<u>juez</u>'); expect(h).not.toContain('<i>cls</i>');
+  expect(h).toContain('&lt;u&gt;juez&lt;/u&gt;'); expect(h).toContain('&lt;i&gt;cls&lt;/i&gt;');
+  const p = await html('/metricas?tab=jueces&ws=ws&range=7&preview=1');
+  expect(p).toContain('name="ws" value="ws"');
+  expect(p).toMatch(/name="since" value="\d{4}-\d{2}-\d{2}T/);
 });

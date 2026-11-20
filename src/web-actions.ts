@@ -154,6 +154,7 @@ export const ACTIONS: Record<string, Action> = {
       ensureSchema(store.db);
       if (store.db.query("SELECT 1 FROM scores WHERE scorer = ? AND subject_activity_id = ? AND status IN ('pending','running')").get(input.scorer!, id)) throw new StoreError('conflict', 'ya hay una puntuación en cola');
       enqueueManual(store, stateDir, id, input.scorer!, 'manual');
+      store.event(store.getActivity(id).workstreamId, 'info', `puntuación encolada: ${input.scorer} sobre ${id}`, store.getActivity(id).changeId);
     },
   },
   // Puntuar un rango pasado: `expected` es el número de la vista previa; si ya no coincide no se encola nada.
@@ -171,6 +172,7 @@ export const ACTIONS: Record<string, Action> = {
       ensureSchema(store.db);
       if (previewBackfill(store, stateDir, ws.id, opts).runs !== Number(input.expected)) throw new StoreError('conflict', 'la vista previa cambió');
       enqueueBackfill(store, stateDir, ws.id, opts);
+      store.event(ws.id, 'info', `${input.expected} puntuaciones encoladas (rango pasado${input.scorer ? `, juez ${input.scorer}` : ''})`);
     },
   },
   'questions/answer': {

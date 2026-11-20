@@ -8,7 +8,8 @@ import type { Activity } from './store.ts';
 
 const esc = (v: unknown) => redact(String(v ?? '')).replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[c]!);
 const enc = encodeURIComponent;
-const usd = (v: number | null) => v === null ? 'No medido' : `${v.toFixed(4)} USD`;
+// Una fila rara (coste no numérico) es «No medido», no un 500 (T65-H1).
+const usd = (v: unknown) => typeof v !== 'number' || !Number.isFinite(v) ? 'No medido' : `${v.toFixed(4)} USD`;
 const pct = (p: number, n: number) => n === 0 ? 'No medido' : `${Math.round(p / n * 100)} % (${p}/${n})`;
 const table = (caption: string, headers: string[], rows: string[][]) => `<div class="table-wrap"><table><caption>${esc(caption)}</caption><thead><tr>${headers.map(h => `<th scope="col">${esc(h)}</th>`).join('')}</tr></thead><tbody>${rows.map(r => `<tr>${r.map((v, i) => i === 0 ? `<th scope="row">${v}</th>` : `<td>${v}</td>`).join('')}</tr>`).join('')}</tbody></table></div>`;
 const STATUS: Record<string, string> = { pending: 'En cola', running: 'En curso', done: 'Hecha', failed: 'Fallida', skipped: 'Omitida' };
@@ -18,9 +19,9 @@ export const NO_SCORES = 'No hay puntuaciones en este rango.';
 const historyRows = (rows: ReturnType<typeof scoreRows>) => rows.map(r => [
   `<time>${esc(r.createdAt)}</time>`,
   `<a href="/changes/${enc(r.changeId)}">${esc(r.changeTitle ?? r.changeId)}</a> · <a href="/activities/${enc(r.subjectActivityId)}">${esc(r.subjectActivityId.slice(0, 8))}</a>`,
-  `<a href="?tab=jueces&amp;scorer=${enc(r.scorer)}">${esc(r.scorer)}</a>`, String(r.round), esc(ORIGIN[r.origin] ?? r.origin), esc(STATUS[r.status] ?? r.status),
+  `<a href="?tab=jueces&amp;scorer=${enc(r.scorer)}">${esc(r.scorer)}</a>`, esc(r.round), esc(ORIGIN[r.origin] ?? r.origin), esc(STATUS[r.status] ?? r.status),
   // NULL es «sin puntuar», nunca 0 (I3).
-  r.label === null ? 'Sin puntuar' : `${esc(r.label)} (${r.score})`,
+  r.label === null ? 'Sin puntuar' : `${esc(r.label)} (${esc(r.score)})`,
   r.passed === null ? 'No medido' : r.passed ? 'Sí' : 'No', usd(r.costUsd)]);
 const HISTORY_HEAD = ['Fecha', 'Change · activity', 'Juez', 'Ronda', 'Origen', 'Estado', 'Clase', 'Aprobada', 'Coste'];
 
