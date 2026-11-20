@@ -30,7 +30,18 @@ CREATE TABLE IF NOT EXISTS experiment_runs (
   rowid INTEGER PRIMARY KEY AUTOINCREMENT, experiment_id TEXT NOT NULL, batch TEXT NOT NULL, seed INTEGER NOT NULL,
   split TEXT NOT NULL, task_id TEXT NOT NULL, repeat INTEGER NOT NULL, arm TEXT NOT NULL, position INTEGER NOT NULL,
   profile_digest TEXT NOT NULL, agent TEXT NOT NULL, success INTEGER NOT NULL, diff_lines INTEGER NOT NULL,
-  duration_ms INTEGER NOT NULL, change_id TEXT, error TEXT, created_at TEXT NOT NULL);`);
+  duration_ms INTEGER NOT NULL, change_id TEXT, error TEXT, created_at TEXT NOT NULL);
+-- T67: automejora. Config por workstream y candidatos (perfil nuevo + experimento); la fab nunca asigna el perfil.
+CREATE TABLE IF NOT EXISTS improvement_config (
+  workstream_id TEXT PRIMARY KEY, enabled INTEGER NOT NULL DEFAULT 0, suite_path TEXT NOT NULL, split TEXT NOT NULL, repeats INTEGER NOT NULL,
+  window INTEGER NOT NULL DEFAULT 20, min_scores INTEGER NOT NULL DEFAULT 10, threshold REAL NOT NULL DEFAULT 0.4);
+CREATE TABLE IF NOT EXISTS improvement_candidates (
+  id TEXT PRIMARY KEY, workstream_id TEXT NOT NULL, role TEXT NOT NULL, base_digest TEXT NOT NULL, candidate_digest TEXT, experiment_id TEXT,
+  origin TEXT NOT NULL CHECK (origin IN ('threshold','manual')), trigger_scores TEXT NOT NULL,
+  status TEXT NOT NULL CHECK (status IN ('pending','proposing','proposed','experimenting','ready','failed','dismissed')),
+  error TEXT, created_at TEXT NOT NULL, finished_at TEXT);
+CREATE UNIQUE INDEX IF NOT EXISTS improvement_open ON improvement_candidates(workstream_id, role)
+  WHERE status IN ('pending','proposing','proposed','experimenting','ready');`);
   const cols = db.query('PRAGMA table_info(experiment_runs)').all() as { name: string }[];
   for (const [col, type] of [
     ['cost_usd', 'REAL'],
