@@ -10,6 +10,10 @@ import { closeSync, existsSync, fstatSync, openSync, readFileSync } from 'node:f
 import { dirname, resolve } from 'node:path';
 import { gitEvidence, writeManifest } from './manifest.ts';
 import { lastDue, parseCron } from './cron.ts';
+import {
+  assertNoteAttachmentMounts, assertPrivateNoteDatabase, NOTE_ATTACHMENT_HISTORY_MAX, NOTE_ATTACHMENT_MAX,
+  validateNoteAttachment, type NoteAttachment, type NoteAttachmentMeta, type NoteAttachmentTarget,
+} from './note-attachments.ts';
 
 import {
   type ActivityKind as BaseActivityKind,
@@ -173,7 +177,10 @@ export interface ChangeNote {
   activityId: string | null;
   attemptId: string | null;
   deliveredAt: string | null;
+  attachment?: NoteAttachmentMeta;
 }
+
+export interface ReservedChangeNote extends ChangeNote { attachmentBytes?: Uint8Array }
 
 export interface Activity {
   id: string;
@@ -410,6 +417,8 @@ function toChangeNote(r: Row): ChangeNote {
     activityId: r.activity_id as string | null,
     attemptId: r.attempt_id as string | null,
     deliveredAt: r.delivered_at as string | null,
+    ...(typeof r.attachment_name === 'string' && typeof r.attachment_size === 'number'
+      ? { attachment: { name: r.attachment_name, size: r.attachment_size } } : {}),
   };
 }
 
@@ -560,6 +569,8 @@ export class Store {
   }
 
   private migrate(): void {
+    this.addColumn('change_notes', 'attachment_name', 'TEXT');
+    this.addColumn('change_notes', 'attachment_bytes', 'BLOB');
     this.addColumn('activities', 'validator', 'TEXT');
     this.addColumn('workstreams', 'verify', 'TEXT');
     this.addColumn('workstreams', 'verify_setup', 'TEXT');
@@ -1138,7 +1149,17 @@ export class Store {
 
   // ---- notas del dueño ---------------------------------------------------
 
-  addChangeNote(changeId: string, body: string): ChangeNote {
+  noteRunnerIsRemote(workstreamId: string): boolean {
+    const runner = this.getWorkstream(workstreamId).runner;
+    return runner !== null && this.getRunner(runner).kind === 'ssh';
+  }
+
+  assertNoteAttachmentState(target?: NoteAttachmentTarget): void {
+    assertPrivateNoteDatabase(this.dbPath);
+    assertNoteAttachmentMounts(this.dbPath, this.listWorkstreams().map(ws => ws.repo), target);
+  }
+
+  addChangeNote(changeId: string, body: string, attachment?: NoteAttachment): ChangeNote {
     return this.withRetry(() => {
       const change = this.getChange(changeId);
       if (isTerminalChange(change.status)) {
@@ -1153,33 +1174,74 @@ export class Store {
       ).get(changeId)!;
       if (n >= 20) throw new StoreError('limit_reached', 'el change tiene 20 notas sin entregar');
 
+      if (attachment !== undefined) {
+        const invalid = validateNoteAttachment(attachment);
+        if (invalid) throw new StoreError('invalid_input', invalid);
+        if (this.noteRunnerIsRemote(change.workstreamId)) {
+          throw new StoreError('invalid_input', 'Los adjuntos requieren un workstream local. El runner asignado es remoto.');
+        }
+        this.assertNoteAttachmentState();
+        const { pending, total } = this.db.query<{ pending: number; total: number }, [string]>(`
+          SELECT COALESCE(SUM(CASE WHEN delivered_at IS NULL THEN length(attachment_bytes) ELSE 0 END), 0) AS pending,
+            COALESCE(SUM(length(attachment_bytes)), 0) AS total FROM change_notes WHERE change_id = ?
+        `).get(changeId)!;
+        if (pending + attachment.bytes.byteLength > NOTE_ATTACHMENT_MAX) {
+          throw new StoreError('limit_reached', 'El change admite hasta 65 536 bytes de adjuntos pendientes.');
+        }
+        if (total + attachment.bytes.byteLength > NOTE_ATTACHMENT_HISTORY_MAX) {
+          throw new StoreError('limit_reached', 'El change admite hasta 1 MiB de adjuntos en su histórico.');
+        }
+      }
+
       const id = randomUUID();
       const actor = process.env.FAB_ACTOR ?? userInfo().username;
       const createdAt = this.now();
-      this.db.query('INSERT INTO change_notes (id, change_id, body, actor, created_at) VALUES (?,?,?,?,?)')
-        .run(id, changeId, body, actor, createdAt);
-      this.event(change.workstreamId, 'info', `nota del dueño registrada (${id.slice(0, 8)}, ${bytes} bytes)`, changeId);
-      return { id, changeId, body, actor, createdAt, activityId: null, attemptId: null, deliveredAt: null };
+      const meta = attachment && { name: attachment.name, size: attachment.bytes.byteLength };
+      this.db.query(`INSERT INTO change_notes (id, change_id, body, actor, created_at, attachment_name, attachment_bytes)
+        VALUES (?,?,?,?,?,?,?)`).run(id, changeId, body, actor, createdAt, attachment?.name ?? null, attachment?.bytes ?? null);
+      this.event(change.workstreamId, 'info', `nota del dueño registrada (${id.slice(0, 8)}, ${bytes} bytes${meta ? `, adjunto de ${meta.size} bytes` : ''})`, changeId);
+      return { id, changeId, body, actor, createdAt, activityId: null, attemptId: null, deliveredAt: null, ...(meta && { attachment: meta }) };
     });
   }
 
   listChangeNotes(changeId: string): ChangeNote[] {
     // Una apertura de solo lectura puede encontrar una base anterior a las notas.
     if (!this.db.query("SELECT 1 FROM sqlite_schema WHERE type = 'table' AND name = 'change_notes'").get()) return [];
-    const rows = this.db.query<Row, [string]>(
-      'SELECT * FROM change_notes WHERE change_id = ? ORDER BY created_at, rowid'
-    ).all(changeId);
+    const columns = new Set(this.db.query<{ name: string }, []>('PRAGMA table_info(change_notes)').all().map(col => col.name));
+    const attachment = columns.has('attachment_name') && columns.has('attachment_bytes')
+      ? ', attachment_name, length(attachment_bytes) AS attachment_size' : '';
+    const rows = this.db.query<Row, [string]>(`SELECT id, change_id, body, actor, created_at, activity_id, attempt_id, delivered_at
+      ${attachment} FROM change_notes WHERE change_id = ? ORDER BY created_at, rowid`).all(changeId);
     return rows.map(toChangeNote);
   }
 
-  reserveNotes(changeId: string, activityId: string, attemptId: string): ChangeNote[] {
+  reserveNotes(changeId: string, activityId: string, attemptId: string, target?: NoteAttachmentTarget): ReservedChangeNote[] {
     return this.withRetry(() => {
+      const plain = '(attachment_name IS NULL AND attachment_bytes IS NULL)';
+      let filter = plain;
+      if (target && this.db.query(`SELECT 1 FROM change_notes WHERE change_id = ? AND delivered_at IS NULL AND NOT ${plain}`).get(changeId)) {
+        const change = this.getChange(changeId);
+        if (!this.noteRunnerIsRemote(change.workstreamId)) {
+          try {
+            this.assertNoteAttachmentState(target);
+            filter = `(${plain} OR (attachment_name IS NOT NULL AND attachment_bytes IS NOT NULL))`;
+          } catch { /* Un estado que dejó de ser apto conserva completas las notas con adjunto. */ }
+        }
+      }
       // Una reserva sin confirmar puede pertenecer a un intento interrumpido.
       this.db.query(`UPDATE change_notes SET activity_id = ?, attempt_id = ?
-        WHERE change_id = ? AND delivered_at IS NULL`).run(activityId, attemptId, changeId);
-      const rows = this.db.query<Row, [string]>(`SELECT * FROM change_notes
-        WHERE change_id = ? AND delivered_at IS NULL ORDER BY created_at, rowid`).all(changeId);
-      return rows.map(toChangeNote);
+        WHERE change_id = ? AND delivered_at IS NULL AND ${filter}`).run(activityId, attemptId, changeId);
+      const rows = this.db.query<Row, [string, string, string]>(`SELECT * FROM change_notes
+        WHERE change_id = ? AND activity_id = ? AND attempt_id = ? AND delivered_at IS NULL AND ${filter}
+        ORDER BY created_at, rowid`).all(changeId, activityId, attemptId);
+      return rows.map(row => {
+        const bytes = row.attachment_bytes;
+        const note = toChangeNote({ ...row, attachment_size: bytes instanceof Uint8Array ? bytes.byteLength : null });
+        if (!note.attachment || !(bytes instanceof Uint8Array)) return note;
+        const invalid = validateNoteAttachment({ name: note.attachment.name, bytes });
+        if (invalid) throw new StoreError('invalid_input', invalid);
+        return { ...note, attachmentBytes: bytes };
+      });
     });
   }
 
