@@ -14,6 +14,26 @@ type Escape = (value: unknown) => string;
 /** Límite de visualización por fichero en la web (32 KiB). Si se supera, se trunca con aviso. */
 export const FILE_VIEW_LIMIT = 32 * 1024;
 
+/** Trunca un Buffer UTF-8 respetando la frontera de carácter para no generar U+FFFD (T89-H4). */
+export function safeTruncateUtf8(buf: Buffer, maxBytes: number): string {
+  if (buf.byteLength <= maxBytes) return buf.toString('utf8');
+  let end = maxBytes;
+  let i = end - 1;
+  while (i >= 0 && i >= end - 4 && (buf[i] & 0xC0) === 0x80) {
+    i--;
+  }
+  if (i >= 0 && (buf[i] & 0x80) !== 0) {
+    const lead = buf[i];
+    const seqLen = (lead & 0xE0) === 0xC0 ? 2
+      : (lead & 0xF0) === 0xE0 ? 3
+      : (lead & 0xF8) === 0xF0 ? 4 : 1;
+    if (i + seqLen > end) {
+      end = i;
+    }
+  }
+  return buf.subarray(0, end).toString('utf8');
+}
+
 const enc = encodeURIComponent;
 
 export function definitionPage(store: Store, stateDir: string | undefined, url: URL, escape: Escape): { title: string; body: string } {
@@ -77,10 +97,11 @@ export function definitionPage(store: Store, stateDir: string | undefined, url: 
 
   const filesHtml = sortedPaths.map(path => {
     const content = files.get(path) ?? '';
-    const byteLength = Buffer.byteLength(content, 'utf8');
+    const buf = Buffer.from(content, 'utf8');
+    const byteLength = buf.byteLength;
     const isTruncated = byteLength > FILE_VIEW_LIMIT;
     const displayedText = isTruncated
-      ? Buffer.from(content, 'utf8').subarray(0, FILE_VIEW_LIMIT).toString('utf8')
+      ? safeTruncateUtf8(buf, FILE_VIEW_LIMIT)
       : content;
     const warning = isTruncated
       ? `<p class="notice">Fichero grande truncado para visualización (mostrando ${Math.round(FILE_VIEW_LIMIT / 1024)} KiB de ${Math.round(byteLength / 1024)} KiB). El fichero íntegro se conserva en <code>fab definition export</code>.</p>`

@@ -184,6 +184,25 @@ test('un fichero grande se trunca con aviso', async () => {
   expect(html).not.toContain('B'.repeat(FILE_VIEW_LIMIT + 100));
 });
 
+test('el truncado de ficheros grandes respeta la frontera de caracter utf8 sin producir U+FFFD', async () => {
+  seedWorkstream();
+  // Crear una skill con caracteres multibyte justo en la frontera de FILE_VIEW_LIMIT (32 KiB)
+  const padding = 'a'.repeat(FILE_VIEW_LIMIT - 1); // 32767 bytes
+  const multibyte = 'ñ'.repeat(10); // 20 bytes (cada 'ñ' ocupa 2 bytes)
+  const skillContent = padding + multibyte;
+
+  const utf8SkillDir = join(repoDir, '.agents', 'skills', 'utf8-boundary');
+  mkdirSync(utf8SkillDir, { recursive: true });
+  writeFileSync(join(utf8SkillDir, 'SKILL.md'), skillContent);
+
+  server = startWeb(stateDir, 0);
+  const html = await getHtml('/definicion?ws=demo');
+
+  expect(html).toContain('skills/utf8-boundary/SKILL.md');
+  expect(html).toContain('Fichero grande truncado para visualización');
+  expect(html).not.toContain('\uFFFD');
+});
+
 test('la página no escribe en disco', async () => {
   seedWorkstream();
   server = startWeb(stateDir, 0);
