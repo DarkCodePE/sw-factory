@@ -60,7 +60,7 @@ export function readEvidence(stateDir: string, path: string): EvidenceText | nul
 
 // Regla de presentación; no amplía redact ni cambia la lectura histórica de improve.
 function redactForWeb(text: string): string {
-  return redact(text).replace(/-----BEGIN (?:[A-Z]+ )?PRIVATE KEY-----[\s\S]*$/g, '[REDACTED]');
+  return redact(text).replace(/-----BEGIN (?:[A-Z]+ )?PRIVATE KEY(?: BLOCK)?-----[\s\S]*$/g, '[REDACTED]');
 }
 
 export function evidencePath(changeId: string, file: string): string {
@@ -68,30 +68,42 @@ export function evidencePath(changeId: string, file: string): string {
   return `runs/${changeId}/${file}`;
 }
 
-export function redact(text: string): string {
-  return text
-    .replace(/-----BEGIN (?:[A-Z]+ )?PRIVATE KEY-----[\s\S]*?-----END (?:[A-Z]+ )?PRIVATE KEY-----/g, '[REDACTED]')
-    .replace(/\bBearer\s+[A-Za-z0-9._~+/=-]+/gi, 'Bearer [REDACTED]')
-    .replace(/\b(?:sk-[A-Za-z0-9_-]{16,}|AIza[\w-]{35})\b/g, '[REDACTED]')
-    .replace(/\b(?:AKIA|ASIA)[A-Z0-9]{16}\b/g, '[REDACTED]')
-    .replace(/\b(?:gh[pousr]_[A-Za-z0-9]{16,}|github_pat_[A-Za-z0-9_]{16,})\b/g, '[REDACTED]')
-    .replace(/\bxox[baprs]-[A-Za-z0-9-]{10,}\b/g, '[REDACTED]')
-    .replace(/\beyJ[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+\b/g, '[REDACTED]')
-    .replace(/\b([a-z][a-z0-9+.-]*:\/\/)[^\s/@]+:[^\s/@]+@/gi, '$1[REDACTED]@')
-    .replace(/\bglpat-[A-Za-z0-9_-]{16,}/g, '[REDACTED]')
-    .replace(/\bnpm_[A-Za-z0-9]{20,}\b/g, '[REDACTED]')
-    .replace(/-----BEGIN PGP PRIVATE KEY BLOCK-----[\s\S]*?-----END PGP PRIVATE KEY BLOCK-----/g, '[REDACTED]')
-    .replace(/\b((?:Set-)?Cookie\s*:\s*)[^\r\n]+/gi, '$1[REDACTED]')
-    .replace(/\b(authorization["']?\s*[:=]\s*)["']?(?:(?:basic|digest|token)\s+)?[^\s"',}]+["']?/gi, '$1[REDACTED]')
-    .replace(/(--[\w-]*(?:token|secret|password|passwd|api-?key)[\w-]*[\s=]+)["']?[^\s"']+["']?/gi, '$1[REDACTED]')
-    .replace(/(\bcurl\b[^\n]*?\s(?:-u|--user)[\s=]+)["']?[^\s"']+["']?/g, '$1[REDACTED]')
-    .replace(/\b(pass["']?\s*[:=]\s*)["']?[^\s"',}]+["']?/gi, '$1[REDACTED]')
-    .replace(new RegExp(`\\b([\\w-]*(?:${SECRET_WORDS})[\\w-]*["']?\\s*[:=]\\s*)["']?[^\\s"',}]+["']?`, 'gi'), '$1[REDACTED]');
+// Palabras que delatan un valor secreto en una clave; `pass` y las cabeceras van aparte y exactas, para no atrapar «bypass» o «Cookie banner».
+const SECRET_WORDS = 'api[_-]?key|token|secret|password|passwd|pwd|credential|private[_-]?key';
+const SECRET_KEY = new RegExp(`${SECRET_WORDS}|^(?:pass|authorization|proxy-authorization|cookie|set-cookie)$`, 'i');
+// Valor: entre comillas con escapes, o hasta el siguiente separador.
+const VALUE = String.raw`("(?:[^"\\\n]|\\.){0,4096}"|'(?:[^'\\\n]|\\.){0,4096}'|[^\s"',}]+)`;
+const quoted = (v: string) => /^["']/.test(v) ? `${v[0]}[REDACTED]${v[0]}` : '[REDACTED]';
+const mask = (re: RegExp) => [re, (_m: string, key: string, v: string) => key + quoted(v)] as const;
+
+/** Saneador de un campo JSON: el nombre decide el valor completo; el resto pasa por `redact`. Lo comparten el manifiesto y el lector de evidencia. */
+export function redactField(key: string, value: string): string {
+  return SECRET_KEY.test(key) ? '[REDACTED]' : redact(value);
 }
 
-// Palabras que delatan un valor secreto en una clave; `pass` va aparte y suelta, para no atrapar «bypass».
-const SECRET_WORDS = 'api[_-]?key|token|secret|password|passwd|pwd|credential|private[_-]?key';
-const SECRET_KEY = new RegExp(`${SECRET_WORDS}|^(?:pass|authorization|cookie)$`, 'i');
+const RULES: (readonly [RegExp, string | ((m: string, key: string, v: string) => string)])[] = [
+  [/-----BEGIN (?:[A-Z]+ )?PRIVATE KEY(?: BLOCK)?-----[\s\S]*?-----END (?:[A-Z]+ )?PRIVATE KEY(?: BLOCK)?-----/g, '[REDACTED]'],
+  [/\bBearer\s+[A-Za-z0-9._~+/=-]+/gi, 'Bearer [REDACTED]'],
+  [/\b(?:sk-[A-Za-z0-9_-]{16,}|AIza[\w-]{35})\b/g, '[REDACTED]'],
+  [/\b(?:AKIA|ASIA)[A-Z0-9]{16}\b/g, '[REDACTED]'],
+  [/\b(?:gh[pousr]_[A-Za-z0-9]{16,}|github_pat_[A-Za-z0-9_]{16,})\b/g, '[REDACTED]'],
+  [/\bxox[baprs]-[A-Za-z0-9-]{10,}\b/g, '[REDACTED]'],
+  [/\beyJ[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+\b/g, '[REDACTED]'],
+  [/\b([a-z][a-z0-9+.-]*:\/\/)[^\s/@]+:[^\s/@]+@/gi, '$1[REDACTED]@'],
+  [/\bglpat-[A-Za-z0-9_-]{16,}/g, '[REDACTED]'],
+  [/\bnpm_[A-Za-z0-9]{20,}\b/g, '[REDACTED]'],
+  [/\b((?:Set-)?Cookie[ \t]*:[ \t]*)[^\r\n]+/gi, '$1[REDACTED]'],
+  mask(new RegExp(String.raw`\b((?:proxy-)?authorization["']?[ \t]*[:=][ \t]*)${VALUE.replace('|[^', '|(?:(?:basic|digest|token|bearer)[ \\t]+)?[^')}`, 'gi')),
+  mask(new RegExp(String.raw`(--[\w-]*(?:token|secret|password|passwd|api-?key)[\w-]*(?:[ \t]+|=))(?!-)${VALUE}`, 'gi')),
+  mask(new RegExp(String.raw`(\bcurl\b[^\n]{0,500}?[ \t](?:-u|--user)(?:[ \t]+|=))${VALUE}`, 'g')),
+  mask(new RegExp(String.raw`\b(pass["']?[ \t]*[:=][ \t]*)${VALUE}`, 'gi')),
+  mask(new RegExp(String.raw`\b([\w-]*(?:${SECRET_WORDS})[\w-]*["']?\s*[:=]\s*)${VALUE}`, 'gi')),
+];
+
+export function redact(text: string): string {
+  return RULES.reduce((t, [re, to]) => t.replace(re, to as string), text);
+}
+
 
 
 export function activityMetadata(stateDir: string, a: Activity): Record<string, unknown> | null {

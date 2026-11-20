@@ -3,7 +3,7 @@
 import { existsSync, mkdirSync, readFileSync, renameSync, rmSync, writeFileSync } from 'node:fs';
 import { dirname, join, resolve } from 'node:path';
 import { randomUUID } from 'node:crypto';
-import { redact } from './evidence.ts';
+import { redact, redactField } from './evidence.ts';
 import type { Store } from './store.ts';
 import { DEFAULT_DIGEST, fabSha } from './profile.ts';
 import { GIT_SAFE_FLAGS, branchFor } from './worktrees.ts';
@@ -69,7 +69,7 @@ export function writeManifest(store: Store, changeId: string, stateDir = store.s
   const cleanup = { worktree: existsSync(join(stateDir, 'worktrees', c.id.slice(0, 8))) ? 'retained' : 'absent',
     branch: gitEvidence(ws.repo, 'show-ref', '--verify', `refs/heads/${branch}`) ? 'retained' : 'absent' };
   // Redact strings before JSON encoding so multiline PEMs cannot evade scrubbing.
-  const scrub = (_key: string, value: unknown) => typeof value === 'string' ? redact(value) : value;
+  const scrub = (key: string, value: unknown) => typeof value === 'string' ? redactField(key, value) : value;
   atomicEvidence(join(dir, 'run.json'), JSON.stringify({ schemaVersion: 1, changeId, status: c.status,
     profile: ws.profile ?? DEFAULT_DIGEST, fabSha: fabSha(),
     baseSha: c.baseSha, branch, head, createdAt: c.createdAt, updatedAt: c.updatedAt,
