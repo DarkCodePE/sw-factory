@@ -1,10 +1,12 @@
 // fab bench create|run|cancel|report|add-task. Superficie CLI de T66; las reglas viven en bench.ts y bench-task.ts.
 import type { Database } from 'bun:sqlite';
 import { parseArgs } from 'node:util';
-import { cancelBenchmark, createBenchmark, runBenchmark, type Variant } from './bench.ts';
+import { benchmarkSummary, cancelBenchmark, createBenchmark, runBenchmark, type Variant } from './bench.ts';
 import { writeSuiteWithTask } from './bench-task.ts';
 import { SPLITS, type Split } from './improve.ts';
 import { StoreError, type Store } from './store.ts';
+
+export { benchmarkSummary } from './bench.ts';
 
 const bad = (m: string) => new StoreError('invalid_input', m);
 const FORMAT = '--variant debe ser <nombre>=<digest>@<agente>';
@@ -17,36 +19,6 @@ export function parseVariant(raw: string): Variant {
 
 /** El error puede traer salida de un agente: una línea, sin caracteres de control. */
 const oneLine = (text: string) => text.replace(/[\x00-\x1f\x7f-\x9f]+/g, ' ').trim().slice(0, 300);
-
-const mean = (xs: number[]) => xs.reduce((a, b) => a + b, 0) / xs.length;
-
-/** Una sola fuente para la tabla y el JSON: los dos salen de aquí, así no pueden discrepar. */
-export function benchmarkSummary(db: Database, id: string) {
-  let b: { suite_digest: string; judge_profile: string | null; status: string; error: string | null } | null;
-  try { b = db.query('SELECT suite_digest, judge_profile, status, error FROM benchmarks WHERE id = ?').get(id) as typeof b; } catch { b = null; }
-  if (!b) throw new StoreError('not_found', `benchmark ${id} no existe`);
-  const rows = db.query('SELECT * FROM experiment_runs WHERE experiment_id = ? ORDER BY rowid').all(id) as Record<string, any>[];
-  const scored = db.query(`SELECT r.arm, s.scorer, s.score, s.passed FROM benchmark_scores s JOIN experiment_runs r ON r.rowid = s.run_rowid
-    WHERE s.benchmark_id = ?`).all(id) as { arm: string; scorer: string; score: number | null; passed: number | null }[];
-  const variants = [...new Set(rows.map(r => r.arm as string))].map(arm => {
-    const r = rows.filter(x => x.arm === arm);
-    // Un juez sin puntuar (score nulo) no entra en la tasa: se cuenta aparte, nunca como suspenso.
-    const judges = [...new Set(scored.filter(x => x.arm === arm).map(x => x.scorer))].sort().map(scorer => {
-      const j = scored.filter(x => x.arm === arm && x.scorer === scorer), ok = j.filter(x => x.score !== null);
-      const passed = ok.filter(x => x.passed === 1).length;
-      return { scorer, scored: ok.length, unscored: j.length - ok.length, passed, pass_rate: ok.length ? passed / ok.length : null, mean_score: ok.length ? mean(ok.map(x => x.score!)) : null };
-    });
-    const cost = r.map(x => x.cost_usd as number | null).filter((c): c is number => c !== null);
-    return {
-      variant: arm, agent: r[0]!.agent as string, profile: r[0]!.profile_digest as string, n: r.length,
-      success_rate: mean(r.map(x => x.success as number)), mean_diff_lines: mean(r.map(x => x.diff_lines as number)),
-      mean_duration_ms: mean(r.map(x => x.duration_ms as number)),
-      // Coste desconocido es null («—»), nunca 0; `cost_known` dice cuántas filas lo informaron.
-      mean_cost_usd: cost.length ? mean(cost) : null, cost_known: cost.length, judges,
-    };
-  });
-  return { benchmark: id, status: b.status, error: b.error, suite_digest: b.suite_digest, judge_profile: b.judge_profile, variants };
-}
 
 export function reportBenchmarkText(db: Database, id: string): string {
   const s = benchmarkSummary(db, id);

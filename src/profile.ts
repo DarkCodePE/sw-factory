@@ -26,6 +26,24 @@ export interface Profile {
   roles?: Partial<Record<Role, RoleConfig>>;
   /** Solo v2: jueces que clasifican ejecuciones terminadas. Son un aviso, nunca una puerta (T64). */
   scorers?: Record<string, ScorerDef>;
+  /** Política del digest vigente. También admite perfiles v1 sin activar el comportamiento de roles de v2. */
+  autoImprove?: AutoImprovePolicy;
+}
+
+export interface AutoThreshold { window: number; minScores: number; threshold: number }
+export interface AutoImprovePolicy extends AutoThreshold { scorers: string[]; instructions: string }
+
+export const DEFAULT_AUTO_THRESHOLD: Readonly<AutoThreshold> = { window: 20, minScores: 10, threshold: 0.4 };
+export const AUTO_INSTRUCTIONS_MAX = 8192;
+
+export function validateAutoThreshold(
+  { window, minScores, threshold }: AutoThreshold,
+  fields = { window: 'window', minScores: 'minScores', threshold: 'threshold' },
+): void {
+  if (!Number.isSafeInteger(window) || window < 1) throw new Error(`${fields.window} debe ser un entero ≥ 1`);
+  if (!Number.isSafeInteger(minScores) || minScores < 1) throw new Error(`${fields.minScores} debe ser un entero ≥ 1`);
+  if (minScores > window) throw new Error(`${fields.minScores} no puede superar ${fields.window}: el umbral no dispararía nunca`);
+  if (typeof threshold !== 'number' || !(threshold > 0 && threshold <= 1)) throw new Error(`${fields.threshold} debe estar en (0, 1]`);
 }
 
 export const SCORER_SCOPES = [...ROLES, 'change'] as const;
@@ -36,7 +54,7 @@ export interface ScorerDef { scope: ScorerScope; rubric: string; classes: Scorer
 const MAX_TEMPLATE = 32 * 1024;
 const WORKER_KEYS = ['rules', 'investigate', 'implement'];
 const VALIDATOR_KEYS = ['rules', 'code_review', 'security_audit', 'qa'];
-const TOP_KEYS = ['schemaVersion', 'harness', 'model', 'repo', 'worker', 'validators'];
+const TOP_KEYS = ['schemaVersion', 'harness', 'model', 'repo', 'worker', 'validators', 'autoImprove'];
 const TOP_KEYS_V2 = [...TOP_KEYS, 'roles', 'scorers'];
 const SCORER_NAME_RE = /^[a-z0-9][a-z0-9-]{0,40}$/;
 const CLASS_LABEL_RE = /^[a-z0-9_-]{1,24}$/;
@@ -121,6 +139,22 @@ function validateScorers(raw: unknown, profileHarness: string, modelOk: (m: unkn
   }
 }
 
+function validateAutoImprove(raw: unknown, scorers: Profile['scorers']): void {
+  if (!raw || typeof raw !== 'object' || Array.isArray(raw)) throw new Error('autoImprove debe ser un objeto');
+  const policy = raw as AutoImprovePolicy;
+  for (const key of Object.keys(policy)) {
+    if (!['window', 'minScores', 'threshold', 'scorers', 'instructions'].includes(key)) throw new Error('autoImprove contiene una clave desconocida');
+  }
+  validateAutoThreshold(policy);
+  if (!Array.isArray(policy.scorers) || new Set(policy.scorers).size !== policy.scorers.length ||
+      policy.scorers.some(name => typeof name !== 'string' || !Object.hasOwn(scorers ?? {}, name) || scorers?.[name]?.scope === 'change')) {
+    throw new Error('scorers debe incluir únicamente jueces de rol del mismo perfil, sin repetir');
+  }
+  if (typeof policy.instructions !== 'string' || policy.instructions.includes('\0') || Buffer.byteLength(policy.instructions) > AUTO_INSTRUCTIONS_MAX) {
+    throw new Error(`instructions debe ser texto sin NUL de hasta ${AUTO_INSTRUCTIONS_MAX} bytes`);
+  }
+}
+
 /** Valida esquema y plantillas. Lanza con un mensaje que nombra el campo. */
 export function validateProfile(raw: unknown): Profile {
   if (!raw || typeof raw !== 'object' || Array.isArray(raw)) throw new Error('perfil inválido: debe ser un objeto JSON');
@@ -156,6 +190,7 @@ export function validateProfile(raw: unknown): Profile {
     }
   }
   if (v2 && o.scorers !== undefined) validateScorers(o.scorers, o.harness as string, modelOk);
+  if (o.autoImprove !== undefined) validateAutoImprove(o.autoImprove, o.scorers as Profile['scorers']);
   templates(o.worker, WORKER_KEYS, 'worker');
   templates(o.validators, VALIDATOR_KEYS, 'validators');
   const w = o.worker as Record<string, string>, v = o.validators as Record<string, string>;

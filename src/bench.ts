@@ -66,13 +66,52 @@ export function createBenchmark(db: Database, stateDir: string, i: { id: string;
   }).immediate();
 }
 
-function getBenchmark(db: Database, id: string) {
-  if (!db.query("SELECT 1 FROM sqlite_schema WHERE type = 'table' AND name = 'benchmarks'").get()) throw notFound(id);
-  const row = db.query<{ suite: string; variants: string; status: string; judge_profile: string | null }, [string]>(
-    'SELECT suite, variants, status, judge_profile FROM benchmarks WHERE id = ?',
+const hasBenchmarks = (db: Database) =>
+  !!db.query("SELECT 1 FROM sqlite_schema WHERE type = 'table' AND name = 'benchmarks'").get();
+
+type BenchmarkRow = { id: string; status: string; variants: string; created_at: string };
+
+export function listBenchmarks(db: Database) {
+  if (!hasBenchmarks(db)) return [];
+  return db.query<BenchmarkRow, []>('SELECT id, status, variants, created_at FROM benchmarks ORDER BY created_at DESC, id').all()
+    .map(row => ({ ...row, variants: JSON.parse(row.variants) as Variant[] }));
+}
+
+export function getBenchmark(db: Database, id: string) {
+  if (!hasBenchmarks(db)) throw notFound(id);
+  const row = db.query<{ suite: string; suite_digest: string; variants: string; status: string; judge_profile: string | null; error: string | null }, [string]>(
+    'SELECT suite, suite_digest, variants, status, judge_profile, error FROM benchmarks WHERE id = ?',
   ).get(id);
   if (!row) throw notFound(id);
   return row;
+}
+
+const mean = (xs: number[]) => xs.reduce((a, b) => a + b, 0) / xs.length;
+
+/** Una sola fuente para la tabla y el JSON: los dos salen de aquí, así no pueden discrepar. */
+export function benchmarkSummary(db: Database, id: string) {
+  const b = getBenchmark(db, id);
+  const rows = db.query('SELECT * FROM experiment_runs WHERE experiment_id = ? ORDER BY rowid').all(id) as Record<string, any>[];
+  const scored = db.query(`SELECT r.arm, s.scorer, s.score, s.passed FROM benchmark_scores s JOIN experiment_runs r ON r.rowid = s.run_rowid
+    WHERE s.benchmark_id = ?`).all(id) as { arm: string; scorer: string; score: number | null; passed: number | null }[];
+  const variants = [...new Set(rows.map(r => r.arm as string))].map(arm => {
+    const r = rows.filter(x => x.arm === arm);
+    // Un juez sin puntuar (score nulo) no entra en la tasa: se cuenta aparte, nunca como suspenso.
+    const judges = [...new Set(scored.filter(x => x.arm === arm).map(x => x.scorer))].sort().map(scorer => {
+      const j = scored.filter(x => x.arm === arm && x.scorer === scorer), ok = j.filter(x => x.score !== null);
+      const passed = ok.filter(x => x.passed === 1).length;
+      return { scorer, scored: ok.length, unscored: j.length - ok.length, passed, pass_rate: ok.length ? passed / ok.length : null, mean_score: ok.length ? mean(ok.map(x => x.score!)) : null };
+    });
+    const cost = r.map(x => x.cost_usd as number | null).filter((c): c is number => c !== null);
+    return {
+      variant: arm, agent: r[0]!.agent as string, profile: r[0]!.profile_digest as string, n: r.length,
+      success_rate: mean(r.map(x => x.success as number)), mean_diff_lines: mean(r.map(x => x.diff_lines as number)),
+      mean_duration_ms: mean(r.map(x => x.duration_ms as number)),
+      // Coste desconocido es null («—»), nunca 0; `cost_known` dice cuántas filas lo informaron.
+      mean_cost_usd: cost.length ? mean(cost) : null, cost_known: cost.length, judges,
+    };
+  });
+  return { benchmark: id, status: b.status, error: b.error, suite_digest: b.suite_digest, judge_profile: b.judge_profile, variants };
 }
 
 export function cancelBenchmark(db: Database, id: string): void {

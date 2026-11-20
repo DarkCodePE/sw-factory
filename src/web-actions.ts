@@ -10,6 +10,10 @@ import { redact } from './manifest.ts';
 import { AdmissionDb, hasAdmission } from './admission/db.ts';
 import { answerQuestion } from './admission/answers.ts';
 import { resetSessionCap } from './admission/sessions.ts';
+import { cancelBenchmark } from './bench.ts';
+import { saveAutoImproveProfile } from './web-improve-auto.ts';
+import { saveSuiteCandidate, suiteTaskForm } from './web-bench.ts';
+import type { Split } from './improve.ts';
 import type { WebAuth } from './web-auth.ts';
 import { PROFILE_BODY_LIMIT, ProfileInputError, profileAction } from './web-profile.ts';
 import { enqueueBackfill, enqueueManual, ensureSchema, previewBackfill } from './scorers.ts';
@@ -55,7 +59,7 @@ export function actionForms(store: Store, url: URL, csrf?: string): string {
       body += form(`/changes/${id}/note`, `<fieldset><legend>Nota para el agente</legend><label for="note-body">Nota (máximo 8 KiB)</label><textarea id="note-body" name="body" rows="4" maxlength="8192" required></textarea><button>Guardar nota</button><p class="muted">No lanza ni interrumpe nada. Se entrega al empezar el siguiente turno de trabajo, una sola vez.${planned ? '' : ' Ahora no hay ningún turno previsto.'} Enviar dos veces crea dos notas.</p></fieldset>`);
     }
     if (!FINAL_STATUSES.includes(c.status)) body += form(`/changes/${id}/cancel`, `<fieldset><legend>Cancelar change</legend><label><input type="checkbox" name="confirm" value="yes" required> Confirmo: cancela el change y borra su worktree (igual que fab reject)</label><button>Cancelar change</button></fieldset>`);
-    return `<section aria-label="Decisiones">${body}</section>`;
+    return `<section aria-label="Decisiones">${body}${suiteTaskForm(c, store.stateDir, url, escape, csrf)}</section>`;
   }
   const a = store.getActivity(id);
   let body = '';
@@ -106,6 +110,43 @@ export const ACTIONS: Record<string, Action> = {
       const a = store.getActivity(id); out.destination = `/activities/${id}`;
       if (a.reviewStatus !== 'awaiting' && ['approved', 'commented', 'declined'].includes(a.reviewStatus ?? '')) throw new StoreError('conflict', 'revisión resuelta');
       store.resolveReview(id, input.decision as ReviewDecision, input.comment!);
+    },
+  },
+  'automejora/save': {
+    api: false,
+    path: route('automejora', 'save'),
+    input: raw => raw,
+    run: (store, id, input, out, _actor, stateDir) => {
+      out.destination = `/automejora?ws=${encodeURIComponent(id)}`;
+      try { out.destination += `&digest=${saveAutoImproveProfile(store, stateDir, id, input)}`; }
+      catch (error) {
+        if (error instanceof StoreError && error.code === 'invalid_input') throw new InputError(400, error.message);
+        throw error;
+      }
+    },
+  },
+  'benchmarks/cancel': {
+    api: false,
+    path: route('benchmarks', 'cancel'),
+    input: raw => {
+      if (raw.confirm !== 'yes') throw new InputError(400, 'Confirma la cancelación.');
+      return {};
+    },
+    run: (store, id, _input, out) => {
+      out.destination = `/benchmarks/${encodeURIComponent(id)}`;
+      cancelBenchmark(store.db, id);
+    },
+  },
+  'changes/suite-task': {
+    api: false,
+    path: route('changes', 'suite-task'),
+    input: pick('task', 'split', 'verify'),
+    run: (store, id, input, out, _actor, stateDir) => {
+      out.destination = `/changes/${encodeURIComponent(id)}`;
+      out.destination = saveSuiteCandidate(store, stateDir, id, {
+        id: input.task!, split: input.split as Split,
+        verify: input.verify?.trim() || undefined,
+      });
     },
   },
   'changes/retry': {
@@ -290,6 +331,7 @@ export async function performAction(stateDir: string, name: string, id: string, 
     finally { if (previous === undefined) delete process.env.FAB_ACTOR; else process.env.FAB_ACTOR = previous; }
     if (out.repo) { await writer.waitForRelease(id); await removeWorktree(out.repo, stateDir, id); }
   } catch (error) {
+    if (error instanceof InputError) throw error;
     out.result = error instanceof StoreError && messages[error.code] ? error.code : 'error';
   } finally { store?.close(); }
   return out;
