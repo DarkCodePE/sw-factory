@@ -116,15 +116,18 @@ test('argumentos inválidos: error claro y salida 1', async () => {
 });
 
 test('H1: SIGINT aborta y el manejador sobrevive al primer Ctrl-C; al soltar no queda ninguno', () => {
-  const before = process.listenerCount('SIGINT');
+  // Se compara por identidad: el runner de tests puede tener sus propios manejadores de SIGINT (en la CI, de un solo uso).
+  const before = new Set(process.listeners('SIGINT'));
   const ac = new AbortController();
   const dispose = abortOnSigint(ac);
+  const mine = process.listeners('SIGINT').filter(l => !before.has(l));
+  expect(mine.length).toBe(1);
   process.emit('SIGINT');
   expect(ac.signal.aborted).toBe(true);
   // Con `once` el segundo Ctrl-C no tendría manejador y mataría el proceso sin pasar por el finally de judge.
-  expect(process.listenerCount('SIGINT')).toBe(before + 1);
+  expect(process.listeners('SIGINT')).toContain(mine[0]);
   dispose();
-  expect(process.listenerCount('SIGINT')).toBe(before);
+  expect(process.listeners('SIGINT')).not.toContain(mine[0]);
 });
 
 test('H2: si a algún juez le falta historial, el total es «No medido», no una suma parcial', async () => {
