@@ -112,7 +112,8 @@ export const INBOX_JS = `(()=>{const K='fab.inbox.seen';const read=()=>{try{retu
 const apply=(root=document)=>{const s=read();root.querySelectorAll('[data-seen-id]').forEach(li=>{const on=s.has(li.dataset.seenId);li.classList.toggle('seen',on);const b=li.querySelector('[data-seen]');if(b){const t=on?'Visto · deshacer':'Marcar como visto';if(b.textContent!==t)b.textContent=t;b.setAttribute('aria-pressed',String(on))}})};
 const sel=()=>[...document.querySelectorAll('[data-sel]:checked')];
 const keep=root=>{if(root===document)return;const on=new Set(sel().map(c=>c.dataset.sel));root.querySelectorAll('[data-seen-id]').forEach(li=>{const c=li.querySelector('[data-sel]');if(c)c.checked=on.has(li.dataset.seenId)})};
-window.fabPrepare=root=>{apply(root);keep(root)};document.addEventListener('click',ev=>{const t=ev.target.closest&&ev.target.closest('[data-sel-all],[data-seen-sel],[data-copy]');if(!t)return;
+const copied=root=>{if(root===document)return;root.querySelectorAll('[data-copy]').forEach(b=>{const l=document.querySelector('[data-copy="'+b.dataset.copy+'"]');if(l&&l.textContent!==b.textContent)b.textContent=l.textContent})};
+window.fabPrepare=root=>{apply(root);keep(root);copied(root)};document.addEventListener('click',ev=>{const t=ev.target.closest&&ev.target.closest('[data-sel-all],[data-seen-sel],[data-copy]');if(!t)return;
 if(t.matches('[data-sel-all]')){const all=[...document.querySelectorAll('[data-sel]')];const on=all.some(c=>!c.checked);all.forEach(c=>{c.checked=on})}
 else if(t.matches('[data-seen-sel]')){const s=read();sel().forEach(c=>{const id=c.dataset.sel;t.dataset.seenSel==='1'?s.add(id):s.delete(id)});write(s);apply()}
 else{const v=t.dataset.copy;Promise.resolve().then(()=>navigator.clipboard.writeText(v)).then(()=>{t.textContent='Copiado'},()=>{t.textContent='No se pudo copiar'})}});

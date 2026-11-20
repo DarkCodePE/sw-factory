@@ -305,3 +305,14 @@ test('T94-H3: en solo lectura Perfiles trae (sin plantillas) el ancla a la que a
   expect(page).toContain(`id="${link[2]}"`);
   expect(page).not.toContain('<form action="/perfiles/guardar"'); expect(page).not.toContain('<textarea'); // T58: sin plantillas en solo lectura
 });
+
+test('T94-H4: una casilla con foco no frena el sondeo y el texto de «Copiar id» no lo desmonta', async () => {
+  const poll = await (server = startWeb(dir, 0), get('/poll.js'));
+  expect(poll).toContain("input:not([data-sel]),select,textarea"); // las casillas no cuentan como «escribiendo»
+  const mk = (text: string, id = 'abc') => ({ dataset: { copy: id }, textContent: text });
+  const live = mk('Copiado'), received = mk('Copiar id');
+  const win: Record<string, unknown> = {}; const doc = { querySelectorAll: () => [], addEventListener() {}, body: {}, querySelector: (s: string) => s === '[data-copy="abc"]' ? live : null };
+  new Function('window', 'document', 'localStorage', 'MutationObserver', 'navigator', INBOX_JS)(win, doc, { getItem: () => null, setItem() {} }, class { observe() {} }, {});
+  (win.fabPrepare as (r: unknown) => void)({ querySelectorAll: (s: string) => s === '[data-copy]' ? [received] : [] });
+  expect(received.textContent).toBe('Copiado'); // igual al vivo: el <main> no cambia y no se sustituye
+});
