@@ -300,6 +300,7 @@ async function recorrido(login: string) {
     abrir('/perfiles?ws=plataforma');
     const antes = leer(s => s.getWorkstream('plataforma').profile);
     eq(antes, semilla.profiles.v2, 'perfil inicial (v2 con roles)');
+    click('form[action="/perfiles/guardar"] details summary'); // T84: las plantillas van en un desplegable
     const campo = '[id="f-worker.investigate"]'; // se añade una línea: sustituir la plantilla entera pierde líneas obligatorias
     rellenar(campo, `${ab('get', 'value', campo)}\nLínea añadida por el e2e.`);
     click('form[action="/perfiles/guardar"] button'); await esperarTexto('Perfil guardado');
@@ -309,10 +310,11 @@ async function recorrido(login: string) {
     foto('perfil-guardado');
     ab('check', 'form[action="/perfiles/asignar"] input[name=confirm]');
     click('form[action="/perfiles/asignar"] button');
-    ab('wait', '--url', '**ws=plataforma'); // la página de «guardado» ya traía su aviso: se espera a la redirección de asignar
-    registrada('aviso de asignar');
-    eq(leer(s => s.getWorkstream('plataforma').profile), digest, 'perfil asignado');
-    eventosDe(marca);
+    ab('wait', '--url', '**ws=plataforma'); // la redirección de asignar
+    // T84: «plataforma» tiene trabajo vivo en la semilla, así que asignar se rechaza con su aviso y el perfil no cambia.
+    await esperarTexto('El workstream tiene trabajo vivo');
+    eq(leer(s => s.getWorkstream('plataforma').profile), antes, 'asignar con trabajo vivo no cambia el perfil');
+    void marca; // guardar y la asignación rechazada no dejan eventos
   });
 
   await flujo('workstream: guardar ajustes', async () => {
@@ -376,7 +378,9 @@ async function recorrido(login: string) {
     visita('/automations/nueva', 'Crear automation', 'automation-nueva');
     visita('/config/runners', 'Runners', 'runners');
     visita('/perfiles?ws=plataforma', 'Resolución sin override de CLI', 'roles-perfil');
-    abrir(`/changes/${id('nota')}`); eq(ab('get', 'count', 'input[type=file]'), '1', 'el formulario de nota ofrece el selector de adjunto'); foto('adjunto-formulario');
+    abrir(`/changes/${id('nota')}`); const selector = ab('get', 'count', 'input[type=file]') === '1';
+    // El estado del e2e vive bajo el repo (.e2e): con él dentro de un montaje escribible el adjunto se rechaza por diseño (T96) y la página lo dice.
+    assert(selector || paginaTexto().includes('Mientras tanto puedes guardar una nota de texto'), 'el formulario de nota ofrece el selector de adjunto o explica por qué no'); foto('adjunto-formulario');
   });
 
   await flujo('pool fake: el change triado avanza y la web lo refleja', async () => {
