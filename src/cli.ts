@@ -14,6 +14,7 @@ import { benchMain } from './bench-cli.ts';
 import { improveMain } from './improve-cli.ts';
 import { abortOnSigint, scoreMain } from './scorers-cli.ts';
 import { automationMain } from './automation-cli.ts';
+import { apiKeyMain } from './api-key-cli.ts';
 import type { ReviewDecision, WorkstreamState } from './enums.ts';
 import { runPool } from './pool.ts';
 import { Store, StoreError } from './store.ts';
@@ -97,6 +98,7 @@ const HELP = `fab — agente de código y fábrica de software local
   fab score backfill <slug> [--since <iso>] [--scorer <name>] [--yes]   vista previa (nº y coste) y, con --yes, encola
   fab ws list
   fab profile export [--out f] | import <f> | inspect <digest> | list   perfiles de instrucciones inmutables por digest
+  fab api-key create --name <n> --scope read|decide | list | revoke <id|nombre>   claves de la API local (la clave se muestra una vez)
   fab ws state <slug> <active|paused|archived>
   fab signal add <slug> <title> [--body <text>]
   fab signal list <slug>
@@ -159,6 +161,10 @@ async function main(argv: string[]): Promise<number> {
   if (argv[0] === 'jira' || argv[0] === 'pr') return connectorsMain(argv[0], argv.slice(1));
   if (argv[0] === 'agents') return agentsMain(argv.slice(1));
   if (argv[0] === 'profile') { mkdirSync(STATE_DIR, { recursive: true }); return profileMain(argv.slice(1), STATE_DIR); }
+  if (argv[0] === 'api-key') {
+    const store = openStore();
+    try { return apiKeyMain(argv.slice(1), store); } finally { store.close(); }
+  }
   if (argv[0] === 'improve') {
     const store = openStore();
     try { return await improveMain(argv.slice(1), store, STATE_DIR); } finally { store.close(); }
@@ -442,7 +448,7 @@ async function main(argv: string[]): Promise<number> {
   }
 }
 
-const COMMANDS = new Set(['worktree', 'ws', 'signal', 'triage', 'inbox', 'review', 'run', 'status', 'show', 'merge', 'retry', 'gate', 'reject', 'events', 'tui', 'doctor', 'agents', 'profile', 'improve', 'bench', 'score', 'automation', 'resident', 'help']);
+const COMMANDS = new Set(['worktree', 'ws', 'signal', 'triage', 'inbox', 'review', 'run', 'status', 'show', 'merge', 'retry', 'gate', 'reject', 'events', 'tui', 'doctor', 'agents', 'profile', 'improve', 'bench', 'score', 'automation', 'api-key', 'resident', 'help']);
 
 // A forced exit is still needed for handles left by dependencies, but pipe
 // writes are asynchronous: wait for both write queues before terminating.
