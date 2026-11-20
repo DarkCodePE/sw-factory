@@ -12,6 +12,7 @@ import { configPage } from './web-config.ts';
 import { PROFILE_BODY_LIMIT, profilesPage } from './web-profile.ts';
 
 import { INBOX_JS, changesView, inboxView, parseQuery, type Ui } from './web-changes.ts';
+import { activityScores } from './web-scorers.ts';
 import { metricsPage, METRICS_STYLE } from './web-metrics.ts';
 import { WebAuth } from './web-auth.ts';
 import { turnsSection, notesSection, turnLogRoute } from './web-turns.ts';
@@ -104,7 +105,7 @@ function page(store: Store, stateDir: string, url: URL, csrf?: string): { title:
   const costs = activityCosts(a, meta);
   const count = Math.max(costs?.length ?? 0, a.retryCount + (a.status === 'failed' ? 0 : 1), 1);
   const duration = typeof meta?.durationMs === 'number' && Number.isFinite(meta.durationMs) ? meta.durationMs : null;
-  return { title: `Activity · ${a.validator ?? a.kind}`, body: `<p><a href="/changes/${enc(c.id)}">${escape(c.title)}</a></p><div class="summary">${badge(a.status)} ${a.reviewStatus ? badge(a.reviewStatus) : ''}<span>${escape(a.id)}</span></div>${actionForms(store, url, csrf)}<h2>Intentos</h2><div class="table-wrap"><table><thead><tr><th>Intento</th><th>Coste</th><th>Duración</th></tr></thead><tbody>${Array.from({ length: count }, (_, i) => `<tr><td>${i + 1}</td><td>${money(costs?.[i] ?? null)}</td><td>${i === count - 1 && duration !== null ? `${duration} ms` : 'No medida'}</td></tr>`).join('')}</tbody></table></div><p class="muted">La evidencia histórica solo conserva la duración del último intento.</p><h2>Veredicto y resultado</h2><p>Validador: ${escape(a.validator ?? (a.kind === 'gates' ? 'gate' : 'No aplica'))} · Revisión: ${escape(labels[a.reviewStatus ?? ''] ?? a.reviewStatus ?? 'Sin veredicto')}</p><pre tabindex="0">${escape([a.reviewComment, a.result, a.error].filter(Boolean).join('\n') || 'Sin resultado registrado.')}</pre>${evidence(stateDir, c.id, `${a.id}.log`, 'Log')}${evidence(stateDir, c.id, `${a.id}.json`, 'Metadata de ejecución')}${evidence(stateDir, c.id, 'run.json', 'run.json')}${evidence(stateDir, c.id, 'diff.patch', 'Diff')}` };
+  return { title: `Activity · ${a.validator ?? a.kind}`, body: `<p><a href="/changes/${enc(c.id)}">${escape(c.title)}</a></p><div class="summary">${badge(a.status)} ${a.reviewStatus ? badge(a.reviewStatus) : ''}<span>${escape(a.id)}</span></div>${actionForms(store, url, csrf)}${activityScores(store, stateDir, a, csrf)}<h2>Intentos</h2><div class="table-wrap"><table><thead><tr><th>Intento</th><th>Coste</th><th>Duración</th></tr></thead><tbody>${Array.from({ length: count }, (_, i) => `<tr><td>${i + 1}</td><td>${money(costs?.[i] ?? null)}</td><td>${i === count - 1 && duration !== null ? `${duration} ms` : 'No medida'}</td></tr>`).join('')}</tbody></table></div><p class="muted">La evidencia histórica solo conserva la duración del último intento.</p><h2>Veredicto y resultado</h2><p>Validador: ${escape(a.validator ?? (a.kind === 'gates' ? 'gate' : 'No aplica'))} · Revisión: ${escape(labels[a.reviewStatus ?? ''] ?? a.reviewStatus ?? 'Sin veredicto')}</p><pre tabindex="0">${escape([a.reviewComment, a.result, a.error].filter(Boolean).join('\n') || 'Sin resultado registrado.')}</pre>${evidence(stateDir, c.id, `${a.id}.log`, 'Log')}${evidence(stateDir, c.id, `${a.id}.json`, 'Metadata de ejecución')}${evidence(stateDir, c.id, 'run.json', 'run.json')}${evidence(stateDir, c.id, 'diff.patch', 'Diff')}` };
 }
 
 export function startWeb(stateDir: string, port = 4310, options: { write?: boolean } = {}) {
@@ -149,7 +150,7 @@ export function startWeb(stateDir: string, port = 4310, options: { write?: boole
         store = openStore();
         const log = turnLogRoute(store.db, stateDir, url.pathname);
         if (log) return respond(log.body, log.status, 'text/plain; charset=utf-8');
-        const content = isMetrics ? metricsPage(store, stateDir, url) : isConfig ? await configPage(store, stateDir, url, escape) : isProfiles ? profilesPage(store, stateDir, url, escape, auth?.sessionCsrf(req)) : isExperiments ? experimentsPage(store.db, url.pathname) : isFlow ? flowPage(store, url, escape) : page(store, stateDir, url, auth?.sessionCsrf(req));
+        const content = isMetrics ? metricsPage(store, stateDir, url, auth?.sessionCsrf(req)) : isConfig ? await configPage(store, stateDir, url, escape) : isProfiles ? profilesPage(store, stateDir, url, escape, auth?.sessionCsrf(req)) : isExperiments ? experimentsPage(store.db, url.pathname) : isFlow ? flowPage(store, url, escape) : page(store, stateDir, url, auth?.sessionCsrf(req));
         if (!content) return respond('Página no encontrada', 404, 'text/plain; charset=utf-8');
         content.body = actionNotice(req.method === 'GET' ? auth?.takeNotice(req, url.pathname) : undefined) + content.body;
         const workstreams = store.listWorkstreams();

@@ -89,6 +89,12 @@ function scopesOf(a: Activity): ScorerScope[] {
   return [];
 }
 
+/** Nombres de los jueces del perfil de la activity cuyo ámbito casa con ella; vacío si no es puntuable. */
+export function scorersFor(stateDir: string, a: Activity): string[] {
+  const scopes = scopesOf(a);
+  return Object.entries(profileOf(stateDir, a)?.profile.scorers ?? {}).filter(([, d]) => scopes.includes(d.scope)).map(([n]) => n);
+}
+
 export function subjectsFor(store: Store, wsId: string, since?: string): { activity: Activity; scope: ScorerScope }[] {
   return store.listActivities({ workstream: wsId })
     .filter((a) => !since || (a.completedAt ?? '') >= since)
@@ -144,10 +150,13 @@ export function enqueueManual(store: Store, stateDir: string, activityId: string
 
 const hasScores = (db: Database) => db.query("SELECT 1 FROM sqlite_master WHERE name = 'scores'").get() !== null;
 
+export interface BackfillOpts { since?: string; scorer?: string; rescore?: boolean }
+
 /** Pares (activity, juez) de un rango sin ninguna fila en `scores`: las ya puntuadas o en cola se saltan. Solo lectura. */
-export function backfillCandidates(store: Store, stateDir: string, wsId: string, opts: { since?: string; scorer?: string } = {}): { activity: Activity; scorer: string }[] {
+export function backfillCandidates(store: Store, stateDir: string, wsId: string, opts: BackfillOpts = {}): { activity: Activity; scorer: string }[] {
   const ws = store.getWorkstream(wsId);
-  const seen = hasScores(store.db) ? store.db.query('SELECT 1 FROM scores WHERE scorer = ? AND profile_digest = ? AND subject_activity_id = ? LIMIT 1') : null;
+  // `rescore` (web): repite también las ya puntuadas, pero nunca encima de una fila pendiente o en curso.
+  const seen = hasScores(store.db) ? store.db.query(`SELECT 1 FROM scores WHERE scorer = ? AND profile_digest = ? AND subject_activity_id = ? ${opts.rescore ? "AND status IN ('pending','running')" : ''} LIMIT 1`) : null;
   const cache = new Map<string, Profile | null>();
   const out: { activity: Activity; scorer: string }[] = [];
   for (const { activity: a, scope } of subjectsFor(store, ws.id, opts.since)) {
@@ -160,7 +169,7 @@ export function backfillCandidates(store: Store, stateDir: string, wsId: string,
 }
 
 /** Vista previa de puntuar ejecuciones pasadas. El coste sale de las puntuaciones ya hechas del juez; sin historial es null («No medido»), nunca 0. */
-export function previewBackfill(store: Store, stateDir: string, wsId: string, opts: { since?: string; scorer?: string } = {}):
+export function previewBackfill(store: Store, stateDir: string, wsId: string, opts: BackfillOpts = {}):
   { runs: number; byScorer: { scorer: string; runs: number; avgCostUsd: number | null }[]; estimatedUsd: number | null } {
   const cands = backfillCandidates(store, stateDir, wsId, opts);
   const counts = new Map<string, number>();
@@ -172,10 +181,48 @@ export function previewBackfill(store: Store, stateDir: string, wsId: string, op
 }
 
 /** Encola el rango como `backfill`; quien llama ya mostró la vista previa. */
-export function enqueueBackfill(store: Store, stateDir: string, wsId: string, opts: { since?: string; scorer?: string } = {}): number {
+export function enqueueBackfill(store: Store, stateDir: string, wsId: string, opts: BackfillOpts = {}): number {
   const cands = backfillCandidates(store, stateDir, wsId, opts);
   for (const c of cands) enqueueManual(store, stateDir, c.activity.id, c.scorer, 'backfill');
   return cands.length;
+}
+
+// ---- T65: consultas de solo lectura para la web (no crean la tabla) ------------------------------
+
+export interface ScoreFilter { wsId?: string; since?: string; scorer?: string }
+const where = (f: ScoreFilter, extra = '') => {
+  const c = [extra, f.wsId && 'workstream_id = $ws', f.since && 'created_at >= $since', f.scorer && 'scorer = $scorer'].filter(Boolean);
+  return { sql: c.length ? `WHERE ${c.join(' AND ')}` : '', p: { ...(f.wsId && { ws: f.wsId }), ...(f.since && { since: f.since }), ...(f.scorer && { scorer: f.scorer }) } as Record<string, string> };
+};
+
+export interface ScorerSummary { scorer: string; profileDigest: string; scope: string; done: number; failed: number; pending: number; passed: number; costUsd: number | null; unmeasured: number }
+/** Una fila por (juez, perfil). La tasa de aprobado es passed/done; el coste es null si ninguna ejecución lo midió. */
+export function scorerSummary(db: Database, f: ScoreFilter = {}): ScorerSummary[] {
+  if (!hasScores(db)) return [];
+  const w = where(f);
+  return (db.query(`SELECT scorer, profile_digest AS profileDigest, MIN(scope) AS scope, SUM(status='done') AS done, SUM(status='failed') AS failed,
+    SUM(status IN ('pending','running')) AS pending, SUM(status='done' AND passed=1) AS passed, SUM(cost_usd) AS costUsd, SUM(status='done' AND cost_usd IS NULL) AS unmeasured
+    FROM scores ${w.sql} GROUP BY scorer, profile_digest ORDER BY scorer, profile_digest`).all(w.p as never) as ScorerSummary[]);
+}
+
+/** Aprobadas y puntuadas por día y juez. Solo cuentan las filas `done` con veredicto. */
+export function passByDay(db: Database, f: ScoreFilter = {}): { day: string; scorer: string; done: number; passed: number }[] {
+  if (!hasScores(db)) return [];
+  const w = where(f, "status = 'done' AND passed IS NOT NULL");
+  return db.query(`SELECT substr(COALESCE(finished_at, created_at), 1, 10) AS day, scorer, COUNT(*) AS done, SUM(passed) AS passed
+    FROM scores ${w.sql} GROUP BY day, scorer ORDER BY day DESC, scorer`).all(w.p as never) as never;
+}
+
+export interface ScoreRow { id: string; scorer: string; round: number; origin: string; status: string; label: string | null; score: number | null; passed: number | null;
+  costUsd: number | null; createdAt: string; changeId: string; changeTitle: string | null; subjectActivityId: string; profileDigest: string }
+/** Historial, lo más reciente primero. La explicación del juez no sale: deriva de texto no confiable (A6). */
+export function scoreRows(db: Database, f: ScoreFilter & { activityId?: string } = {}, limit = 200): ScoreRow[] {
+  if (!hasScores(db)) return [];
+  const w = where(f);
+  const act = f.activityId ? `${w.sql ? w.sql + ' AND' : 'WHERE'} subject_activity_id = $act` : w.sql;
+  return db.query(`SELECT s.id, scorer, round, origin, s.status, label, score, passed, cost_usd AS costUsd, s.created_at AS createdAt, change_id AS changeId, c.title AS changeTitle,
+    subject_activity_id AS subjectActivityId, profile_digest AS profileDigest FROM (SELECT * FROM scores ${act} ORDER BY created_at DESC, id LIMIT ${Math.trunc(limit)}) s
+    LEFT JOIN changes c ON c.id = s.change_id ORDER BY s.created_at DESC, s.id`).all({ ...w.p, ...(f.activityId && { act: f.activityId }) } as never) as ScoreRow[];
 }
 
 // ---- material -----------------------------------------------------------------------------------

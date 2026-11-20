@@ -1,6 +1,7 @@
 import type { Store } from './store.ts';
 import { calculateMetrics, type MetricsRange } from './metrics.ts';
 import { redact } from './evidence.ts';
+import { scorersPanel } from './web-scorers.ts';
 const esc = (v: unknown) => redact(String(v ?? '')).replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[c]!);
 const money = (v: number | null) => v === null ? 'No medido' : `${v.toFixed(2)} USD`;
 const duration = (v: number | null) => v === null ? 'No medido' : `${(v / 3600000).toLocaleString('es', { maximumFractionDigits: 2 })} h`;
@@ -11,7 +12,16 @@ function bars(name: string, rows: [string, number][]) {
   const max = Math.max(1, ...rows.map(r => r[1]));
   return `<svg role="img" aria-label="${esc(name)}; valores en la tabla siguiente" viewBox="0 0 350 ${Math.max(1, rows.length) * 36}" width="350" height="${Math.max(1, rows.length) * 36}">${rows.map(([label, v], i) => `<text x="0" y="${i * 36 + 21}" fill="currentColor" font-size="14">${esc(label)}</text><rect x="145" y="${i * 36 + 7}" width="${v / max * 155}" height="20" fill="currentColor"/><text x="315" y="${i * 36 + 21}" fill="currentColor" font-size="14">${v}</text>`).join('')}</svg>`;
 }
-export function metricsPage(store: Store, stateDir: string, url: URL): { title: string; body: string } {
+const tabs = (active: string, q: string) => `<nav aria-label="Secciones de métricas" class="tabs"><a href="/metricas${q}"${active === 'resumen' ? ' aria-current="page"' : ''}>Resumen</a> <a href="/metricas?tab=jueces${q ? '&amp;' + q.slice(1) : ''}"${active === 'jueces' ? ' aria-current="page"' : ''}>Jueces</a></nav>`;
+export function metricsPage(store: Store, stateDir: string, url: URL, csrf?: string): { title: string; body: string } {
+  if (url.searchParams.get('tab') === 'jueces') {
+    if (!['7', '30', 'all'].includes(url.searchParams.get('range') ?? '7')) throw new URIError('Rango inválido');
+    return { title: 'Métricas · Jueces', body: tabs('jueces', '') + scorersPanel(store, stateDir, url, csrf) };
+  }
+  const page = metricsSummary(store, stateDir, url);
+  return { title: page.title, body: tabs('resumen', '') + page.body };
+}
+function metricsSummary(store: Store, stateDir: string, url: URL): { title: string; body: string } {
   const ws = url.searchParams.get('ws') || undefined, range = url.searchParams.get('range') ?? '7';
   if (!['7', '30', 'all'].includes(range)) throw new URIError('Rango inválido');
   const m = calculateMetrics(store, stateDir, { ws, range: range as MetricsRange });
