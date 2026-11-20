@@ -97,6 +97,7 @@ function validateScorers(raw: unknown, profileHarness: string, modelOk: (m: unkn
     });
     for (const k of ['passing', 'sampling'] as const) if (!unit(d[k])) throw new Error(`perfil inválido: ${at}.${k} debe ser un número entre 0 y 1`);
     // El juez corre siempre confinado: su adaptador (propio o el del perfil) debe poder confinarse.
+    if (d.harness !== undefined && typeof d.harness !== 'string') throw new Error(`perfil inválido: ${at}.harness debe ser un adaptador confinable (${CONFINABLE_AGENTS.join(', ')})`);
     const adapter = d.harness ?? profileHarness;
     if (typeof adapter !== 'string' || !AGENT_NAMES.includes(adapter) || !CONFINABLE_AGENTS.includes(adapter)) throw new Error(`perfil inválido: ${at}.harness debe ser un adaptador confinable (${CONFINABLE_AGENTS.join(', ')})`);
     modelOk(d.model, adapter, `${at}.model`);
