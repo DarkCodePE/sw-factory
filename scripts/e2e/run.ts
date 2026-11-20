@@ -366,6 +366,19 @@ async function recorrido(login: string) {
     abrir('/changes/no-existe'); assert(paginaTexto().includes('Registro no encontrado'), '404 de un change inexistente');
   });
 
+  await flujo('páginas de la ronda T77–T98 (solo lectura): webhooks, definición, benchmarks, automejora, claves API, automations, runners, roles y adjuntos', async () => {
+    const visita = (ruta: string, texto: string, nombre: string) => { abrir(ruta); assert(paginaTexto().includes(texto), `${nombre}: falta «${texto}»`); foto(nombre); };
+    visita('/webhooks', 'Webhooks', 'webhooks');
+    visita('/definicion', 'Definición', 'definicion');
+    visita('/benchmarks', 'No hay benchmarks', 'benchmarks');
+    visita('/automejora?ws=plataforma', 'Automejora', 'automejora');
+    visita('/config/claves-api', 'Claves API', 'claves-api');
+    visita('/automations/nueva', 'Crear automation', 'automation-nueva');
+    visita('/config/runners', 'Runners', 'runners');
+    visita('/perfiles?ws=plataforma', 'Resolución sin override de CLI', 'roles-perfil');
+    abrir(`/changes/${id('nota')}`); eq(ab('get', 'count', 'input[type=file]'), '1', 'el formulario de nota ofrece el selector de adjunto'); foto('adjunto-formulario');
+  });
+
   await flujo('pool fake: el change triado avanza y la web lo refleja', async () => {
     assert(cambioPool, 'depende del flujo de triaje');
     const s = new Store(join(semilla.stateDir, 'fabrica.db'));

@@ -10,7 +10,7 @@ const run = async (...args: string[]) => {
   const out = await new Response(p.stdout).text(); return { out, code: await p.exited };
 };
 // Palabras que siguen a «fab» en prosa y no son un verbo.
-const PROSA = new Set(['existente']);
+const PROSA = new Set(['existente', 'la', 'registra']); // «fab la clave…» (T90) y «fab registra…» (T87): prosa de textos nuevos
 
 test('T80: cada verbo de fab que cita la web está en `fab --help`', async () => {
   const { out: help } = await run('--help');
