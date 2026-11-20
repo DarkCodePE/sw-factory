@@ -82,6 +82,10 @@ export interface Workstream {
   verifySetupHash?: string | null;
   /** Digest del perfil de instrucciones fijado; null = perfil por defecto. */
   profile: string | null;
+  /** Variables de entorno que el workstream permite a sus agentes (solo nombres); null = modo anterior. */
+  envAllow: string[] | null;
+  /** Servidores MCP que el workstream permite a sus agentes; null = modo anterior. */
+  mcpAllow: string[] | null;
 }
 
 export interface Signal {
@@ -273,8 +277,29 @@ function toWorkstream(r: Row): Workstream {
     verifySetup: r.verify_setup == null ? [] : JSON.parse(r.verify_setup as string),
     verifySetupHash: (r.verify_setup_hash as string | null) ?? null,
     profile: (r.profile as string | null) ?? null,
+    envAllow: r.env_allow == null ? null : JSON.parse(r.env_allow as string),
+    mcpAllow: r.mcp_allow == null ? null : JSON.parse(r.mcp_allow as string),
     createdAt: r.created_at as string,
   };
+}
+
+const ENV_NAME = /^[A-Z_][A-Z0-9_]{0,63}$/;
+const ENV_FORBIDDEN = /^(PATH|HOME|TMPDIR|NODE_OPTIONS|LD_.*|BUN_.*|GIT_CONFIG.*|FAB_.*|FABRICA_.*)$/;
+const MCP_NAME = /^[a-z0-9][a-z0-9-]{0,40}$/;
+
+/** Reglas de nombres de T71 §4.2; el valor de una variable nunca entra aquí. */
+function checkAllowNames(field: 'env_allow' | 'mcp_allow', names: string[]): void {
+  const env = field === 'env_allow';
+  const max = env ? 16 : 8;
+  if (names.length > max) throw new StoreError('invalid_input', `${field}: como máximo ${max} nombres`);
+  if (new Set(names).size !== names.length) throw new StoreError('invalid_input', `${field}: nombres repetidos`);
+  for (const [i, n] of names.entries()) {
+    const ok = typeof n === 'string' && (env ? ENV_NAME.test(n) : MCP_NAME.test(n));
+    // No se repite el texto: una línea de --import podría ser un valor.
+    if (!ok) throw new StoreError('invalid_input', `${field}: el nombre nº ${i + 1} no es válido`);
+    if (env && ENV_FORBIDDEN.test(n)) throw new StoreError('invalid_input', `${field}: ${n} está prohibido (controla el cargador, git o la fab)`);
+    if (!env && n === 'fab') throw new StoreError('invalid_input', `${field}: "fab" está reservado`);
+  }
 }
 
 function toSignal(r: Row): Signal {
@@ -492,6 +517,8 @@ export class Store {
     this.addColumn('activities', 'lease_expires_at', 'TEXT');
     this.addColumn('activities', 'agent_pgid', 'INTEGER');
     this.addColumn('workstreams', 'profile', 'TEXT');
+    this.addColumn('workstreams', 'env_allow', 'TEXT');
+    this.addColumn('workstreams', 'mcp_allow', 'TEXT');
     this.addColumn('activities', 'profile_digest', 'TEXT');
     this.addColumn('activities', 'fab_sha', 'TEXT');
     this.addColumn('activities', 'agent', 'TEXT');
@@ -601,6 +628,28 @@ export class Store {
       this.event(ws.id, 'info', `workstream ${ws.state} -> ${next}`);
     });
     return this.getWorkstream(ws.id);
+  }
+
+  setWorkstreamEnvAllow(idOrSlug: string, names: string[] | null): Workstream {
+    return this.#setAllow(idOrSlug, 'env_allow', names);
+  }
+
+  setWorkstreamMcpAllow(idOrSlug: string, names: string[] | null): Workstream {
+    return this.#setAllow(idOrSlug, 'mcp_allow', names);
+  }
+
+  #setAllow(idOrSlug: string, field: 'env_allow' | 'mcp_allow', names: string[] | null): Workstream {
+    if (names !== null) checkAllowNames(field, names);
+    const next = names === null ? null : JSON.stringify(names);
+    this.withRetry(() => {
+      this.db.transaction(() => {
+        const ws = this.getWorkstream(idOrSlug);
+        const prev = (field === 'env_allow' ? ws.envAllow : ws.mcpAllow);
+        this.db.query(`UPDATE workstreams SET ${field} = ? WHERE id = ?`).run(next, ws.id);
+        this.event(ws.id, 'info', `${field}: ${prev === null ? 'legacy' : JSON.stringify(prev)} -> ${next ?? 'legacy'}`);
+      }).immediate();
+    });
+    return this.getWorkstream(idOrSlug);
   }
 
   // ---- signals -----------------------------------------------------------
