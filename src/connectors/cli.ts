@@ -149,6 +149,7 @@ export async function connectorsMain(cmd: 'jira' | 'pr', argv: string[], deps: C
     if (pr.repo !== repo || pr.branch !== change.branch) throw new Error('El PR recibido no corresponde al change');
     deps.crash?.('pr-created');
     getLinks(true)!.setPullRequest(change.id, pr);
+    getStore().recordPrOpened(change.id, pr.url);
     if (hasAdmission(getStore())) {
       const adm = new AdmissionDb(getStore()), threads = new ThreadLinks(adm);
       const first = threads.threadsOf(change.id)[0];

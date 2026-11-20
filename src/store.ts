@@ -2007,6 +2007,39 @@ export class Store {
     return { changes, total };
   }
 
+  /** Registra el PR abierto como evento de change. La URL debe comenzar por https://. */
+  recordPrOpened(changeId: string, url: string): void {
+    if (!url.startsWith('https://')) throw new StoreError('invalid_input', 'la URL del PR debe comenzar por https://');
+    const c = this.getChange(changeId);
+    this.event(c.workstreamId, 'info', `pr_opened: ${url}`, changeId);
+  }
+
+  /** Registra el merge del change como evento. */
+  recordMerged(changeId: string): void {
+    const c = this.getChange(changeId);
+    this.event(c.workstreamId, 'info', 'merge_completed', changeId);
+  }
+
+  /** Obtiene la URL del PR asociada a un change, si existe y es https://. Solo lectura local. */
+  getChangePrUrl(changeId: string): string | null {
+    const ev = this.db.query("SELECT message FROM events WHERE change_id = ? AND (message GLOB 'pr_opened: https://*' OR message GLOB 'pr_opened https://*' OR message GLOB 'pr opened: https://*') ORDER BY id ASC LIMIT 1").get(changeId) as { message: string } | null;
+    if (ev) {
+      const match = /pr_?opened:?\s*(https:\/\/\S+)/i.exec(ev.message);
+      if (match && match[1]) return match[1];
+    }
+    const hasLinks = this.db.query("SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'change_links'").get();
+    if (hasLinks) {
+      const row = this.db.query('SELECT pr_json FROM change_links WHERE change_id = ?').get(changeId) as { pr_json: string | null } | null;
+      if (row?.pr_json) {
+        try {
+          const pr = JSON.parse(row.pr_json) as { url?: string };
+          if (pr.url && typeof pr.url === 'string' && pr.url.startsWith('https://')) return pr.url;
+        } catch {}
+      }
+    }
+    return null;
+  }
+
   /** Intervenciones humanas agrupadas por día para series temporales. */
   metricsDailyInterventions(changeIds: string[], until: string): Map<string, number> {
     if (!changeIds.length) return new Map();
@@ -2019,15 +2052,33 @@ export class Store {
     return new Map(rows.map(r => [r.day, r.n]));
   }
 
+  /** PRs abiertos y fusionados agrupados por día para series temporales. */
+  metricsDailyPrs(changeIds: string[], until: string): { opened: Map<string, number>; merged: Map<string, number> } {
+    if (!changeIds.length) return { opened: new Map(), merged: new Map() };
+    const prOpen = "(message GLOB 'pr_opened: https://*' OR message GLOB 'pr_opened https://*' OR message GLOB 'pr opened: https://*')";
+    const merge = "(message IN ('merge_completed','merged','change merged') OR message LIKE 'merge_completed:%' OR message LIKE 'merged:%')";
+    const openedRows = this.db.query(`SELECT substr(created_at, 1, 10) AS day, COUNT(*) AS n
+      FROM events WHERE change_id IN (${changeIds.map(() => '?').join(',')}) AND julianday(created_at) <= julianday(?)
+      AND ${prOpen} GROUP BY substr(created_at, 1, 10)`).all(...changeIds, until) as Array<{ day: string; n: number }>;
+    const mergedRows = this.db.query(`SELECT substr(created_at, 1, 10) AS day, COUNT(*) AS n
+      FROM events WHERE change_id IN (${changeIds.map(() => '?').join(',')}) AND julianday(created_at) <= julianday(?)
+      AND ${merge} GROUP BY substr(created_at, 1, 10)`).all(...changeIds, until) as Array<{ day: string; n: number }>;
+    return { opened: new Map(openedRows.map(r => [r.day, r.n])), merged: new Map(mergedRows.map(r => [r.day, r.n])) };
+  }
+
   /** Hitos y acciones humanas registrados. No interpreta texto de issues; ignora el agotamiento de reintentos de un validador (su cuarentena, bloqueo y reintento humano sí cuentan). */
-  metricsEvents(changeIds: string[], until: string): Array<{ changeId: string; reviewAt: string | null; decisionAt: string | null; terminalAt: string | null; reviews: number; answers: number; retries: number }> {
+  metricsEvents(changeIds: string[], until: string): Array<{ changeId: string; reviewAt: string | null; decisionAt: string | null; terminalAt: string | null; reviews: number; answers: number; retries: number; prOpenedAt: string | null; mergedAt: string | null }> {
     if (!changeIds.length) return [];
     const review = "(message = 'change_review approved' OR message LIKE 'change_review approved:%' OR message = 'change_review commented' OR message LIKE 'change_review commented:%' OR message = 'change_review declined' OR message LIKE 'change_review declined:%' OR message = 'investigation approved' OR message LIKE 'investigation approved:%' OR message = 'investigation commented' OR message LIKE 'investigation commented:%' OR message = 'investigation declined' OR message LIKE 'investigation declined:%')";
     const terminal = "(message IN ('change completed','change canceled','change_review declined','investigation declined') OR message LIKE 'change_review declined:%' OR message LIKE 'investigation declined:%' OR message LIKE 'blocked:%' OR message LIKE 'quarantined:%' OR message GLOB 'change_review failed permanently:*' OR message GLOB 'investigation failed permanently:*' OR message GLOB 'implementation failed permanently:*' OR message GLOB 'steward failed permanently:*' OR message GLOB 'gates failed permanently:*')";
+    const prOpen = "(message GLOB 'pr_opened: https://*' OR message GLOB 'pr_opened https://*' OR message GLOB 'pr opened: https://*')";
+    const merge = "(message IN ('merge_completed','merged','change merged') OR message LIKE 'merge_completed:%' OR message LIKE 'merged:%')";
     return this.db.query(`SELECT change_id AS changeId,
       MIN(CASE WHEN message = 'investigation awaiting spec review' THEN created_at END) AS reviewAt,
       MIN(CASE WHEN ${review} THEN created_at END) AS decisionAt,
       MIN(CASE WHEN ${terminal} THEN created_at END) AS terminalAt,
+      MIN(CASE WHEN ${prOpen} THEN created_at END) AS prOpenedAt,
+      MIN(CASE WHEN ${merge} THEN created_at END) AS mergedAt,
       SUM(CASE WHEN ${review} THEN 1 ELSE 0 END) AS reviews,
       SUM(CASE WHEN message GLOB 'human reply received (question *); re-queued' THEN 1 ELSE 0 END) AS answers,
       SUM(CASE WHEN message GLOB 'change retried (*)' THEN 1 ELSE 0 END) AS retries

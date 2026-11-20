@@ -53,6 +53,7 @@ export function calculateMetrics(store: Store, stateDir: string, options: { ws?:
   const cohort = store.metricsCohort(options.ws, since, until, METRICS_LIMIT);
   const events = new Map(store.metricsEvents(cohort.changes.map(c => c.id), until).map(e => [e.changeId, e]));
   const values: number[][] = [[], [], [], []];
+  const kickoffPr: number[] = [], prMerge: number[] = [];
   const kinds: string[] = [], adapters = new Map<string, CostGroup>(), models = new Map<string, CostGroup>();
   const sources = new Map<string, CostGroup>(), actors = new Map<string, CostGroup>();
   const humans: Array<{ id: string; title: string; reviews: number; answers: number; retries: number; total: number }> = [];
@@ -66,6 +67,14 @@ export function calculateMetrics(store: Store, stateDir: string, options: { ws?:
     // change_review se crea ya solicitando revisión, incluso después de resolverse.
     const milestones = [first(acts.map(a => a.createdAt)), first([...acts.filter(a => a.kind === 'change_review' && !a.validator).map(a => a.createdAt), e?.reviewAt]), first([e?.decisionAt]), first([e?.terminalAt])];
     milestones.forEach((t, i) => { if (t !== null) values[i]!.push(t - Date.parse(c.createdAt)); });
+
+    // Tramos con PR
+    const prAt = e?.prOpenedAt ? Date.parse(e.prOpenedAt) : NaN;
+    const mergeAt = e?.mergedAt ? Date.parse(e.mergedAt) : NaN;
+    const createdMs = Date.parse(c.createdAt);
+    if (Number.isFinite(prAt) && prAt >= createdMs && prAt <= now) kickoffPr.push(prAt - createdMs);
+    if (Number.isFinite(prAt) && Number.isFinite(mergeAt) && mergeAt >= prAt && mergeAt <= now) prMerge.push(mergeAt - prAt);
+
     const reviews = e?.reviews ?? 0, answers = e?.answers ?? 0, retries = e?.retries ?? 0;
     humans.push({ id: c.id, title: c.title, reviews, answers, retries, total: reviews + answers + retries });
     let cost: number | null = null;
@@ -128,9 +137,11 @@ export function calculateMetrics(store: Store, stateDir: string, options: { ws?:
   }
 
   const dailyInterventionsMap = store.metricsDailyInterventions(cohort.changes.map(c => c.id), until);
+  const dailyPrsMap = store.metricsDailyPrs(cohort.changes.map(c => c.id), until);
   const dailyChanges: Array<number | null> = [];
   const dailyCosts: Array<number | null> = [];
   const dailyInterventions: Array<number | null> = [];
+  const dailyPrs: Array<{ opened: number | null; merged: number | null }> = [];
 
   for (const day of days) {
     const dayChanges = cohort.changes.filter(c => c.createdAt.slice(0, 10) === day);
@@ -148,12 +159,25 @@ export function calculateMetrics(store: Store, stateDir: string, options: { ws?:
     }
     const intCount = dailyInterventionsMap.get(day);
     dailyInterventions.push(intCount !== undefined && intCount > 0 ? intCount : null);
+    const op = dailyPrsMap.opened.get(day);
+    const mg = dailyPrsMap.merged.get(day);
+    dailyPrs.push({
+      opened: op !== undefined && op > 0 ? op : null,
+      merged: mg !== undefined && mg > 0 ? mg : null,
+    });
   }
+
+  const prCycles = [
+    { name: 'Kickoff → PR', ...distribution(kickoffPr) },
+    { name: 'PR → primera revisión humana', ...distribution([]) },
+    { name: 'PR → merge', ...distribution(prMerge) },
+  ];
 
   return { count: cohort.changes.length, omitted: cohort.total - cohort.changes.length, since, until,
     cycles: ['Primera activity', 'Primera revisión pedida', 'Primera decisión humana', 'Primer estado terminal registrado'].map((name, i) => ({ name, ...distribution(values[i]!) })),
+    prCycles,
     humans, states: counts(cohort.changes.map(c => c.status)), kinds: counts(kinds),
-    daily: { days, changes: dailyChanges, costs: dailyCosts, interventions: dailyInterventions },
+    daily: { days, changes: dailyChanges, costs: dailyCosts, interventions: dailyInterventions, prs: dailyPrs },
     cost: { total: unknownChanges ? null : measured, measured, unknownChanges,
       top: measuredCosts.sort((a, b) => b.cost - a.cost || a.id.localeCompare(b.id)).slice(0, 10),
       adapters: [...adapters.values()], models: [...models.values()],

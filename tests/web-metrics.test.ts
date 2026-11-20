@@ -297,3 +297,93 @@ test('T82 HTTP: rango libre vía HTTP y rechazo de rangos inválidos', async () 
     store = new Store(join(dir, 'fabrica.db'));
   }
 });
+
+test('T83: ciclo con PR (kickoff→PR, PR→primera revisión humana, PR→merge); tramos exactos con eventos sintéticos', () => {
+  const c1 = store.createChange('uno', 'Change con PR', '');
+  store.db.query("UPDATE changes SET created_at=?, status='completed' WHERE id=?").run('2026-11-18T00:00:00Z', c1.id);
+  store.event(c1.workstreamId, 'info', 'pr_opened: https://github.com/org/repo/pull/42', c1.id);
+  store.db.query("UPDATE events SET created_at=? WHERE change_id=? AND message LIKE 'pr_opened%'").run('2026-11-18T02:00:00Z', c1.id);
+  store.event(c1.workstreamId, 'info', 'merge_completed', c1.id);
+  store.db.query("UPDATE events SET created_at=? WHERE change_id=? AND message='merge_completed'").run('2026-11-18T05:00:00Z', c1.id);
+
+  const c2 = store.createChange('uno', 'Change sin PR', '');
+  store.db.query("UPDATE changes SET created_at=? WHERE id=?").run('2026-11-18T00:00:00Z', c2.id);
+
+  const m = calculateMetrics(store, dir, { range: '7', now });
+  const kickoffPr = m.prCycles.find(c => c.name === 'Kickoff → PR')!;
+  expect(kickoffPr.median).toBe(2 * 3600000);
+  expect(kickoffPr.samples).toBe(1);
+
+  const prReview = m.prCycles.find(c => c.name === 'PR → primera revisión humana')!;
+  expect(prReview.median).toBeNull();
+  expect(prReview.samples).toBe(0);
+
+  const prMerge = m.prCycles.find(c => c.name === 'PR → merge')!;
+  expect(prMerge.median).toBe(3 * 3600000);
+  expect(prMerge.samples).toBe(1);
+
+  expect(m.count).toBe(2);
+  expect(m.count - kickoffPr.samples).toBe(1);
+  expect(m.count - prMerge.samples).toBe(1);
+});
+
+test('T83: serie de PRs abiertos y fusionados en el tiempo', () => {
+  const c = store.createChange('uno', 'Change serie PRs', '');
+  store.db.query("UPDATE changes SET created_at=? WHERE id=?").run('2026-11-17T00:00:00Z', c.id);
+
+  store.event(c.workstreamId, 'info', 'pr_opened: https://github.com/org/repo/pull/10', c.id);
+  store.db.query("UPDATE events SET created_at=? WHERE change_id=? AND message LIKE 'pr_opened%'").run('2026-11-17T12:00:00Z', c.id);
+  store.event(c.workstreamId, 'info', 'merge_completed', c.id);
+  store.db.query("UPDATE events SET created_at=? WHERE change_id=? AND message='merge_completed'").run('2026-11-18T12:00:00Z', c.id);
+
+  const { body: html } = metricsPage(store, dir, new URL('http://127.0.0.1:4310/metricas?from=2026-11-17&to=2026-11-19'));
+  expect(html).toContain('PRs abiertos y fusionados por día');
+  expect(html).toContain('Tramos del ciclo con PR');
+  expect(html).toContain('Kickoff → PR');
+  expect(html).toContain('PR → merge');
+  expect(html).toContain('PR → primera revisión humana');
+});
+
+test('T83: detalle del change muestra enlace al PR, escapa URL, solo admite https, y sin PR es No medido', async () => {
+  const c1 = store.createChange('uno', 'Change con PR https', '');
+  store.recordPrOpened(c1.id, 'https://github.com/org/repo/pull/99?param=1&other=<script>');
+
+  const c2 = store.createChange('uno', 'Change sin PR', '');
+
+  const c3 = store.createChange('uno', 'Change con PR http no seguro', '');
+  store.db.exec("CREATE TABLE IF NOT EXISTS change_links (change_id TEXT PRIMARY KEY, source_system TEXT, source_key TEXT, source_url TEXT, pr_json TEXT)");
+  store.db.query("INSERT INTO change_links (change_id, pr_json) VALUES (?, ?)").run(c3.id, JSON.stringify({ url: 'http://insecure.test/pr/1' }));
+
+  store.close();
+  const server = startWeb(dir, 0);
+  try {
+    const r1 = await fetch(`http://127.0.0.1:${server.port}/changes/${c1.id}`);
+    expect(r1.status).toBe(200);
+    const html1 = await r1.text();
+    expect(html1).toContain('https://github.com/org/repo/pull/99?param=1&amp;other=&lt;script&gt;');
+    expect(html1).not.toContain('<script>');
+    expect(html1).toContain('<a href="https://github.com/org/repo/pull/99?param=1&amp;other=&lt;script&gt;"');
+
+    const r2 = await fetch(`http://127.0.0.1:${server.port}/changes/${c2.id}`);
+    expect(r2.status).toBe(200);
+    const html2 = await r2.text();
+    expect(html2).toContain('PR: No medido');
+
+    const r3 = await fetch(`http://127.0.0.1:${server.port}/changes/${c3.id}`);
+    expect(r3.status).toBe(200);
+    const html3 = await r3.text();
+    expect(html3).toContain('PR: No medido');
+    expect(html3).not.toContain('http://insecure.test');
+  } finally {
+    server.stop(true);
+    store = new Store(join(dir, 'fabrica.db'));
+  }
+});
+
+test('T83: recordPrOpened solo admite https', () => {
+  const c = store.createChange('uno', 'c', '');
+  expect(() => store.recordPrOpened(c.id, 'http://inseguro.test')).toThrow();
+  expect(() => store.recordPrOpened(c.id, 'javascript:alert(1)')).toThrow();
+  store.recordPrOpened(c.id, 'https://github.com/owner/repo/pull/1');
+  expect(store.getChangePrUrl(c.id)).toBe('https://github.com/owner/repo/pull/1');
+});

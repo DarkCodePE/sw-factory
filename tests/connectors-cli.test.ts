@@ -68,6 +68,10 @@ test('Jira import → change → implementation → PR → HU comment uses only 
   expect((f.opened[0] as any).draft).toBe(true);
   expect(f.comments[0]).toContain('https://github.com/owner/project/pull/3');
   expect(f.links.get(change.id)?.pr?.number).toBe(3);
+  expect(f.store.getChangePrUrl(change.id)).toBe('https://github.com/owner/project/pull/3');
+  const prEvents = f.store.listEvents(change.workstreamId, 50, change.id).filter(e => typeof e.message === 'string' && e.message.startsWith('pr_opened:'));
+  expect(prEvents).toHaveLength(1);
+  expect(prEvents[0]?.message).toBe('pr_opened: https://github.com/owner/project/pull/3');
   expect(await connectorsMain('pr', ['show', change.id], f.deps)).toBe(0);
   expect(f.output.join('\n')).toContain(`HU: ${issue.ref.key}`);
   expect(await connectorsMain('jira', ['comment', change.id], f.deps)).toBe(0);
