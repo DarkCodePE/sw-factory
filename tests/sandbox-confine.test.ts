@@ -1,4 +1,4 @@
-import { expect, test } from 'bun:test';
+import { expect, spyOn, test } from 'bun:test';
 import { existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { getAgent, runAgent } from '../src/agents.ts';
@@ -44,7 +44,7 @@ print('STATUS: done')`],
   } finally { rmSync(root, { recursive: true, force: true }); }
 });
 
-test.skipIf(!canConfine)('confinement works without a host user site or pytest launcher', () => {
+test.skipIf(!canConfine)('confinement works without a host user site or pytest launcher', async () => {
   const root = mkdtempSync('/tmp/fab-no-user-site-');
   const original = process.env.HOME;
   try {
@@ -52,7 +52,7 @@ test.skipIf(!canConfine)('confinement works without a host user site or pytest l
     process.env.HOME = root;
     const confined = confineAgent('simulated', ['sh', '-c', 'test ! -e /home/agent/.local'], root);
     try {
-      expect(Bun.spawnSync(confined.argv, { env: confined.env }).exitCode).toBe(0);
+      expect(await confined.spawn('ignore').exited).toBe(0);
     } finally { confined.cleanup(); }
   } finally { process.env.HOME = original; rmSync(root, { recursive: true, force: true }); }
 });
@@ -111,21 +111,93 @@ test('confinement fails closed when bwrap is missing or broken', async () => {
   } finally { process.env.PATH = original; rmSync(root, { recursive: true, force: true }); }
 });
 
+test.skipIf(!canConfine)('T98: una preparación rechazada elimina el scratch', () => {
+  const root = mkdtempSync('/tmp/fab-confine-prep-');
+  const temp = join(root, 'temp');
+  const saved = process.env.TMPDIR;
+  try {
+    mkdirSync(temp);
+    process.env.TMPDIR = temp;
+    expect(Bun.spawnSync(['git', 'init', '-q', root]).exitCode).toBe(0);
+    expect(() => confineAgent('claude', ['sh', '-c', 'true'], root, {}, join(root, '.git', 'projects'))).toThrow(/preparación falló: .*escribible/);
+    expect(readdirSync(temp)).toEqual([]);
+  } finally {
+    if (saved === undefined) delete process.env.TMPDIR; else process.env.TMPDIR = saved;
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test.skipIf(!canConfine).each(['lanzamiento', 'lectura', 'cancelación'])('T98: limpia el scratch ante un fallo de %s', async phase => {
+  const root = mkdtempSync('/tmp/fab-confine-error-');
+  const launch = Bun.spawn;
+  let home: string | undefined;
+  let pid: number | undefined;
+  let exited: Promise<number> | undefined;
+  const hook = spyOn(Bun, 'spawn').mockImplementation(((...args: Parameters<typeof Bun.spawn>) => {
+    const argv = args[0];
+    if (!Array.isArray(argv) || !argv.includes('--chdir')) return launch(...args);
+    home = argv[argv.indexOf('/home/agent') - 1];
+    if (phase === 'lanzamiento') throw new Error('detalle-interno-sintético');
+    const child = launch(...args);
+    pid = child.pid;
+    exited = child.exited;
+    // Response.text() falla al intentar leer el otro extremo de este pipe bloqueado.
+    if (phase === 'lectura') (child.stdout as ReadableStream).getReader();
+    return child;
+  }) as typeof Bun.spawn);
+  try {
+    expect(Bun.spawnSync(['git', 'init', '-q', root]).exitCode).toBe(0);
+    const adapter = { name: 'fake', command: () => ['sh', '-c', 'exec sleep 30'] };
+    const ac = new AbortController();
+    const error = await runAgent(adapter, '', root, 4000, {
+      confine: true,
+      signal: ac.signal,
+      onSpawn: () => { if (phase === 'cancelación') ac.abort(); },
+    }).catch(e => e);
+    if (phase !== 'lanzamiento') {
+      expect(pid).toBeDefined();
+      expect(() => process.kill(pid!, 0)).toThrow();
+    }
+    expect(home).toBeDefined();
+    expect(existsSync(home!)).toBe(false);
+    expect(error).toBeInstanceOf(Error);
+    expect(error.message).toContain(phase === 'cancelación' ? 'agente o montaje falló' : phase);
+    expect(error.message).not.toContain('detalle-interno-sintético');
+  } finally {
+    hook.mockRestore();
+    if (pid !== undefined) {
+      try { process.kill(-pid, 'SIGKILL'); } catch {}
+      await exited;
+    }
+    if (home) rmSync(join(home, '..'), { recursive: true, force: true });
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+async function collect(c: ReturnType<typeof confineAgent>) {
+  try {
+    const child = c.spawn('ignore');
+    const [exitCode, stdout, stderr] = await Promise.all([child.exited, new Response(child.stdout).text(), new Response(child.stderr).text()]);
+    return { exitCode, stdout, stderr };
+  } finally { c.cleanup(); }
+}
+
 // T40: `claude --resume` needs the transcript to outlive the ephemeral sandbox HOME.
 function inSandbox(script: string, cwd: string, claudeProjects?: string) {
   const c = confineAgent('claude', ['sh', '-c', script], cwd, {}, claudeProjects);
-  try { return Bun.spawnSync(c.argv, { env: c.env }); } finally { c.cleanup(); }
+  expect(c.inspection.mountsClaudeProjects).toBe(claudeProjects !== undefined);
+  return collect(c);
 }
 
-test.skipIf(!canConfine)('claudeProjects persists /home/agent/.claude/projects across confined calls of one worktree', () => {
+test.skipIf(!canConfine)('claudeProjects persists /home/agent/.claude/projects across confined calls of one worktree', async () => {
   const root = mkdtempSync('/tmp/fab-proj-'), state = mkdtempSync('/tmp/fab-proj-state-');
   try {
     expect(Bun.spawnSync(['git', 'init', '-q', root]).exitCode).toBe(0);
     const projects = join(state, 'live', 'abc', 'claude-projects');
-    const w = inSandbox('echo transcript > /home/agent/.claude/projects/s.jsonl', root, projects);
+    const w = await inSandbox('echo transcript > /home/agent/.claude/projects/s.jsonl', root, projects);
     expect(w.exitCode).toBe(0);
-    const r = inSandbox('cat /home/agent/.claude/projects/s.jsonl', root, projects);
-    expect(r.stdout.toString().trim()).toBe('transcript');
+    const r = await inSandbox('cat /home/agent/.claude/projects/s.jsonl', root, projects);
+    expect(r.stdout.trim()).toBe('transcript');
   } finally { rmSync(root, { recursive: true, force: true }); rmSync(state, { recursive: true, force: true }); }
 });
 
@@ -154,29 +226,32 @@ test.skipIf(!canConfine)('T41: claude-projects dentro del git dir y cambiado por
   } finally { rmSync(root, { recursive: true, force: true }); rmSync(victim, { recursive: true, force: true }); }
 });
 
-test.skipIf(!canConfine)('without claudeProjects nothing persists: each confined call gets a fresh HOME', () => {
+test.skipIf(!canConfine)('without claudeProjects nothing persists: each confined call gets a fresh HOME', async () => {
   const root = mkdtempSync('/tmp/fab-noproj-');
   try {
     expect(Bun.spawnSync(['git', 'init', '-q', root]).exitCode).toBe(0);
-    inSandbox('mkdir -p /home/agent/.claude/projects && echo transcript > /home/agent/.claude/projects/s.jsonl', root);
-    const r = inSandbox('test -e /home/agent/.claude/projects/s.jsonl', root);
+    const w = await inSandbox('mkdir -p /home/agent/.claude/projects && echo transcript > /home/agent/.claude/projects/s.jsonl', root);
+    expect(w.exitCode).toBe(0);
+    const r = await inSandbox('test -e /home/agent/.claude/projects/s.jsonl', root);
     expect(r.exitCode).not.toBe(0);
     expect(existsSync(join(root, '.git', 'fab-live'))).toBe(false);
   } finally { rmSync(root, { recursive: true, force: true }); }
 });
 
-test.skipIf(!canConfine)('T41: mcpConfig se monta en solo lectura en una ruta fija y sustituye todas las apariciones en el argv; falla cerrado si falta, hay symlink o cae en un montaje escribible', () => {
+test.skipIf(!canConfine)('T41: mcpConfig se monta en solo lectura en una ruta fija y sustituye todas las apariciones en el argv; falla cerrado si falta, hay symlink o cae en un montaje escribible', async () => {
   const root = mkdtempSync('/tmp/fab-mcp-'), state = mkdtempSync('/tmp/fab-mcp-state-'), victim = mkdtempSync('/tmp/fab-mcp-victim-');
   try {
     expect(Bun.spawnSync(['git', 'init', '-q', root]).exitCode).toBe(0);
     const cfg = join(state, 'mcp.json');
     writeFileSync(cfg, '{"t":1}');
     const run = (file: string, argv: string[], mcp = file) => {
-      const c = confineAgent('claude', argv, root, {}, undefined, mcp); try { return Bun.spawnSync(c.argv, { env: c.env }); } finally { c.cleanup(); }
+      const c = confineAgent('claude', argv, root, {}, undefined, mcp);
+      expect(c.inspection.mountsMcpConfigReadOnly).toBe(true);
+      return collect(c);
     };
-    const ok = run(cfg, ['sh', '-c', 'cat /opt/fab-mcp/mcp.json && ! (echo x >> /opt/fab-mcp/mcp.json) && test "$0" = /opt/fab-mcp/mcp.json && test "$1" = /opt/fab-mcp/mcp.json', cfg, cfg]);
+    const ok = await run(cfg, ['sh', '-c', 'cat /opt/fab-mcp/mcp.json && ! (echo x >> /opt/fab-mcp/mcp.json) && test "$0" = /opt/fab-mcp/mcp.json && test "$1" = /opt/fab-mcp/mcp.json', cfg, cfg]);
     expect(ok.exitCode).toBe(0);
-    expect(ok.stdout.toString()).toBe('{"t":1}');
+    expect(ok.stdout).toBe('{"t":1}');
     expect(() => run(cfg, ['sh', '-c', 'true'])).toThrow(/argv/); // ruta ausente del argv
     const live = join(root, '.git', 'state', 'live', 'abc');
     mkdirSync(join(live, 'mcp'), { recursive: true });

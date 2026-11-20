@@ -8,12 +8,13 @@ import { agentEnv, type AgentEnvInput } from './env.ts';
 /** Adaptadores que corren confinados; el perfil exige uno de ellos a los jueces. */
 export const CONFINABLE_AGENTS: readonly string[] = ['claude', 'codex', 'fake', 'simulated'];
 
-export function assertConfinement(agent: string): void {
+export function assertConfinement(agent: string): string {
   if (!CONFINABLE_AGENTS.includes(agent)) throw new Error(`--confine: adaptador ${agent} no soportado`);
   const bwrap = Bun.which('bwrap', { PATH: process.env.PATH });
   if (!bwrap) throw new Error('--confine requiere bubblewrap (bwrap); no se ejecutará sin aislar');
   const p = Bun.spawnSync([bwrap, '--ro-bind', '/usr', '/usr', '--symlink', 'usr/bin', '/bin', '--symlink', 'usr/lib', '/lib', '--symlink', 'usr/lib64', '/lib64', '--unshare-pid', '--proc', '/proc', '--dev', '/dev', '--', '/bin/true']);
   if (p.exitCode !== 0) throw new Error(`--confine: bubblewrap no funciona: ${p.stderr.toString().trim()}`);
+  return bwrap;
 }
 
 const MCP_CONFIG_IN_SANDBOX = '/opt/fab-mcp/mcp.json';
@@ -45,11 +46,9 @@ export function hostDir(dir: string, cwd: string): string {
 /** Modo declarado (T72): el resto de entradas de `agentEnv` las pone `confineAgent`. */
 export type EnvDecl = Pick<Partial<AgentEnvInput>, 'wsAllow' | 'channel' | 'roleEnv' | 'mcpRequired'>;
 
-/**
- * `argv` no lleva ningún valor de variable: `bwrap` hereda `env` (el llamador DEBE lanzarlo con él; `runAgent` lo hace) y el hijo recibe exactamente ese entorno.
- */
+/** Prepara un lanzador que siempre entrega a bwrap el entorno calculado aquí. */
 export function confineAgent(name: string, argv: string[], cwd: string, extra: Record<string, string> = {}, claudeProjects?: string, mcpConfig?: string, model?: string, decl?: EnvDecl) {
-  assertConfinement(name);
+  const bwrap = assertConfinement(name);
   const scratch = mkdtempSync(join(tmpdir(), 'fab-confine-'));
   try {
     const home = join(scratch, 'home');
@@ -63,7 +62,7 @@ export function confineAgent(name: string, argv: string[], cwd: string, extra: R
     const writable = writableMounts(worktree);
     for (const path of writable) args.push('--bind', path, path);
     const binary = Bun.which(argv[0]!, { PATH: process.env.PATH });
-    if (!binary) throw new Error(`--confine: ejecutable ausente: ${argv[0]}`);
+    if (!binary) throw new Error('ejecutable del agente ausente');
     const command = [...argv];
     if (!realpathSync(binary).startsWith('/usr/')) {
       args.push('--ro-bind', realpathSync(binary), '/opt/fab-agent/agent');
@@ -112,8 +111,26 @@ export function confineAgent(name: string, argv: string[], cwd: string, extra: R
     const env: Record<string, string> = { PATH: '/opt/fab-runtime:/usr/local/bin:/usr/bin:/bin:/home/agent/.local/bin', HOME: '/home/agent', TMPDIR: '/tmp', LANG: 'C.UTF-8',
       GIT_CONFIG_COUNT: '2', GIT_CONFIG_KEY_0: 'user.name', GIT_CONFIG_VALUE_0: 'fab', GIT_CONFIG_KEY_1: 'user.email', GIT_CONFIG_VALUE_1: 'fab@local' };
     Object.assign(env, { ...agentEnv({ adapter: name, confined: true, channel: false, wsAllow: null, roleEnv: [], mcpRequired: [], ...decl, host: { ...process.env, ...extra }, model }).env, ...env });
-    args.push('--chdir', worktree, '--', ...command);
-    return { argv: [Bun.which('bwrap', { PATH: process.env.PATH })!, ...args], env, cleanup: () => rmSync(scratch, { recursive: true, force: true }) };
+    const inspection = Object.freeze({
+      envNames: Object.freeze(Object.keys(env).sort()),
+      newSession: args.includes('--new-session'),
+      mcpConfigCount: command.filter(arg => arg === '--mcp-config').length,
+      mountsClaudeProjects: args.includes('/home/agent/.claude/projects'),
+      mountsMcpConfigReadOnly: args.some((arg, i) => arg === '--ro-bind' && args[i + 2] === MCP_CONFIG_IN_SANDBOX),
+    });
+    const launchArgv = [bwrap, ...args, '--chdir', worktree, '--', ...command];
+    return {
+      inspection,
+      spawn(input: Uint8Array | 'ignore') {
+        if (input !== 'ignore' && !(input instanceof Uint8Array)) throw new Error('--confine: entrada de lanzamiento inválida');
+        try {
+          return Bun.spawn(launchArgv, { cwd: worktree, env, stdin: input, stdout: 'pipe', stderr: 'pipe', detached: true });
+        } catch {
+          throw new Error('--confine: lanzamiento falló');
+        }
+      },
+      cleanup: () => rmSync(scratch, { recursive: true, force: true }),
+    };
   } catch (e) {
     rmSync(scratch, { recursive: true, force: true });
     throw new Error(`--confine: preparación falló: ${(e as Error).message}`, { cause: e });
