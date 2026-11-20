@@ -1235,13 +1235,15 @@ export class Store {
     ).all();
   }
 
-  revokeApiKey(idOrName: string): void {
+  revokeApiKey(target: string | { id: string }): void {
     this.withRetry(() => {
-      // Si un nombre coincide con el id de otra clave, el id tiene prioridad.
+      // La CLI conserva la búsqueda por nombre con prioridad del id. La web identifica una fila por id.
+      const id = typeof target === 'string' ? target : target.id;
+      const name = typeof target === 'string' ? target : null;
       const { changes } = this.db.query(
         `UPDATE api_keys SET revoked_at = COALESCE(revoked_at, ?)
          WHERE id = (SELECT id FROM api_keys WHERE id = ? OR name = ? ORDER BY (id = ?) DESC LIMIT 1)`,
-      ).run(this.now(), idOrName, idOrName, idOrName);
+      ).run(this.now(), id, name, id);
       if (changes === 0) throw new StoreError('not_found', 'clave API no encontrada');
     });
   }
