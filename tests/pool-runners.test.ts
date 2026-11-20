@@ -212,3 +212,14 @@ test('R10: la activity de gates corre en casa y no abre ninguna sesión', async 
   expect(gates?.status).toBe('completed');
   expect(store.getActivity(gates!.id).runner).toBeNull();
 });
+
+test('el prompt que viaja al runner no lleva rutas de casa (el agente trabaja en el cwd del runner)', async () => {
+  const ws = workstream();
+  store.setWorkstreamRunner(ws.id, 'torre');
+  const c = store.createChange(ws.id, 'fix', 'desc');
+  await runPool(store, opts(ws.id, { runnerTransport: fake('auto') }));
+  expect(store.listActivities({ changeId: c.id }).every(a => a.status === 'completed')).toBe(true);
+  const sent = readFileSync(join(fakeDir, 'transcript'), 'latin1');
+  expect(sent).toContain('Working directory:'); // el prompt sí viaja
+  expect(sent).not.toContain(dir);               // pero sin ninguna ruta de la máquina de casa (T74 §3.3)
+});

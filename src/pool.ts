@@ -389,9 +389,11 @@ export async function processActivity(
       mcpConfigPath = join(hostDir(join(resolve(opts.stateDir), 'live', change.id.slice(0, 8), 'mcp'), path), `mcp-${randomUUID()}.json`);
       writeFileSync(mcpConfigPath, JSON.stringify({ mcpServers: access.servers }), { mode: 0o600 });
     }
+    // Con runner remoto el agente trabaja en el clon del runner: el prompt no lleva la ruta de casa (T74 §3.3; el e2e con claude real se perdía buscándola).
+    const promptDir = remote ? '.' : path;
     const prompt = a.validator
-      ? buildValidatorPrompt(a.validator, { change, diffStat, base: 'main', branch, worktree: path, history, untrusted: channel || undefined }, profile.validators)
-      : buildWorkerPrompt({ workstream: ws, change, activity: a, history, worktree: path, branch, untrusted: channel || undefined }, { factoryCommits: agent.factoryCommits }, profile.worker);
+      ? buildValidatorPrompt(a.validator, { change, diffStat, base: 'main', branch, worktree: promptDir, history, untrusted: channel || undefined }, profile.validators)
+      : buildWorkerPrompt({ workstream: ws, change, activity: a, history, worktree: promptDir, branch, untrusted: channel || undefined }, { factoryCommits: agent.factoryCommits }, profile.worker);
     log(`[${workerId}] ${a.validator ?? a.kind} "${change.title}" -> ${adapter} in ${path}`);
     const readOnly = a.validator ? (a.validator !== 'qa') : (a.kind === 'investigation');
     const probeFile = `${runDirectory(opts.stateDir, change.id)}/${a.id}.egress.json`;

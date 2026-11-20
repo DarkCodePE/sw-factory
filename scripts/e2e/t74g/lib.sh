@@ -9,7 +9,7 @@ t74g_setup() { # $1 = dir temporal, $2 = HOME del runner (por defecto uno desech
   T74G_RPATH="$T74G_DIR/rbin:/usr/local/bin:/usr/bin:/bin"
   [ -n "${T74G_RPATH_EXTRA:-}" ] && T74G_RPATH="$T74G_DIR/rbin:$T74G_RPATH_EXTRA:/usr/local/bin:/usr/bin:/bin"
   "$T74G_SRC/install-fake-ssh.sh" "$T74G_DIR/bin" "$T74G_DIR/log" "$T74G_RHOME" "$T74G_RPATH" "$T74G_DIR/root" "$T74G_REPO/src/cli.ts"
-  cp "$T74G_SRC/shim-sh" "$T74G_DIR/rbin/sh"; chmod +x "$T74G_DIR/rbin/sh"
+  [ -n "${REAL:-}" ] || { cp "$T74G_SRC/shim-sh" "$T74G_DIR/rbin/sh"; chmod +x "$T74G_DIR/rbin/sh"; }
 }
 fab() { FABRICA_HOME="$T74G_DIR/fabhome" PATH="$T74G_DIR/bin:$PATH" bun "$T74G_REPO/src/cli.ts" "$@"; }
 t74g_repo() { # $1 = destino
