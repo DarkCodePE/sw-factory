@@ -1,0 +1,129 @@
+{
+  "fecha": "2026-11-19T23:55:29.962Z",
+  "total": 20,
+  "ok": 20,
+  "conocidos": 0,
+  "fallos": 0,
+  "resultados": [
+    {
+      "flujo": "acceso: canjear el enlace de un solo uso",
+      "estado": "ok",
+      "detalle": "",
+      "ms": 2139
+    },
+    {
+      "flujo": "bandeja y filtros de changes",
+      "estado": "ok",
+      "detalle": "",
+      "ms": 438
+    },
+    {
+      "flujo": "crear una señal y triarla sin crear turnos",
+      "estado": "ok",
+      "detalle": "",
+      "ms": 486
+    },
+    {
+      "flujo": "ignorar una señal",
+      "estado": "ok",
+      "detalle": "",
+      "ms": 163
+    },
+    {
+      "flujo": "aprobar una revisión",
+      "estado": "ok",
+      "detalle": "",
+      "ms": 282
+    },
+    {
+      "flujo": "pedir cambios con un comentario",
+      "estado": "ok",
+      "detalle": "",
+      "ms": 332
+    },
+    {
+      "flujo": "responder la pregunta abierta",
+      "estado": "ok",
+      "detalle": "",
+      "ms": 304
+    },
+    {
+      "flujo": "dejar una nota",
+      "estado": "ok",
+      "detalle": "",
+      "ms": 280
+    },
+    {
+      "flujo": "reintentar un change",
+      "estado": "ok",
+      "detalle": "",
+      "ms": 216
+    },
+    {
+      "flujo": "cancelar un change con confirmación",
+      "estado": "ok",
+      "detalle": "",
+      "ms": 313
+    },
+    {
+      "flujo": "renombrar un change",
+      "estado": "ok",
+      "detalle": "",
+      "ms": 155
+    },
+    {
+      "flujo": "automation: ejecutar, pausar y activar",
+      "estado": "ok",
+      "detalle": "",
+      "ms": 516
+    },
+    {
+      "flujo": "perfil: guardar uno nuevo y asignarlo",
+      "estado": "ok",
+      "detalle": "",
+      "ms": 469
+    },
+    {
+      "flujo": "workstream: guardar ajustes",
+      "estado": "ok",
+      "detalle": "",
+      "ms": 180
+    },
+    {
+      "flujo": "workstream: archivar con confirmación",
+      "estado": "ok",
+      "detalle": "",
+      "ms": 533
+    },
+    {
+      "flujo": "asistente de alta de workstream",
+      "estado": "ok",
+      "detalle": "",
+      "ms": 864
+    },
+    {
+      "flujo": "páginas de solo lectura: métricas, configuración, flujo, experimentos y turnos",
+      "estado": "ok",
+      "detalle": "",
+      "ms": 2243
+    },
+    {
+      "flujo": "pool fake: el change triado avanza y la web lo refleja",
+      "estado": "ok",
+      "detalle": "",
+      "ms": 301
+    },
+    {
+      "flujo": "API: clave, lectura, escritura y rutas que no existen",
+      "estado": "ok",
+      "detalle": "",
+      "ms": 40
+    },
+    {
+      "flujo": "seguridad: sesión, Origin y Host",
+      "estado": "ok",
+      "detalle": "",
+      "ms": 190
+    }
+  ]
+}
