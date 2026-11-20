@@ -1,0 +1,39 @@
+{
+  "copy": "/tmp/webf3-mutation-y_h7r460",
+  "results": [
+    {
+      "mutation": "mediana",
+      "exit": 1,
+      "killed": true,
+      "failure": [
+        "(fail) mediana par/impar y p90 por rango m\u00e1s pr\u00f3ximo [76.56ms]",
+        "(fail) tramos exactos, intervenciones, estados, tipos y coste; null no es cero [143.29ms]"
+      ]
+    },
+    {
+      "mutation": "null-cero",
+      "exit": 1,
+      "killed": true,
+      "failure": [
+        "(fail) tramos exactos, intervenciones, estados, tipos y coste; null no es cero [132.29ms]"
+      ]
+    },
+    {
+      "mutation": "fecha",
+      "exit": 1,
+      "killed": true,
+      "failure": [
+        "(fail) filtros de cohorte por fecha y workstream, incluyendo l\u00edmites y futuro [172.05ms]"
+      ]
+    },
+    {
+      "mutation": "workstream",
+      "exit": 1,
+      "killed": true,
+      "failure": [
+        "(fail) filtros de cohorte por fecha y workstream, incluyendo l\u00edmites y futuro [159.18ms]"
+      ]
+    }
+  ],
+  "restoredExit": 0
+}
