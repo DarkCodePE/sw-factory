@@ -1,6 +1,7 @@
 import { createHash } from 'node:crypto';
 import { mkdir, stat } from 'node:fs/promises';
 import { basename, dirname, join, resolve } from 'node:path';
+import { ensureStateDir } from '../state-dir.ts';
 
 export interface ExecWorktreeOptions {
   repo: string;
@@ -80,7 +81,7 @@ export async function prepareExecWorktree(options: ExecWorktreeOptions): Promise
     ? resolve(process.env.FABRICA_HOME, 'worktrees')
     : resolve(process.env.HOME ?? '.', '.fabrica', 'worktrees');
   const root = options.root ? resolve(options.root) : defaultRoot;
-  await mkdir(root, { recursive: true });
+  if (options.root) await mkdir(root, { recursive: true }); else ensureStateDir(root); // la raíz por defecto cuelga del estado de fab
 
   // 3. Compute target path: <root>/<8 hex hash of repo>/<repo name>/
   const repoHash = createHash('sha256').update(repoRoot).digest('hex').slice(0, 8);

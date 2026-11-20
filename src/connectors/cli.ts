@@ -1,4 +1,4 @@
-import { existsSync, mkdirSync } from 'node:fs';
+import { existsSync } from 'node:fs';
 import { resolve } from 'node:path';
 import { parseArgs } from 'node:util';
 import { AdmissionDb, hasAdmission } from '../admission/db.ts';
@@ -10,6 +10,7 @@ import { createJiraGateway, loadJiraEnv, validateJiraKey } from './jira.ts';
 import { ChangeLinkStore } from './links.ts';
 import { importIssue, issueToSignal, pullRequestBody, ticketComment } from './intake.ts';
 import { VALIDATOR_KINDS, type PullRequestGateway, type TicketGateway } from './types.ts';
+import { ensureStateDir } from '../state-dir.ts';
 
 export interface ConnectorDeps {
   store?: Store;
@@ -66,7 +67,7 @@ export async function connectorsMain(cmd: 'jira' | 'pr', argv: string[], deps: C
       if (!store) {
         const path = resolve(stateDir, 'fabrica.db');
         if (dry && !existsSync(path)) throw new Error('No existe una base local para consultar el change');
-        if (!dry) mkdirSync(stateDir, { recursive: true });
+        if (!dry) ensureStateDir(stateDir);
         store = ownedStore = new Store(path);
       }
       return store;

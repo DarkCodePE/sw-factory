@@ -2,7 +2,7 @@
 // fab — local software factory CLI.
 import { Writable } from 'node:stream';
 import { Console } from 'node:console';
-import { mkdirSync, readFileSync } from 'node:fs';
+import { readFileSync } from 'node:fs';
 import { resolve } from 'node:path';
 import { parseArgs } from 'node:util';
 
@@ -44,6 +44,7 @@ import { AdmissionDb, hasAdmission } from './admission/db.ts';
 import { resetSessionCap } from './admission/sessions.ts';
 import { protectedIntegrity, purgeRegenerableCaches } from './validators/integrity.ts';
 import { mergeRecoverably } from './validators/publish.ts';
+import { ensureStateDir } from './state-dir.ts';
 
 // Bun's native console bypasses fd-backed Writable queues. For pipes/files,
 // proxies force console output through queues we can drain before exit.
@@ -142,7 +143,7 @@ Estado en ${STATE_DIR} (cambiar con FABRICA_HOME). Agente predeterminado: native
 Agentes: ${AGENT_NAMES.join(', ')}`;
 
 function openStore(): Store {
-  mkdirSync(STATE_DIR, { recursive: true, mode: 0o700 });
+  ensureStateDir(STATE_DIR);
   return new Store(resolve(STATE_DIR, 'fabrica.db'));
 }
 
@@ -172,7 +173,7 @@ async function main(argv: string[]): Promise<number> {
   if (argv[0] === 'web') return webMain(argv.slice(1), STATE_DIR);
   if (argv[0] === 'jira' || argv[0] === 'pr') return connectorsMain(argv[0], argv.slice(1));
   if (argv[0] === 'agents') return agentsMain(argv.slice(1));
-  if (argv[0] === 'profile') { mkdirSync(STATE_DIR, { recursive: true, mode: 0o700 }); return profileMain(argv.slice(1), STATE_DIR); }
+  if (argv[0] === 'profile') { ensureStateDir(STATE_DIR); return profileMain(argv.slice(1), STATE_DIR); }
   if (argv[0] === 'api-key') {
     const store = openStore();
     try { return apiKeyMain(argv.slice(1), store); } finally { store.close(); }
