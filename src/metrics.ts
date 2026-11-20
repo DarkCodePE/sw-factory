@@ -34,7 +34,17 @@ export function calculateMetrics(store: Store, stateDir: string, options: { ws?:
 
   if (from !== undefined) validateDay(from);
   if (to !== undefined) validateDay(to);
-  if (from !== undefined && to !== undefined && from > to) throw new URIError('Rango inválido');
+  if (from !== undefined && to !== undefined) {
+    if (from > to) throw new URIError('Rango inválido');
+    const fromMs = Date.parse(`${from}T00:00:00.000Z`);
+    const toMs = Date.parse(`${to}T00:00:00.000Z`);
+    const diffDays = Math.round((toMs - fromMs) / 86400000) + 1;
+    if (diffDays > 366) throw new URIError('Rango demasiado amplio');
+  } else if (from !== undefined) {
+    const fromMs = Date.parse(`${from}T00:00:00.000Z`);
+    const diffDays = Math.round((now - fromMs) / 86400000) + 1;
+    if (diffDays > 366) throw new URIError('Rango demasiado amplio');
+  }
   if (range !== undefined && !['7', '30', 'all', 'custom'].includes(range)) throw new URIError('Rango inválido');
 
   let since: string | null = null;

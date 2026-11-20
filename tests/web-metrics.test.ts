@@ -305,6 +305,22 @@ test('T82 HTTP: rango libre vía HTTP y rechazo de rangos inválidos', async () 
   }
 });
 
+test('T82-H1: el rango libre rechaza más de 366 días con 400', async () => {
+  expect(() => calculateMetrics(store, dir, { from: '2024-01-01', to: '2025-01-03' })).toThrow(URIError);
+  expect(() => calculateMetrics(store, dir, { from: '1000-01-01', to: '9999-12-31' })).toThrow(URIError);
+  const server = startWeb(dir, 0);
+  try {
+    const base = `http://127.0.0.1:${server.port}/metricas`;
+    const res = await fetch(`${base}?from=2024-01-01&to=2025-01-03`);
+    expect(res.status).toBe(400);
+    const resOom = await fetch(`${base}?from=1000-01-01&to=9999-12-31`);
+    expect(resOom.status).toBe(400);
+  } finally {
+    server.stop(true);
+    store = new Store(join(dir, 'fabrica.db'));
+  }
+});
+
 test('T83: ciclo con PR (kickoff→PR, PR→primera revisión humana, PR→merge); tramos exactos con eventos sintéticos', () => {
   const c1 = store.createChange('uno', 'Change con PR', '');
   store.db.query("UPDATE changes SET created_at=?, status='completed' WHERE id=?").run('2026-11-18T00:00:00Z', c1.id);
