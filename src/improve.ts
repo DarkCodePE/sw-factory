@@ -30,7 +30,18 @@ CREATE TABLE IF NOT EXISTS experiment_runs (
   rowid INTEGER PRIMARY KEY AUTOINCREMENT, experiment_id TEXT NOT NULL, batch TEXT NOT NULL, seed INTEGER NOT NULL,
   split TEXT NOT NULL, task_id TEXT NOT NULL, repeat INTEGER NOT NULL, arm TEXT NOT NULL, position INTEGER NOT NULL,
   profile_digest TEXT NOT NULL, agent TEXT NOT NULL, success INTEGER NOT NULL, diff_lines INTEGER NOT NULL,
-  duration_ms INTEGER NOT NULL, change_id TEXT, error TEXT, created_at TEXT NOT NULL);`);
+  duration_ms INTEGER NOT NULL, change_id TEXT, error TEXT, created_at TEXT NOT NULL);
+-- T67: automejora. Config por workstream y candidatos (perfil nuevo + experimento); la fab nunca asigna el perfil.
+CREATE TABLE IF NOT EXISTS improvement_config (
+  workstream_id TEXT PRIMARY KEY, enabled INTEGER NOT NULL DEFAULT 0, suite_path TEXT NOT NULL, split TEXT NOT NULL, repeats INTEGER NOT NULL,
+  window INTEGER NOT NULL DEFAULT 20, min_scores INTEGER NOT NULL DEFAULT 10, threshold REAL NOT NULL DEFAULT 0.4);
+CREATE TABLE IF NOT EXISTS improvement_candidates (
+  id TEXT PRIMARY KEY, workstream_id TEXT NOT NULL, role TEXT NOT NULL, base_digest TEXT NOT NULL, candidate_digest TEXT, experiment_id TEXT,
+  origin TEXT NOT NULL CHECK (origin IN ('threshold','manual')), trigger_scores TEXT NOT NULL,
+  status TEXT NOT NULL CHECK (status IN ('pending','proposing','proposed','experimenting','ready','failed','dismissed')),
+  error TEXT, created_at TEXT NOT NULL, finished_at TEXT, lease_expires_at TEXT);
+CREATE UNIQUE INDEX IF NOT EXISTS improvement_open ON improvement_candidates(workstream_id, role)
+  WHERE status IN ('pending','proposing','proposed','experimenting','ready');`);
   const cols = db.query('PRAGMA table_info(experiment_runs)').all() as { name: string }[];
   for (const [col, type] of [
     ['cost_usd', 'REAL'],
@@ -40,6 +51,8 @@ CREATE TABLE IF NOT EXISTS experiment_runs (
     ['worker_report', 'TEXT'],
   ] as const)
     if (!cols.some(c => c.name === col)) db.exec(`ALTER TABLE experiment_runs ADD COLUMN ${col} ${type}`);
+  if (!(db.query('PRAGMA table_info(improvement_candidates)').all() as { name: string }[]).some(c => c.name === 'lease_expires_at'))
+    db.exec('ALTER TABLE improvement_candidates ADD COLUMN lease_expires_at TEXT'); // T67 H2: bases creadas antes del lease
   const expCols = db.query('PRAGMA table_info(experiments)').all() as { name: string }[];
   if (!expCols.some(c => c.name === 'repeated_baseline')) db.exec('ALTER TABLE experiments ADD COLUMN repeated_baseline INTEGER NOT NULL DEFAULT 0');
   if (!expCols.some(c => c.name === 'control')) db.exec('ALTER TABLE experiments ADD COLUMN control TEXT');
@@ -212,7 +225,7 @@ export async function restoreProtected(worktree: string, base: string, paths: st
 }
 
 /** Un brazo: clon desechable en el commit base, store y workstream propios, agente, y comando de verificación. */
-async function runArm(stateDir: string, root: string, task: SuiteTask, digest: string, agent: string, acceptBinaries: boolean, confine: boolean): Promise<ArmResult> {
+export async function runArm(stateDir: string, root: string, task: SuiteTask, digest: string, agent: string, acceptBinaries: boolean, confine: boolean): Promise<ArmResult> {
   const started = Date.now();
   const fail = (error: string): ArmResult => ({ integrityOk: null, success: false, diffLines: 0, durationMs: Date.now() - started, costUsd: null, changeId: null, error, workerReport: null });
   mkdirSync(root, { recursive: true });

@@ -1,5 +1,6 @@
 // fab resident report [--json]   informe de solo lectura (sin lock) de lo que ha registrado el residente
-// fab resident --repo owner/name [--mode off|observe|auto] [--workstream slug] [--once] [--since ISO] ...  (auto: --workstream y --self obligatorios)
+// fab resident --repo owner/name [--mode off|observe|auto] [--workstream slug] [--once] [--since ISO] [--hook-port N] ...  (auto: --workstream y --self obligatorios)
+// --hook-port abre el receptor de avisos de GitHub en 127.0.0.1; el secreto va solo en FAB_GITHUB_WEBHOOK_SECRET (nunca en argv).
 
 // --since solo fija el inicio cuando aún no hay cursor; sin él se lee el último día.
 import { parseArgs } from 'node:util';
@@ -24,7 +25,7 @@ export async function residentMain(argv: string[], store: Store, deps: { run?: C
     }
     const { values } = parseArgs({ args: argv, options: {
       repo: { type: 'string' }, mode: { type: 'string', default: 'observe' }, once: { type: 'boolean' }, interval: { type: 'string', default: '60' }, since: { type: 'string' },
-      label: { type: 'string', default: DEFAULT_POLICY.triggerLabel }, self: { type: 'string' }, workstream: { type: 'string' }, comments: { type: 'boolean' }, 'allow-author': { type: 'string', multiple: true }, trust: { type: 'string' } } });
+      label: { type: 'string', default: DEFAULT_POLICY.triggerLabel }, self: { type: 'string' }, workstream: { type: 'string' }, comments: { type: 'boolean' }, 'hook-port': { type: 'string' }, 'allow-author': { type: 'string', multiple: true }, trust: { type: 'string' } } });
     if (values.mode !== 'off' && values.mode !== 'observe' && values.mode !== 'auto') throw new Error('--mode debe ser off|observe|auto');
     if (values.mode === 'auto') { if (!values.workstream) throw new Error('el modo auto exige --workstream <slug>'); store.getWorkstream(values.workstream); } // existe el workstream donde se crearán los changes
     if (!values.repo) throw new Error('falta --repo owner/name');
@@ -32,7 +33,9 @@ export async function residentMain(argv: string[], store: Store, deps: { run?: C
     const interval = Number(values.interval);
     if (!Number.isFinite(interval) || interval < 1) throw new Error('--interval debe ser un número de segundos >= 1');
     if (values.since !== undefined && !/^\d{4}-\d\d-\d\dT\d\d:\d\d:\d\dZ$/.test(values.since)) throw new Error('--since debe ser ISO UTC, p. ej. 2026-01-01T00:00:00Z');
-    const resident = new Resident(store, { repo: values.repo, mode: values.mode, run: deps.run, selfLogin: values.self, workstream: values.workstream, comments: values.comments, intervalMs: interval * 1000, since: values.since, policy: {
+    const hookPort = values['hook-port'] === undefined ? undefined : Number(values['hook-port']);
+    if (values['hook-port'] !== undefined && !(/^\d{1,5}$/.test(values['hook-port']) && hookPort! <= 65535)) throw new Error('--hook-port debe ser un puerto entre 0 y 65535');
+    const resident = new Resident(store, { repo: values.repo, mode: values.mode, run: deps.run, selfLogin: values.self, workstream: values.workstream, comments: values.comments, intervalMs: interval * 1000, hookPort, hookSecret: process.env.FAB_GITHUB_WEBHOOK_SECRET, since: values.since, policy: {
       repos: [values.repo], triggerLabel: values.label!, allowAuthors: values['allow-author'] ?? [],
       trustedAssociations: values.trust ? values.trust.split(',').map(s => s.trim()).filter(Boolean) : DEFAULT_POLICY.trustedAssociations } });
     for (const signal of ['SIGINT', 'SIGTERM'] as const) process.once(signal, () => resident.stop());

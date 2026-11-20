@@ -1,6 +1,7 @@
 // Headless coding-agent adapters. Each turns (prompt, cwd) into one non-interactive run.
 // The factory never edits code itself; it hands one activity to one agent run.
-import { confineAgent } from './sandbox/confine.ts';
+import { confineAgent, type EnvDecl } from './sandbox/confine.ts';
+import { agentEnv, scrubValues } from './sandbox/env.ts';
 import { atomicEvidence } from './manifest.ts';
 import { existsSync, readFileSync } from 'node:fs';
 import { selfCommand } from './self.ts';
@@ -31,7 +32,7 @@ export interface AgentRun {
 
 export interface AgentAdapter {
   name: string;
-  command(prompt: string, options?: { readOnly?: boolean; confine?: boolean; promptStdin?: boolean; model?: string }): string[];
+  command(prompt: string, options?: { readOnly?: boolean; confine?: boolean; promptStdin?: boolean; model?: string; mcpConfig?: string }): string[];
   /** El adaptador acepta un modelo por activity (`options.model`). */
   supportsModel?: boolean;
   /** runAgent sends the prompt on stdin; command() keeps argv input by default. */
@@ -71,6 +72,8 @@ const claude: AgentAdapter = {
     ].join(','),
     '--output-format',
     'json',
+    // Con `--strict-mcp-config` no se cargan los servidores del usuario (T72 S5).
+    ...(options?.mcpConfig ? ['--strict-mcp-config', '--mcp-config', options.mcpConfig] : []),
   ],
   parse: parseClaudeJson,
 };
@@ -142,7 +145,7 @@ const fake: AgentAdapter = {
   command: (prompt, options) => [
     'sh',
     '-c',
-    'if [ -n "$FABRICA_FAKE_SLEEP" ]; then sleep "$FABRICA_FAKE_SLEEP"; fi; if [ -n "$FABRICA_FAKE_TOUCH" ]; then touch "$FABRICA_FAKE_TOUCH-$$"; fi; printf "STATUS: %s\\n\\nfake agent handled: %s\\n" "${FABRICA_FAKE_STATUS:-done}" "$1"' + (options?.model ? '; printf "model=%s\\n" "$2"' : ''),
+    'if [ -n "$FABRICA_FAKE_SLEEP" ]; then sleep "$FABRICA_FAKE_SLEEP"; fi; if [ -n "$FABRICA_FAKE_TOUCH" ]; then touch "$FABRICA_FAKE_TOUCH-$$"; fi; if [ -n "$FABRICA_FAKE_ECHO" ]; then printenv "$FABRICA_FAKE_ECHO"; fi; printf "STATUS: %s\\n\\nfake agent handled: %s\\n" "${FABRICA_FAKE_STATUS:-done}" "$1"' + (options?.model ? '; printf "model=%s\\n" "$2"' : ''),
     'fake',
     prompt.slice(0, 80),
     ...(options?.model ? [options.model] : []),
@@ -174,6 +177,8 @@ export function getAgent(name: string): AgentAdapter {
 export const AGENT_NAMES = Object.keys(ADAPTERS);
 /** Adaptadores que aceptan un modelo por activity; `agy` no (no se conoce flag). */
 export const MODEL_AGENTS = AGENT_NAMES.filter(n => ADAPTERS[n]!.supportsModel);
+/** Adaptadores que aceptan una configuración MCP por ejecución (`options.mcpConfig`); hoy solo `claude`. */
+export const MCP_AGENTS = ['claude'];
 
 /** Preserve the factory decision line when retaining a bounded report tail. */
 export function boundedAgentOutput(text: string): string {
@@ -190,16 +195,16 @@ export async function runAgent(
   prompt: string,
   cwd: string,
   timeoutMs = 20 * 60_000,
-  options: { readOnly?: boolean; confine?: boolean; capturePath?: string; signal?: AbortSignal; onSpawn?: (pgid: number) => void; model?: string; claudeProjects?: string; mcpConfig?: string } = {}
+  options: { readOnly?: boolean; confine?: boolean; capturePath?: string; signal?: AbortSignal; onSpawn?: (pgid: number) => void; model?: string; claudeProjects?: string; mcpConfig?: string; envDecl?: EnvDecl; scrub?: Record<string, string> } = {}
 ): Promise<AgentRun> {
   const start = Date.now();
   const argv = agent.command(prompt, { ...options, promptStdin: agent.promptStdin === true });
-  const confined = options.confine ? confineAgent(agent.name, argv, cwd, agent.env?.(), options.claudeProjects, options.mcpConfig, options.model) : undefined;
+  const confined = options.confine ? confineAgent(agent.name, argv, cwd, agent.env?.(), options.claudeProjects, options.mcpConfig, options.model, options.envDecl) : undefined;
   let proc;
   try {
     proc = Bun.spawn(confined?.argv ?? argv, {
       cwd,
-      env: confined?.env ?? { ...process.env, ...(agent.env?.() ?? {}) },
+      env: confined?.env ?? agentEnv({ adapter: agent.name, confined: false, channel: false, wsAllow: null, roleEnv: [], mcpRequired: [], ...options.envDecl, host: { ...process.env, ...(agent.env?.() ?? {}) }, model: options.model }).env,
       stdin: agent.promptStdin ? new TextEncoder().encode(prompt) : 'ignore', stdout: 'pipe', stderr: 'pipe', detached: true,
     });
   } catch (e) {
@@ -251,9 +256,11 @@ export async function runAgent(
     terminateWithEscalation();
   }, timeoutMs);
 
+  // Los valores entregados (T72, S6) se limpian antes de que nada de la salida llegue al log, al error o al report.
+  const clean = (t: string) => options.scrub ? scrubValues(t, options.scrub) : t;
   const [stdout, stderr, exitCode] = await Promise.all([
-    new Response(proc.stdout).text(),
-    new Response(proc.stderr).text(),
+    new Response(proc.stdout).text().then(clean),
+    new Response(proc.stderr).text().then(clean),
     proc.exited,
   ]);
 

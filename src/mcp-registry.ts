@@ -18,7 +18,7 @@ const REF = /^(?:Bearer )?\$\{([A-Z_][A-Z0-9_]{0,63})\}$/;
 const FORBIDDEN_EXACT = new Set(['PATH', 'HOME', 'TMPDIR', 'NODE_OPTIONS']);
 const FORBIDDEN_PREFIX = ['LD_', 'BUN_', 'GIT_CONFIG', 'FAB_', 'FABRICA_'];
 
-/** Variables que cambian el cargador, git o la propia fab (T71 §4.2); también las usará el perfil. */
+/** Variables que cambian el cargador, git o la propia fab (T71 §4.2). Única lista: la usan el registro, el perfil y el Store. */
 export const isForbiddenEnvName = (n: string): boolean => FORBIDDEN_EXACT.has(n) || FORBIDDEN_PREFIX.some(p => n.startsWith(p));
 
 export class McpRegistryError extends Error {}
@@ -110,4 +110,15 @@ export function mcpListMain(stateDir: string, env: NodeJS.ProcessEnv = process.e
     console.error(`error: ${terminalText(e.message)}`);
     return 1;
   }
+}
+
+/** Los servidores pedidos con el formato de `--mcp-config` de claude. Las referencias `${NOMBRE}` van sin resolver: las expande `claude` desde su entorno [I, T72g]. */
+export function claudeMcpServers(registry: McpRegistry, names: string[]): Record<string, unknown> {
+  return Object.fromEntries(names.map(n => {
+    const s = registry[n]!;
+    // shortcut: el registro no declara el transporte; `/sse` al final de la ruta se trata como SSE, el resto como http (T72g lo comprueba).
+    return [n, s.kind === 'url'
+      ? { type: new URL(s.url).pathname.endsWith('/sse') ? 'sse' : 'http', url: s.url, headers: s.headers }
+      : { command: s.command[0], args: s.command.slice(1), env: s.env }];
+  }));
 }

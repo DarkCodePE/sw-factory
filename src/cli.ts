@@ -2,16 +2,21 @@
 // fab — local software factory CLI.
 import { Writable } from 'node:stream';
 import { Console } from 'node:console';
-import { mkdirSync } from 'node:fs';
+import { mkdirSync, readFileSync } from 'node:fs';
 import { resolve } from 'node:path';
 import { parseArgs } from 'node:util';
 
 import { captureMain } from './manifest-capture.ts';
 import { AGENT_NAMES } from './agents.ts';
 import { agentsMain } from './agents-verify.ts';
-import { mcpListMain } from './mcp-registry.ts';
+import { loadMcpRegistry, mcpListMain, McpRegistryError } from './mcp-registry.ts';
 import { profileMain } from './profile-cli.ts';
+import { benchMain } from './bench-cli.ts';
 import { improveMain } from './improve-cli.ts';
+import { abortOnSigint, scoreMain } from './scorers-cli.ts';
+import { automationMain } from './automation-cli.ts';
+import { apiKeyMain } from './api-key-cli.ts';
+import { CODE_LEAVES_WARNING, runnerMain, serveMain } from './runner-cli.ts';
 import type { ReviewDecision, WorkstreamState } from './enums.ts';
 import { runPool } from './pool.ts';
 import { Store, StoreError } from './store.ts';
@@ -81,11 +86,28 @@ const HELP = `fab — agente de código y fábrica de software local
 
   fab ws create <slug> --repo <path> --goal <text> [--agent ${AGENT_NAMES.join('|')}]
                 [--verify <comando>] [--verify-setup <comando>] [--protect <glob>] [--protect-none] [--profile <digest>] [--concurrency N] [--task-limit N] [--no-change-approval] [--no-spec-approval]
+  fab ws env <ws> [--allow NOMBRE… | --import <fichero> | --none | --legacy]   variables permitidas (solo nombres)
+                                                                               un valor de menos de 8 caracteres no se limpia de la salida ni de los ficheros
+  fab ws mcp <ws> [--allow nombre… | --none | --legacy]                        servidores MCP permitidos
   fab improve create --experiment-id <id> --baseline <digest> --candidate <digest> --suite <archivo>
   fab improve run <id> --split development|validation|qualification --repeats N [--agent <name>] [--seed N]
   fab improve report <id> | delete <id>   experimentos pareados (fase 1: sin cualificación ni rollout)
+  fab improve auto-config <ws> --suite <f> --split <s> --repeats N [--window N] [--min N] [--threshold X] [--enable|--disable]
+  fab improve auto <ws> [--once] [--agent <name>] | propose <ws> --role <rol> | candidates [<ws>] [--json] | dismiss <id>
+                automejora: crea CANDIDATOS (perfil nuevo + experimento); solo el dueño los aplica asignando el perfil
+  fab bench create --id <id> --suite <f> --variant <nombre>=<digest>@<agente> … [--judge-profile <digest>]
+  fab bench run <id> --split <s> --repeats N [--seed N] [--confine] [--concurrency N] | cancel <id> | report <id> [--json]
+  fab bench add-task <change> --id <id> --split <s> --out <fichero> [--suite <existente>] [--verify <comando>]
+  fab score run <slug> [--once] [--max N] [--budget-usd X] [--agent <name>]   jueces: avisos, nunca puertas; confinados; ejecuta las pendientes de todos los workstreams
+  fab score add <activityId> --scorer <name> | list <slug> [--change <id>] [--json]
+  fab score backfill <slug> [--since <iso>] [--scorer <name>] [--yes]   vista previa (nº y coste) y, con --yes, encola
   fab ws list
+  fab runner add <nombre> --ssh <alias> [--max-bundle-mb N] | --local [--confine]   runner remoto (el código sale de tu máquina) o local
+  fab runner list [--json] | enable <nombre> | disable <nombre> | rm <nombre> | check <nombre>
+  fab runner serve --root <dir>   lado runner (lo arranca sshd por el comando forzado)
+  fab ws runner <ws> <nombre> | --none   asigna o quita el runner del workstream
   fab profile export [--out f] | import <f> | inspect <digest> | list   perfiles de instrucciones inmutables por digest
+  fab api-key create --name <n> --scope read|decide | list | revoke <id|nombre>   claves de la API local (la clave se muestra una vez)
   fab ws state <slug> <active|paused|archived>
   fab signal add <slug> <title> [--body <text>]
   fab signal list <slug>
@@ -95,8 +117,10 @@ const HELP = `fab — agente de código y fábrica de software local
   --verify-setup <comando>  Fase previa al gate, repetible: con red, worktree solo lectura, escribe solo en $FAB_DEPS; el gate lo monta ro
                       (PYTHONPATH, PATH/bin, NODE_PATH). Se repite solo si cambia. Ej: --verify-setup 'python3 -m pip install --target $FAB_DEPS pytest' --verify 'pytest -q'
   fab resident report [--json]  informe de solo lectura de lo registrado (cursor, decisiones, label-not-verified, efectos con reintentos)
-  fab resident --repo owner/name [--mode off|observe|auto] [--workstream <slug>] [--once] [--since ISO] [--interval s] [--label fab] [--allow-author u] [--trust OWNER,MEMBER]
+  fab resident --repo owner/name [--mode off|observe|auto] [--workstream <slug>] [--once] [--since ISO] [--interval s] [--label fab] [--allow-author u] [--trust OWNER,MEMBER] [--hook-port N]
                                 residente en modo observe: registra would_admit de issues sin crear changes
+  fab automation add <slug> --name <n> (--cron "<e>" | --every hour|day|week [--at HH:MM] [--weekday N]) --title <t> --body-file <f>
+  fab automation list [slug] [--json] | enable <id> | disable <id> | rm <id> | run-now <id> | tick | run   crean señales a horas fijas (UTC); no lanzan trabajo
   fab inbox [slug]
   fab review <activityId> <approve|comment|decline> [--comment <text>]
   fab run <slug> [--once] [--agent <name>] [--accept-agent-binaries] [--live]
@@ -146,9 +170,36 @@ async function main(argv: string[]): Promise<number> {
   if (argv[0] === 'jira' || argv[0] === 'pr') return connectorsMain(argv[0], argv.slice(1));
   if (argv[0] === 'agents') return agentsMain(argv.slice(1));
   if (argv[0] === 'profile') { mkdirSync(STATE_DIR, { recursive: true }); return profileMain(argv.slice(1), STATE_DIR); }
+  if (argv[0] === 'api-key') {
+    const store = openStore();
+    try { return apiKeyMain(argv.slice(1), store); } finally { store.close(); }
+  }
+  // `serve` es el lado runner: no abre el Store (el runner no tiene base, R1).
+  if (argv[0] === 'runner' && argv[1] === 'serve') return serveMain(argv.slice(2));
+  if (argv[0] === 'runner') {
+    const store = openStore();
+    try { return await runnerMain(argv.slice(1), store); } catch (err) {
+      console.error(err instanceof StoreError ? `error (${err.code}): ${err.message}` : `error: ${(err as Error).message}`);
+      return 1;
+    } finally { store.close(); }
+  }
   if (argv[0] === 'improve') {
     const store = openStore();
     try { return await improveMain(argv.slice(1), store, STATE_DIR); } finally { store.close(); }
+  }
+  if (argv[0] === 'bench') {
+    const store = openStore();
+    try { return await benchMain(argv.slice(1), store, STATE_DIR); } finally { store.close(); }
+  }
+  if (argv[0] === 'score') {
+    const store = openStore();
+    const ac = new AbortController();
+    const release = abortOnSigint(ac);
+    try { return await scoreMain(argv.slice(1), store, STATE_DIR, ac.signal); } finally { release(); store.close(); }
+  }
+  if (argv[0] === 'automation') {
+    const store = openStore();
+    try { return await automationMain(argv.slice(1), store); } finally { store.close(); }
   }
   if (argv[0] === 'validate') {
     const store = openStore();
@@ -201,6 +252,10 @@ async function main(argv: string[]): Promise<number> {
       'verify-setup': { type: 'string', multiple: true },
       'protect-none': { type: 'boolean' },
       profile: { type: 'string' },
+      allow: { type: 'string', multiple: true },
+      import: { type: 'string' },
+      none: { type: 'boolean' },
+      legacy: { type: 'boolean' },
       help: { type: 'boolean', short: 'h' },
     },
   });
@@ -240,7 +295,43 @@ async function main(argv: string[]): Promise<number> {
         } else if (sub === 'state') {
           const ws = store.setWorkstreamState(rest[0] ?? '', rest[1] as WorkstreamState);
           console.log(`${ws.slug} -> ${ws.state}`);
-        } else throw new StoreError('invalid_input', 'fab ws create|list|state');
+        } else if (sub === 'env' || sub === 'mcp') {
+          const slug = rest[0] ?? '';
+          const ws = store.getWorkstream(slug);
+          const isEnv = sub === 'env';
+          const modes = [values.allow, values.import, values.none, values.legacy].filter(v => v !== undefined && v !== false).length;
+          if (modes > 1) throw new StoreError('invalid_input', `fab ws ${sub}: --allow, ${isEnv ? '--import, ' : ''}--none y --legacy son excluyentes`);
+          if (values.import !== undefined && !isEnv) throw new StoreError('invalid_input', '--import solo existe en fab ws env');
+          let names: string[] | null | undefined;
+          if (values.allow) names = values.allow;
+          else if (values.none) names = [];
+          else if (values.legacy) names = null;
+          else if (values.import !== undefined) names = readNameList(values.import);
+          if (names !== undefined) {
+            if (!isEnv && names?.length) {
+              let reg;
+              try { reg = loadMcpRegistry(STATE_DIR); } catch (e) { if (e instanceof McpRegistryError) throw new StoreError('invalid_input', `fab ws mcp: ${e.message}`); throw e; }
+              const unknown = names!.filter(n => !(n in reg));
+              if (unknown.length) throw new StoreError('invalid_input', `fab ws mcp: no está en el registro MCP (mcp-servers.json): ${unknown.join(', ')}`);
+            }
+            const upd = isEnv ? store.setWorkstreamEnvAllow(ws.id, names) : store.setWorkstreamMcpAllow(ws.id, names);
+            console.log(`${upd.slug} ${sub}: ${(isEnv ? upd.envAllow : upd.mcpAllow)?.join(', ') ?? 'modo anterior'}`);
+          } else {
+            const list = isEnv ? ws.envAllow : ws.mcpAllow;
+            if (list === null) console.log(`${ws.slug} ${sub}: modo anterior`);
+            else {
+              // Solo mira el entorno de este proceso; el del pool puede ser otro.
+              for (const n of list) console.log(isEnv ? `${n.padEnd(32)} ${process.env[n] === undefined ? 'no definida' : 'definida'}` : n);
+              if (!list.length) console.log('(vacía: modo declarado, sin nada permitido)');
+            }
+          }
+        } else if (sub === 'runner') {
+          const [slug, name] = rest;
+          if (!slug || !!name === !!values.none) throw new StoreError('invalid_input', 'usage: fab ws runner <ws> <nombre> | --none');
+          const upd = store.setWorkstreamRunner(slug, name ?? null);
+          console.log(`${upd.slug} runner: ${upd.runner ?? 'ninguno'}`);
+          if (name && store.getRunner(name).kind === 'ssh') console.log(`aviso: ${CODE_LEAVES_WARNING} ${store.getRunner(name).target}.`);
+        } else throw new StoreError('invalid_input', 'fab ws create|list|state|env|mcp|runner');
         return 0;
       }
       case 'signal': {
@@ -416,7 +507,14 @@ async function main(argv: string[]): Promise<number> {
   }
 }
 
-const COMMANDS = new Set(['worktree', 'ws', 'signal', 'triage', 'inbox', 'review', 'run', 'status', 'show', 'merge', 'retry', 'gate', 'reject', 'events', 'tui', 'doctor', 'agents', 'profile', 'improve', 'resident', 'help']);
+/** Un nombre por línea, `#` comenta; una línea con `=` aborta sin leer ni mostrar ningún valor. */
+function readNameList(path: string): string[] {
+  const lines = readFileSync(path, 'utf8').split('\n').map(l => l.replace(/#.*/, '').trim()).filter(Boolean);
+  if (lines.some(l => l.includes('='))) throw new StoreError('invalid_input', 'el fichero parece contener valores; pasa solo nombres');
+  return lines;
+}
+
+const COMMANDS = new Set(['worktree', 'ws', 'signal', 'triage', 'inbox', 'review', 'run', 'status', 'show', 'merge', 'retry', 'gate', 'reject', 'events', 'tui', 'doctor', 'agents', 'profile', 'improve', 'bench', 'score', 'automation', 'api-key', 'runner', 'resident', 'help']);
 
 // A forced exit is still needed for handles left by dependencies, but pipe
 // writes are asynchronous: wait for both write queues before terminating.
