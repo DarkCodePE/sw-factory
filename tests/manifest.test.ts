@@ -175,3 +175,19 @@ test('egressProbe: native deja la sonda en run.json; otro adaptador y sin sonda 
   expect(await run('fake', true)).toBeNull();
   expect(await run('native', false, true)).toBeNull();
 });
+
+test('T77: redact cubre los formatos de H4 y no toca texto corriente', () => {
+  const secretos = [
+    'Authorization: Basic dXNlcjpwYXNzd29yZDEyMw==', 'Cookie: sid=abc123SECRET; theme=dark', 'Set-Cookie: sid=abc123SECRET; HttpOnly',
+    'glpat-AbCdEf0123456789xyzQ', 'npm_AbCdEf0123456789xyzQ12345', 'passwd=hunter2hunter2', 'pwd: hunter2hunter2', 'pass=hunter2hunter2',
+    'npm publish --token hunter2hunter2', 'cli --password=hunter2hunter2', 'curl -u admin:hunter2hunter2 https://x.test', 'private_key_id: 0123abcd4567ef',
+    '-----BEGIN PGP PRIVATE KEY BLOCK-----\nhunter2hunter2\n-----END PGP PRIVATE KEY BLOCK-----',
+    '{"authorization": "Basic hunter2hunter2"}', '{"pass": "hunter2hunter2"}', '{"password": "hunter2hunter2"}',
+  ];
+  for (const s of secretos) {
+    const out = redact(s);
+    expect(out, s).toContain('[REDACTED]');
+    expect(out, s).not.toMatch(/hunter2|AbCdEf0123|SECRET|dXNlcjpw|0123abcd/);
+  }
+  for (const s of ['bypass: true', 'compass=north', 'Basic setup guide', 'curl -s https://x.test', 'cookie banner shown', 'npm run test --silent']) expect(redact(s)).toBe(s);
+});

@@ -45,11 +45,11 @@ export function readEvidence(stateDir: string, path: string): EvidenceText | nul
     // JSON histórico puede contener PEM con saltos escapados; redactar los valores decodificados.
     if (!truncated && path.endsWith('.json')) {
       try {
-        const textJson = JSON.stringify(JSON.parse(text), (key, v) => typeof v === 'string' ? (/api[_-]?key|token|secret|password|credential/i.test(key) ? '[REDACTED]' : redactForWeb(v)) : v, 2);
+        const textJson = JSON.stringify(JSON.parse(text), (key, v) => typeof v === 'string' ? (SECRET_KEY.test(key) ? '[REDACTED]' : redactForWeb(v)) : v, 2);
         return { text: textJson, truncated: false };
       } catch { /* Mostrar JSON roto como texto. */ }
     }
-    text = text.replace(/("[\w-]*(?:api[_-]?key|token|secret|password|credential)[\w-]*"\s*:\s*)"(?:[^"\\]|\\.)*"/gi, '$1"[REDACTED]"');
+    text = text.replace(new RegExp(`("[\\w-]*(?:${SECRET_WORDS})[\\w-]*"\\s*:\\s*)"(?:[^"\\\\]|\\\\.)*"`, 'gi'), '$1"[REDACTED]"');
     text = redactForWeb(text);
     return { text, truncated };
   } catch (error) {
@@ -78,8 +78,20 @@ export function redact(text: string): string {
     .replace(/\bxox[baprs]-[A-Za-z0-9-]{10,}\b/g, '[REDACTED]')
     .replace(/\beyJ[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+\b/g, '[REDACTED]')
     .replace(/\b([a-z][a-z0-9+.-]*:\/\/)[^\s/@]+:[^\s/@]+@/gi, '$1[REDACTED]@')
-    .replace(/\b([\w-]*(?:api[_-]?key|token|secret|password|credential)[\w-]*\s*[:=]\s*)["']?[^\s"',}]+["']?/gi, '$1[REDACTED]');
+    .replace(/\bglpat-[A-Za-z0-9_-]{16,}/g, '[REDACTED]')
+    .replace(/\bnpm_[A-Za-z0-9]{20,}\b/g, '[REDACTED]')
+    .replace(/-----BEGIN PGP PRIVATE KEY BLOCK-----[\s\S]*?-----END PGP PRIVATE KEY BLOCK-----/g, '[REDACTED]')
+    .replace(/\b((?:Set-)?Cookie\s*:\s*)[^\r\n]+/gi, '$1[REDACTED]')
+    .replace(/\b(authorization["']?\s*[:=]\s*)["']?(?:(?:basic|digest|token)\s+)?[^\s"',}]+["']?/gi, '$1[REDACTED]')
+    .replace(/(--[\w-]*(?:token|secret|password|passwd|api-?key)[\w-]*[\s=]+)["']?[^\s"']+["']?/gi, '$1[REDACTED]')
+    .replace(/(\bcurl\b[^\n]*?\s(?:-u|--user)[\s=]+)["']?[^\s"']+["']?/g, '$1[REDACTED]')
+    .replace(/\b(pass["']?\s*[:=]\s*)["']?[^\s"',}]+["']?/gi, '$1[REDACTED]')
+    .replace(new RegExp(`\\b([\\w-]*(?:${SECRET_WORDS})[\\w-]*["']?\\s*[:=]\\s*)["']?[^\\s"',}]+["']?`, 'gi'), '$1[REDACTED]');
 }
+
+// Palabras que delatan un valor secreto en una clave; `pass` va aparte y suelta, para no atrapar «bypass».
+const SECRET_WORDS = 'api[_-]?key|token|secret|password|passwd|pwd|credential|private[_-]?key';
+const SECRET_KEY = new RegExp(`${SECRET_WORDS}|^(?:pass|authorization|cookie)$`, 'i');
 
 
 export function activityMetadata(stateDir: string, a: Activity): Record<string, unknown> | null {
