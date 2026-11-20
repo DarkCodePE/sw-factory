@@ -3,6 +3,7 @@ import { mkdtempSync, readFileSync, rmSync, writeFileSync, existsSync } from 'no
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { Store } from '../src/store.ts';
+import { readEvidence } from '../src/evidence.ts';
 import { activityLog, atomicEvidence, gitEvidence, redact, runDirectory, writeManifest } from '../src/manifest.ts';
 import { getAgent } from '../src/agents.ts';
 import { processActivity } from '../src/pool.ts';
@@ -190,4 +191,10 @@ test('T77: redact cubre los formatos de H4 y no toca texto corriente', () => {
     expect(out, s).not.toMatch(/hunter2|AbCdEf0123|SECRET|dXNlcjpw|0123abcd/);
   }
   for (const s of ['bypass: true', 'compass=north', 'Basic setup guide', 'curl -s https://x.test', 'cookie banner shown', 'npm run test --silent']) expect(redact(s)).toBe(s);
+});
+
+test('T77: la evidencia JSON servida por la web redacta authorization, cookie, pass y private_key_id', () => {
+  writeFileSync(join(dir, 'e.json'), JSON.stringify({ authorization: 'Basic hunter2', cookie: 'sid=hunter2', pass: 'hunter2', private_key_id: 'hunter2', nota: 'bypass' }));
+  const out = readEvidence(dir, 'e.json')!.text;
+  expect(out).not.toContain('hunter2'); expect(out).toContain('bypass');
 });
