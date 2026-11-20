@@ -4,7 +4,7 @@ import type { Database } from 'bun:sqlite';
 import { randomUUID } from 'node:crypto';
 import { mkdirSync, rmSync } from 'node:fs';
 import { join } from 'node:path';
-import { ensureSchema, SPLITS, type Split } from './improve.ts';
+import { createExperiment, ensureSchema, runExperiment, SPLITS, type Split } from './improve.ts';
 import { DEFAULT_DIGEST, profileDigest, resolveProfile, resolveRole, ROLES, saveProfile, type Profile, type Role } from './profile.ts';
 import { untrusted } from './prompts.ts';
 import { CONFINABLE_AGENTS } from './sandbox/confine.ts';
@@ -200,14 +200,49 @@ export async function proposeTemplate(store: Store, stateDir: string, candidateI
   }
 }
 
-export interface TickOptions { agent?: string }
+// ---- T67c: experimento y ciclo ------------------------------------------------------------------
 
-/** Evalúa el umbral de cada rol y crea los candidatos que toquen. Apagado sin configuración o con `enabled = 0`. */
-export async function tick(store: Store, _stateDir: string, wsId: string, _opts: TickOptions = {}): Promise<void> {
+export interface ExperimentOptions { agent?: string; log?: (m: string) => void }
+
+/** proposed → experimenting → ready | failed. Experimento pareado base vs candidato, SIEMPRE confinado (M5); el perfil candidato ya guardado se conserva si falla. */
+export async function runCandidateExperiment(store: Store, stateDir: string, candidateId: string, opts: ExperimentOptions = {}): Promise<void> {
+  ensureSchema(store.db);
+  const c = row(store, candidateId);
+  const claimed = store.withRetry(() => store.db.query(`UPDATE improvement_candidates SET status='experimenting' WHERE id=? AND status='proposed'`).run(candidateId).changes === 1);
+  if (!claimed) throw new StoreError('invalid_transition', `candidato ${candidateId.slice(0, 8)} está ${c.status}, no proposed`);
+  try {
+    const cfg = getConfig(store, c.workstreamId);
+    if (!cfg) return fail(store, c, 'experimenting', 'sin configuración de automejora');
+    const ws = store.getWorkstream(c.workstreamId);
+    const { adapter } = resolveRole(resolveProfile(stateDir, c.baseDigest).profile, 'implement', ws.agent, opts.agent);
+    if (!CONFINABLE_AGENTS.includes(adapter)) return fail(store, c, 'experimenting', `--confine: adaptador ${adapter} no soportado; usa --agent`);
+    const experimentId = `auto-${c.id.replace(/-/g, '').slice(0, 8)}`;
+    createExperiment(store.db, stateDir, { id: experimentId, baseline: c.baseDigest, candidate: c.candidateDigest!, suitePath: cfg.suitePath });
+    store.withRetry(() => store.db.query(`UPDATE improvement_candidates SET experiment_id=? WHERE id=? AND status='experimenting'`).run(experimentId, candidateId));
+    await runExperiment(store.db, stateDir, experimentId, { split: cfg.split, repeats: cfg.repeats, agent: adapter, confine: true, log: opts.log });
+    const ok = store.withRetry(() => store.db.query(`UPDATE improvement_candidates SET status='ready', finished_at=? WHERE id=? AND status='experimenting'`).run(store.now(), candidateId).changes === 1);
+    if (ok) store.event(c.workstreamId, 'info', `candidato de mejora ${c.id.slice(0, 8)} listo (experimento ${experimentId})`);
+  } catch (e) {
+    fail(store, c, 'experimenting', String((e as Error).message ?? e));
+  }
+}
+
+export interface TickOptions extends ProposeOptions {}
+
+/**
+ * Evalúa el umbral de cada rol y crea los candidatos que toquen; después lleva cada candidato abierto hasta donde pueda
+ * (pending → proposed → ready). Apagado sin configuración o con `enabled = 0`. Nunca asigna el perfil (D-H): `ready` espera al dueño.
+ */
+export async function tick(store: Store, stateDir: string, wsId: string, opts: TickOptions = {}): Promise<void> {
   if (!getConfig(store, wsId)?.enabled) return;
   for (const role of ROLES) {
     const e = evaluateThreshold(store, wsId, role);
     if (!e.fire) continue;
     try { createCandidate(store, wsId, role, 'threshold', e.scores, e.total); } catch (err) { if (!(err instanceof StoreError && err.code === 'conflict')) throw err; }
+  }
+  for (const c of listCandidates(store.db, store.getWorkstream(wsId).id)) {
+    if (opts.signal?.aborted) return;
+    if (c.status === 'pending') await proposeTemplate(store, stateDir, c.id, opts);
+    if (row(store, c.id).status === 'proposed') await runCandidateExperiment(store, stateDir, c.id, opts);
   }
 }
