@@ -73,3 +73,10 @@ test('T77-H1: rachas largas de guiones y de palabras con guion no son cuadrátic
     expect(performance.now() - t0).toBeLessThan(1500);
   }
 });
+
+test('T77-H2: los contadores de tokens de un log stream-json no se redactan; los textos secretos sí', () => {
+  const linea = '{"usage":{"input_tokens":1234,"output_tokens":56},"max_tokens":8,"stop":true,"token":"zq9Xv7hunterK3"}';
+  const out = redact(linea);
+  expect(JSON.parse(out)).toEqual({ usage: { input_tokens: 1234, output_tokens: 56 }, max_tokens: 8, stop: true, token: '[REDACTED]' });
+  expect(redact('token=12345678')).toBe('token=[REDACTED]'); // fuera de JSON, un valor numérico sí es secreto
+});

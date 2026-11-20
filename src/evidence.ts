@@ -74,7 +74,8 @@ const SECRET_KEY = new RegExp(`${SECRET_WORDS}|^(?:pass|authorization|proxy-auth
 // Valor: entre comillas con escapes, o hasta el siguiente separador.
 const VALUE = String.raw`("(?:[^"\\\n]|\\.){0,4096}"|'(?:[^'\\\n]|\\.){0,4096}'|[^\s"',}]+)`;
 const quoted = (v: string) => /^["']/.test(v) ? `${v[0]}[REDACTED]${v[0]}` : '[REDACTED]';
-const mask = (re: RegExp) => [re, (_m: string, key: string, v: string) => key + quoted(v)] as const;
+// Con la clave entre comillas (JSON), solo se sustituye un valor de texto: los números y literales (`"input_tokens": 12`) se conservan.
+const mask = (re: RegExp) => [re, (m: string, key: string, v: string) => /["']\s*[:=]\s*$/.test(key) && !/^["']/.test(v) ? m : key + quoted(v)] as const;
 
 /** Saneador de un campo JSON: el nombre decide el valor completo; el resto pasa por `redact`. Lo comparten el manifiesto y el lector de evidencia. */
 export function redactField(key: string, value: string): string {
