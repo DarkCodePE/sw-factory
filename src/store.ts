@@ -1073,17 +1073,36 @@ export class Store {
    */
   changeIndex(workstream?: string): ChangeSummary[] {
     const ws = workstream ? this.getWorkstream(workstream) : undefined;
-    const has = (t: string) => this.db.query("SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = ?").get(t) !== null;
-    const source = new Map<string, ChangeSource>();
-    const mark = (sql: string, map: (r: Row) => ChangeSource) => { for (const r of this.db.query(sql).all() as Row[]) source.set(r.change_id as string, map(r)); };
-    mark('SELECT change_id FROM signals WHERE change_id IS NOT NULL', () => 'cli');
-    if (has('adm_thread_changes')) mark('SELECT change_id FROM adm_thread_changes', () => 'channel');
-    if (has('change_links')) mark('SELECT change_id, source_system FROM change_links WHERE source_system IS NOT NULL', r => r.source_system === 'jira' ? 'jira' : 'channel');
-    if (has('jira_imports')) mark('SELECT s.change_id FROM jira_imports i JOIN signals s ON s.id = i.signal_id WHERE s.change_id IS NOT NULL', () => 'jira');
-    const creator = new Map((this.db.query('SELECT change_id, actor FROM events WHERE id IN (SELECT MIN(id) FROM events WHERE change_id IS NOT NULL GROUP BY change_id)').all() as Row[])
-      .map(r => [r.change_id as string, (r.actor as string | null) ?? null]));
     const rows = (ws ? this.db.query('SELECT * FROM changes WHERE workstream_id = ? ORDER BY created_at').all(ws.id) : this.db.query('SELECT * FROM changes ORDER BY created_at').all()) as Row[];
+    const { source, creator } = this.resolveChangeAttribution();
     return rows.map(r => ({ ...toChange(r), source: source.get(r.id as string) ?? null, creator: creator.get(r.id as string) ?? null }));
+  }
+
+  /** Resuelve fuente y creador para un conjunto de changes acotado (o todos si se omite). */
+  resolveChangeAttribution(changeIds?: string[]): { source: Map<string, ChangeSource>; creator: Map<string, string | null> } {
+    if (changeIds && !changeIds.length) return { source: new Map(), creator: new Map() };
+    const has = (t: string) => this.db.query("SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = ?").get(t) !== null;
+    const filter = changeIds ? ` WHERE change_id IN (${changeIds.map(() => '?').join(',')})` : '';
+    const filterAnd = changeIds ? ` AND change_id IN (${changeIds.map(() => '?').join(',')})` : '';
+    const params = changeIds ?? [];
+
+    const source = new Map<string, ChangeSource>();
+    const mark = (sql: string, sqlParams: string[], map: (r: Row) => ChangeSource) => {
+      for (const r of this.db.query(sql).all(...sqlParams) as Row[]) source.set(r.change_id as string, map(r));
+    };
+    mark(`SELECT change_id FROM signals WHERE change_id IS NOT NULL${filterAnd}`, params, () => 'cli');
+    if (has('adm_thread_changes')) mark(`SELECT change_id FROM adm_thread_changes${filter}`, params, () => 'channel');
+    if (has('change_links')) mark(`SELECT change_id, source_system FROM change_links WHERE source_system IS NOT NULL${filterAnd}`, params, r => r.source_system === 'jira' ? 'jira' : 'channel');
+    if (has('jira_imports')) {
+      const jiraFilter = changeIds ? ` AND s.change_id IN (${changeIds.map(() => '?').join(',')})` : '';
+      mark(`SELECT s.change_id FROM jira_imports i JOIN signals s ON s.id = i.signal_id WHERE s.change_id IS NOT NULL${jiraFilter}`, params, () => 'jira');
+    }
+
+    const creatorFilter = changeIds ? ` AND change_id IN (${changeIds.map(() => '?').join(',')})` : '';
+    const creator = new Map((this.db.query(`SELECT change_id, actor FROM events WHERE id IN (SELECT MIN(id) FROM events WHERE change_id IS NOT NULL${creatorFilter} GROUP BY change_id)`).all(...params) as Row[])
+      .map(r => [r.change_id as string, (r.actor as string | null) ?? null]));
+
+    return { source, creator };
   }
 
   setChangeBranch(changeId: string, branch: string): void {
@@ -1987,25 +2006,95 @@ export class Store {
   }
 
   /** Cohorte acotada para métricas; solo SELECT, sin cargar cuerpos de eventos. */
-  metricsCohort(workstream: string | undefined, since: string | null, until: string, limit: number): { changes: Change[]; total: number } {
+  metricsCohort(workstream: string | undefined, since: string | null, until: string, limit: number): { changes: ChangeSummary[]; total: number } {
     const wsId = workstream ? this.getWorkstream(workstream).id : null;
     const where = '(? IS NULL OR workstream_id = ?) AND (? IS NULL OR julianday(created_at) >= julianday(?)) AND julianday(created_at) <= julianday(?)';
     const params = [wsId, wsId, since, since, until];
     const total = (this.db.query(`SELECT COUNT(*) AS n FROM changes WHERE ${where}`).get(...params) as { n: number }).n;
-    const changes = (this.db.query(`SELECT * FROM changes WHERE ${where} ORDER BY julianday(created_at) DESC, id LIMIT ?`)
-      .all(...params, limit) as Row[]).map(toChange);
+    const rows = this.db.query(`SELECT * FROM changes WHERE ${where} ORDER BY julianday(created_at) DESC, id LIMIT ?`)
+      .all(...params, limit) as Row[];
+    const { source, creator } = this.resolveChangeAttribution(rows.map(r => r.id as string));
+    const changes: ChangeSummary[] = rows.map(r => ({ ...toChange(r), source: source.get(r.id as string) ?? null, creator: creator.get(r.id as string) ?? null }));
     return { changes, total };
   }
 
+  /** Registra el PR abierto como evento de change. La URL debe comenzar por https:// y tener host válido. */
+  recordPrOpened(changeId: string, url: string): void {
+    let cleanUrl: string;
+    try {
+      const trimmed = url.trim();
+      if (trimmed.includes('\\')) throw new Error();
+      const u = new URL(trimmed);
+      if (u.protocol !== 'https:' || !u.hostname || trimmed.startsWith('https:///') || trimmed.startsWith('HTTPS:///')) throw new Error();
+      cleanUrl = u.href;
+    } catch {
+      throw new StoreError('invalid_input', 'la URL del PR debe comenzar por https:// y tener un host válido');
+    }
+    const c = this.getChange(changeId);
+    const existing = this.db.query("SELECT 1 FROM events WHERE change_id = ? AND message = ?").get(changeId, `pr_opened: ${cleanUrl}`);
+    if (existing) return;
+    this.event(c.workstreamId, 'info', `pr_opened: ${cleanUrl}`, changeId);
+  }
+
+  /** Obtiene la URL del PR asociada a un change, si existe y es https://. Solo lectura local. */
+  getChangePrUrl(changeId: string): string | null {
+    const ev = this.db.query("SELECT message FROM events WHERE change_id = ? AND message GLOB 'pr_opened: https://*' ORDER BY id DESC LIMIT 1").get(changeId) as { message: string } | null;
+    if (ev) {
+      const match = /^pr_opened:\s*(https:\/\/\S+)/i.exec(ev.message);
+      if (match && match[1]) return match[1];
+    }
+    const hasLinks = this.db.query("SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'change_links'").get();
+    if (hasLinks) {
+      const row = this.db.query('SELECT pr_json FROM change_links WHERE change_id = ?').get(changeId) as { pr_json: string | null } | null;
+      if (row?.pr_json) {
+        try {
+          const pr = JSON.parse(row.pr_json) as { url?: string };
+          if (pr.url && typeof pr.url === 'string' && pr.url.startsWith('https://')) return pr.url;
+        } catch {}
+      }
+    }
+    return null;
+  }
+
+  /** Intervenciones humanas agrupadas por día para series temporales. */
+  metricsDailyInterventions(changeIds: string[], until: string): Map<string, number> {
+    if (!changeIds.length) return new Map();
+    const review = "(message = 'change_review approved' OR message LIKE 'change_review approved:%' OR message = 'change_review commented' OR message LIKE 'change_review commented:%' OR message = 'change_review declined' OR message LIKE 'change_review declined:%' OR message = 'investigation approved' OR message LIKE 'investigation approved:%' OR message = 'investigation commented' OR message LIKE 'investigation commented:%' OR message = 'investigation declined' OR message LIKE 'investigation declined:%')";
+    const rows = this.db.query(`SELECT substr(created_at, 1, 10) AS day, COUNT(*) AS n
+      FROM events WHERE change_id IN (${changeIds.map(() => '?').join(',')}) AND julianday(created_at) <= julianday(?)
+      AND (${review} OR message GLOB 'human reply received (question *); re-queued' OR message GLOB 'change retried (*)')
+      AND (message NOT GLOB '* failed permanently:*' OR activity_id NOT IN (SELECT id FROM activities WHERE validator IS NOT NULL))
+      GROUP BY substr(created_at, 1, 10)`).all(...changeIds, until) as Array<{ day: string; n: number }>;
+    return new Map(rows.map(r => [r.day, r.n]));
+  }
+
+  /** PRs abiertos y fusionados agrupados por día para series temporales. */
+  metricsDailyPrs(changeIds: string[], until: string): { opened: Map<string, number>; merged: Map<string, number> } {
+    if (!changeIds.length) return { opened: new Map(), merged: new Map() };
+    const prOpen = "message GLOB 'pr_opened: https://*'";
+    const merge = "message = 'merge_completed'";
+    const openedRows = this.db.query(`SELECT substr(created_at, 1, 10) AS day, COUNT(DISTINCT change_id) AS n
+      FROM events WHERE change_id IN (${changeIds.map(() => '?').join(',')}) AND julianday(created_at) <= julianday(?)
+      AND ${prOpen} GROUP BY substr(created_at, 1, 10)`).all(...changeIds, until) as Array<{ day: string; n: number }>;
+    const mergedRows = this.db.query(`SELECT substr(created_at, 1, 10) AS day, COUNT(DISTINCT change_id) AS n
+      FROM events WHERE change_id IN (${changeIds.map(() => '?').join(',')}) AND julianday(created_at) <= julianday(?)
+      AND ${merge} GROUP BY substr(created_at, 1, 10)`).all(...changeIds, until) as Array<{ day: string; n: number }>;
+    return { opened: new Map(openedRows.map(r => [r.day, r.n])), merged: new Map(mergedRows.map(r => [r.day, r.n])) };
+  }
+
   /** Hitos y acciones humanas registrados. No interpreta texto de issues; ignora el agotamiento de reintentos de un validador (su cuarentena, bloqueo y reintento humano sí cuentan). */
-  metricsEvents(changeIds: string[], until: string): Array<{ changeId: string; reviewAt: string | null; decisionAt: string | null; terminalAt: string | null; reviews: number; answers: number; retries: number }> {
+  metricsEvents(changeIds: string[], until: string): Array<{ changeId: string; reviewAt: string | null; decisionAt: string | null; terminalAt: string | null; reviews: number; answers: number; retries: number; prOpenedAt: string | null; mergedAt: string | null }> {
     if (!changeIds.length) return [];
     const review = "(message = 'change_review approved' OR message LIKE 'change_review approved:%' OR message = 'change_review commented' OR message LIKE 'change_review commented:%' OR message = 'change_review declined' OR message LIKE 'change_review declined:%' OR message = 'investigation approved' OR message LIKE 'investigation approved:%' OR message = 'investigation commented' OR message LIKE 'investigation commented:%' OR message = 'investigation declined' OR message LIKE 'investigation declined:%')";
     const terminal = "(message IN ('change completed','change canceled','change_review declined','investigation declined') OR message LIKE 'change_review declined:%' OR message LIKE 'investigation declined:%' OR message LIKE 'blocked:%' OR message LIKE 'quarantined:%' OR message GLOB 'change_review failed permanently:*' OR message GLOB 'investigation failed permanently:*' OR message GLOB 'implementation failed permanently:*' OR message GLOB 'steward failed permanently:*' OR message GLOB 'gates failed permanently:*')";
+    const prOpen = "message GLOB 'pr_opened: https://*'";
+    const merge = "message = 'merge_completed'";
     return this.db.query(`SELECT change_id AS changeId,
       MIN(CASE WHEN message = 'investigation awaiting spec review' THEN created_at END) AS reviewAt,
       MIN(CASE WHEN ${review} THEN created_at END) AS decisionAt,
       MIN(CASE WHEN ${terminal} THEN created_at END) AS terminalAt,
+      MIN(CASE WHEN ${prOpen} THEN created_at END) AS prOpenedAt,
+      MIN(CASE WHEN ${merge} THEN created_at END) AS mergedAt,
       SUM(CASE WHEN ${review} THEN 1 ELSE 0 END) AS reviews,
       SUM(CASE WHEN message GLOB 'human reply received (question *); re-queued' THEN 1 ELSE 0 END) AS answers,
       SUM(CASE WHEN message GLOB 'change retried (*)' THEN 1 ELSE 0 END) AS retries

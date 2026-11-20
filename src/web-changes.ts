@@ -1,5 +1,5 @@
 // Lista de changes y bandeja con filtros, orden y agrupación. Solo presenta datos del Store (changeIndex, inbox).
-import type { Activity, ChangeSource, ChangeSummary } from './store.ts';
+import type { Activity, ChangeSource, ChangeSummary, Store } from './store.ts';
 
 export interface Ui { escape(v: unknown): string; badge(status: string): string; labels: Record<string, string> }
 export interface Query { status: string; q: string; sort: 'updated' | 'created' | 'title'; from: string; to: string; source: string; actor: string }
@@ -74,3 +74,17 @@ export const INBOX_JS = `(()=>{const K='fab.inbox.seen';const read=()=>{try{retu
 const apply=(root=document)=>{const s=read();root.querySelectorAll('[data-seen-id]').forEach(li=>{const on=s.has(li.dataset.seenId);li.classList.toggle('seen',on);const b=li.querySelector('[data-seen]');if(b){const t=on?'Visto · deshacer':'Marcar como visto';if(b.textContent!==t)b.textContent=t;b.setAttribute('aria-pressed',String(on))}})};
 window.fabPrepare=apply;document.addEventListener('click',ev=>{const b=ev.target.closest&&ev.target.closest('[data-seen]');if(!b)return;const li=b.closest('[data-seen-id]');const s=read();const id=li.dataset.seenId;s.has(id)?s.delete(id):s.add(id);write(s);apply()});
 new MutationObserver(()=>apply()).observe(document.body,{childList:true,subtree:true});apply()})();`;
+
+/** Enlace al PR de un change; solo admite https:// y se escapa; 'No medido' si falta o no es https con host. */
+export function changePrLink(store: Store, changeId: string): string {
+  const url = store.getChangePrUrl(changeId);
+  if (!url) return 'No medido';
+  try {
+    const u = new URL(url);
+    if (u.protocol !== 'https:' || !u.hostname) return 'No medido';
+  } catch {
+    return 'No medido';
+  }
+  const esc = (v: string) => v.replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[c]!);
+  return `<a href="${esc(url)}">${esc(url)}</a>`;
+}
