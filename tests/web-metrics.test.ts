@@ -177,3 +177,36 @@ test('H8: singleAttempt exige cero reintentos y a lo sumo un coste', () => {
   store.db.query('DELETE FROM changes WHERE id=?').run(one.id);
   const two = seed(1, 1); expect(write(two, 1, [1])).toBe('No medido');
 });
+function validatorChange() {
+  const c = store.createChange('uno', 'x', '');
+  store.db.query("UPDATE activities SET status='completed',kind='implementation' WHERE change_id=?").run(c.id);
+  store.db.query("UPDATE changes SET status='implemented' WHERE id=?").run(c.id);
+  store.db.query("UPDATE workstreams SET state='active'").run();
+  store.requestValidation(c.id, ['code_review']);
+  return { c, a: store.claimActivity('uno', 'w')! };
+}
+test('N1: la cuarentena de un validador sigue siendo estado terminal', () => {
+  const { c, a } = validatorChange();
+  store.quarantineActivity(a.id, 'w', 'razón');
+  expect(store.getChange(c.id).status).toBe('quarantined');
+  expect(calculateMetrics(store, dir).cycles[3]?.samples).toBe(1);
+});
+test('N1: el bloqueo de un validador sigue siendo estado terminal', () => {
+  const { c, a } = validatorChange();
+  store.blockActivity(a.id, 'w', 'razón');
+  expect(store.getChange(c.id).status).toBe('blocked');
+  expect(calculateMetrics(store, dir).cycles[3]?.samples).toBe(1);
+});
+test('N1: el reintento humano de un change bloqueado por validador cuenta como intervención', () => {
+  const { c, a } = validatorChange();
+  store.blockActivity(a.id, 'w', 'razón');
+  store.retryChange(c.id);
+  expect(calculateMetrics(store, dir).humans.find(h => h.id === c.id)?.retries).toBe(1);
+});
+test('N2: change completed y canceled sin activity siguen siendo terminales', () => {
+  const c = store.createChange('uno', 'x', '');
+  store.db.query("UPDATE changes SET status='implemented' WHERE id=?").run(c.id);
+  store.closeChange(c.id, 'completed');
+  expect(store.db.query("SELECT activity_id FROM events WHERE message='change completed'").get()).toEqual({ activity_id: null });
+  expect(calculateMetrics(store, dir).cycles[3]?.samples).toBe(1);
+});
