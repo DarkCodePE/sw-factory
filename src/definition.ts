@@ -40,10 +40,12 @@ export function buildDefinition(store: Store, stateDir: string | undefined, slug
   for (const k of WORKER_KEYS) files.set(`profile/worker/${k}.md`, worker[k]);
   for (const k of VALIDATOR_KEYS) files.set(`profile/validators/${k}.md`, validators[k]);
   const skills = join(ws.repo, '.agents', 'skills');
-  if (existsSync(skills)) {
+  if (existsSync(skills) && !lstatSync(skills).isSymbolicLink()) {
     for (const name of readdirSync(skills).sort()) {
-      const f = join(skills, name, 'SKILL.md');
-      if (!SKILL_NAME_RE.test(name) || !existsSync(f) || lstatSync(f).isSymbolicLink()) continue;
+      const skillDir = join(skills, name);
+      if (!SKILL_NAME_RE.test(name) || !existsSync(skillDir) || lstatSync(skillDir).isSymbolicLink() || !lstatSync(skillDir).isDirectory()) continue;
+      const f = join(skillDir, 'SKILL.md');
+      if (!existsSync(f) || lstatSync(f).isSymbolicLink()) continue;
       const text = readFileSync(f, 'utf8');
       if (Buffer.byteLength(text) <= MAX_SKILL) files.set(`skills/${name}/SKILL.md`, text);
     }

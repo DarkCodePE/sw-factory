@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, expect, test } from 'bun:test';
-import { existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, statSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, statSync, symlinkSync, writeFileSync } from 'node:fs';
 import { homedir, tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { exportDefinition } from '../src/definition.ts';
@@ -150,6 +150,25 @@ test('error al generar definicion no filtra rutas locales ni el directorio home 
   expect(html).toContain('No se pudo generar el árbol de definición');
   expect(html).not.toContain(homedir());
   expect(html).not.toContain(repoDir);
+});
+
+test('ignora directorios de skills que sean symlinks para evitar directory traversal', async () => {
+  seedWorkstream();
+  // Crear un directorio externo con un SKILL.md
+  const outsideDir = join(dir, 'outside-skill');
+  mkdirSync(outsideDir, { recursive: true });
+  writeFileSync(join(outsideDir, 'SKILL.md'), 'contenido secreto exterior');
+
+  // Crear un symlink en .agents/skills apuntando al directorio externo
+  const symlinkSkill = join(repoDir, '.agents', 'skills', 'traversal-skill');
+  symlinkSync(outsideDir, symlinkSkill);
+
+  server = startWeb(stateDir, 0);
+  const html = await getHtml('/definicion?ws=demo');
+
+  // No debe incluir la skill externa que vino a través del symlink
+  expect(html).not.toContain('traversal-skill');
+  expect(html).not.toContain('contenido secreto exterior');
 });
 
 test('un fichero grande se trunca con aviso', async () => {
