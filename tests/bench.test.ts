@@ -225,7 +225,9 @@ test('reanuda un benchmark huérfano en running desde la última fila, solo con 
   await expect(runBenchmark(db, dir, 'orphan', { ...options, resume: true, repeats: 1 })).rejects.toThrow(/repeats/);
   expect(rows('orphan')).toHaveLength(8);
 
-  expect(await runBenchmark(db, dir, 'orphan', { ...options, seed: 99, resume: true, concurrency: 2 })).toEqual({ seed: 7, runs: 12 });
+  let launches = 0;
+  expect(await runBenchmark(db, dir, 'orphan', { ...options, seed: 99, resume: true, concurrency: 2, log: () => { launches++; } })).toEqual({ seed: 7, runs: 12 });
+  expect(launches).toBe(4); // no relanza las ocho corridas ya pagadas
   const order = (id: string) => rows(id).map(r => [r.task_id, r.repeat, r.position, r.arm]);
   expect(order('orphan')).toEqual(order('whole'));
   expect(benchmark('orphan')).toMatchObject({ status: 'complete', error: null });
