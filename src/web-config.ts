@@ -156,7 +156,11 @@ export async function configPage(store: Store, stateDir: string, url: URL, escap
       ['Aprobación de change', yesNo(selected.requireChangeApproval)],
       ['Aprobación de spec', yesNo(selected.requireApproval)],
     ])}</section>
-    <section><h2>Perfil vigente</h2>${profileView(stateDir, selected, escape)}</section>`
+    <section><h2>Perfil vigente</h2>${profileView(stateDir, selected, escape)}</section>
+    <section><h2>Definición</h2>
+      <p>El árbol de definición agrupa la configuración, el perfil y las skills en ficheros versionables.</p>
+      <p><a href="/definicion?ws=${escape(selected.slug)}">Ver árbol de definición (${escape(selected.slug)})</a></p>
+    </section>`
     : '<p class="empty">No hay workstreams.</p>';
   const egress = selected ? latestEgress(store, stateDir, selected, escape) : 'No medido';
   const [sandbox, mcp] = await Promise.all([detectSandbox(), mcpInventory(escape)]);
