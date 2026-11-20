@@ -280,10 +280,11 @@ test('H4/E10: MCP_NOT_SUPPORTED si el rol pide servidores y el adaptador no los 
   expect(first()).toMatchObject({ status: 'blocked', error: expect.stringContaining('MCP_NOT_SUPPORTED') });
 });
 
-test('H4/E7: el motivo del STATUS que imprime el agente sale limpio de la base', async () => {
-  const { pool, first } = setup(v2({ investigate: { env: ['CANARIO'] } }), { env: ['CANARIO'] });
-  await withEnv({ CANARIO: CANARY, FABRICA_FAKE_STATUS: `blocked: falta ${CANARY}` }, async () => { await pool(); });
-  expect(first().status).toBe('blocked');
+test('H4/E7: el status.reason de un turno vivo sale limpio de la base', async () => {
+  const { fakeLive } = await import('./helpers/live.ts');
+  const backend = fakeLive([{ output: 'x', status: { kind: 'blocked', reason: `falta ${CANARY}` } as never, reports: [] }], { name: 'claude' });
+  const { pool } = setup(v2({ investigate: { harness: 'claude', env: ['TRACKER_TOKEN'] } }, 'claude'), { env: ['TRACKER_TOKEN'] }, 'claude');
+  await withEnv({ TRACKER_TOKEN: CANARY, FABRICA_HOME: dir }, async () => { await pool({ live: true, liveBackends: { claude: backend }, acceptAgentBinaries: true }); });
   expect(everything()).not.toContain(CANARY);
 });
 
@@ -292,6 +293,7 @@ test('H4/E8: el human_action de un report vivo sale limpio de la base', async ()
   const backend = fakeLive([{ output: 'x', reports: [{ state: 'awaiting', summary: 'espera', human_action: `pega ${CANARY}` }] }], { name: 'claude' });
   const { pool } = setup(v2({ investigate: { harness: 'claude', env: ['TRACKER_TOKEN'] } }, 'claude'), { env: ['TRACKER_TOKEN'] }, 'claude');
   await withEnv({ TRACKER_TOKEN: CANARY, FABRICA_HOME: dir }, async () => { await pool({ live: true, liveBackends: { claude: backend }, acceptAgentBinaries: true }); });
+  expect(new AdmissionDb(store).db.query('SELECT text FROM adm_questions').all()).toEqual([{ text: 'pega [REDACTED:TRACKER_TOKEN]' }]);
   expect(everything()).not.toContain(CANARY);
 });
 
