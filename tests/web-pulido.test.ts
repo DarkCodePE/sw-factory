@@ -256,3 +256,14 @@ test('T94: seleccionar todo, marcar y quitar «visto», copiar; el sondeo conser
   (win.fabPrepare as (r: unknown) => void)({ querySelectorAll: () => next });
   expect(next.map(l => l.c.checked)).toEqual([true, true, false]);
 });
+
+// ---- Arreglos tras verificación ----------------------------------------------------------------------------------
+test('T95-H1: jira_imports sin source_url no rompe el detalle del change', async () => {
+  store.db.exec('CREATE TABLE jira_imports (issue_key TEXT PRIMARY KEY, signal_id TEXT NOT NULL UNIQUE)');
+  const c = store.createChange(ws, 'Vieja base', 'd');
+  const ro = new Store(join(dir, 'fabrica.db'), { readonly: true });
+  expect(ro.changeLinks(c.id)).toEqual({}); ro.close();
+  server = startWeb(dir, 0);
+  const res = await fetch(`http://127.0.0.1:${server.port}/changes/${c.id}`);
+  expect(res.status).toBe(200); expect(await res.text()).toContain('Vieja base');
+});

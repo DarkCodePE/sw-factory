@@ -1106,7 +1106,8 @@ export class Store {
     const out: ChangeLinks = {};
     const row = has('change_links') ? this.db.query('SELECT * FROM change_links WHERE change_id = ?').get(changeId) as Row | null : null;
     if (row?.source_system && row.source_key && row.source_url) out.source = { system: String(row.source_system), key: String(row.source_key), url: String(row.source_url) };
-    else if (has('jira_imports')) {
+    // Una base anterior a T49 puede tener `jira_imports` sin `source_url`; el Store de solo lectura no la migra.
+    else if (has('jira_imports') && (this.db.query('PRAGMA table_info(jira_imports)').all() as Row[]).some(c => c.name === 'source_url')) {
       const i = this.db.query('SELECT i.issue_key, i.source_url FROM jira_imports i JOIN signals s ON s.id = i.signal_id WHERE s.change_id = ?').get(changeId) as Row | null;
       if (i?.source_url) out.source = { system: 'jira', key: String(i.issue_key), url: String(i.source_url) };
     }
