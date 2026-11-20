@@ -1,7 +1,9 @@
 // Adaptación HTTP: las transiciones, el cercado y los eventos siguen en los comandos existentes.
 import { createHash } from 'node:crypto';
 import { join } from 'node:path';
-import { isRunnerName, Store, StoreError } from './store.ts';
+import { isRunnerName, Store, StoreError, WorkstreamBusyError } from './store.ts';
+import { AGENT_NAMES } from './agents.ts';
+import { isProfileDigest } from './profile.ts';
 import { linkTriagedSignal } from './admission/apply.ts';
 import { removeWorktree } from './worktrees.ts';
 import { SIGNAL_BODY_MAX, SIGNAL_TITLE_MAX } from './web-signals.ts';
@@ -16,7 +18,7 @@ import { saveSuiteCandidate, suiteTaskForm } from './web-bench.ts';
 import type { Split } from './improve.ts';
 import { API_KEYS_PATH, API_KEY_CREATE_PATH, createApiKeyResponse, revokeApiKeyResponse, type ApiKeyUsage } from './web-api-keys.ts';
 import type { WebAuth } from './web-auth.ts';
-import { PROFILE_BODY_LIMIT, ProfileInputError, profileAction } from './web-profile.ts';
+import { PROFILE_BODY_LIMIT, ProfileInputError, checkProfileFields, profileAction } from './web-profile.ts';
 import { enqueueBackfill, enqueueManual, ensureSchema, previewBackfill } from './scorers.ts';
 import { archiveWorkstream, createWorkstream, workstreamSettings, workstreamState, wsFields } from './web-ws.ts';
 import { result as inertPage, RUNNER_CHECK_PATH, type runnerCheckAction } from './web-runner-check.ts';
@@ -34,6 +36,7 @@ const messages: Record<string, string> = {
   skipped_open: 'Saltada: ya hay una señal o un change abierto de esta automation; no se creó ninguna señal.',
   skipped_inactive: 'Saltada: el workstream no está activo; no se creó ninguna señal.',
   not_found: 'not_found: no se encontró el registro.', invalid_input: 'invalid_input: revisa los datos de la acción.',
+  workstream_busy: 'El workstream tiene trabajo vivo. Reintenta cuando termine el turno o se resuelva la espera o reanudación.',
   error: 'No se pudo registrar la acción. Revisa el estado antes de volver a intentarlo.',
 };
 const runnerErrors: Record<string, string> = {
@@ -102,6 +105,7 @@ const titleOf = (raw: Raw) => {
 // Valida y normaliza los campos de una acción; el orden de las comprobaciones es el de F2.
 const pick = (...keys: string[]) => (raw: Raw): Raw => { for (const k of keys) limit(text(raw, k)); return Object.fromEntries(keys.map(k => [k, text(raw, k)])); };
 const route = (entity: string, verb: string) => new RegExp(`^/${entity}/([^/]+)/${verb}$`);
+const ADAPTER_FIELDS = ['agent', 'previous', 'profileExpected', 'confirm'] as const;
 const findSignal = (store: Store, id: string) => {
   const s = [...store.listWorkstreams()].flatMap(w => store.listSignals(w.id)).find(s => s.id === id);
   if (!s) throw new StoreError('not_found', 'señal inexistente');
@@ -396,6 +400,23 @@ export const ACTIONS: Record<string, Action | CheckAction | WebResponseAction> =
     input: raw => ({ state: raw.state }),
     run: (store, id, input, out) => { out.destination = '/workstreams'; workstreamState(store, id, input.state); },
   },
+  'workstreams/adaptador': {
+    path: route('workstreams', 'adaptador'),
+    api: false,
+    input: raw => {
+      const input = pick(...ADAPTER_FIELDS)(raw);
+      if (!AGENT_NAMES.includes(input.agent!) || !input.previous || !isProfileDigest(input.profileExpected!) || input.confirm !== 'yes') {
+        throw new InputError(400, 'Revisa y confirma el cambio de adaptador del workstream.');
+      }
+      return input;
+    },
+    run: (store, id, input, out) => {
+      out.destination = '/perfiles';
+      const ws = store.getWorkstream(id);
+      out.destination = `/perfiles?ws=${encodeURIComponent(ws.slug)}`;
+      store.setWorkstreamAgent(ws.id, input.agent!, input.previous!, input.profileExpected!);
+    },
+  },
   'workstreams/archive': {
     path: route('workstreams', 'archive'),
     input: raw => ({ confirm: raw.confirm }),
@@ -453,7 +474,8 @@ export async function performAction(stateDir: string, name: string, id: string, 
       }
       throw new InputError(500, 'No se pudo registrar la acción.');
     }
-    out.result = error instanceof StoreError && messages[error.code] ? error.code : 'error';
+    out.result = error instanceof WorkstreamBusyError ? 'workstream_busy'
+      : error instanceof StoreError && messages[error.code] ? error.code : 'error';
   } finally { store?.close(); }
   return out;
 }
@@ -530,6 +552,7 @@ export async function webAction(req: Request, stateDir: string, port: number, au
     id = name.endsWith('/create') ? '' : decodeURIComponent(raw);
     if ('check' in action) return await runnerCheck(id, extendCheckTimeout);
     if (id && !/^[\w-]+$/.test(id)) return new Response('Identificador inválido.', { status: 400 });
+    if (name === 'workstreams/adaptador') checkProfileFields(form, ['csrf', ...ADAPTER_FIELDS]);
     let repeated = false;
     // Las acciones anteriores conservan el primer valor. En los editores importa cada campo.
     for (const [k, v] of form) {

@@ -1,7 +1,9 @@
 // SQLite-backed store for workstreams, signals, changes, activities and events.
 // Every lifecycle transition goes through a compare-and-set UPDATE so concurrent workers
 // cannot double-claim or overwrite each other's results.
-import { DEFAULT_DIGEST, resolveProfile } from './profile.ts';
+import { DEFAULT_DIGEST, ROLES, isProfileDigest, resolveProfile, resolveRole, type Profile } from './profile.ts';
+import { AGENT_NAMES } from './agents.ts';
+import { CONFINABLE_AGENTS } from './sandbox/confine.ts';
 import { isForbiddenEnvName } from './mcp-registry.ts';
 import { Database } from 'bun:sqlite';
 import { createHash, randomBytes, randomUUID, timingSafeEqual } from 'node:crypto';
@@ -272,6 +274,12 @@ export class StoreError extends Error {
     message: string
   ) {
     super(message);
+  }
+}
+
+export class WorkstreamBusyError extends StoreError {
+  constructor() {
+    super('conflict', 'El workstream tiene trabajo vivo. Reintenta cuando termine el turno o se resuelva la espera o reanudación.');
   }
 }
 
@@ -727,17 +735,80 @@ export class Store {
     return this.getWorkstream(id);
   }
 
-  /** Asigna un perfil al workstream (T58). `expected` es el digest vigente que vio quien pide el cambio; el evento guarda anterior y nuevo. */
-  assignProfile(idOrSlug: string, digest: string, expected: string): void {
-    try { resolveProfile(this.stateDir, digest); } catch (e) { throw new StoreError('invalid_input', (e as Error).message); }
+  /** Asigna un perfil bajo el mismo lock que el claim y las transiciones de sesión. */
+  assignProfile(idOrSlug: string, digest: string, expected: string, expectedAgent?: string): void {
+    if (!isProfileDigest(digest)) throw new StoreError('invalid_input', 'digest de perfil inválido');
     this.withRetry(() => {
       const ws = this.getWorkstream(idOrSlug);
       const current = ws.profile ?? DEFAULT_DIGEST;
-      if (current !== expected || current === digest) throw new StoreError('conflict', 'el perfil vigente cambió o ya es ese');
-      const r = this.db.query('UPDATE workstreams SET profile = ? WHERE id = ? AND COALESCE(profile, ?) = ?').run(digest === DEFAULT_DIGEST ? null : digest, ws.id, DEFAULT_DIGEST, expected);
-      if (r.changes !== 1) throw new StoreError('conflict', 'el perfil vigente cambió');
+      if (current !== expected || (expectedAgent !== undefined && ws.agent !== expectedAgent) || current === digest) {
+        throw new StoreError('conflict', 'la configuración vigente cambió o el perfil ya está asignado');
+      }
+      const next = this.#configurationProfile(digest);
+      // Restauración de T58: si falta el perfil anterior, el fallback manual es lo único conocido.
+      let before: Profile;
+      try { before = this.#configurationProfile(current); }
+      catch (e) {
+        if (digest !== DEFAULT_DIGEST || !(e instanceof StoreError)) throw e;
+        before = next;
+      }
+      this.#checkExecutionConfig(ws, before, next, ws.agent);
+      this.db.query('UPDATE workstreams SET profile = ? WHERE id = ?').run(digest === DEFAULT_DIGEST ? null : digest, ws.id);
       this.event(ws.id, 'info', `perfil asignado: ${current} → ${digest}`);
     });
+  }
+
+  setWorkstreamAgent(idOrSlug: string, agent: string, previous: string, profileExpected: string): void {
+    if (!AGENT_NAMES.includes(agent)) throw new StoreError('invalid_input', 'adaptador desconocido');
+    this.withRetry(() => {
+      const ws = this.getWorkstream(idOrSlug);
+      if (ws.agent !== previous || (ws.profile ?? DEFAULT_DIGEST) !== profileExpected || ws.agent === agent) {
+        throw new StoreError('conflict', 'la configuración vigente cambió o el adaptador ya está asignado');
+      }
+      const profile = this.#configurationProfile(ws.profile);
+      this.#checkExecutionConfig(ws, profile, profile, agent);
+      this.db.query('UPDATE workstreams SET agent = ? WHERE id = ?').run(agent, ws.id);
+      this.event(ws.id, 'info', `adaptador del workstream: ${ws.agent} → ${agent}`);
+    });
+  }
+
+  #configurationProfile(digest: string | null): Profile {
+    try { return resolveProfile(this.stateDir, digest).profile; }
+    catch { throw new StoreError('invalid_input', 'perfil desconocido, inaccesible o corrupto'); }
+  }
+
+  #hasTable(name: string): boolean {
+    return this.db.query("SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = ?").get(name) !== null;
+  }
+
+  #checkExecutionConfig(ws: Workstream, before: Profile, next: Profile, agent: string): void {
+    const claimed = this.db.query(`SELECT 1 FROM activities WHERE workstream_id = ?
+      AND status IN ('in_progress', 'waiting_reply') LIMIT 1`).get(ws.id);
+    const resuming = !claimed && this.#hasTable('adm_sessions') && this.db.query(`
+      SELECT 1 FROM activities a JOIN changes c ON c.id = a.change_id
+      JOIN adm_sessions s ON s.change_id = a.change_id AND s.kind = a.kind
+      WHERE a.workstream_id = ? AND a.status = 'pending' AND a.validator IS NULL
+        AND c.status NOT IN (${TERMINAL_CHANGE_STATUSES.map(() => '?').join(', ')})
+        AND s.status = 'open' AND s.launched_at IS NOT NULL
+        AND s.generation = (SELECT MAX(generation) FROM adm_sessions WHERE change_id = a.change_id AND kind = a.kind)
+      LIMIT 1`).get(ws.id, ...TERMINAL_CHANGE_STATUSES);
+    if (claimed || resuming) throw new WorkstreamBusyError();
+
+    const channel = (this.#hasTable('adm_thread_changes') && this.db.query(`
+      SELECT 1 FROM adm_thread_changes t JOIN changes c ON c.id = t.change_id WHERE c.workstream_id = ? LIMIT 1`).get(ws.id))
+      || (this.#hasTable('adm_thread_signals') && this.db.query(`
+      SELECT 1 FROM adm_thread_signals t JOIN signals s ON s.id = t.signal_id WHERE s.workstream_id = ? LIMIT 1`).get(ws.id));
+    if ((channel || agent !== ws.agent) && !CONFINABLE_AGENTS.includes(agent)) {
+      throw new StoreError('invalid_input', 'el adaptador fallback del workstream debe ser confinable');
+    }
+    for (const role of ROLES) {
+      const previous = resolveRole(before, role, ws.agent);
+      const effective = resolveRole(next, role, agent);
+      if ((channel || previous.adapter !== effective.adapter || previous.model !== effective.model)
+        && !CONFINABLE_AGENTS.includes(effective.adapter)) {
+        throw new StoreError('invalid_input', `el adaptador efectivo de ${role} debe ser confinable`);
+      }
+    }
   }
 
   setVerifySetupHash(id: string, hash: string): void {

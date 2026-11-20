@@ -1,7 +1,7 @@
 // Perfil de instrucciones inmutable, identificado por digest sha256 del JSON canónico.
 // Idea: ext/esf/internal/harnessprofile/profile.go@d901657 (MIT); reimplementado, sin copiar código.
-import { createHash } from 'node:crypto';
-import { existsSync, mkdirSync, readFileSync, readdirSync, renameSync, rmSync, writeFileSync } from 'node:fs';
+import { createHash, randomUUID } from 'node:crypto';
+import { existsSync, linkSync, mkdirSync, readFileSync, readdirSync, rmSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { AGENT_NAMES, MCP_AGENTS, MODEL_AGENTS } from './agents.ts';
 import { isForbiddenEnvName } from './mcp-registry.ts';
@@ -211,18 +211,31 @@ export function roleOf(a: { kind: string; validator: string | null }): Role | nu
  * Adaptador y modelo de una activity: override de la CLI > rol del perfil v2 > workstream.
  * Un modelo solo vale para el adaptador con el que se declaró. Con v1 es siempre lo de antes.
  */
-export function resolveRole(profile: Profile, role: Role | null, wsAgent: string, override?: string): { adapter: string; model: string | null; source: 'override' | 'role' | 'workstream' } {
-  if (profile.schemaVersion !== 2) return { adapter: override ?? wsAgent, model: null, source: override ? 'override' : 'workstream' };
-  const cfg = role ? profile.roles?.[role] : undefined;
+export function resolveRole(profile: Profile, role: Role | null, wsAgent: string, override?: string): {
+  adapter: string;
+  model: string | null;
+  source: 'override' | 'role' | 'workstream';
+  modelSource: 'role' | 'profile' | 'adapter';
+  modelDefaultReason: 'legacy' | 'incompatible' | 'undeclared' | null;
+} {
+  const v2 = profile.schemaVersion === 2;
+  const cfg = v2 && role ? profile.roles?.[role] : undefined;
   const adapter = override ?? cfg?.harness ?? wsAgent;
-  const model = cfg?.model !== undefined && adapter === (cfg.harness ?? profile.harness) ? cfg.model
-    : profile.model !== undefined && adapter === profile.harness ? profile.model : null;
-  return { adapter, model, source: override ? 'override' : cfg?.harness ? 'role' : 'workstream' };
+  const source = override ? 'override' : cfg?.harness ? 'role' : 'workstream';
+  if (cfg?.model !== undefined && adapter === (cfg.harness ?? profile.harness)) {
+    return { adapter, source, model: cfg.model, modelSource: 'role', modelDefaultReason: null };
+  }
+  if (v2 && profile.model !== undefined && adapter === profile.harness) {
+    return { adapter, source, model: profile.model, modelSource: 'profile', modelDefaultReason: null };
+  }
+  const modelDefaultReason = !v2 && profile.model !== undefined ? 'legacy'
+    : v2 && (cfg?.model !== undefined || profile.model !== undefined) ? 'incompatible' : 'undeclared';
+  return { adapter, source, model: null, modelSource: 'adapter', modelDefaultReason };
 }
 
 const profilesDir = (stateDir: string) => join(stateDir, 'profiles');
 const fileFor = (stateDir: string, digest: string) => join(profilesDir(stateDir), `${digest}.json`);
-const isDigest = (s: string) => /^[0-9a-f]{64}$/.test(s);
+export const isProfileDigest = (s: string) => /^[0-9a-f]{64}$/.test(s);
 
 /** Guarda el perfil direccionado por contenido. Reimportar el mismo es idempotente. */
 export function saveProfile(stateDir: string, raw: unknown): { digest: string; created: boolean } {
@@ -231,17 +244,24 @@ export function saveProfile(stateDir: string, raw: unknown): { digest: string; c
   const path = fileFor(stateDir, digest);
   if (existsSync(path)) { loadProfile(stateDir, digest); return { digest, created: false }; } // verifica integridad
   mkdirSync(profilesDir(stateDir), { recursive: true });
-  const tmp = `${path}.${process.pid}.tmp`;
+  const tmp = `${path}.${randomUUID()}.tmp`;
   try {
     writeFileSync(tmp, canonicalJson(profile) + '\n', { flag: 'wx', mode: 0o444 });
-    renameSync(tmp, path);
+    try {
+      // Publicar bytes completos sin reemplazar el fichero que haya publicado otro escritor.
+      linkSync(tmp, path);
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code !== 'EEXIST') throw error;
+      loadProfile(stateDir, digest);
+      return { digest, created: false };
+    }
   } finally { rmSync(tmp, { force: true }); }
   return { digest, created: true };
 }
 
 /** Carga y re-verifica: el contenido en disco debe producir el digest con el que se pidió. */
 export function loadProfile(stateDir: string, digest: string): Profile {
-  if (!isDigest(digest)) throw new Error(`digest de perfil inválido: ${digest}`);
+  if (!isProfileDigest(digest)) throw new Error(`digest de perfil inválido: ${digest}`);
   const path = fileFor(stateDir, digest);
   if (!existsSync(path)) throw new Error(`perfil desconocido: ${digest} (impórtalo con fab profile import)`);
   const profile = validateProfile(JSON.parse(readFileSync(path, 'utf8')));
@@ -250,7 +270,7 @@ export function loadProfile(stateDir: string, digest: string): Profile {
 }
 
 export function listProfiles(stateDir: string): string[] {
-  return existsSync(profilesDir(stateDir)) ? readdirSync(profilesDir(stateDir)).filter(f => f.endsWith('.json') && isDigest(f.slice(0, -5))).map(f => f.slice(0, -5)).sort() : [];
+  return existsSync(profilesDir(stateDir)) ? readdirSync(profilesDir(stateDir)).filter(f => f.endsWith('.json') && isProfileDigest(f.slice(0, -5))).map(f => f.slice(0, -5)).sort() : [];
 }
 
 export const DEFAULT_DIGEST = profileDigest(defaultProfile());
