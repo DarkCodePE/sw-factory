@@ -44,10 +44,6 @@ export function calculateMetrics(store: Store, stateDir: string, options: { ws?:
     const toMs = Date.parse(`${to}T00:00:00.000Z`);
     const diffDays = Math.round((toMs - fromMs) / 86400000) + 1;
     if (diffDays > 366) throw new URIError('Rango demasiado amplio');
-  } else if (from !== undefined) {
-    const fromMs = Date.parse(`${from}T00:00:00.000Z`);
-    const diffDays = Math.round((now - fromMs) / 86400000) + 1;
-    if (diffDays > 366) throw new URIError('Rango demasiado amplio');
   }
   if (range !== undefined && !['7', '30', 'all', 'custom'].includes(range)) throw new URIError('Rango inválido');
 

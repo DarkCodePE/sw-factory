@@ -488,6 +488,17 @@ test('T83-H7: recordPrOpened guarda URL canónica normalizada y rechaza barras i
   expect(() => store.recordPrOpened(c2.id, 'https:\\\\h\\\\x')).toThrow();
 });
 
+test('T82-H9: borde exacto de 366 días pasa y 367 días da 400; solo from no lanza 400', () => {
+  // 2024 es bisiesto (366 días exactos): 2024-01-01 a 2024-12-31 son 366 días
+  expect(() => calculateMetrics(store, dir, { from: '2024-01-01', to: '2024-12-31', now })).not.toThrow();
+
+  // 367 días exactos: 2024-01-01 a 2025-01-01
+  expect(() => calculateMetrics(store, dir, { from: '2024-01-01', to: '2025-01-01', now })).toThrow(URIError);
+
+  // Solo from (sin to) de hace más de 366 días no se rechaza (la serie se acota a 90 días)
+  expect(() => calculateMetrics(store, dir, { from: '2024-01-01', now })).not.toThrow();
+});
+
 test('T83-H1: repetir recordPrOpened no duplica el evento ni altera el conteo en metricsDailyPrs', () => {
   const c = store.createChange('uno', 'Change con PR repetido', '');
   store.recordPrOpened(c.id, 'https://github.com/org/repo/pull/1');
