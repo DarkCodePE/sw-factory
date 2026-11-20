@@ -25,12 +25,14 @@ beforeEach(() => {
 });
 afterEach(() => { server?.stop(true); store?.close(); rmSync(dir, { recursive: true, force: true }); });
 
-test('lista escapada con horario y estado; no hay formulario de alta', async () => {
+test('lista escapada con horario, estado y enlaces de administración', async () => {
   store.createAutomation({ workstream: 'prueba', name: 'otra', cron: '0 * * * *', title: '<img src=x>', body: '<b>b</b>' });
   await login(); const page = await html('/automations');
   expect(page).toContain('30 7 * * *'); expect(page).toContain('Sin ejecutar'); expect(page).toContain('&lt;img src=x&gt;');
   expect(page).not.toContain('<img src=x>'); expect(page).toContain('No lanza trabajo: la señal espera tu triage.');
   expect(page).not.toContain('name="cron"');
+  expect(page).toContain('href="/automations/nueva"');
+  expect(page).toContain(`href="/automations/${auto}/editar"`);
   expect((await post('/automations', { name: 'x' })).status).toBe(404);
 });
 test('sin --write: lista de solo lectura, sin formularios y POST 405', async () => {
