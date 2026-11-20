@@ -458,3 +458,32 @@ test('el fallo del evento revierte edición y borrado, incluso si cambia el curs
   expect(() => store.deleteAutomation(a.id, rev)).toThrow('evento rechazado');
   expect(store.getAutomation(a.id)).toEqual(a);
 });
+
+// T86-H1/H2: lo que el evento de edición conserva del valor anterior.
+function auditedBody(body: string): string {
+  const a = store.createAutomation({ ...template, name: `auditada-${Math.random().toString(36).slice(2, 8)}`, body });
+  const { workstream: _, ...fields } = template;
+  store.updateAutomation(a.id, automationRevision(a), { ...fields, name: a.name, body: 'reemplazo' });
+  const message = String(store.listEvents(workstreamId, 1)[0]!.message);
+  return JSON.parse(message.slice(message.indexOf('{'))).previous.body;
+}
+
+test.each([
+  ['passwd=hunter2 y más', 'passwd= [REDACTED]'], ['pwd: otra clave larga', 'pwd: [REDACTED]'], ['key=abc123', 'key= [REDACTED]'],
+  ['mi_key = valor con espacios', 'mi_key = [REDACTED]'], ['DB_PASSWORD=zzz\nlinea2', 'DB_PASSWORD= [REDACTED]\nlinea2'],
+])('T86-H1: el valor anterior omite la credencial en «%s»', (body, expected) => {
+  expect(auditedBody(body)).toBe(expected);
+});
+
+test('T86-H1: palabras que solo contienen «key» o «pass» no se tratan como credenciales', () => {
+  expect(auditedBody('monkey=1 keyboard=azerty bypass=sí')).toBe('monkey=1 keyboard=azerty bypass=sí');
+});
+
+test('T86-H2: sin controles C0/C1 ni bidi, y lo serializado también respeta el tope de 8 KiB', () => {
+  expect(auditedBody('a\u009bb‮c\u0001d\te\nf')).toBe('a b c d\te\nf');
+  expect(auditedBody('\u0001'.repeat(8192))).toBe(' '.repeat(8192)); // antes: 49 304 bytes de «\u0001» en el evento
+  const quotes = '"'.repeat(5000); // 5000 bytes, pero 10 002 al serializar
+  expect(auditedBody(quotes)).toBe('[OMITIDO: más de 8 KiB]');
+  const message = String(store.listEvents(workstreamId, 1)[0]!.message);
+  expect(message.length).toBeLessThan(500);
+});

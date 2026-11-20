@@ -11,7 +11,7 @@ import { userInfo } from 'node:os';
 import { closeSync, existsSync, fstatSync, openSync, readFileSync } from 'node:fs';
 import { dirname, resolve } from 'node:path';
 import { gitEvidence, writeManifest } from './manifest.ts';
-import { redact } from './evidence.ts';
+import { redact, redactField } from './evidence.ts';
 import { lastDue, parseCron } from './cron.ts';
 import {
   assertNoteAttachmentMounts, assertPrivateNoteDatabase, NOTE_ATTACHMENT_HISTORY_MAX, NOTE_ATTACHMENT_MAX,
@@ -161,13 +161,23 @@ function validateAutomation({ name, cron, title, body }: AutomationFields): void
   }
 }
 
+// T86-H1: qué claves delatan un secreto lo decide `redactField` (T77), que ya cubre password, passwd, pwd, token…; `key` suelta es de esta plantilla.
+const isSecretKey = (key: string) => redactField(key, '') === '[REDACTED]' || /^key$|[_-]key$/i.test(key);
+
 function automationAuditValue(value: string): string {
   if (Buffer.byteLength(value) > 8192) return '[OMITIDO: más de 8 KiB]';
-  const sanitized = redact(value
-    .replace(/-----BEGIN (?:[A-Z]+ )?PRIVATE KEY-----[\s\S]*$/g, '[REDACTED]')
-    // Conserva la clave y omite el resto de la línea, incluidos valores con espacios.
-    .replace(/(\b(?:[\w-]*(?:api[_-]?key|token|secret|password|credential)[\w-]*|authorization|(?:set-)?cookie)["']?[^\S\r\n]*[:=])\s*[^\r\n]*/gi, '$1 [REDACTED]'));
-  return new TextDecoder().decode(Buffer.from(sanitized).subarray(0, 8192), { stream: true });
+  const text = value.replace(/-----BEGIN (?:[A-Z]+ )?PRIVATE KEY-----[\s\S]*$/g, '[REDACTED]');
+  // Conserva la clave y omite el resto de la línea, incluidos valores con espacios.
+  const pair = /([\w-]+)(["']?[^\S\r\n]*[:=])/g;
+  let out = '', pos = 0, m: RegExpExecArray | null;
+  while ((m = pair.exec(text))) {
+    if (!isSecretKey(m[1]!)) continue;
+    const end = text.indexOf('\n', pair.lastIndex), lineEnd = end === -1 ? text.length : end;
+    out += `${text.slice(pos, pair.lastIndex)} [REDACTED]`; pos = lineEnd; pair.lastIndex = lineEnd;
+  }
+  // T86-H2: sin controles C0/C1 ni bidi (que `fab events` imprimiría crudos ni JSON.stringify expande ×6); se conservan TAB, LF y CR.
+  const clean = redact(out + text.slice(pos)).replace(/[^\P{Cc}\t\n\r]|\p{Cf}/gu, ' ');
+  return new TextDecoder().decode(Buffer.from(clean).subarray(0, 8192), { stream: true });
 }
 
 type AutomationRun =
@@ -1116,7 +1126,9 @@ export class Store {
   }
 
   private auditAutomation(a: Automation, action: 'editada' | 'borrada', fields: readonly (keyof AutomationFields)[]): void {
-    const previous = Object.fromEntries(fields.map(key => [key, automationAuditValue(a[key])]));
+    // T86-H2: el límite también rige sobre lo serializado (las comillas y los saltos se escapan ×2 en el JSON).
+    const bounded = (value: string) => { const text = automationAuditValue(value); return JSON.stringify(text).length > 8192 + 2 ? '[OMITIDO: más de 8 KiB]' : text; };
+    const previous = Object.fromEntries(fields.map(key => [key, bounded(a[key])]));
     this.event(a.workstreamId, 'info', `automation ${automationAuditValue(a.name)} ${action} ${JSON.stringify({ id: a.id, previous })}`);
   }
 
