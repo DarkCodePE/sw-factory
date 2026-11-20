@@ -117,3 +117,13 @@ test('T77-H1/P2-H1: ninguna regla de RULES es cuadrática con entradas patológi
   });
   expect(lentas).toEqual([]);
 });
+
+test.each([
+  ['URL con &', 'curl "https://api.x/v1?a=1&b=2" -u admin:zq9Xv7hunterK3'], ['cabecera con ;', 'curl -H "Accept: text/html;q=0.9" -u admin:zq9Xv7hunterK3 https://x'],
+  ['comilla con |', "curl 'https://x/?f=a|b' --user admin:zq9Xv7hunterK3"],
+])('P2-H2: curl -u con %s no deja salir la credencial', (_n, texto) => {
+  expect(redact(texto)).not.toContain('zq9Xv7');
+});
+test('P2-H2: un -u de otro comando tras && o | no se toca', () => {
+  for (const t of ['curl https://x.test && tar -u f', 'curl https://x.test | sort -u', 'curl https://x.test ; cp -u a b']) expect(redact(t)).toBe(t);
+});
