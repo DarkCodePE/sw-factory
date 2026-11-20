@@ -95,26 +95,23 @@ export async function runLiveActivity(store: Store, adm: AdmissionDb, a: Activit
   reports.markApplied(a.id); // lo que quede pendiente es de un intento anterior ya resuelto; este turno produce el suyo
   for (;;) {
     try {
+      // La reserva va antes de marcar la sesión: si falla (contención), no queda una sesión lanzada que nunca existió.
+      const attemptId = randomUUID();
+      const notes = store.reserveNotes(a.changeId, a.id, attemptId);
+      const reserved = notes.length;
       const { session, turn } = sessions.begin(a.changeId, a.kind, meta);
       ctx.crash?.('session-written');
       sessions.markLaunched(session.sessionId); // A8: antes de lanzar, no en onSpawn
-      const attemptId = randomUUID();
       turns.begin({
         attemptId, activityId: a.id, changeId: a.changeId, sessionId: session.sessionId,
         generation: session.generation, plan: reason, questionId,
       });
-      // La reconstrucción lee las notas históricas y las recién reservadas en la misma transacción.
-      const { prompt, reserved } = adm.tx(() => {
-        const notes = store.reserveNotes(a.changeId, a.id, attemptId);
-        if (reason === 'reconstructed') {
-          const rebuilt = reconstructPrompt(store, adm, a.id, {
-            worktree: ctx.cwd, branch: ctx.branch, factoryCommits: ctx.factoryCommits, templates: ctx.templates,
-          });
-          return { prompt: rebuilt + LIVE_RULES, reserved: notes.length };
-        }
-        const rules = reason === 'fresh' || notes.length ? LIVE_RULES : '';
-        return { prompt: basePrompt + notesBlock(notes) + rules, reserved: notes.length };
-      });
+      // La reconstrucción repite también las notas ya entregadas; las recién reservadas salen de la reserva.
+      const prompt = reason === 'reconstructed'
+        ? reconstructPrompt(store, adm, a.id, {
+          worktree: ctx.cwd, branch: ctx.branch, factoryCommits: ctx.factoryCommits, templates: ctx.templates,
+        }) + LIVE_RULES
+        : basePrompt + notesBlock(notes) + (reason === 'fresh' || reserved ? LIVE_RULES : '');
       ctx.crash?.('session-launched');
       const record = reports.recorder(a.id, attemptId, ctx.crash);
       let result;
