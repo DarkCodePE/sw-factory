@@ -16,6 +16,7 @@ import { improveMain } from './improve-cli.ts';
 import { abortOnSigint, scoreMain } from './scorers-cli.ts';
 import { automationMain } from './automation-cli.ts';
 import { apiKeyMain } from './api-key-cli.ts';
+import { runnerMain } from './runner-cli.ts';
 import type { ReviewDecision, WorkstreamState } from './enums.ts';
 import { runPool } from './pool.ts';
 import { Store, StoreError } from './store.ts';
@@ -169,6 +170,7 @@ async function main(argv: string[]): Promise<number> {
     const store = openStore();
     try { return apiKeyMain(argv.slice(1), store); } finally { store.close(); }
   }
+  if (argv[0] === 'runner') return runnerMain(argv.slice(1));
   if (argv[0] === 'improve') {
     const store = openStore();
     try { return await improveMain(argv.slice(1), store, STATE_DIR); } finally { store.close(); }
@@ -494,7 +496,7 @@ function readNameList(path: string): string[] {
   return lines;
 }
 
-const COMMANDS = new Set(['worktree', 'ws', 'signal', 'triage', 'inbox', 'review', 'run', 'status', 'show', 'merge', 'retry', 'gate', 'reject', 'events', 'tui', 'doctor', 'agents', 'profile', 'improve', 'bench', 'score', 'automation', 'api-key', 'resident', 'help']);
+const COMMANDS = new Set(['worktree', 'ws', 'signal', 'triage', 'inbox', 'review', 'run', 'status', 'show', 'merge', 'retry', 'gate', 'reject', 'events', 'tui', 'doctor', 'agents', 'profile', 'improve', 'bench', 'score', 'automation', 'api-key', 'runner', 'resident', 'help']);
 
 // A forced exit is still needed for handles left by dependencies, but pipe
 // writes are asynchronous: wait for both write queues before terminating.
