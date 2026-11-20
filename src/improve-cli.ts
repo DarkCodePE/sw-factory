@@ -3,7 +3,7 @@ import { parseArgs } from 'node:util';
 import { AGENT_NAMES } from './agents.ts';
 import { createCandidate, dismissCandidate, evaluateThreshold, getConfig, listCandidates, setConfig, tick } from './improve-auto.ts';
 import { createExperiment, deleteExperiment, experimentRunsJson, reportExperiment, runExperiment, SPLITS, type Split } from './improve.ts';
-import { ROLES, type Role } from './profile.ts';
+import { DEFAULT_AUTO_THRESHOLD, ROLES, type Role } from './profile.ts';
 import { StoreError, type Store } from './store.ts';
 
 const TICK_MS = 5 * 60_000;
@@ -39,8 +39,8 @@ export async function improveMain(argv: string[], store: Store, stateDir: string
       setConfig(store, ws, {
         enabled: values.enable ? true : values.disable ? false : old?.enabled ?? false,
         suitePath: values.suite ?? old?.suitePath ?? need(undefined, '--suite'), split: (values.split ?? old?.split ?? need(undefined, '--split')) as Split,
-        repeats: Number(values.repeats ?? old?.repeats ?? need(undefined, '--repeats')), window: Number(values.window ?? old?.window ?? 20),
-        minScores: Number(values.min ?? old?.minScores ?? 10), threshold: Number(values.threshold ?? old?.threshold ?? 0.4),
+        repeats: Number(values.repeats ?? old?.repeats ?? need(undefined, '--repeats')), window: Number(values.window ?? old?.window ?? DEFAULT_AUTO_THRESHOLD.window),
+        minScores: Number(values.min ?? old?.minScores ?? DEFAULT_AUTO_THRESHOLD.minScores), threshold: Number(values.threshold ?? old?.threshold ?? DEFAULT_AUTO_THRESHOLD.threshold),
       });
       console.log(`automejora de ${ws} ${getConfig(store, ws)!.enabled ? 'activada' : 'desactivada'}`);
     } else if (sub === 'auto') {

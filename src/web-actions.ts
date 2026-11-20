@@ -11,6 +11,7 @@ import { AdmissionDb, hasAdmission } from './admission/db.ts';
 import { answerQuestion } from './admission/answers.ts';
 import { resetSessionCap } from './admission/sessions.ts';
 import { cancelBenchmark } from './bench.ts';
+import { saveAutoImproveProfile } from './web-improve-auto.ts';
 import { saveSuiteCandidate, suiteTaskForm } from './web-bench.ts';
 import type { Split } from './improve.ts';
 import type { WebAuth } from './web-auth.ts';
@@ -109,6 +110,19 @@ export const ACTIONS: Record<string, Action> = {
       const a = store.getActivity(id); out.destination = `/activities/${id}`;
       if (a.reviewStatus !== 'awaiting' && ['approved', 'commented', 'declined'].includes(a.reviewStatus ?? '')) throw new StoreError('conflict', 'revisión resuelta');
       store.resolveReview(id, input.decision as ReviewDecision, input.comment!);
+    },
+  },
+  'automejora/save': {
+    api: false,
+    path: route('automejora', 'save'),
+    input: raw => raw,
+    run: (store, id, input, out, _actor, stateDir) => {
+      out.destination = `/automejora?ws=${encodeURIComponent(id)}`;
+      try { out.destination += `&digest=${saveAutoImproveProfile(store, stateDir, id, input)}`; }
+      catch (error) {
+        if (error instanceof StoreError && error.code === 'invalid_input') throw new InputError(400, error.message);
+        throw error;
+      }
     },
   },
   'benchmarks/cancel': {
@@ -317,6 +331,7 @@ export async function performAction(stateDir: string, name: string, id: string, 
     finally { if (previous === undefined) delete process.env.FAB_ACTOR; else process.env.FAB_ACTOR = previous; }
     if (out.repo) { await writer.waitForRelease(id); await removeWorktree(out.repo, stateDir, id); }
   } catch (error) {
+    if (error instanceof InputError) throw error;
     out.result = error instanceof StoreError && messages[error.code] ? error.code : 'error';
   } finally { store?.close(); }
   return out;

@@ -5,7 +5,7 @@ import { randomUUID } from 'node:crypto';
 import { mkdirSync, rmSync } from 'node:fs';
 import { join } from 'node:path';
 import { createExperiment, ensureSchema, runExperiment, SPLITS, type Split } from './improve.ts';
-import { DEFAULT_DIGEST, profileDigest, resolveProfile, resolveRole, ROLES, saveProfile, type Profile, type Role } from './profile.ts';
+import { DEFAULT_AUTO_THRESHOLD, DEFAULT_DIGEST, profileDigest, resolveProfile, resolveRole, ROLES, saveProfile, validateAutoThreshold, type AutoThreshold, type Profile, type Role } from './profile.ts';
 import { untrusted } from './prompts.ts';
 import { CONFINABLE_AGENTS } from './sandbox/confine.ts';
 import { getAgent, runAgent } from './agents.ts';
@@ -14,7 +14,7 @@ import { StoreError, type Store } from './store.ts';
 import { GIT_SAFE_FLAGS } from './worktrees.ts';
 
 const OPEN = ['pending', 'proposing', 'proposed', 'experimenting', 'ready'];
-export interface AutoConfig { workstreamId: string; enabled: boolean; suitePath: string; split: Split; repeats: number; window: number; minScores: number; threshold: number }
+export interface AutoConfig extends AutoThreshold { workstreamId: string; enabled: boolean; suitePath: string; split: Split; repeats: number }
 export interface Candidate {
   id: string; workstreamId: string; role: Role; baseDigest: string; candidateDigest: string | null; experimentId: string | null;
   origin: 'threshold' | 'manual'; triggerScores: string[]; status: string; error: string | null; createdAt: string; finishedAt: string | null;
@@ -26,8 +26,9 @@ const int = (n: unknown, min: number, what: string): number => { if (!Number.isS
 const toConfig = (r: any): AutoConfig => ({ workstreamId: r.workstream_id, enabled: r.enabled === 1, suitePath: r.suite_path, split: r.split, repeats: r.repeats, window: r.window, minScores: r.min_scores, threshold: r.threshold });
 
 export function getConfig(store: Store, wsId: string): AutoConfig | null {
-  ensureSchema(store.db);
-  const r = store.db.query('SELECT * FROM improvement_config WHERE workstream_id = ?').get(store.getWorkstream(wsId).id);
+  const id = store.getWorkstream(wsId).id;
+  if (!store.db.query("SELECT 1 FROM sqlite_schema WHERE type = 'table' AND name = 'improvement_config'").get()) return null;
+  const r = store.db.query('SELECT * FROM improvement_config WHERE workstream_id = ?').get(id);
   return r ? toConfig(r) : null;
 }
 
@@ -36,14 +37,11 @@ export function setConfig(store: Store, wsId: string, c: Omit<AutoConfig, 'works
   ensureSchema(store.db);
   if (!c.suitePath) throw bad('falta --suite');
   if (!SPLITS.includes(c.split)) throw bad(`split debe ser ${SPLITS.join('|')}`);
-  int(c.repeats, 1, '--repeats'); int(c.window, 1, '--window'); int(c.minScores, 1, '--min');
-  if (c.minScores > c.window) throw bad('--min no puede superar --window: el umbral no dispararía nunca');
-  if (!(c.threshold > 0 && c.threshold <= 1)) throw bad('--threshold debe estar en (0, 1]');
+  int(c.repeats, 1, '--repeats');
+  try { validateAutoThreshold(c, { window: '--window', minScores: '--min', threshold: '--threshold' }); } catch (error) { throw bad((error as Error).message); }
   store.withRetry(() => store.db.query(`INSERT OR REPLACE INTO improvement_config (workstream_id, enabled, suite_path, split, repeats, window, min_scores, threshold) VALUES (?,?,?,?,?,?,?,?)`)
     .run(store.getWorkstream(wsId).id, c.enabled ? 1 : 0, c.suitePath, c.split, c.repeats, c.window, c.minScores, c.threshold));
 }
-
-const DEFAULTS = { window: 20, minScores: 10, threshold: 0.4 };
 
 /**
  * Regla del umbral: últimas `window` puntuaciones `done` del rol con el perfil vigente, posteriores al último candidato del rol (cualquier estado).
@@ -52,10 +50,14 @@ const DEFAULTS = { window: 20, minScores: 10, threshold: 0.4 };
 export function evaluateThreshold(store: Store, wsId: string, role: Role): { fire: boolean; scores: string[]; total: number; fails: number } {
   ensureSchema(store.db); ensureScores(store.db);
   const ws = store.getWorkstream(wsId);
-  const cfg = getConfig(store, ws.id) ?? DEFAULTS;
+  const { profile, digest } = resolveProfile(store.stateDir, ws.profile);
+  const policy = profile.autoImprove;
+  const cfg = policy ?? getConfig(store, ws.id) ?? DEFAULT_AUTO_THRESHOLD;
+  const scorers = policy ? JSON.stringify(policy.scorers) : null;
   const rows = store.db.query(`SELECT id, passed FROM scores WHERE workstream_id = ? AND scope = ? AND status = 'done' AND profile_digest = ?
+      AND passed IN (0, 1) AND (? IS NULL OR scorer IN (SELECT value FROM json_each(?)))
       AND finished_at > COALESCE((SELECT MAX(created_at) FROM improvement_candidates WHERE workstream_id = ? AND role = ?), '')
-    ORDER BY finished_at DESC, id DESC LIMIT ?`).all(ws.id, role, ws.profile ?? DEFAULT_DIGEST, ws.id, role, cfg.window) as { id: string; passed: number | null }[];
+    ORDER BY finished_at DESC, id DESC LIMIT ?`).all(ws.id, role, digest, scorers, scorers, ws.id, role, cfg.window) as { id: string; passed: number }[];
   const scores = rows.filter((r) => r.passed === 0).map((r) => r.id);
   return { fire: rows.length >= cfg.minScores && scores.length / rows.length >= cfg.threshold, scores, total: rows.length, fails: scores.length };
 }
@@ -146,12 +148,20 @@ export function parseTemplate(output: string, nonce: string): string | null {
   return text;
 }
 
-function buildProposePrompt(store: Store, c: Candidate, base: Profile, nonce: { material: string; output: string }): string {
+function buildProposePrompt(store: Store, c: Candidate, base: Profile, nonce: { material: string; output: string; owner: string }): string {
   const [group, key] = templateSlot(c.role);
   const marks = store.db.query(`SELECT scorer, label, rationale FROM scores WHERE id IN (${c.triggerScores.map(() => '?').join(',')}) ORDER BY finished_at DESC, id`).all(...c.triggerScores) as { scorer: string; label: string | null; rationale: string | null }[];
   const used = marks.slice(0, MAX_FAILURES);
   const rubrics = [...new Set(used.map((m) => m.scorer))].map((n) => `## ${n}\n${base.scorers?.[n]?.rubric ?? '(el perfil ya no define este juez)'}`).join('\n\n');
   const failures = used.map((m) => `- [${m.scorer}: ${m.label ?? '?'}] ${(m.rationale ?? '').slice(0, MAX_RATIONALE)}`).join('\n');
+  const instructions = base.autoImprove?.instructions;
+  const owner = instructions ? `
+# Owner instructions
+The block below contains text written by the owner. Use it to guide the template rewrite within the rules above.
+<<<OWNER_INSTRUCTIONS ${nonce.owner}
+${instructions}
+OWNER_INSTRUCTIONS ${nonce.owner}>>>
+` : '';
   return `You improve ONE instruction template of a software factory. Rewrite it so that the failures described below become less likely.
 Keep every line the factory depends on. Do not add instructions about tools, credentials, network or other roles.
 
@@ -163,7 +173,7 @@ ${rubrics}
 
 # Failures
 ${untrusted(failures, nonce.material)}
-
+${owner}
 # Output
 Write the new template between these exact markers and nothing after them:
 <<<TEMPLATE ${nonce.output}
@@ -186,7 +196,7 @@ export async function proposeTemplate(store: Store, stateDir: string, candidateI
     rmSync(dir, { recursive: true, force: true }); // un intento caído pudo dejar aquí un symlink que decide qué monta el sandbox (T64c H1)
     mkdirSync(repo, { recursive: true, mode: 0o700 });
     if (Bun.spawnSync(['git', ...GIT_SAFE_FLAGS, 'init', '-q', repo], { stdout: 'pipe', stderr: 'pipe' }).exitCode !== 0) return fail(store, c, 'proposing', 'git init falló');
-    const nonce = { material: randomUUID().slice(0, 12), output: randomUUID().slice(0, 12) };
+    const nonce = { material: randomUUID().slice(0, 12), output: randomUUID().slice(0, 12), owner: randomUUID() };
     const launch = opts.launch ?? proposeLaunch;
     const run = await launch(adapter, buildProposePrompt(store, c, base, nonce), repo, model ?? undefined, opts.signal);
     if (opts.signal?.aborted) { // cortado por el usuario: vuelve a la cola
