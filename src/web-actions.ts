@@ -12,6 +12,7 @@ import { answerQuestion } from './admission/answers.ts';
 import { resetSessionCap } from './admission/sessions.ts';
 import type { WebAuth } from './web-auth.ts';
 import { PROFILE_BODY_LIMIT, ProfileInputError, profileAction } from './web-profile.ts';
+import { enqueueBackfill, enqueueManual, ensureSchema, previewBackfill } from './scorers.ts';
 import { archiveWorkstream, createWorkstream, workstreamSettings, workstreamState, wsFields } from './web-ws.ts';
 
 const escape = (s: string) => redact(s).replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[c]!);
@@ -138,6 +139,34 @@ export const ACTIONS: Record<string, Action> = {
       if (store.isTerminalChange(c.status)) throw new StoreError('invalid_transition', 'change terminal');
       store.event(c.workstreamId, 'warning', 'reject solicitado', id);
       store.closeChange(id, 'canceled'); out.repo = store.getWorkstream(c.workstreamId).repo;
+    },
+  },
+  // T65: los jueces son un aviso (D-G). Estas acciones solo encolan filas en `scores`; no tocan estados.
+  'activities/score': {
+    path: route('activities', 'score'),
+    input: raw => { if (!/^[a-z0-9][a-z0-9-]{0,40}$/.test(text(raw, 'scorer'))) throw new InputError(400, 'Elige un juez.'); return { scorer: text(raw, 'scorer') }; },
+    run: (store, id, input, out, _actor, stateDir) => {
+      out.destination = `/activities/${id}`;
+      ensureSchema(store.db);
+      if (store.db.query("SELECT 1 FROM scores WHERE scorer = ? AND subject_activity_id = ? AND status IN ('pending','running')").get(input.scorer!, id)) throw new StoreError('conflict', 'ya hay una puntuación en cola');
+      enqueueManual(store, stateDir, id, input.scorer!, 'manual');
+    },
+  },
+  // Puntuar un rango pasado: `expected` es el número de la vista previa; si ya no coincide no se encola nada.
+  'scorers/backfill': {
+    path: /^\/(scorers)\/backfill$/,
+    input: raw => {
+      const since = text(raw, 'since'), scorer = text(raw, 'scorer');
+      if (!/^[\w-]+$/.test(text(raw, 'ws')) || !/^\d{1,6}$/.test(text(raw, 'expected')) || (since && (since.length > 40 || Number.isNaN(Date.parse(since)))) || (scorer && !/^[a-z0-9][a-z0-9-]{0,40}$/.test(scorer))) throw new InputError(400, 'Revisa la vista previa y vuelve a confirmar.');
+      return { ws: text(raw, 'ws'), since, scorer, expected: text(raw, 'expected'), skip: text(raw, 'skip') };
+    },
+    run: (store, _id, input, out, _actor, stateDir) => {
+      const ws = store.getWorkstream(input.ws!);
+      out.destination = `/metricas?tab=jueces&ws=${encodeURIComponent(ws.slug)}`;
+      const opts = { since: input.since || undefined, scorer: input.scorer || undefined, rescore: input.skip !== 'yes' };
+      ensureSchema(store.db);
+      if (previewBackfill(store, stateDir, ws.id, opts).runs !== Number(input.expected)) throw new StoreError('conflict', 'la vista previa cambió');
+      enqueueBackfill(store, stateDir, ws.id, opts);
     },
   },
   'questions/answer': {
@@ -288,6 +317,6 @@ export async function webAction(req: Request, stateDir: string, port: number, au
     if (error instanceof URIError) return new Response('Identificador inválido.', { status: 400 });
     result = 'error';
   }
-  auth.rememberNotice(req, destination, result);
+  auth.rememberNotice(req, destination.split('?')[0]!, result);
   return new Response(null, { status: 303, headers: { Location: destination } });
 }
