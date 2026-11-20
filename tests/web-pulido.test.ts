@@ -219,8 +219,11 @@ test('T97: la lista cuenta activities y muestra «No medido» donde falta el dat
 });
 test('T97: una base anterior (sin signals.source ni activities.agent) sigue listando', () => {
   const c = store.createChange(ws, 'Vieja', 'd');
-  store.db.exec('ALTER TABLE signals DROP COLUMN source; ALTER TABLE activities DROP COLUMN agent;');
-  const row = store.changeIndex().find(x => x.id === c.id)!;
+  // Una sentencia por exec y sin el índice: un DROP COLUMN que falla no se puede tragar en silencio.
+  store.db.exec('DROP INDEX idx_signals_source'); store.db.exec('ALTER TABLE signals DROP COLUMN source'); store.db.exec('ALTER TABLE activities DROP COLUMN agent');
+  expect((store.db.query('PRAGMA table_info(signals)').all() as { name: string }[]).some(x => x.name === 'source')).toBe(false);
+  const ro = new Store(join(dir, 'fabrica.db'), { readonly: true });
+  const row = ro.changeIndex().find(x => x.id === c.id)!; ro.close();
   expect(row.source).toBeNull(); expect(row.agents).toEqual([]); expect(row.activityCount).toBe(1);
 });
 test('T97: 1000 changes se consultan y filtran en menos de 300 ms', () => {
