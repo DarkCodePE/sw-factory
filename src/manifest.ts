@@ -10,11 +10,19 @@ import { GIT_SAFE_FLAGS, branchFor } from './worktrees.ts';
 
 export { redact, readEgressProbe } from './evidence.ts';
 
+/** Un .json válido se sanea por valores y nombres de campo: una regla de texto sobre el JSON serializado lo rompería (`"tokens": 5`). */
+function redactJson(text: string): string {
+  try {
+    const out = JSON.stringify(JSON.parse(text), (key, v) => typeof v === 'string' ? redactField(key, v) : v, text.includes('\n  ') ? 2 : 0);
+    return text.endsWith('\n') ? out + '\n' : out;
+  } catch { return redact(text); }
+}
+
 export function atomicEvidence(path: string, text: string): void {
   mkdirSync(dirname(path), { recursive: true, mode: 0o700 });
   const tmp = `${path}.${randomUUID()}.tmp`;
   try {
-    writeFileSync(tmp, redact(text), { mode: 0o600, flag: 'wx' });
+    writeFileSync(tmp, path.endsWith('.json') ? redactJson(text) : redact(text), { mode: 0o600, flag: 'wx' });
     renameSync(tmp, path);
   } finally { rmSync(tmp, { force: true }); }
 }

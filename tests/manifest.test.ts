@@ -198,3 +198,9 @@ test('T77: la evidencia JSON servida por la web redacta authorization, cookie, p
   const out = readEvidence(dir, 'e.json')!.text;
   expect(out).not.toContain('hunter2'); expect(out).toContain('bypass');
 });
+
+test('T77a: atomicEvidence conserva un .json válido aunque lleve claves con nombre de secreto y números', () => {
+  const p = join(dir, 'm.json');
+  atomicEvidence(p, JSON.stringify({ tokens: 5, usage: { token: 7 }, password: 'x', nota: 'ok', auth: 'Bearer abcdef123456' }));
+  expect(JSON.parse(readFileSync(p, 'utf8'))).toEqual({ tokens: 5, usage: { token: 7 }, password: '[REDACTED]', nota: 'ok', auth: 'Bearer [REDACTED]' });
+});
