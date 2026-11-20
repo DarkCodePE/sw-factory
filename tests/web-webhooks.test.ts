@@ -92,6 +92,8 @@ test('una entrega sin firma aparece como rechazada sin cuerpo', async () => {
 
   // La web debe reflejar exactamente la celda de rechazo con contador 1 y fecha
   expect(html).toMatch(/<dt>Entregas rechazadas[^<]*<\/dt><dd>1 \(última: <time>/);
+  expect(html).toContain('Entregas rechazadas (sin firma válida)');
+  expect(html).toContain('Por política de contención y seguridad (D-K, §4)');
   // Invariante de seguridad: ningún cuerpo de petición se guarda ni se publica
   expect(html).not.toContain('opened');
   expect(html).not.toContain('number: 42');
@@ -208,6 +210,11 @@ test('búsqueda por ID, evento o resultado filtra la lista de entregas', async (
   const searchResult = await getHtml('/webhooks?q=ignored_repo');
   expect(searchResult).toContain('del-uuid-beta');
   expect(searchResult).not.toContain('del-uuid-alpha');
+
+  // Búsqueda por etiqueta amigable (RESULT_LABELS)
+  const searchLabel = await getHtml(`/webhooks?q=${encodeURIComponent('Repo ignorado')}`);
+  expect(searchLabel).toContain('del-uuid-beta');
+  expect(searchLabel).not.toContain('del-uuid-alpha');
 
   const searchNone = await getHtml('/webhooks?q=inexistente');
   expect(searchNone).toContain('Ninguna entrega coincide con la búsqueda.');
@@ -377,14 +384,17 @@ test('escapa el campo de rechazos y tolera tabla adm_hook_rejections con esquema
   const adm = new AdmissionDb(store);
   adm.recordRejectedHook();
 
-  // 1. Probar que texto con HTML en count se escapa contra XSS
+  // 1. Probar que texto con HTML en count y last_rejected_at se escapa contra XSS
   const maliciousCount = '<b id="xss-count">alerta</b>';
-  store.db.query('UPDATE adm_hook_rejections SET count = ? WHERE id = 1').run(maliciousCount as unknown as number);
+  const maliciousDate = '<script id="xss-date">alert(1)</script>';
+  store.db.query('UPDATE adm_hook_rejections SET count = ?, last_rejected_at = ? WHERE id = 1').run(maliciousCount as unknown as number, maliciousDate);
 
   server = startWeb(dir, 0);
   const htmlXss = await getHtml('/webhooks');
   expect(htmlXss).not.toContain('<b id="xss-count">alerta</b>');
   expect(htmlXss).toContain('&lt;b id=&quot;xss-count&quot;&gt;alerta&lt;/b&gt;');
+  expect(htmlXss).not.toContain('<script id="xss-date">alert(1)</script>');
+  expect(htmlXss).toContain('&lt;script id=&quot;xss-date&quot;&gt;alert(1)&lt;/script&gt;');
 
   server.stop(true);
   store.close();
@@ -407,4 +417,25 @@ test('escapa el campo de rechazos y tolera tabla adm_hook_rejections con esquema
   serverCorrupt.stop(true);
   storeCorrupt.close();
   rmSync(dirCorrupt, { recursive: true, force: true });
+});
+
+test('borde de 30s de adm_lock y reloj inyectable en webhookReceptorStatus', () => {
+  const t0 = new Date('2026-11-20T12:00:00.000Z');
+  let currentTime = t0.getTime();
+  const testStore = new Store(join(dir, 'fabrica.db'), { clock: () => new Date(currentTime) });
+  const adm = new AdmissionDb(testStore);
+
+  // Sin lock -> inactivo
+  expect(testStore.webhookReceptorStatus().active).toBe(false);
+
+  // Con lock en t0 - 30_000 -> activo (exactamente en el borde de 30s)
+  adm.db.query('INSERT INTO adm_lock (id, owner, pid, host, heartbeat_at) VALUES (1, ?, ?, ?, ?)')
+    .run('residente-test', process.pid, 'localhost', t0.getTime() - 30_000);
+  expect(testStore.webhookReceptorStatus().active).toBe(true);
+
+  // Si avanza 1 ms (30_001 ms) -> inactivo
+  currentTime = t0.getTime() + 1;
+  expect(testStore.webhookReceptorStatus().active).toBe(false);
+
+  testStore.close();
 });

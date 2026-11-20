@@ -11,13 +11,11 @@ export const RESULT_LABELS: Record<string, string> = {
   coalesced: 'Coalescida (frecuencia)',
   ignored_event: 'Evento ignorado',
   ignored_repo: 'Repo ignorado',
-  rejected: 'Rechazada',
 };
 
 function statusClass(result: string): string {
   if (result === 'woke') return 'completed';
   if (result === 'coalesced') return 'waiting_reply';
-  if (result === 'rejected') return 'failed';
   return 'draft';
 }
 
@@ -101,7 +99,7 @@ export function webhooksPage(store: Store, url: URL, escape: Escape): { title: s
         ['Secreto en entorno (proceso web)', secretConfigured ? 'Configurado (FAB_GITHUB_WEBHOOK_SECRET)' : 'No configurado'],
         ['Eventos admitidos', '<code>issues</code>, <code>issue_comment</code>'],
         ['Entregas últimas 24 h', summary24h],
-        ['Entregas rechazadas (sin firma)', status.rejectedCount ? `${escape(status.rejectedCount)}${status.lastRejectedAt ? ` (última: <time>${escape(status.lastRejectedAt)}</time>)` : ''}` : '0'],
+        ['Entregas rechazadas (sin firma válida)', status.rejectedCount ? `${escape(status.rejectedCount)}${status.lastRejectedAt ? ` (última: <time>${escape(status.lastRejectedAt)}</time>)` : ''}` : '0'],
         ['Última entrega', status.lastDeliveryAt ? `<time>${escape(status.lastDeliveryAt)}</time>` : 'Ninguna'],
       ])}
     </section>
