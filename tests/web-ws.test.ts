@@ -162,3 +162,59 @@ test('T58-H4: las rutas de workstream cortan en 16 KiB aunque el servidor acepte
     expect((await post(path, { relleno: 'a'.repeat(17 * 1024) })).status).toBe(413);
   expect(events().length).toBe(antes);
 });
+
+// ---- ronda web: T60 H1-H4 ----
+const SECRETO = 'usar ghp_' + 'a'.repeat(36) + ' aquí';
+test('T60-H1: guardar ajustes sin tocar el objetivo no lo sobrescribe con [REDACTED]', async () => {
+  store.updateWorkstreamSettings('prueba', { goal: SECRETO });
+  const page = await html('/workstreams');
+  const goal = /<textarea id="g-prueba"[^>]*>([^<]*)<\/textarea>/.exec(page)![1]!.replace(/&quot;/g, '"');
+  expect(goal).toBe(SECRETO); // el campo lleva el valor real, escapado
+  await post('/workstreams/prueba/settings', { goal, concurrency: '5', task_limit: '20' });
+  expect(ws()).toMatchObject({ goal: SECRETO, workerConcurrency: 5 });
+  expect(ws().goal).not.toContain('REDACTED');
+});
+test('T60-H1: el asistente arrastra repo, objetivo y comando sin redactarlos en los campos ocultos', async () => {
+  const p = await wiz({ paso: '5', ...base(), goal: SECRETO, verify: 'echo ghp_' + 'b'.repeat(36) });
+  expect(p).toContain(`name="goal" value="${SECRETO}"`);
+  expect(p).toContain('name="verify" value="echo ghp_' + 'b'.repeat(36));
+  expect(p).not.toContain('value="[REDACTED]');
+});
+test('T60-H2: el valor del paso actual y el mensaje de error se escapan', async () => {
+  const p = await wiz({ paso: '2', repo: '"><script>alert(1)</script>' });
+  expect(p).not.toContain('<script>alert');
+  expect(p).toContain('value="&quot;&gt;&lt;script&gt;');
+  const q = await wiz({ paso: '4', ...base(), agent: '<img src=x onerror=alert(1)>' });
+  expect(q).not.toContain('<img src=x');
+});
+test('T60-H3: aviso de changes en curso, topes, perfil inexistente y comando mal formado', async () => {
+  const w = ws();
+  const c = store.createChange(w.id, 't', 'd'); store.db.query("UPDATE changes SET status='in_progress' WHERE id=?").run(c.id);
+  expect(await html('/workstreams')).toContain('Hay 1 changes en curso');
+  for (const bad of [{ goal: 'x'.repeat(2001) }, { concurrency: '17' }, { task_limit: '1001' }]) {
+    await post('/workstreams/prueba/settings', { goal: 'ok', concurrency: '2', task_limit: '20', ...bad });
+    expect(ws()).toMatchObject({ goal: 'objetivo <b>inicial</b>', workerConcurrency: 2, taskLimit: 20 });
+  }
+  expect(await wiz({ paso: '3', ...base(), goal: 'x'.repeat(2001) })).toContain('entre 1 y 2000');
+  expect(await wiz({ paso: '4', ...base(), profile: 'f'.repeat(64) })).toContain('no está guardado');
+  expect(await wiz({ paso: '5', ...base(), verify: 'echo "sin cerrar' })).toContain('Comando no válido');
+  await post('/workstreams/nuevo', { ...base(), verify: 'echo "sin cerrar' });
+  expect(store.listWorkstreams().map(x => x.slug)).toEqual(['prueba']);
+});
+test('T60-H3: el ajuste compara contra el valor anterior y falla con conflict si otro escribió', () => {
+  const w = ws();
+  const orig = store.getWorkstream.bind(store);
+  // Simula una escritura concurrente entre la lectura y el UPDATE: el UPDATE ... AND goal = anterior no cambia nada.
+  store.getWorkstream = ((id: string) => { const r = orig(id); store.db.query('UPDATE workstreams SET goal = ? WHERE id = ?').run('otro escritor', w.id); return r; }) as typeof store.getWorkstream;
+  expect(() => store.updateWorkstreamSettings('prueba', { goal: 'mío' })).toThrow(/changed concurrently/);
+  store.getWorkstream = orig;
+  expect(ws().goal).toBe('otro escritor');
+});
+test('T60-H4: un dato inválido en el alta vuelve al asistente, al paso que falla, con lo escrito', async () => {
+  const r = await post('/workstreams/nuevo', { ...base(), slug: 'Mal Slug' });
+  const loc = r.headers.get('location')!;
+  expect(loc).toStartWith('/workstreams/nuevo?');
+  const page = await (await req(loc, { headers: { cookie } })).text();
+  expect(page).toContain('slug'); expect(page).toContain('>Mi objetivo</textarea>'); expect(page).toContain('Paso 2 de 5');
+  expect(store.listWorkstreams()).toHaveLength(1);
+});

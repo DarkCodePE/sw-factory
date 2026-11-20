@@ -235,7 +235,15 @@ export const ACTIONS: Record<string, Action> = {
     api: false,
     path: /^\/(workstreams)\/nuevo$/,
     input: wsFields,
-    run: (store, _id, input, out, _actor, stateDir) => { out.destination = '/workstreams'; createWorkstream(store, stateDir, input as ReturnType<typeof wsFields>); },
+    run: (store, _id, input, out, _actor, stateDir) => {
+      out.destination = '/workstreams';
+      try { createWorkstream(store, stateDir, input as ReturnType<typeof wsFields>); }
+      catch (e) {
+        // T60-H4: un dato inválido devuelve al asistente, que muestra el paso que falla con lo escrito.
+        if (e instanceof StoreError && e.code === 'invalid_input') out.destination = `/workstreams/nuevo?${new URLSearchParams({ ...(input as Record<string, string>), paso: '5' })}`;
+        throw e;
+      }
+    },
   },
   'workstreams/settings': {
     path: route('workstreams', 'settings'),

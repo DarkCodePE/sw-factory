@@ -10,6 +10,8 @@ import { listProfiles } from './profile.ts';
 import { redact } from './manifest.ts';
 
 const esc = (v: unknown) => redact(String(v ?? '')).replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[c]!);
+// Valor de un campo editable: se escapa pero no se redacta, o guardar sin tocar el campo lo sobrescribiría con [REDACTED] (T60-H1).
+const attr = (v: unknown) => String(v ?? '').replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[c]!);
 const enc = encodeURIComponent;
 const SLUG = /^[a-z0-9][a-z0-9-]{0,62}$/;
 const binLabels: Record<AgentBinVerdict, string> = { ok: 'binario verificado', distinto: 'binario distinto del pin', no_instalado: 'no instalado', sin_pin: 'sin pin' };
@@ -56,7 +58,7 @@ function checklist(v: Pick<Values, 'agent' | 'verify'>): string {
 }
 
 function field(step: number, v: Values, stateDir: string): string {
-  const val = (k: keyof Values) => esc(v[k]);
+  const val = (k: keyof Values) => attr(v[k]);
   switch (step) {
     case 0: return `<label for="f-repo">Ruta absoluta del repositorio</label><input id="f-repo" name="repo" type="text" value="${val('repo')}" required>`;
     case 1: return `<label for="f-goal">Objetivo</label><textarea id="f-goal" name="goal" rows="3" maxlength="2000" required>${val('goal')}</textarea><label for="f-slug">Slug</label><input id="f-slug" name="slug" type="text" value="${val('slug')}" pattern="[a-z0-9][a-z0-9-]*" required>`;
@@ -73,7 +75,7 @@ export function wizardPage(store: Store, stateDir: string, url: URL, csrf?: stri
   const requested = Math.min(Math.max(Number(url.searchParams.get('paso')) || 1, 1), STEPS.length + 1);
   let step = 1, error: string | null = null;
   for (; step < requested; step++) if ((error = STEPS[step - 1]!.check(v, store, stateDir))) break;
-  const hidden = (skip: number[]) => FIELDS.filter(k => !skip.includes(STEP_OF[k])).map(k => `<input type="hidden" name="${k}" value="${esc(v[k])}">`).join('');
+  const hidden = (skip: number[]) => FIELDS.filter(k => !skip.includes(STEP_OF[k])).map(k => `<input type="hidden" name="${k}" value="${attr(v[k])}">`).join('');
   const nav = `<p class="muted">Paso ${step} de ${STEPS.length + 1}${step > 1 ? ` · <a href="/workstreams/nuevo?${new URLSearchParams({ paso: String(step - 1), ...v })}">Atrás</a>` : ''}</p>`;
   const err = error ? `<p class="notice" role="alert">${esc(error)}</p>` : '';
   if (step <= STEPS.length) return { title, body: `${nav}${err}<form action="/workstreams/nuevo" method="get" class="web-action"><fieldset><legend>${STEPS[step - 1]!.title}</legend><input type="hidden" name="paso" value="${step + 1}">${hidden([step - 1])}${field(step - 1, v, stateDir)}<button>Siguiente</button></fieldset></form>` };
@@ -85,7 +87,7 @@ function cardForms(w: Workstream, csrf: string, inProgress: number): string {
   const hidden = `<input type="hidden" name="csrf" value="${esc(csrf)}">`;
   const base = `/workstreams/${enc(w.slug)}`;
   const state = (next: string, label: string) => `<form action="${base}/state" method="post" class="web-action">${hidden}<input type="hidden" name="state" value="${next}"><button>${label}</button></form>`;
-  const settings = `<form action="${base}/settings" method="post" class="web-action"><fieldset><legend>Ajustes</legend>${hidden}<label for="g-${esc(w.slug)}">Objetivo</label><textarea id="g-${esc(w.slug)}" name="goal" rows="3" maxlength="2000">${esc(w.goal)}</textarea><label for="c-${esc(w.slug)}">Concurrencia de workers (1–16)</label><input id="c-${esc(w.slug)}" name="concurrency" type="number" min="1" max="16" value="${w.workerConcurrency}"><label for="t-${esc(w.slug)}">Tope de tareas (1–1000)</label><input id="t-${esc(w.slug)}" name="task_limit" type="number" min="1" max="1000" value="${w.taskLimit}"><button>Guardar ajustes</button><p class="muted">Los flags de aprobación y las rutas protegidas solo se cambian con la CLI.</p></fieldset></form>`;
+  const settings = `<form action="${base}/settings" method="post" class="web-action"><fieldset><legend>Ajustes</legend>${hidden}<label for="g-${esc(w.slug)}">Objetivo</label><textarea id="g-${esc(w.slug)}" name="goal" rows="3" maxlength="2000">${attr(w.goal)}</textarea><label for="c-${esc(w.slug)}">Concurrencia de workers (1–16)</label><input id="c-${esc(w.slug)}" name="concurrency" type="number" min="1" max="16" value="${w.workerConcurrency}"><label for="t-${esc(w.slug)}">Tope de tareas (1–1000)</label><input id="t-${esc(w.slug)}" name="task_limit" type="number" min="1" max="1000" value="${w.taskLimit}"><button>Guardar ajustes</button><p class="muted">Los flags de aprobación y las rutas protegidas solo se cambian con la CLI.</p></fieldset></form>`;
   const archive = w.state === 'archived' ? '' : `<details><summary>Archivar workstream</summary><form action="${base}/archive" method="post" class="web-action">${hidden}<p>Archivar usa la misma transición que <code>fab ws state ${esc(w.slug)} archived</code>; no borra datos y se puede reabrir.${inProgress ? ` Hay ${inProgress} changes en curso.` : ''}</p><label for="a-${esc(w.slug)}">Escribe «${esc(w.slug)}» para confirmar</label><input id="a-${esc(w.slug)}" name="confirm" type="text" autocomplete="off" required><button>Archivar</button></form></details>`;
   return `<div class="ws-forms">${w.state === 'active' ? state('paused', 'Pausar') : w.state === 'archived' ? state('paused', 'Reabrir (pausado)') : state('active', 'Activar')}${settings}${archive}</div>`;
 }
