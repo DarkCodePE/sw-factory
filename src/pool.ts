@@ -540,8 +540,6 @@ export async function runPool(store: Store, opts: PoolOptions): Promise<void> {
         recovered = store.requeueOrphans(ws.id, undefined, id => !!adm && new ReportStore(adm).pending(id) !== undefined); // M2
         // M4: el plazo de una espera también lo vigila el pool (no solo el residente), para que venza aunque el residente no corra.
         if (opts.live && adm) expireQuestions(store, adm);
-        // T68d: solo crea señales (nunca activities); el triage sigue siendo del dueño.
-        for (const r of store.fireDueAutomations(ws.id)) log(`automation ${r.id.slice(0, 8)}: ${r.result}`);
       } catch (err) {
         if (isBusyError(err)) {
           await Promise.race([Bun.sleep(50), interruptPromise]);
@@ -550,6 +548,13 @@ export async function runPool(store: Store, opts: PoolOptions): Promise<void> {
         throw err;
       }
       if (recovered) log(`recovered ${recovered} orphaned activities`);
+      // T68d: solo crea señales (nunca activities); el triage sigue siendo del dueño.
+      // Aislada: un fallo (contención o no) de una función auxiliar no puede parar el reclamo ni terminar el pool.
+      try {
+        for (const r of store.fireDueAutomations(ws.id)) log(`automation ${r.id.slice(0, 8)}: ${r.result}`);
+      } catch (err) {
+        if (!isBusyError(err)) log(`automation: ${(err as Error).message}`);
+      }
 
       let current: Workstream;
       try {
