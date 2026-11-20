@@ -1,7 +1,11 @@
 #!/usr/bin/env bun
 // T63: ¿cuántos changes aprobados por los validadores acabaron rechazados por el dueño? Solo lectura, sin modelos.
 // Definición, umbral y límites: docs/research/warp-platform/diseno/T64.md §2.
+// R cuenta solo los `canceled` con el evento «reject solicitado» (`fab reject`, src/cli.ts). Desde D8 retirar la etiqueta de un issue
+// también cancela el change (src/admission/resident.ts) y eso no juzga el trabajo: se informa aparte en `revocados` y no entra en la tasa.
+// Límite: un rechazo anterior a ese evento no se ve y cuenta como revocado.
 // Uso: bun scripts/medir/t63-validadores.ts <stateDir>...
+import { realpathSync } from 'node:fs';
 import { join } from 'node:path';
 import { Store } from '../../src/store.ts';
 
@@ -11,6 +15,8 @@ const DIA_MS = 86_400_000;
 
 export interface Medicion {
   a: number; r: number; p: number;
+  /** Aprobados `canceled` sin evento de `fab reject` (revocación de D8 u otra causa): fuera de la tasa. */
+  revocados: number;
   /** Aprobados aún `implemented` desde hace más de 7 días. */
   pViejos: number;
   /** R / (A + R); `null` si A + R = 0 («No medido», nunca 0). */
@@ -21,8 +27,9 @@ export interface Medicion {
 }
 
 export function medir(stateDirs: string[], now: Date = new Date()): Medicion {
-  let a = 0, r = 0, p = 0, pViejos = 0;
-  for (const dir of stateDirs) {
+  let a = 0, r = 0, p = 0, pViejos = 0, revocados = 0;
+  // El mismo stateDir dado dos veces contaría doble.
+  for (const dir of new Set(stateDirs.map(d => realpathSync(d)))) {
     const s = new Store(join(dir, 'fabrica.db'), { readonly: true });
     try {
       // rowid desempata created_at iguales: la «más reciente» de cada validador.
@@ -37,7 +44,10 @@ export function medir(stateDirs: string[], now: Date = new Date()): Medicion {
         for (const v of acts) ult.set(v.validator, v.status === 'completed' && v.review_status === 'approved');
         if (![...ult.values()].every(Boolean)) continue;
         if (c.status === 'completed') a++;
-        else if (c.status === 'canceled') r++;
+        else if (c.status === 'canceled') {
+          const rej = s.db.query(`SELECT 1 FROM events WHERE change_id = ? AND message = 'reject solicitado' LIMIT 1`).get(c.id);
+          if (rej) r++; else revocados++;
+        }
         else if (c.status === 'implemented') {
           p++;
           if (now.getTime() - Date.parse(c.updated_at) > 7 * DIA_MS) pViejos++;
@@ -48,7 +58,7 @@ export function medir(stateDirs: string[], now: Date = new Date()): Medicion {
   const tasa = a + r > 0 ? r / (a + r) : null;
   const alta = a + r >= MIN_CHANGES && tasa !== null && tasa > UMBRAL_TASA;
   return {
-    a, r, p, pViejos, tasa,
+    a, r, p, revocados, pViejos, tasa,
     veredicto: alta ? 'tasa alta' : a + r < MIN_CHANGES ? 'datos insuficientes' : 'tasa baja',
     muestreo: alta ? 0.5 : 0.1,
     fecha: now.toISOString(),
