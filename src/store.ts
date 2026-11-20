@@ -2083,10 +2083,15 @@ export class Store {
     let lastRejectedAt: string | null = null;
     const hasRejections = this.db.query("SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'adm_hook_rejections'").get() !== null;
     if (hasRejections) {
-      const rej = this.db.query('SELECT count, last_rejected_at FROM adm_hook_rejections WHERE id = 1').get() as { count: number; last_rejected_at: string } | null;
-      if (rej) {
-        rejectedCount = rej.count;
-        lastRejectedAt = rej.last_rejected_at;
+      try {
+        const rej = this.db.query('SELECT count, last_rejected_at FROM adm_hook_rejections WHERE id = 1').get() as { count: number; last_rejected_at: string } | null;
+        if (rej) {
+          rejectedCount = rej.count;
+          lastRejectedAt = rej.last_rejected_at;
+        }
+      } catch {
+        rejectedCount = 0;
+        lastRejectedAt = null;
       }
     }
 

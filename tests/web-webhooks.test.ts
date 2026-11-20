@@ -371,3 +371,40 @@ test('escapa el campo bytes de una entrega si contiene caracteres HTML', async (
   expect(html).not.toContain(payload);
   expect(html).toContain('&lt;img src=x onerror=alert(1)&gt;');
 });
+
+test('escapa el campo de rechazos y tolera tabla adm_hook_rejections con esquema corrupto sin dar 500', async () => {
+  store = new Store(join(dir, 'fabrica.db'));
+  const adm = new AdmissionDb(store);
+  adm.recordRejectedHook();
+
+  // 1. Probar que texto con HTML en count se escapa contra XSS
+  const maliciousCount = '<b id="xss-count">alerta</b>';
+  store.db.query('UPDATE adm_hook_rejections SET count = ? WHERE id = 1').run(maliciousCount as unknown as number);
+
+  server = startWeb(dir, 0);
+  const htmlXss = await getHtml('/webhooks');
+  expect(htmlXss).not.toContain('<b id="xss-count">alerta</b>');
+  expect(htmlXss).toContain('&lt;b id=&quot;xss-count&quot;&gt;alerta&lt;/b&gt;');
+
+  server.stop(true);
+  store.close();
+
+  // 2. Probar tabla adm_hook_rejections corrupta/incompleta (sin columna count) no produce 500
+  const dirCorrupt = mkdtempSync(join(tmpdir(), 'fab-corrupt-test-'));
+  const storeCorrupt = new Store(join(dirCorrupt, 'fabrica.db'));
+  // Crear solo adm_hook_deliveries para activar hasWebhookTables, y adm_hook_rejections rota sin count
+  storeCorrupt.db.exec(`
+    CREATE TABLE adm_hook_deliveries (delivery_id TEXT PRIMARY KEY, event TEXT, received_at TEXT, bytes INTEGER, result TEXT);
+    CREATE TABLE adm_hook_rejections (id INTEGER PRIMARY KEY, bad_col TEXT);
+  `);
+
+  const serverCorrupt = startWeb(dirCorrupt, 0);
+  const res = await fetch(`http://127.0.0.1:${serverCorrupt.port}/webhooks`);
+  expect(res.status).toBe(200);
+  const htmlCorrupt = await res.text();
+  expect(htmlCorrupt).toContain('Webhooks');
+
+  serverCorrupt.stop(true);
+  storeCorrupt.close();
+  rmSync(dirCorrupt, { recursive: true, force: true });
+});

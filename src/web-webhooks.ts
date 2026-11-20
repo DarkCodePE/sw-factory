@@ -101,7 +101,7 @@ export function webhooksPage(store: Store, url: URL, escape: Escape): { title: s
         ['Secreto en entorno (proceso web)', secretConfigured ? 'Configurado (FAB_GITHUB_WEBHOOK_SECRET)' : 'No configurado'],
         ['Eventos admitidos', '<code>issues</code>, <code>issue_comment</code>'],
         ['Entregas últimas 24 h', summary24h],
-        ['Entregas rechazadas (sin firma)', status.rejectedCount ? `${status.rejectedCount}${status.lastRejectedAt ? ` (última: <time>${escape(status.lastRejectedAt)}</time>)` : ''}` : '0'],
+        ['Entregas rechazadas (sin firma)', status.rejectedCount ? `${escape(status.rejectedCount)}${status.lastRejectedAt ? ` (última: <time>${escape(status.lastRejectedAt)}</time>)` : ''}` : '0'],
         ['Última entrega', status.lastDeliveryAt ? `<time>${escape(status.lastDeliveryAt)}</time>` : 'Ninguna'],
       ])}
     </section>
