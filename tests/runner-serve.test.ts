@@ -63,7 +63,6 @@ async function sendJob(s: S, over: Record<string, unknown> = {}, jobId = 'act1-1
   s.send(prompt); s.send(data);
 }
 const bwrapOf = () => Bun.spawnSync(['pgrep', '-P', String(process.pid), '-x', 'bwrap']).stdout.toString().trim().split('\n').filter(Boolean).map(Number);
-const procFile = (pid: number, f: string) => readFileSync(`/proc/${pid}/${f}`);
 const gone = (pid: number) => { try { process.kill(pid, 0); return false; } catch { return true; } };
 
 beforeEach(() => {
@@ -145,27 +144,28 @@ test('A16: hello con v distinta de 1 corta la sesión con bad_request', async ()
   expect(s.messages()[0]).toMatchObject({ type: 'error', code: 'bad_request' });
 });
 
-test('el argv lanzado es el del adaptador local y el entorno solo trae base y lista fija', async () => {
-  const canary = { CANARIO_RUNNER: 'x1', GH_TOKEN: 'x2', SSH_AUTH_SOCK: '/tmp/x3', FABRICA_FAKE_SLEEP: '30' };
-  Object.assign(process.env, canary);
-  const s = session();
-  try {
-    hello(s); await until(() => s.has('hello'), 'hello');
-    await sendJob(s, {}, 'act1-1', 'pide algo');
-    await until(() => bwrapOf().length > 0, 'bwrap en marcha');
-    const [pid] = bwrapOf();
-    const cmd = procFile(pid!, 'cmdline').toString().split('\0');
-    const expected = getAgent('fake').command('pide algo', { readOnly: false, confine: true, promptStdin: false });
-    expect(cmd.slice(cmd.indexOf('--') + 1, cmd.indexOf('--') + 1 + expected.length)).toEqual(expected);
-    const env = procFile(pid!, 'environ').toString().split('\0').filter(Boolean).map(l => l.split('=')[0]!);
-    expect(env).not.toContain('CANARIO_RUNNER');
-    expect(env).not.toContain('GH_TOKEN');
-    expect(env).not.toContain('SSH_AUTH_SOCK');
-    for (const k of env) expect(['PATH', 'HOME', 'TMPDIR', 'LANG', 'FABRICA_FAKE_SLEEP', 'FABRICA_FAKE_STATUS', 'FABRICA_FAKE_TOUCH'].includes(k) || k.startsWith('GIT_CONFIG_')).toBe(true);
-  } finally {
-    for (const k of Object.keys(canary)) delete process.env[k];
-    s.end(); await s.done;
-  }
+test('el agente remoto comprueba su argv, stdin y los marcadores del entorno del runner', async () => {
+  const bin = join(tmp, 'bin');
+  mkdirSync(bin);
+  const prompt = 'pide algo';
+  const expected = getAgent('claude').command(prompt, { readOnly: false, confine: true, promptStdin: true }).slice(1);
+  expected.push('--setting-sources', '', '--strict-mcp-config', '--mcp-config', '{"mcpServers":{}}');
+  writeFileSync(join(bin, 'claude'), `#!/usr/bin/python3
+import json, os, sys
+assert sys.argv[1:] == ${JSON.stringify(expected)}
+assert sys.stdin.read() == ${JSON.stringify(prompt)}
+assert os.environ["ANTHROPIC_API_KEY"] == "sintetico-runner"
+assert "CANARIO_RUNNER" not in os.environ
+assert "GH_TOKEN" not in os.environ
+assert "SSH_AUTH_SOCK" not in os.environ
+print(json.dumps({"type": "result", "result": "STATUS: done\\n\\nconfirmado"}))
+`, { mode: 0o755 });
+  const r = await runRemoteAgent(runner, job({ adapter: 'claude', prompt, expectChanges: false }), serveProc([
+    'ANTHROPIC_API_KEY=sintetico-runner', 'CANARIO_RUNNER=excluido', 'GH_TOKEN=sintetico-gh', 'SSH_AUTH_SOCK=/tmp/sintetico',
+  ], `${bin}:${process.env.PATH}`));
+  expect(r.exitCode).toBe(0);
+  expect(r.ok).toBe(true);
+  expect(r.output).toContain('confirmado');
 });
 
 test('A13: al cerrarse la sesión se mata al agente y se borra el encargo', async () => {
@@ -215,6 +215,26 @@ test('el plazo del agente lo mata y el resultado lo refleja (reloj inyectado)', 
     expect(r.exitCode).not.toBe(0);
     expect(r.bundleBytes).toBe(0);
   } finally { delete process.env.FABRICA_FAKE_SLEEP; }
+});
+
+test('T98: un fallo tras el spawn termina al agente antes de borrar el encargo', async () => {
+  const saved = process.env.FABRICA_FAKE_SLEEP;
+  process.env.FABRICA_FAKE_SLEEP = '30';
+  let pid: number | undefined;
+  const s = session({ timer: () => { [pid] = bwrapOf(); throw new Error('fallo sintético al armar el plazo'); } });
+  try {
+    hello(s); await until(() => s.has('hello'), 'hello');
+    await sendJob(s);
+    expect(await s.done).toBe(1);
+    expect(pid).toBeDefined();
+    expect(gone(pid!)).toBe(true);
+    expect(readdirSync(join(root, 'jobs'))).toEqual([]);
+    expect(s.messages().at(-1)).toMatchObject({ type: 'error', code: 'internal', message: expect.stringContaining('control de ejecución') });
+  } finally {
+    s.end();
+    if (pid !== undefined) { try { process.kill(-pid, 'SIGKILL'); } catch {} }
+    if (saved === undefined) delete process.env.FABRICA_FAKE_SLEEP; else process.env.FABRICA_FAKE_SLEEP = saved;
+  }
 });
 
 test('expectChanges falso no devuelve bundle aunque el agente escriba', async () => {

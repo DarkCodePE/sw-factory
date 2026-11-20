@@ -58,16 +58,30 @@ describe('T34: flags repetidos y token fuera de argv', () => {
     } finally { f.restore(); }
   });
   test('confine no añade un segundo --mcp-config vacío que pueda ganar al del turno', async () => {
+    if (!Bun.which('bwrap')) return;
     const { confineAgent } = await import('../src/sandbox/confine.ts');
     const dir = mkdtempSync(join(tmpdir(), 'live-conf-')); Bun.spawnSync(['git', 'init', '-q', dir]);
-    if (!Bun.which('bwrap')) return; // sin bubblewrap no hay nada que comprobar
-    // confine exige el ejecutable; en CI no hay `claude` real. Ruta absoluta: Bun.which no ve cambios de PATH en caliente.
-    const f = fakeClaude('exit 0');
+    const bin = join(dir, 'probe');
+    writeFileSync(bin, `#!/bin/sh
+set -eu
+count=0
+for arg do
+  if [ "$arg" = --mcp-config ]; then count=$((count + 1)); fi
+done
+test "$count" = 1
+printf confirmado
+`, { mode: 0o755 });
+    const c = confineAgent('claude', [bin, ...liveClaudeArgv(base, {}, 'abc', join(dir, '.git/fab-live/m.json'))], dir);
     try {
-      const c = confineAgent('claude', [join(f.dir, 'claude'), ...liveClaudeArgv(base, {}, 'abc', join(dir, '.git/fab-live/m.json'))], dir) as { argv?: string[]; command?: string[] };
-      const all = JSON.stringify(c);
-      expect((all.match(/--mcp-config/g) ?? []).length).toBe(1);
-    } finally { f.restore(); }
+      expect(c.inspection.mcpConfigCount).toBe(1);
+      const child = c.spawn('ignore');
+      const [code, stdout] = await Promise.all([child.exited, new Response(child.stdout).text()]);
+      expect(code).toBe(0);
+      expect(stdout).toBe('confirmado');
+    } finally {
+      c.cleanup();
+      rmSync(dir, { recursive: true, force: true });
+    }
   });
 });
 
