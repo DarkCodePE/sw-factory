@@ -96,15 +96,21 @@ test('la ventana toma las `window` más recientes', () => {
 
 test('tick: sin configuración o con enabled = 0 no crea nada; habilitado crea un candidato y no más', async () => {
   seed(10, 10);
-  await tick(store, dir, 'ws');
+  const launched: string[] = [];
+  // Desde T67c `tick` también propone: el lanzador es inyectado (sin agente real) y su salida inválida deja el candidato en failed.
+  const opts = { launch: async (adapter: string) => { launched.push(adapter); return { ok: true, output: 'sin marcadores', exitCode: 0, durationMs: 1, status: { kind: 'done' as const, reason: '' } }; } };
+  await tick(store, dir, 'ws', opts);
   expect(candidates()).toHaveLength(0);
   setConfig(store, 'ws', { ...cfg, enabled: false });
-  await tick(store, dir, 'ws');
+  await tick(store, dir, 'ws', opts);
   expect(candidates()).toHaveLength(0);
+  expect(launched).toHaveLength(0);
   setConfig(store, 'ws', cfg);
-  await tick(store, dir, 'ws'); await tick(store, dir, 'ws');
+  await tick(store, dir, 'ws', opts); await tick(store, dir, 'ws', opts);
   expect(candidates()).toHaveLength(1);
-  expect(store.db.query(`SELECT message FROM events WHERE message LIKE 'candidato de mejora%'`).all()).toHaveLength(1);
+  expect(launched).toHaveLength(1); // el fallido no se reintenta ni se crea otro
+  const ev = store.db.query(`SELECT message FROM events WHERE message LIKE 'candidato de mejora%' ORDER BY rowid`).all() as { message: string }[];
+  expect(ev.map((e) => /creado|fallido/.exec(e.message)![0])).toEqual(['creado', 'fallido']);
 });
 
 test('listCandidates sobre una base sin las tablas devuelve vacío y no las crea', () => {

@@ -46,10 +46,15 @@ export async function improveMain(argv: string[], store: Store, stateDir: string
     } else if (sub === 'auto') {
       const ws = need(id, '<workstream>');
       if (values.agent && !AGENT_NAMES.includes(values.agent)) throw new StoreError('invalid_input', `unknown agent ${values.agent}`);
-      do {
-        try { await tick(store, stateDir, ws, { agent: values.agent, log: console.error }); } catch (e) { if (values.once) throw e; console.error(`error: ${(e as Error).message}`); }
-        if (!values.once) await Bun.sleep(TICK_MS);
-      } while (!values.once);
+      const ctl = new AbortController(); // Ctrl-C: el candidato en curso vuelve a la cola en vez de quedar atascado (H2)
+      const stop = () => ctl.abort();
+      process.once('SIGINT', stop); process.once('SIGTERM', stop);
+      try {
+        do {
+          try { await tick(store, stateDir, ws, { agent: values.agent, log: console.error, signal: ctl.signal }); } catch (e) { if (values.once) throw e; console.error(`error: ${(e as Error).message}`); }
+          if (!values.once && !ctl.signal.aborted) await Promise.race([Bun.sleep(TICK_MS), new Promise((r) => ctl.signal.addEventListener('abort', r, { once: true }))]);
+        } while (!values.once && !ctl.signal.aborted);
+      } finally { process.off('SIGINT', stop); process.off('SIGTERM', stop); }
       const ready = listCandidates(store.db, ws).filter((c) => c.status === 'ready');
       console.log(`tick hecho; ${ready.length} candidato(s) listo(s) para revisar (fab improve candidates ${ws})`);
     } else if (sub === 'propose') {

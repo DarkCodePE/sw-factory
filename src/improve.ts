@@ -39,7 +39,7 @@ CREATE TABLE IF NOT EXISTS improvement_candidates (
   id TEXT PRIMARY KEY, workstream_id TEXT NOT NULL, role TEXT NOT NULL, base_digest TEXT NOT NULL, candidate_digest TEXT, experiment_id TEXT,
   origin TEXT NOT NULL CHECK (origin IN ('threshold','manual')), trigger_scores TEXT NOT NULL,
   status TEXT NOT NULL CHECK (status IN ('pending','proposing','proposed','experimenting','ready','failed','dismissed')),
-  error TEXT, created_at TEXT NOT NULL, finished_at TEXT);
+  error TEXT, created_at TEXT NOT NULL, finished_at TEXT, lease_expires_at TEXT);
 CREATE UNIQUE INDEX IF NOT EXISTS improvement_open ON improvement_candidates(workstream_id, role)
   WHERE status IN ('pending','proposing','proposed','experimenting','ready');`);
   const cols = db.query('PRAGMA table_info(experiment_runs)').all() as { name: string }[];
@@ -51,6 +51,8 @@ CREATE UNIQUE INDEX IF NOT EXISTS improvement_open ON improvement_candidates(wor
     ['worker_report', 'TEXT'],
   ] as const)
     if (!cols.some(c => c.name === col)) db.exec(`ALTER TABLE experiment_runs ADD COLUMN ${col} ${type}`);
+  if (!(db.query('PRAGMA table_info(improvement_candidates)').all() as { name: string }[]).some(c => c.name === 'lease_expires_at'))
+    db.exec('ALTER TABLE improvement_candidates ADD COLUMN lease_expires_at TEXT'); // T67 H2: bases creadas antes del lease
   const expCols = db.query('PRAGMA table_info(experiments)').all() as { name: string }[];
   if (!expCols.some(c => c.name === 'repeated_baseline')) db.exec('ALTER TABLE experiments ADD COLUMN repeated_baseline INTEGER NOT NULL DEFAULT 0');
   if (!expCols.some(c => c.name === 'control')) db.exec('ALTER TABLE experiments ADD COLUMN control TEXT');

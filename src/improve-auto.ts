@@ -8,7 +8,8 @@ import { createExperiment, ensureSchema, runExperiment, SPLITS, type Split } fro
 import { DEFAULT_DIGEST, profileDigest, resolveProfile, resolveRole, ROLES, saveProfile, type Profile, type Role } from './profile.ts';
 import { untrusted } from './prompts.ts';
 import { CONFINABLE_AGENTS } from './sandbox/confine.ts';
-import { defaultLaunch, ensureSchema as ensureScores, type Launch } from './scorers.ts';
+import { getAgent, runAgent } from './agents.ts';
+import { ensureSchema as ensureScores, type Launch } from './scorers.ts';
 import { StoreError, type Store } from './store.ts';
 import { GIT_SAFE_FLAGS } from './worktrees.ts';
 
@@ -36,6 +37,7 @@ export function setConfig(store: Store, wsId: string, c: Omit<AutoConfig, 'works
   if (!c.suitePath) throw bad('falta --suite');
   if (!SPLITS.includes(c.split)) throw bad(`split debe ser ${SPLITS.join('|')}`);
   int(c.repeats, 1, '--repeats'); int(c.window, 1, '--window'); int(c.minScores, 1, '--min');
+  if (c.minScores > c.window) throw bad('--min no puede superar --window: el umbral no dispararía nunca');
   if (!(c.threshold > 0 && c.threshold <= 1)) throw bad('--threshold debe estar en (0, 1]');
   store.withRetry(() => store.db.query(`INSERT OR REPLACE INTO improvement_config (workstream_id, enabled, suite_path, split, repeats, window, min_scores, threshold) VALUES (?,?,?,?,?,?,?,?)`)
     .run(store.getWorkstream(wsId).id, c.enabled ? 1 : 0, c.suitePath, c.split, c.repeats, c.window, c.minScores, c.threshold));
@@ -99,6 +101,14 @@ export function listCandidates(db: Database, wsId?: string): Candidate[] {
 // ---- T67b: el agente que propone la plantilla ---------------------------------------------------
 
 const PROPOSE_TIMEOUT_MS = 10 * 60_000;
+// Lease de un candidato en curso: si el proceso muere, el siguiente tick lo recoge al vencer (H2). El experimento es largo: tope holgado.
+const PROPOSE_LEASE_MS = PROPOSE_TIMEOUT_MS + 60_000;
+const EXPERIMENT_LEASE_MS = 12 * 3_600_000;
+const leaseUntil = (store: Store, ms: number) => new Date(new Date(store.now()).getTime() + ms).toISOString();
+
+/** El agente que propone corre confinado y de solo lectura, con su propio tope (el de los jueces es de 5 min). */
+const proposeLaunch: Launch = (adapter, prompt, cwd, model, signal) =>
+  runAgent(getAgent(adapter), prompt, cwd, PROPOSE_TIMEOUT_MS, { confine: true, readOnly: true, signal, ...(model ? { model } : {}) });
 const MAX_TEMPLATE_BYTES = 32 * 1024;
 const MAX_FAILURES = 20;
 const MAX_RATIONALE = 2000;
@@ -165,7 +175,7 @@ TEMPLATE ${nonce.output}>>>`;
 export async function proposeTemplate(store: Store, stateDir: string, candidateId: string, opts: ProposeOptions = {}): Promise<void> {
   ensureSchema(store.db);
   const c = row(store, candidateId);
-  const claimed = store.withRetry(() => store.db.query(`UPDATE improvement_candidates SET status='proposing' WHERE id=? AND status='pending'`).run(candidateId).changes === 1);
+  const claimed = store.withRetry(() => store.db.query(`UPDATE improvement_candidates SET status='proposing', lease_expires_at=? WHERE id=? AND status='pending'`).run(leaseUntil(store, PROPOSE_LEASE_MS), candidateId).changes === 1);
   if (!claimed) throw new StoreError('invalid_transition', `candidato ${candidateId.slice(0, 8)} está ${c.status}, no pending`);
   const dir = join(stateDir, 'improve-auto', candidateId);
   try {
@@ -173,10 +183,11 @@ export async function proposeTemplate(store: Store, stateDir: string, candidateI
     const { adapter, model } = resolveRole(base, 'implement', store.getWorkstream(c.workstreamId).agent, opts.agent);
     if (!CONFINABLE_AGENTS.includes(adapter)) return fail(store, c, 'proposing', `--confine: adaptador ${adapter} no soportado; usa --agent`);
     const repo = join(dir, 'repo'); // cwd desechable y vacío, sin worktree
+    rmSync(dir, { recursive: true, force: true }); // un intento caído pudo dejar aquí un symlink que decide qué monta el sandbox (T64c H1)
     mkdirSync(repo, { recursive: true, mode: 0o700 });
     if (Bun.spawnSync(['git', ...GIT_SAFE_FLAGS, 'init', '-q', repo], { stdout: 'pipe', stderr: 'pipe' }).exitCode !== 0) return fail(store, c, 'proposing', 'git init falló');
     const nonce = { material: randomUUID().slice(0, 12), output: randomUUID().slice(0, 12) };
-    const launch = opts.launch ?? defaultLaunch;
+    const launch = opts.launch ?? proposeLaunch;
     const run = await launch(adapter, buildProposePrompt(store, c, base, nonce), repo, model ?? undefined, opts.signal);
     if (opts.signal?.aborted) { // cortado por el usuario: vuelve a la cola
       store.withRetry(() => store.db.query(`UPDATE improvement_candidates SET status='pending' WHERE id=? AND status='proposing'`).run(candidateId));
@@ -208,7 +219,7 @@ export interface ExperimentOptions { agent?: string; log?: (m: string) => void }
 export async function runCandidateExperiment(store: Store, stateDir: string, candidateId: string, opts: ExperimentOptions = {}): Promise<void> {
   ensureSchema(store.db);
   const c = row(store, candidateId);
-  const claimed = store.withRetry(() => store.db.query(`UPDATE improvement_candidates SET status='experimenting' WHERE id=? AND status='proposed'`).run(candidateId).changes === 1);
+  const claimed = store.withRetry(() => store.db.query(`UPDATE improvement_candidates SET status='experimenting', lease_expires_at=? WHERE id=? AND status='proposed'`).run(leaseUntil(store, EXPERIMENT_LEASE_MS), candidateId).changes === 1);
   if (!claimed) throw new StoreError('invalid_transition', `candidato ${candidateId.slice(0, 8)} está ${c.status}, no proposed`);
   try {
     const cfg = getConfig(store, c.workstreamId);
@@ -230,11 +241,28 @@ export async function runCandidateExperiment(store: Store, stateDir: string, can
 export interface TickOptions extends ProposeOptions {}
 
 /**
+ * H2: un candidato en `proposing`/`experimenting` con el lease vencido (o sin lease: base anterior) es de un proceso muerto.
+ * La propuesta vuelve a `pending` (reintento; el directorio desechable se borra al empezar); el experimento queda `failed`: no se relanza uno a medias.
+ */
+export function recoverStuck(store: Store, wsId: string): void {
+  ensureSchema(store.db);
+  const now = store.now(), id = store.getWorkstream(wsId).id;
+  const stuck = store.db.query(`SELECT id, status FROM improvement_candidates WHERE workstream_id = ? AND status IN ('proposing','experimenting') AND (lease_expires_at IS NULL OR lease_expires_at < ?)`).all(id, now) as { id: string; status: string }[];
+  for (const s of stuck) {
+    if (s.status === 'proposing') {
+      const back = store.withRetry(() => store.db.query(`UPDATE improvement_candidates SET status='pending', lease_expires_at=NULL WHERE id=? AND status='proposing'`).run(s.id).changes === 1);
+      if (back) store.event(id, 'warning', `candidato de mejora ${s.id.slice(0, 8)} interrumpido en la propuesta: vuelve a la cola`);
+    } else fail(store, row(store, s.id), 'experimenting', 'interrumpido');
+  }
+}
+
+/**
  * Evalúa el umbral de cada rol y crea los candidatos que toquen; después lleva cada candidato abierto hasta donde pueda
  * (pending → proposed → ready). Apagado sin configuración o con `enabled = 0`. Nunca asigna el perfil (D-H): `ready` espera al dueño.
  */
 export async function tick(store: Store, stateDir: string, wsId: string, opts: TickOptions = {}): Promise<void> {
   if (!getConfig(store, wsId)?.enabled) return;
+  recoverStuck(store, wsId);
   for (const role of ROLES) {
     const e = evaluateThreshold(store, wsId, role);
     if (!e.fire) continue;
