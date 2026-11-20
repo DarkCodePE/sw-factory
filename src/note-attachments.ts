@@ -91,6 +91,9 @@ export function assertNoteAttachmentMounts(dbPath: string, repos: string[], targ
   };
   try {
     for (const repo of new Set(repos)) {
+      // Un repo que ya no existe no puede montarse: otro workstream no bloquea los adjuntos del resto.
+      try { realpathSync(repo); }
+      catch (error) { if (missing(error)) continue; throw error; }
       for (const path of writableMounts(repo)) check(path);
       const list = Bun.spawnSync(['git', '-C', repo, 'worktree', 'list', '--porcelain', '-z']);
       if (list.exitCode !== 0) throw new Error();

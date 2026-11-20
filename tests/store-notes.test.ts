@@ -317,3 +317,15 @@ test('adjunto: la comprobación de estado es de lectura y rechaza enlaces y esta
   }
   expect(readFileSync(victim, 'utf8')).toBe('intacto');
 }));
+
+test('T96-H2: el repo ausente de otro workstream no bloquea los adjuntos, y uno vivo dentro del estado sí', () => privateNotes((writer, id, cwd) => {
+  const gone = join(dirname(cwd), 'otro-repo');
+  mkdirSync(gone);
+  expect(Bun.spawnSync(['git', 'init', '-q', gone]).exitCode).toBe(0);
+  writer.createWorkstream({ slug: 'otro', goal: 'g', repo: gone });
+  expect(writer.addChangeNote(id, 'con otro repo vivo', attachment()).attachment?.name).toBe('datos.txt');
+  rmSync(gone, { recursive: true });
+  expect(writer.addChangeNote(id, 'con otro repo ausente', attachment()).attachment?.name).toBe('datos.txt');
+  const a = writer.listActivities({ changeId: id })[0]!;
+  expect(writer.reserveNotes(id, a.id, 'intento', { cwd }).map(n => n.attachmentBytes !== undefined)).toEqual([true, true]);
+}));
