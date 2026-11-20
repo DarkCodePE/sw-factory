@@ -50,7 +50,7 @@ test('A2: clave en la URL o en cookie, o sesión: 401', async () => {
 
 test('A5: merge, gate y rutas ajenas a ACTIONS dan 404; las rutas salen de ACTIONS', async () => {
   for (const p of [`/changes/${change}/merge`, `/changes/${change}/gate`, `/changes/${change}/approve`, '/keys']) expect((await post(p, {})).status).toBe(404);
-  expect(Object.keys(ACTIONS).sort()).toEqual(['activities/review', 'automations/disable', 'automations/enable', 'automations/run', 'changes/cancel', 'changes/note', 'changes/rename', 'changes/retry', 'questions/answer', 'signals/create', 'signals/ignore', 'signals/triage', 'workstreams/archive', 'workstreams/create', 'workstreams/settings', 'workstreams/state']);
+  expect(Object.keys(ACTIONS).sort()).toEqual(['activities/review', 'activities/score', 'automations/disable', 'automations/enable', 'automations/run', 'changes/cancel', 'changes/note', 'changes/rename', 'changes/retry', 'questions/answer', 'scorers/backfill', 'signals/create', 'signals/ignore', 'signals/triage', 'workstreams/archive', 'workstreams/create', 'workstreams/settings', 'workstreams/state']);
 });
 
 test('415, 413 y JSON inválido', async () => {

@@ -52,11 +52,18 @@ test('la tasa de aprobado y el coste coinciden con datos sintéticos; fallidas n
   server = startWeb(dir, 0);
   const h = await html('/metricas?tab=jueces&range=all');
   expect(h).toContain('75 % (3/4)'); // 3 aprobadas de 4 hechas
+  expect(h).toContain('<td>implement</td><td>75 % (3/4)</td><td>4</td><td>1</td><td>0</td>'); // aprobadas, hechas, fallidas, en cola
   expect(h).toContain('1.0000 USD'); expect(h).toContain('1 sin coste medido');
   expect(h).toContain('Sin puntuar'); expect(h).not.toContain('(0)</td><td>No medido');
   expect(h).toContain('&lt;img src=x&gt; cambio'); expect(h).not.toContain('<img src=x>');
   const d = await html('/metricas?tab=jueces&range=all&scorer=calidad');
   expect(d).toContain('Evalúa &lt;b&gt;bien&lt;/b&gt;.'); expect(d).toContain('Tasa de aprobado por día');
+});
+test('un juez sin ningún coste medido muestra «No medido», no 0', async () => {
+  const { digest, impls } = seed(1); insertScore(digest, impls[0]!, { cost: null });
+  server = startWeb(dir, 0);
+  const h = await html('/metricas?tab=jueces&range=all');
+  expect(h).toContain('<td>1</td><td>0</td><td>0</td><td>No medido</td>'); expect(h).not.toContain('0.0000 USD');
 });
 test('sin puntuaciones: aviso, «No medido», y la web no crea la tabla', async () => {
   seed(1); server = startWeb(dir, 0);
