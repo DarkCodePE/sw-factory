@@ -387,12 +387,30 @@ test('T83: serie de PRs abiertos y fusionados en el tiempo', () => {
   store.event(c.workstreamId, 'info', 'merge_completed', c.id);
   store.db.query("UPDATE events SET created_at=? WHERE change_id=? AND message='merge_completed'").run('2026-11-18T12:00:00Z', c.id);
 
+  const m = calculateMetrics(store, dir, { from: '2026-11-17', to: '2026-11-19' });
+  expect(m.daily.prs).toEqual([
+    { opened: 1, merged: null },
+    { opened: null, merged: 1 },
+    { opened: null, merged: null },
+  ]);
+
   const { body: html } = metricsPage(store, dir, new URL('http://127.0.0.1:4310/metricas?from=2026-11-17&to=2026-11-19'));
   expect(html).toContain('PRs abiertos y fusionados por día');
   expect(html).toContain('Tramos del ciclo con PR');
   expect(html).toContain('Kickoff → PR');
   expect(html).toContain('PR → merge');
   expect(html).toContain('PR → primera revisión humana');
+
+  // Afirma celdas de tabla día a día (abiertos, fusionados y sin datos)
+  expect(html).toContain('<tr><th scope="row">2026-11-17</th><td>1</td><td>Sin datos</td></tr>');
+  expect(html).toContain('<tr><th scope="row">2026-11-18</th><td>Sin datos</td><td>1</td></tr>');
+  expect(html).toContain('<tr><th scope="row">2026-11-19</th><td>Sin datos</td><td>Sin datos</td></tr>');
+  expect(html).not.toContain('<tr><th scope="row">2026-11-19</th><td>0</td>');
+
+  // Afirma SVG: barras, valores y hueco
+  expect(html).toContain('<text x="46" y="20" text-anchor="middle" font-size="10" fill="currentColor">1</text>');
+  expect(html).toContain('<text x="126" y="20" text-anchor="middle" font-size="10" fill="currentColor">1</text>');
+  expect(html).toContain('<text x="170" y="103" text-anchor="middle" font-size="11" fill="var(--muted, #888)">hueco</text>');
 });
 
 test('T83: detalle del change muestra enlace al PR, escapa URL, solo admite https, y sin PR es No medido', async () => {
