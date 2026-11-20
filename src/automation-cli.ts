@@ -70,9 +70,10 @@ export async function automationMain(argv: string[], store: Store, opts: Automat
       args: argv, allowPositionals: true,
       options: {
         name: { type: 'string' }, cron: { type: 'string' }, every: { type: 'string' }, at: { type: 'string' },
-        weekday: { type: 'string' }, title: { type: 'string' }, 'body-file': { type: 'string' }, json: { type: 'boolean' },
+        weekday: { type: 'string' }, title: { type: 'string' }, 'body-file': { type: 'string' }, json: { type: 'boolean' }, help: { type: 'boolean', short: 'h' },
       },
     });
+    if (v.help) { console.log(USAGE); return 0; }
     switch (sub) {
       case 'add': {
         if (!arg || !v.name || !v.title) throw fail(USAGE);
