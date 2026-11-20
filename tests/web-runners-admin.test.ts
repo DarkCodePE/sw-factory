@@ -27,6 +27,8 @@ function boot(scenario = 'check', timer?: RunnerCheckOptions['timer'], onTranspo
         console.error("stderr-canario-privado");
         console.log(JSON.stringify({ v: 1, type: 'error', code: 'internal', message: 'respuesta-canario-privada <script>' }));
       `];
+      if (scenario === 'busy-hello') return [process.execPath, '-e', `console.log(JSON.stringify({ v: 1, type: 'error', code: 'busy', message: 'TEXTO-LIBRE <script>' }))`];
+      if (scenario === 'long-line') return [process.execPath, '-e', `process.stdout.write('x'.repeat(2 * 1024 * 1024) + '\\n')`];
       return [process.execPath, fake, scenario, dir];
     },
     timer,
@@ -360,4 +362,30 @@ test('T85-H3: los errores de asignación son una página inerte en claro con enl
   expect(stalePage).toContain('La selección cambió');
   expect(stalePage).not.toContain('conflict:');
   expect(stalePage).toContain('href="/workstreams"');
+});
+
+test('T85-H5: plazo HTTP de 35 s, runner ocupado y línea de hello desmesurada', async () => {
+  // startWeb devuelve un envoltorio: el plazo se espía en el Bun.serve real.
+  const serve = Bun.serve;
+  let timeout!: ReturnType<typeof spyOn>;
+  const serveSpy = spyOn(Bun, 'serve').mockImplementation(((o: Parameters<typeof Bun.serve>[0]) => {
+    const real = serve(o);
+    timeout = spyOn(real, 'timeout');
+    return real;
+  }) as typeof Bun.serve);
+  try { boot('busy-hello'); } finally { serveSpy.mockRestore(); }
+  await login();
+  const busy = await post(check());
+  expect(busy.status).toBe(409);
+  const html = await busy.text();
+  expect(html).toContain('El runner está ocupado');
+  expect(html).not.toMatch(/TEXTO-LIBRE|<script/);
+  expect(timeout).toHaveBeenCalledTimes(1);
+  expect(timeout.mock.calls[0]![1]).toBe(35);
+  server!.stop(true);
+  boot('long-line');
+  await login();
+  const long = await post(check());
+  expect(long.status).toBe(502);
+  expect(await long.text()).toContain('Protocolo incompatible');
 });
