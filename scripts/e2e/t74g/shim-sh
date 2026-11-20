@@ -1,0 +1,13 @@
+#!/bin/sh
+# `sh` falso del runner para el adaptador fake: se instala el primero en el PATH del runner (se monta en el sandbox
+# como /opt/fab-agent/agent). Validador: informe con VERDICT. Resto: escribe un fichero en el clon y delega al fake.
+case "$4" in
+  *"validation agent"*)
+    printf 'STATUS: done\n\nVERDICT: pass\nsin hallazgos (shim e2e T74g)\n'; exit 0;;
+esac
+if [ "$1" = "-c" ]; then
+  printf 'hola desde el runner\n' > RUNNER_E2E.txt
+  env | sort > RUNNER_ENV.txt   # lo que el agente confinado ve
+  [ -f PAUSE ] && sleep 8   # el repo trae PAUSE: ventana para cortar la conexión a mitad de la implementación
+fi
+exec /bin/sh "$@"

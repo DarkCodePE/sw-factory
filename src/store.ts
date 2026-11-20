@@ -2,6 +2,7 @@
 // Every lifecycle transition goes through a compare-and-set UPDATE so concurrent workers
 // cannot double-claim or overwrite each other's results.
 import { DEFAULT_DIGEST, resolveProfile } from './profile.ts';
+import { isForbiddenEnvName } from './mcp-registry.ts';
 import { Database } from 'bun:sqlite';
 import { createHash, randomBytes, randomUUID, timingSafeEqual } from 'node:crypto';
 import { userInfo } from 'node:os';
@@ -82,6 +83,23 @@ export interface Workstream {
   verifySetupHash?: string | null;
   /** Digest del perfil de instrucciones fijado; null = perfil por defecto. */
   profile: string | null;
+  /** Variables de entorno que el workstream permite a sus agentes (solo nombres); null = modo anterior. */
+  envAllow: string[] | null;
+  /** Servidores MCP que el workstream permite a sus agentes; null = modo anterior. */
+  mcpAllow: string[] | null;
+  /** Nombre del runner que ejecuta sus agentes; null = comportamiento anterior (local, sin runner). */
+  runner: string | null;
+}
+
+export interface Runner {
+  name: string;
+  kind: 'local' | 'ssh';
+  /** ssh: alias de ~/.ssh/config del dueño; local: null. La fab no guarda host, usuario ni claves (D-K). */
+  target: string | null;
+  options: Record<string, unknown>;
+  enabled: boolean;
+  createdAt: string;
+  createdBy: string;
 }
 
 export interface Signal {
@@ -186,6 +204,8 @@ export interface Activity {
   /** Pregunta abierta de un turno vivo (solo en `waiting_reply`) y su plazo. */
   questionId: string | null;
   waitUntil: string | null;
+  /** Runner del último intento; null si corrió local sin runner o es anterior a T74. */
+  runner: string | null;
 }
 
 export class StoreError extends Error {
@@ -220,6 +240,14 @@ CREATE TABLE IF NOT EXISTS automations (
   last_result TEXT,
   last_signal_id TEXT,
   UNIQUE (workstream_id, name));
+CREATE TABLE IF NOT EXISTS runners (
+  name TEXT PRIMARY KEY,
+  kind TEXT NOT NULL CHECK (kind IN ('local','ssh')),
+  target TEXT,
+  options TEXT NOT NULL,
+  enabled INTEGER NOT NULL DEFAULT 1,
+  created_at TEXT NOT NULL,
+  created_by TEXT NOT NULL);
 CREATE TABLE IF NOT EXISTS api_keys (
   id TEXT PRIMARY KEY,
   name TEXT NOT NULL UNIQUE,
@@ -276,8 +304,55 @@ function toWorkstream(r: Row): Workstream {
     verifySetup: r.verify_setup == null ? [] : JSON.parse(r.verify_setup as string),
     verifySetupHash: (r.verify_setup_hash as string | null) ?? null,
     profile: (r.profile as string | null) ?? null,
+    envAllow: r.env_allow == null ? null : JSON.parse(r.env_allow as string),
+    mcpAllow: r.mcp_allow == null ? null : JSON.parse(r.mcp_allow as string),
+    runner: (r.runner as string | null) ?? null,
     createdAt: r.created_at as string,
   };
+}
+
+const RUNNER_NAME = /^[a-z0-9][a-z0-9-]{0,40}$/;
+const RUNNER_TARGET = /^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$/;
+
+function toRunner(r: Row): Runner {
+  return {
+    name: r.name as string,
+    kind: r.kind as Runner['kind'],
+    target: (r.target as string | null) ?? null,
+    options: JSON.parse(r.options as string),
+    enabled: bool(r.enabled),
+    createdAt: r.created_at as string,
+    createdBy: r.created_by as string,
+  };
+}
+
+/** Opciones por tipo; cualquier otra clave se rechaza para que un runner nunca guarde secretos (D-K). */
+function checkRunnerOptions(kind: Runner['kind'], options: Record<string, unknown>): void {
+  const bad = (k: string, why: string) => new StoreError('invalid_input', `options.${k}: ${why}`);
+  const allowed = kind === 'local' ? ['confine'] : ['maxBundleMb'];
+  for (const k of Object.keys(options)) if (!allowed.includes(k)) throw bad(k, `no existe para un runner ${kind}`);
+  if ('confine' in options && typeof options.confine !== 'boolean') throw bad('confine', 'debe ser booleano');
+  if ('maxBundleMb' in options && !(Number.isInteger(options.maxBundleMb) && (options.maxBundleMb as number) >= 1 && (options.maxBundleMb as number) <= 4096)) {
+    throw bad('maxBundleMb', 'debe ser un entero entre 1 y 4096');
+  }
+}
+
+const ENV_NAME = /^[A-Z_][A-Z0-9_]{0,63}$/;
+const MCP_NAME = /^[a-z0-9][a-z0-9-]{0,40}$/;
+
+/** Reglas de nombres de T71 §4.2; el valor de una variable nunca entra aquí. */
+function checkAllowNames(field: 'env_allow' | 'mcp_allow', names: string[]): void {
+  const env = field === 'env_allow';
+  const max = env ? 16 : 8;
+  if (names.length > max) throw new StoreError('invalid_input', `${field}: como máximo ${max} nombres`);
+  if (new Set(names).size !== names.length) throw new StoreError('invalid_input', `${field}: nombres repetidos`);
+  for (const [i, n] of names.entries()) {
+    const ok = typeof n === 'string' && (env ? ENV_NAME.test(n) : MCP_NAME.test(n));
+    // No se repite el texto: una línea de --import podría ser un valor.
+    if (!ok) throw new StoreError('invalid_input', `${field}: el nombre nº ${i + 1} no es válido`);
+    if (env && isForbiddenEnvName(n)) throw new StoreError('invalid_input', `${field}: ${n} está prohibido (controla el cargador, git o la fab)`);
+    if (!env && n === 'fab') throw new StoreError('invalid_input', `${field}: "fab" está reservado`);
+  }
 }
 
 function toSignal(r: Row): Signal {
@@ -365,6 +440,7 @@ function toActivity(r: Row): Activity {
     model: (r.model as string | null) ?? null,
     questionId: (r.question_id as string | null) ?? null,
     waitUntil: (r.wait_until as string | null) ?? null,
+    runner: (r.runner as string | null) ?? null,
   };
 }
 
@@ -495,6 +571,10 @@ export class Store {
     this.addColumn('activities', 'lease_expires_at', 'TEXT');
     this.addColumn('activities', 'agent_pgid', 'INTEGER');
     this.addColumn('workstreams', 'profile', 'TEXT');
+    this.addColumn('workstreams', 'env_allow', 'TEXT');
+    this.addColumn('workstreams', 'mcp_allow', 'TEXT');
+    this.addColumn('workstreams', 'runner', 'TEXT');
+    this.addColumn('activities', 'runner', 'TEXT');
     this.addColumn('activities', 'profile_digest', 'TEXT');
     this.addColumn('activities', 'fab_sha', 'TEXT');
     this.addColumn('activities', 'agent', 'TEXT');
@@ -642,6 +722,90 @@ export class Store {
     return this.getWorkstream(ws.id);
   }
 
+  setWorkstreamEnvAllow(idOrSlug: string, names: string[] | null): Workstream {
+    return this.#setAllow(idOrSlug, 'env_allow', names);
+  }
+
+  setWorkstreamMcpAllow(idOrSlug: string, names: string[] | null): Workstream {
+    return this.#setAllow(idOrSlug, 'mcp_allow', names);
+  }
+
+  #setAllow(idOrSlug: string, field: 'env_allow' | 'mcp_allow', names: string[] | null): Workstream {
+    if (names !== null) checkAllowNames(field, names);
+    const next = names === null ? null : JSON.stringify(names);
+    this.withRetry(() => {
+      this.db.transaction(() => {
+        const ws = this.getWorkstream(idOrSlug);
+        const prev = (field === 'env_allow' ? ws.envAllow : ws.mcpAllow);
+        this.db.query(`UPDATE workstreams SET ${field} = ? WHERE id = ?`).run(next, ws.id);
+        this.event(ws.id, 'info', `${field}: ${prev === null ? 'legacy' : JSON.stringify(prev)} -> ${next ?? 'legacy'}`);
+      }).immediate();
+    });
+    return this.getWorkstream(idOrSlug);
+  }
+
+  // ---- runners -----------------------------------------------------------
+
+  createRunner(i: { name: string; kind: Runner['kind']; target?: string | null; options?: Record<string, unknown> }): Runner {
+    if (typeof i.name !== 'string' || !RUNNER_NAME.test(i.name)) throw new StoreError('invalid_input', 'name: use a-z, 0-9 y guiones (1-41 caracteres)');
+    if (i.kind !== 'local' && i.kind !== 'ssh') throw new StoreError('invalid_input', 'kind: debe ser local o ssh');
+    if (i.kind === 'ssh' && !(typeof i.target === 'string' && RUNNER_TARGET.test(i.target))) {
+      throw new StoreError('invalid_input', 'target: alias de ~/.ssh/config (sin usuario@host ni espacios)');
+    }
+    if (i.kind === 'local' && i.target != null) throw new StoreError('invalid_input', 'target: un runner local no lo lleva');
+    const options = i.options ?? {};
+    checkRunnerOptions(i.kind, options);
+    return this.withRetry(() => this.db.transaction(() => {
+      if (this.db.query('SELECT 1 FROM runners WHERE name = ?').get(i.name)) throw new StoreError('conflict', `ya existe el runner ${i.name}`);
+      const row = this.db.query(
+        `INSERT INTO runners (name, kind, target, options, enabled, created_at, created_by) VALUES (?,?,?,?,1,?,?) RETURNING *`,
+      ).get(i.name, i.kind, i.kind === 'ssh' ? i.target! : null, JSON.stringify(options), this.now(), process.env.FAB_ACTOR ?? userInfo().username) as Row;
+      return toRunner(row);
+    }).immediate());
+  }
+
+  listRunners(): Runner[] {
+    return (this.db.query('SELECT * FROM runners ORDER BY name').all() as Row[]).map(toRunner);
+  }
+
+  getRunner(name: string): Runner {
+    const row = this.db.query('SELECT * FROM runners WHERE name = ?').get(name) as Row | null;
+    if (!row) throw new StoreError('not_found', `runner ${name} no encontrado`);
+    return toRunner(row);
+  }
+
+  setRunnerEnabled(name: string, enabled: boolean): Runner {
+    return this.withRetry(() => {
+      const row = this.db.query('UPDATE runners SET enabled = ? WHERE name = ? RETURNING *').get(Number(enabled), name) as Row | null;
+      if (!row) throw new StoreError('not_found', `runner ${name} no encontrado`);
+      // Un evento exige un workstream: alta y borrado (un runner en uso no se borra) no tienen dónde anotarse; pausa y activación, en cada workstream que lo usa.
+      for (const w of this.db.query('SELECT id FROM workstreams WHERE runner = ?').all(name) as { id: string }[]) {
+        this.event(w.id, 'warning', `runner ${name} ${enabled ? 'activado' : 'pausado'}`);
+      }
+      return toRunner(row);
+    });
+  }
+
+  deleteRunner(name: string): void {
+    this.withRetry(() => this.db.transaction(() => {
+      this.getRunner(name);
+      const users = this.db.query('SELECT slug FROM workstreams WHERE runner = ?').all(name) as { slug: string }[];
+      if (users.length) throw new StoreError('conflict', `el runner ${name} lo usa ${users.map(u => u.slug).join(', ')}`);
+      this.db.query('DELETE FROM runners WHERE name = ?').run(name);
+    }).immediate());
+  }
+
+  setWorkstreamRunner(idOrSlug: string, name: string | null): Workstream {
+    this.withRetry(() => this.db.transaction(() => {
+      const ws = this.getWorkstream(idOrSlug);
+      const runner = name === null ? null : this.getRunner(name);
+      this.db.query('UPDATE workstreams SET runner = ? WHERE id = ?').run(name, ws.id);
+      const warn = runner?.kind === 'ssh' ? `; el código de este workstream se enviará a ${runner.target}` : '';
+      this.event(ws.id, 'info', `runner: ${ws.runner ?? 'ninguno'} -> ${name ?? 'ninguno'}${warn}`);
+    }).immediate());
+    return this.getWorkstream(idOrSlug);
+  }
+
   // ---- signals -----------------------------------------------------------
 
   addSignal(workstream: string, title: string, body: string, opts?: { source?: 'web' }): Signal {
@@ -749,9 +913,10 @@ export class Store {
 
   setAutomationEnabled(id: string, enabled: boolean): Automation {
     return this.withRetry(() => {
-      const row = this.db.query<Row, [number, string]>(
-        'UPDATE automations SET enabled = ? WHERE id = ? RETURNING *',
-      ).get(Number(enabled), id);
+      const row = this.db.query<Row, [number, string, number, string]>(
+        // Al reactivar, el suelo pasa a ahora: lo que venció durante la pausa no se recupera.
+        'UPDATE automations SET last_due_at = CASE WHEN ? = 1 AND enabled = 0 THEN ? ELSE last_due_at END, enabled = ? WHERE id = ? RETURNING *',
+      ).get(Number(enabled), this.now(), Number(enabled), id);
       const automation = this.requireAutomation(id, row);
       this.event(automation.workstreamId, 'info', `automation ${automation.name} ${enabled ? 'activada' : 'pausada'}`);
       return automation;
@@ -773,16 +938,33 @@ export class Store {
       : this.db.query<{ id: string }, [string]>('SELECT id FROM automations WHERE enabled = 1 AND workstream_id = ?')
         .all(this.getWorkstream(workstream).id);
     const results: ({ id: string } & AutomationRun)[] = [];
+    const dueOf = (row: Row) => {
+      const a = toAutomation(row);
+      const floor = new Date(a.lastDueAt ?? a.createdAt);
+      if (Number.isNaN(floor.getTime())) throw new Error('last_due_at ilegible');
+      return lastDue(parseCron(a.cron), floor, now);
+    };
     for (const { id } of candidates) {
-      const result = this.withRetry(() => {
-        // Releer la fila con el lock de escritura: otro proceso pudo dispararla, pausarla o borrarla.
-        const row = this.db.query<Row, [string]>('SELECT * FROM automations WHERE id = ? AND enabled = 1').get(id);
-        if (!row) return null;
-        const automation = toAutomation(row);
-        const due = lastDue(parseCron(automation.cron), new Date(automation.lastDueAt ?? automation.createdAt), now);
-        return due ? this.fireAutomation(automation, due.toISOString(), true) : null;
-      });
-      if (result) results.push({ id, ...result });
+      let peek: Row | null = null;
+      try {
+        peek = this.db.query<Row, [string]>('SELECT * FROM automations WHERE id = ? AND enabled = 1').get(id);
+        // Sin vencimiento no se abre transacción de escritura.
+        if (!peek || !dueOf(peek)) continue;
+        const result = this.withRetry(() => {
+          // Releer la fila con el lock de escritura: otro proceso pudo dispararla, pausarla o borrarla.
+          const row = this.db.query<Row, [string]>('SELECT * FROM automations WHERE id = ? AND enabled = 1').get(id);
+          const due = row && dueOf(row);
+          return due ? this.fireAutomation(toAutomation(row), due.toISOString(), true) : null;
+        });
+        if (result) results.push({ id, ...result });
+      } catch (error) {
+        // Una fila rara no para a las demás; el aviso sale una vez por mensaje.
+        if (!peek) throw error;
+        const message = `automation ${String(peek.name)}: no se puede procesar (${(error as Error).message}), se salta`;
+        const seen = this.db.query('SELECT 1 FROM events WHERE workstream_id = ? AND message = ? LIMIT 1')
+          .get(String(peek.workstream_id), message);
+        if (!seen) this.event(String(peek.workstream_id), 'warning', message);
+      }
     }
     return results;
   }
@@ -1618,9 +1800,9 @@ export class Store {
   }
 
   /** Registra con qué perfil y qué sha de fab corre la activity (va al run.json). */
-  setActivityProvenance(activityId: string, profileDigest: string, fabSha: string | null, run?: { agent: string; model: string | null }): void {
+  setActivityProvenance(activityId: string, profileDigest: string, fabSha: string | null, run?: { agent: string; model: string | null; runner?: string | null }): void {
     this.withRetry(() => {
-      if (run) this.db.query('UPDATE activities SET profile_digest = ?, fab_sha = ?, agent = ?, model = ? WHERE id = ?').run(profileDigest, fabSha, run.agent, run.model, activityId);
+      if (run) this.db.query('UPDATE activities SET profile_digest = ?, fab_sha = ?, agent = ?, model = ?, runner = ? WHERE id = ?').run(profileDigest, fabSha, run.agent, run.model, run.runner ?? null, activityId);
       else this.db.query('UPDATE activities SET profile_digest = ?, fab_sha = ? WHERE id = ?').run(profileDigest, fabSha, activityId);
     });
   }

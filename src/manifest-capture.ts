@@ -1,5 +1,13 @@
 // Runs inside runAgent's existing process group: descendants remain abortable.
 import { atomicEvidence } from './manifest.ts';
+import { scrubValues } from './sandbox/env.ts';
+
+/** Los nombres llegan en FABRICA_SCRUB_NAMES (coma); los valores, de este mismo entorno (T72 §5.6, D-K). */
+function scrubTargets(): Record<string, string> {
+  const out: Record<string, string> = {};
+  for (const n of (process.env.FABRICA_SCRUB_NAMES ?? '').split(',')) if (/^[A-Z_][A-Z0-9_]{0,63}$/.test(n) && process.env[n]) out[n] = process.env[n]!;
+  return out;
+}
 
 export async function captureMain(args: string[]): Promise<number> {
   const [path, ...command] = args;
@@ -11,8 +19,9 @@ export async function captureMain(args: string[]): Promise<number> {
   process.on('SIGINT', onSignal);
   // runAgent may send the prompt on stdin; the wrapper must pass it through to the CLI.
   const proc = Bun.spawn(command, { stdin: 'inherit', stdout: 'pipe', stderr: 'pipe' });
+  const targets = scrubTargets();
   const [stdout, stderr, code] = await Promise.all([
-    new Response(proc.stdout).text(), new Response(proc.stderr).text(), proc.exited,
+    new Response(proc.stdout).text().then(t => scrubValues(t, targets)), new Response(proc.stderr).text().then(t => scrubValues(t, targets)), proc.exited,
   ]);
   // Each attempt is complete, including stderr even when stdout is nonempty.
   const { readFileSync, existsSync } = await import('node:fs');

@@ -3,14 +3,10 @@ import { changeTimeline } from '../src/admission/timeline.ts';
 import { Store } from '../src/store.ts';
 import { claimed } from './helpers/live.ts';
 
-const T_SCHEMA = `CREATE TABLE adm_turns (attempt_id TEXT PRIMARY KEY, activity_id TEXT NOT NULL, change_id TEXT NOT NULL, session_id TEXT NOT NULL,
-  generation INTEGER NOT NULL, plan TEXT NOT NULL, question_id TEXT, started_at TEXT NOT NULL, ended_at TEXT, outcome TEXT, exit_code INTEGER,
-  duration_ms INTEGER, cost_usd REAL, log TEXT)`; // esquema §2.1 del diseño; la tabla real es de T54a
 const d = (hm: string) => `2026-11-19T${hm}:00.000Z`;
 
 function setup() {
   const c = claimed(), a = c.claim();
-  c.adm.db.exec(T_SCHEMA);
   const sess = (gen: number, status = 'open', lost: string | null = null) => c.adm.db.query(
     "INSERT INTO adm_sessions(change_id, kind, generation, session_id, backend, cwd, status, lost_reason, created_at, model) VALUES (?,?,?,?,?,?,?,?,?,?)")
     .run(c.change.id, a.kind, gen, `s${gen}`, 'claude', '/w', status, lost, d('09:00'), gen === 1 ? 'sonnet' : null);

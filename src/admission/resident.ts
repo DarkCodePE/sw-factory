@@ -11,6 +11,7 @@ import { commentGate, gate, type GateDecision, type GateInput, type GatePolicy }
 import { collaboratorRole, issueContent, labeler, pollComments, pollIssues, type CommentEvent, type IssueEvent } from './github.ts';
 import { ThreadLinks } from './links.ts';
 import { isTerminalForMandate } from './mandate.ts';
+import { startHook } from './hook.ts';
 import { Outbox } from './outbox.ts';
 import { ResidentLock } from './lock.ts';
 
@@ -27,6 +28,8 @@ export type ResidentConfig = {
   outbox?: boolean; run?: CommandRunner; intervalMs?: number;
   /** Desde dónde leer cuando aún no hay cursor (ISO). Por defecto, el último día (D3). */
   since?: string;
+  /** Receptor de avisos de GitHub (T69b) en 127.0.0.1:<puerto> (0 = efímero); exige `hookSecret` (≥16 caracteres, del entorno, nunca de argv). */
+  hookPort?: number; hookSecret?: string;
   maxAttempts?: number; baseMs?: number; lockTtlMs?: number; crash?: (point: CrashPoint) => void;
 };
 
@@ -42,6 +45,9 @@ export class Resident {
   private readonly comments: boolean;
   private stopped = false;
   private wake?: () => void;
+  private poked = false;
+  /** Puerto real del receptor mientras `run` está activo. */
+  hookPort?: number;
 
   constructor(private readonly store: Store, private readonly cfg: ResidentConfig) {
     if (!['off', 'observe', 'auto'].includes(cfg.mode)) throw new Error(`Modo "${cfg.mode}" no admitido: usa off|observe|auto`);
@@ -52,6 +58,7 @@ export class Resident {
     this.source = `github:${cfg.repo}`;
     if (cfg.mode === 'auto' && !cfg.workstream) throw new Error('el modo auto exige --workstream <slug>: dónde se crean los signals y changes admitidos');
     if (cfg.mode === 'auto' && !cfg.selfLogin) throw new Error('el modo auto exige --self <login>: la fab publica sus preguntas con esa identidad y descarta sus propios eventos');
+    if (cfg.hookPort !== undefined && (cfg.hookSecret ?? '').length < 16) throw new Error('--hook-port exige FAB_GITHUB_WEBHOOK_SECRET en el entorno, de al menos 16 caracteres');
     if (cfg.outbox && !cfg.selfLogin) throw new Error('outbox exige selfLogin');
     // S7: en modo auto el Outbox siempre está (las preguntas de los turnos vivos salen por aquí).
     if (cfg.outbox || cfg.mode === 'auto') this.outbox = new Outbox(this.adm, { selfLogin: cfg.selfLogin!, run: cfg.run });
@@ -256,11 +263,17 @@ export class Resident {
   }
 
   stop(): void { this.stopped = true; this.wake?.(); }
+  /** Un aviso pide un ciclo ya; si llega durante uno, el siguiente no espera el intervalo. */
+  private poke(): void { this.poked = true; this.wake?.(); }
 
   async run(opts: { once?: boolean; log?: (line: string) => void } = {}): Promise<void> {
     const log = opts.log ?? (() => {});
     if (this.cfg.mode === 'off') { log('modo off: no se consulta ninguna fuente'); return; }
     this.lock.acquire();
+    const hook = this.cfg.hookPort === undefined ? undefined : startHook({ port: this.cfg.hookPort, secret: this.cfg.hookSecret!, repo: this.cfg.repo, adm: this.adm,
+      wake: () => this.poke(), now: () => this.adm.now(), log });
+    this.hookPort = hook?.port;
+    if (hook) log(`receptor de avisos en 127.0.0.1:${hook.port}/github`);
     const beat = setInterval(() => { try { this.lock.assertOwned(); } catch (error) { log(String(error)); this.stop(); } }, 10_000);
     try {
       log(`recuperados ${this.effects.recover()} efectos interrumpidos`);
@@ -269,8 +282,9 @@ export class Resident {
         try { log(`ciclo: ${JSON.stringify(await this.cycle())}`); this.alerts.splice(0).forEach(m => log(`AVISO ${m}`)); }
         catch (error) { if (opts.once) throw error; log(`ciclo fallido: ${(error as Error).message}`); }
         if (opts.once || this.stopped) break;
-        await new Promise<void>(resolve => { this.wake = resolve; setTimeout(resolve, this.cfg.intervalMs ?? 60_000); });
+        if (!this.poked) await new Promise<void>(resolve => { this.wake = resolve; setTimeout(resolve, this.cfg.intervalMs ?? 60_000); });
+        this.poked = false;
       } while (!this.stopped);
-    } finally { clearInterval(beat); this.lock.release(); }
+    } finally { hook?.stop(); this.hookPort = undefined; clearInterval(beat); this.lock.release(); }
   }
 }
