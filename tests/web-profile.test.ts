@@ -134,7 +134,7 @@ test('T58-H1: asignar deja el evento con actor web y no cambia FAB_ACTOR', async
   const previous = process.env.FAB_ACTOR;
   const d = digestOf(await post('/perfiles/guardar', edited()));
   await post('/perfiles/asignar', { digest: d, previous: DEFAULT_DIGEST, confirm: 'yes' });
-  const e = store.listEvents('prueba', 10).find(x => x.message.includes('perfil asignado'));
+  const e = store.listEvents('prueba', 10).find(x => String(x.message).includes('perfil asignado'));
   expect(e?.actor).toBe('web');
   expect(process.env.FAB_ACTOR).toBe(previous);
 });

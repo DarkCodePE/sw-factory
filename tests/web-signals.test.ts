@@ -154,7 +154,7 @@ test('T50-H3: la web cancela también failed, blocked y quarantined, como fab re
     store.db.query('UPDATE changes SET status=? WHERE id=?').run(status, c.id);
     expect(await html(`/changes/${c.id}`)).not.toContain('/cancel');
     expect(await html((await post(`/changes/${c.id}/cancel`, { confirm: 'yes' })).headers.get('location')!)).toContain('invalid_transition');
-    expect(store.getChange(c.id).status).toBe(status);
+    expect(store.getChange(c.id).status as string).toBe(status);
   }
 });
 test('T50-H4: sin --write la página de señales con una señal pendiente no pinta Triar ni Ignorar', async () => {

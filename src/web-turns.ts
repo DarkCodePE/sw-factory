@@ -11,19 +11,25 @@ const SEGMENT: Record<Segment['kind'], string> = { trabajo: 'Trabajo', espera_pe
 const OUTCOME: Record<string, string> = { done: 'Hecho', blocked: 'Bloqueado', awaiting: 'Espera respuesta', no_report: 'Sin report', error: 'Error', session_lost: 'Sesión perdida' };
 const NOT_MEASURED = 'No medido';
 
+const finite = (x: number | null | undefined): x is number => typeof x === 'number' && Number.isFinite(x) && x >= 0;
 const span = (ms: number) => ms < 1000 ? `${ms} ms` : ms < 60000 ? `${(ms / 1000).toFixed(1)} s` : `${Math.round(ms / 60000)} min`;
 
 export function turnsSection(db: Database, changeId: string, ui: Ui): string {
   const t = changeTimeline(db, changeId), e = ui.escape;
   const head = '<h2>Turnos</h2>';
   if (t.state === 'sin_tablas') return `${head}<p class="empty">Sin turnos vivos</p>`;
-  if (t.state === 'sin_turnos') return `${head}<p class="empty">${t.sessions.length ? 'Los turnos anteriores a esta versión no se midieron' : 'Sin turnos vivos'}</p>`;
+  if (t.state === 'sin_turnos') {
+    // «Anteriores a esta versión» solo vale sin la tabla adm_turns; con la tabla vacía el primer turno aún no se registró (T54c-H5).
+    const hasTurns = db.query("SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'adm_turns'").get();
+    return `${head}<p class="empty">${!t.sessions.length ? 'Sin turnos vivos' : hasTurns ? 'Aún no hay turnos registrados en esta sesión' : 'Los turnos anteriores a esta versión no se midieron'}</p>`;
+  }
   const lost = new Map(t.sessions.map(s => [s.generation, s.lostReason]));
   const rows = t.turns.map((u: TurnView, i) => {
     const prev = t.turns[i - 1], next = t.turns[i + 1];
     const warn = prev && u.generation !== prev.generation ? `<li class="turn-warn">Sesión perdida: ${e(lost.get(prev.generation) ?? NOT_MEASURED)}. Generación ${e(u.generation)}.</li>` : '';
     const between = t.segments.filter(s => s.kind !== 'trabajo' && s.from >= u.startedAt && (!next || s.from < next.startedAt)).map(s => {
-      const dur = s.to ? span(Date.parse(s.to) - Date.parse(s.from)) : 'en curso';
+      const ms = s.to ? Date.parse(s.to) - Date.parse(s.from) : null;
+      const dur = !s.to ? 'en curso' : finite(ms) ? span(ms) : NOT_MEASURED;
       return `<li class="turn-segment"><time>${e(s.from)}</time> ${e(SEGMENT[s.kind])} · ${e(dur)}</li>`;
     }).join('');
     const q = u.question;
@@ -33,7 +39,7 @@ export function turnsSection(db: Database, changeId: string, ui: Ui): string {
       u.notes.length ? `<p><strong>Notas entregadas</strong></p><ul>${u.notes.map(n => `<li>${e(n.body)} · ${e(n.actor)}</li>`).join('')}</ul>` : '',
       u.log ? `<p><a href="/changes/${encodeURIComponent(changeId)}/turns/${encodeURIComponent(u.attemptId)}/log">Log del turno</a></p>` : `<p class="muted">Log: ${NOT_MEASURED}</p>`,
     ].join('');
-    return `${warn}<li class="turn"><details><summary>#${t.omitted + i + 1} · ${e(u.kind)} · gen. ${e(u.generation)} · ${e(PLAN[u.plan] ?? u.plan)} · ${e(u.outcome ? OUTCOME[u.outcome] ?? u.outcome : 'En curso')} · ${e(u.durationMs == null ? NOT_MEASURED : span(u.durationMs))} · ${e(u.costUsd == null ? NOT_MEASURED : `${u.costUsd.toFixed(2)} USD`)}</summary>${detail}</details></li>${between}`;
+    return `${warn}<li class="turn"><details><summary>#${t.omitted + i + 1} · ${e(u.kind)} · gen. ${e(u.generation)} · ${e(PLAN[u.plan] ?? u.plan)} · ${e(u.outcome ? OUTCOME[u.outcome] ?? u.outcome : 'En curso')} · ${e(finite(u.durationMs) ? span(u.durationMs) : NOT_MEASURED)} · ${e(finite(u.costUsd) ? `${u.costUsd.toFixed(2)} USD` : NOT_MEASURED)}</summary>${detail}</details></li>${between}`;
   });
   return `${head}${t.omitted ? `<p class="notice">Se omiten ${t.omitted} turnos anteriores.</p>` : ''}<ol class="turns">${rows.join('')}</ol>`;
 }
@@ -50,7 +56,7 @@ export function turnLogRoute(db: Database, stateDir: string, pathname: string): 
   if (!row || !row.log) return none;
   try {
     const value = readEvidence(stateDir, evidencePath(changeId, `${row.activity_id}.t-${attemptId}.log`));
-    return value ? { status: 200, body: value.text } : none;
+    return value ? { status: 200, body: value.truncated ? `${value.text}\n[log recortado a 256 KiB]` : value.text } : none;
   } catch { return none; }
 }
 

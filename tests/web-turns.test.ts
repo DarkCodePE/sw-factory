@@ -154,3 +154,50 @@ test('con la base en readonly la ruta del log no escribe nada', async () => {
   expect(readdirSync(dir).sort()).toEqual(before);
   void Database;
 });
+
+// ---- ronda web: T54c H1-H5 ----
+test('T54c-H1/H2: tramos con duración, «No medido», numeración con omitidos y escape de notas, plan y tipo', async () => {
+  new AdmissionDb(store); store.db.exec(T_SCHEMA); session(1, 'open', null);
+  const ins = store.db.query('INSERT INTO adm_turns(attempt_id, activity_id, change_id, session_id, generation, plan, started_at, ended_at, outcome, duration_ms) VALUES (?,?,?,?,?,?,?,?,?,?)');
+  for (let i = 0; i < 300; i++) { const t = new Date(Date.UTC(2026, 10, 1) + i * 1000).toISOString(); ins.run(`n${i}`, act, change, 's1', 1, 'answer', t, t, 'done', 1); }
+  turn('z1', 1, 'fresh', '10:00', '10:10', 'awaiting');
+  store.db.query("INSERT INTO adm_questions(id, activity_id, change_id, text, status, asked_at, answered_at, answer, answered_by) VALUES ('q1',?,?,?,?,?,?,?,?)").run(act, change, 'p', 'answered', d('10:10'), d('10:40'), 'r', 'ana');
+  turn('z2', 1, 'answer', '10:40', '10:50', 'done', { dur: null });
+  const n = store.addChangeNote(change, 'nota <script>alert(1)</script>');
+  store.db.query("UPDATE change_notes SET attempt_id='z2', delivered_at=? WHERE id=?").run(d('10:41'), n.id);
+  start();
+  const h = await page();
+  expect(h).toContain('Espera de una persona · 30 min'); // tramo con su duración
+  expect(h).not.toContain('turn-segment"><time>2026-11-19T10:00:00.000Z</time> Trabajo'); // el trabajo ya es la fila del turno
+  expect(h).toContain('#301'); // numeración con 100 omitidos: el primero visible es el 101
+  expect(h).toContain('Se omiten');
+  expect(h).toMatch(/Respuesta a una pregunta · Hecho · No medido/);
+  expect(h).not.toContain('<script>alert');
+});
+test('T54c-H3: un log de más de 256 KiB se sirve con el aviso de recorte', async () => {
+  new AdmissionDb(store); store.db.exec(T_SCHEMA); session(1, 'open', null);
+  turn('t1', 1, 'fresh', '10:00', '10:10', 'done', { log: `${act}.t-t1.log` });
+  plantLog(`${act}.t-t1.log`, 'x'.repeat(300 * 1024));
+  start();
+  const body = await (await get(logUrl('t1'))).text();
+  expect(body.endsWith('[log recortado a 256 KiB]')).toBe(true);
+  expect(body.length).toBeLessThan(300 * 1024);
+});
+test('T54c-H4: coste no numérico, duración negativa o fecha ilegible dan «No medido», no NaN', async () => {
+  new AdmissionDb(store); store.db.exec(T_SCHEMA); session(1, 'open', null);
+  turn('t1', 1, 'fresh', '10:00', '10:10', 'done', { dur: -5 });
+  store.db.query("UPDATE adm_turns SET cost_usd = 'abc' WHERE attempt_id = 't1'").run();
+  turn('t2', 1, 'answer', '11:00', '11:10', 'done');
+  store.db.query("INSERT INTO adm_questions(id, activity_id, change_id, text, status, asked_at, answered_at) VALUES ('q1',?,?,?,?,?,?)").run(act, change, 'p', 'answered', 'no-fecha', d('10:30'));
+  start();
+  const h = await page();
+  expect(h).not.toMatch(/NaN|-5 ms/);
+  expect(h).toContain('Hecho · No medido · No medido</summary>');
+});
+test('T54c-H5: con adm_turns vacía no dice «anteriores a esta versión»', async () => {
+  new AdmissionDb(store); store.db.exec(T_SCHEMA); session(1, 'open', null);
+  start();
+  const h = await page();
+  expect(h).toContain('Aún no hay turnos registrados');
+  expect(h).not.toContain('anteriores a esta versión');
+});
