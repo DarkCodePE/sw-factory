@@ -32,7 +32,7 @@ export function workstreamRunner(w: Workstream, runners: Runners, csrf?: string)
   const options = available.map(r =>
     `<option value="${escape(r.name)}"${r.name === w.runner ? ' selected' : ''}>${escape(r.name)} (${kindLabel(r.kind)})</option>`).join('');
   const unavailable = w.runner !== null && !available.some(r => r.name === w.runner)
-    ? `<option value="${escape(w.runner)}" disabled selected>${label}</option>` : '';
+    ? `<option value="${escape(w.runner)}" disabled>${label}</option>` : '';
   const seen = available.map(r => hidden(`seen.${r.name}`, `${r.kind} ${r.createdAt}`)).join('');
   const ssh = available.some(r => r.kind === 'ssh')
     ? '<label><input type="checkbox" name="confirm_ssh" value="yes"> Si elijo SSH, acepto enviar código y prompt al runner remoto. La ejecución remota no admite <code>--live</code>.</label>' : '';

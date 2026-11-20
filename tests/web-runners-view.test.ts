@@ -44,6 +44,9 @@ test('la tarjeta muestra la asignación pausada y permite seleccionar runner o p
   expect(html).toContain(`action="/workstreams/${w.id}/runner"`);
   expect(html).toContain('Runner: actual (Pausado)');
   expect(html).toContain('name="expected" value="actual"');
+  // T85-H4: un <select> con la opción deshabilitada seleccionada no envía el campo `runner`.
+  expect(html).toContain('disabled>actual (Pausado)</option>');
+  expect(html).not.toMatch(/disabled selected/);
   expect(html).toContain('<option value="">Predeterminado</option>');
   expect(html).toContain('<option value="torre">torre (SSH)</option>');
   expect(html).toContain('name="confirm" value="yes" required');
