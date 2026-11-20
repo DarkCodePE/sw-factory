@@ -378,6 +378,20 @@ test('T82-H5: elegir rango preset con fechas en la URL vacía fechas y respeta e
   expect(htmlCustom).toContain('<tr><th scope="row">2026-11-19</th><td>Sin datos</td></tr>');
 });
 
+test('T82-H6: change a las 23:00 del día to entra en la cohorte y Todo el historial avisa del tope de 90 días', () => {
+  const c = store.createChange('uno', 'Change 23h', '');
+  store.db.query("UPDATE changes SET created_at=? WHERE id=?").run('2026-11-18T23:00:00Z', c.id);
+
+  const m = calculateMetrics(store, dir, { from: '2026-11-17', to: '2026-11-18', now });
+  expect(m.count).toBe(1);
+  const dayIndex = m.daily.days.indexOf('2026-11-18');
+  expect(dayIndex).toBeGreaterThanOrEqual(0);
+  expect(m.daily.changes[dayIndex]).toBe(1);
+
+  const { body: htmlAll } = metricsPage(store, dir, new URL('http://127.0.0.1:4310/metricas?range=all'));
+  expect(htmlAll).toContain('Las series temporales diarias de «Todo el historial» muestran como máximo los últimos 90 días');
+});
+
 test('T83-H1: repetir recordPrOpened no duplica el evento ni altera el conteo en metricsDailyPrs', () => {
   const c = store.createChange('uno', 'Change con PR repetido', '');
   store.recordPrOpened(c.id, 'https://github.com/org/repo/pull/1');
