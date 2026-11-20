@@ -128,3 +128,17 @@ test('T84-H4: sin trabajo vivo la página no sugiere un bloqueo', async () => {
   await login();
   expect(await view()).not.toContain('termine el trabajo vivo');
 });
+
+test('T84-H5: los selectores ofrecen solo adaptadores confinables y sin fake; un rol ya declarado se conserva', async () => {
+  await login();
+  const html = await view();
+  const roleSelect = /<select name="roles\.implement\.harness">(.*?)<\/select>/s.exec(html)![1]!;
+  const adapterSelect = /<select name="agent" required>(.*?)<\/select>/s.exec(html)![1]!;
+  for (const options of [roleSelect, adapterSelect]) {
+    expect(options).toContain('value="codex"');
+    for (const bad of ['droid', 'agy', 'native', 'fake']) expect(options).not.toContain(`value="${bad}"`);
+  }
+  const digest = saveProfile(dir, { ...defaultProfile(), schemaVersion: 2, harness: 'claude', roles: { implement: { harness: 'droid' } } }).digest;
+  store.db.query('UPDATE workstreams SET profile = ? WHERE id = ?').run(digest, id);
+  expect(/<select name="roles\.implement\.harness">(.*?)<\/select>/s.exec(await view())![1]).toContain('value="droid" selected');
+});

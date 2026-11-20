@@ -27,6 +27,8 @@ const saveFields = ['csrf', 'ws', 'base', 'expectedAgent', 'mode', ...TEMPLATES.
 const ASSIGN_FIELDS = ['csrf', 'ws', 'previous', 'expectedAgent', 'digest', 'confirm'];
 const MASK = '[REDACTED]';
 const masked = (value: string) => redact(value) !== value;
+// Adaptadores que la web ofrece: confinables y sin el de pruebas; el Store sigue siendo quien decide.
+const OFFERED = AGENT_NAMES.filter(agent => CONFINABLE_AGENTS.includes(agent) && agent !== 'fake');
 
 function adapterOptions(agents: readonly string[], current: string | undefined, escape: Escape) {
   return agents.map(agent => `<option value="${escape(agent)}"${agent === current ? ' selected' : ''}>${escape(agent)}</option>`).join('');
@@ -61,7 +63,7 @@ function profileEditor(profile: Profile, hidden: string, escape: Escape) {
   const roleInputs = ROLES.map(role => {
     const cfg = profile.roles?.[role];
     return `<fieldset><legend>${ROLE_LABELS[role]}</legend>
-      <label>Adaptador<select name="roles.${role}.harness"><option value="">Heredar del workstream</option>${adapterOptions(AGENT_NAMES, cfg?.harness, escape)}</select></label>
+      <label>Adaptador<select name="roles.${role}.harness"><option value="">Heredar del workstream</option>${adapterOptions(Array.from(new Set([...OFFERED, ...(cfg?.harness ? [cfg.harness] : [])])), cfg?.harness, escape)}</select></label>
       ${modelInput(`roles.${role}.model`, 'Modelo del rol', cfg?.model)}</fieldset>`;
   }).join('');
   let hasMasked = false;
@@ -107,7 +109,7 @@ export function profilesPage(store: Store, stateDir: string, url: URL, escape: E
     } catch { saved = '<p class="notice">El perfil guardado no está disponible.</p>'; }
   }
   const edit = csrf ? `<section><h2>Editar perfil</h2>${profileEditor(current.profile, `${hidden}<input type="hidden" name="base" value="${current.digest}">`, escape)}</section>` : '';
-  const agents = Array.from(new Set([selected.agent, ...AGENT_NAMES.filter(agent => CONFINABLE_AGENTS.includes(agent))]));
+  const agents = Array.from(new Set([selected.agent, ...OFFERED]));
   const adapterForm = csrf ? `<form action="/workstreams/${encodeURIComponent(selected.id)}/adaptador" method="post" class="web-action">
     <input type="hidden" name="csrf" value="${escape(csrf)}"><input type="hidden" name="previous" value="${escape(selected.agent)}">
     <input type="hidden" name="profileExpected" value="${current.digest}">
