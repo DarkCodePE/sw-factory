@@ -49,6 +49,7 @@ test('cada rechazo nombra el campo', () => {
   bad(v2({ a: scorer({ sampling: NaN }) }), /scorers\.a\.sampling/);
   bad(v2({ a: scorer({ harness: 'agy' }) }), /scorers\.a\.harness/);
   bad(v2({ a: scorer({ harness: 'nope' }) }), /scorers\.a\.harness/);
+  for (const harness of [null, 7, {}]) bad(v2({ a: scorer({ harness }) }), /scorers\.a\.harness/); // null no es «ausente»: daría otro digest
   bad(v2({ a: scorer({ model: '-x', harness: 'claude' }) }), /scorers\.a\.model/);
   bad(v2({ a: scorer({ model: 'm', harness: 'agy' }) }), /scorers\.a\.harness/);
   bad(v2({ a: scorer({ temperature: 1 }) }), /scorers\.a\.temperature/);

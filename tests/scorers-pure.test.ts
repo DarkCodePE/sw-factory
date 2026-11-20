@@ -23,6 +23,7 @@ describe('sampled', () => {
   });
   test('la terna es la semilla', () => {
     expect(pick(0.5)).not.toEqual(ids.filter((id) => sampled('otro', 'dig', id, 0.5)));
+    expect(pick(0.5)).not.toEqual(ids.filter((id) => sampled('spec', 'otro-digest', id, 0.5)));
   });
 });
 
