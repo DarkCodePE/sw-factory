@@ -13,6 +13,7 @@ import { profileMain } from './profile-cli.ts';
 import { benchMain } from './bench-cli.ts';
 import { improveMain } from './improve-cli.ts';
 import { abortOnSigint, scoreMain } from './scorers-cli.ts';
+import { automationMain } from './automation-cli.ts';
 import type { ReviewDecision, WorkstreamState } from './enums.ts';
 import { runPool } from './pool.ts';
 import { Store, StoreError } from './store.ts';
@@ -107,6 +108,8 @@ const HELP = `fab — agente de código y fábrica de software local
   fab resident report [--json]  informe de solo lectura de lo registrado (cursor, decisiones, label-not-verified, efectos con reintentos)
   fab resident --repo owner/name [--mode off|observe|auto] [--workstream <slug>] [--once] [--since ISO] [--interval s] [--label fab] [--allow-author u] [--trust OWNER,MEMBER]
                                 residente en modo observe: registra would_admit de issues sin crear changes
+  fab automation add <slug> --name <n> (--cron "<e>" | --every hour|day|week [--at HH:MM] [--weekday N]) --title <t> --body-file <f>
+  fab automation list [slug] [--json] | enable <id> | disable <id> | rm <id> | run-now <id> | tick | run   crean señales a horas fijas (UTC); no lanzan trabajo
   fab inbox [slug]
   fab review <activityId> <approve|comment|decline> [--comment <text>]
   fab run <slug> [--once] [--agent <name>] [--accept-agent-binaries] [--live]
@@ -169,6 +172,10 @@ async function main(argv: string[]): Promise<number> {
     const ac = new AbortController();
     const release = abortOnSigint(ac);
     try { return await scoreMain(argv.slice(1), store, STATE_DIR, ac.signal); } finally { release(); store.close(); }
+  }
+  if (argv[0] === 'automation') {
+    const store = openStore();
+    try { return await automationMain(argv.slice(1), store); } finally { store.close(); }
   }
   if (argv[0] === 'validate') {
     const store = openStore();
@@ -435,7 +442,7 @@ async function main(argv: string[]): Promise<number> {
   }
 }
 
-const COMMANDS = new Set(['worktree', 'ws', 'signal', 'triage', 'inbox', 'review', 'run', 'status', 'show', 'merge', 'retry', 'gate', 'reject', 'events', 'tui', 'doctor', 'agents', 'profile', 'improve', 'bench', 'score', 'resident', 'help']);
+const COMMANDS = new Set(['worktree', 'ws', 'signal', 'triage', 'inbox', 'review', 'run', 'status', 'show', 'merge', 'retry', 'gate', 'reject', 'events', 'tui', 'doctor', 'agents', 'profile', 'improve', 'bench', 'score', 'automation', 'resident', 'help']);
 
 // A forced exit is still needed for handles left by dependencies, but pipe
 // writes are asynchronous: wait for both write queues before terminating.
