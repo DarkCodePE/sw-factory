@@ -142,6 +142,43 @@ export function enqueueManual(store: Store, stateDir: string, activityId: string
   return id;
 }
 
+const hasScores = (db: Database) => db.query("SELECT 1 FROM sqlite_master WHERE name = 'scores'").get() !== null;
+
+/** Pares (activity, juez) de un rango sin ninguna fila en `scores`: las ya puntuadas o en cola se saltan. Solo lectura. */
+export function backfillCandidates(store: Store, stateDir: string, wsId: string, opts: { since?: string; scorer?: string } = {}): { activity: Activity; scorer: string }[] {
+  const ws = store.getWorkstream(wsId);
+  const seen = hasScores(store.db) ? store.db.query('SELECT 1 FROM scores WHERE scorer = ? AND profile_digest = ? AND subject_activity_id = ? LIMIT 1') : null;
+  const cache = new Map<string, Profile | null>();
+  const out: { activity: Activity; scorer: string }[] = [];
+  for (const { activity: a, scope } of subjectsFor(store, ws.id, opts.since)) {
+    const d = a.profileDigest ?? DEFAULT_DIGEST;
+    if (!cache.has(d)) cache.set(d, profileOf(stateDir, a)?.profile ?? null);
+    for (const [name, def] of Object.entries(cache.get(d)?.scorers ?? {}))
+      if (def.scope === scope && (!opts.scorer || opts.scorer === name) && !seen?.get(name, d, a.id)) out.push({ activity: a, scorer: name });
+  }
+  return out;
+}
+
+/** Vista previa de puntuar ejecuciones pasadas. El coste sale de las puntuaciones ya hechas del juez; sin historial de algún juez el total es null («No medido»), nunca 0 ni suma parcial. */
+export function previewBackfill(store: Store, stateDir: string, wsId: string, opts: { since?: string; scorer?: string } = {}):
+  { runs: number; byScorer: { scorer: string; runs: number; avgCostUsd: number | null }[]; estimatedUsd: number | null } {
+  const cands = backfillCandidates(store, stateDir, wsId, opts);
+  const counts = new Map<string, number>();
+  for (const c of cands) counts.set(c.scorer, (counts.get(c.scorer) ?? 0) + 1);
+  const avg = hasScores(store.db) ? store.db.query("SELECT AVG(cost_usd) AS a FROM scores WHERE scorer = ? AND status = 'done' AND cost_usd IS NOT NULL") : null;
+  const byScorer = [...counts].map(([scorer, runs]) => ({ scorer, runs, avgCostUsd: (avg?.get(scorer) as { a: number | null } | null)?.a ?? null }));
+  // Un solo juez sin historial hace el total «No medido»: una suma parcial parecería el coste real.
+  const estimatedUsd = byScorer.length && byScorer.every((b) => b.avgCostUsd !== null) ? byScorer.reduce((s, b) => s + b.runs * b.avgCostUsd!, 0) : null;
+  return { runs: cands.length, byScorer, estimatedUsd };
+}
+
+/** Encola el rango como `backfill`; quien llama ya mostró la vista previa. */
+export function enqueueBackfill(store: Store, stateDir: string, wsId: string, opts: { since?: string; scorer?: string } = {}): number {
+  const cands = backfillCandidates(store, stateDir, wsId, opts);
+  for (const c of cands) enqueueManual(store, stateDir, c.activity.id, c.scorer, 'backfill');
+  return cands.length;
+}
+
 // ---- material -----------------------------------------------------------------------------------
 
 const cap = (s: string, n: number) => (Buffer.byteLength(s) <= n ? s : Buffer.from(s).subarray(0, n).toString('utf8') + '\n[recortado]');
