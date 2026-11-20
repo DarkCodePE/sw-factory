@@ -2073,7 +2073,7 @@ export class Store {
     const hasLock = this.db.query("SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'adm_lock'").get() !== null;
     if (hasLock) {
       const lock = this.db.query('SELECT heartbeat_at FROM adm_lock WHERE id = 1').get() as { heartbeat_at: number } | null;
-      if (lock && Date.now() - lock.heartbeat_at < 120_000) active = true;
+      if (lock && this.clock().getTime() - lock.heartbeat_at <= 30_000) active = true;
     }
     const total = (this.db.query('SELECT COUNT(*) AS count FROM adm_hook_deliveries').get() as { count: number }).count;
     const last = (this.db.query('SELECT MAX(received_at) AS at FROM adm_hook_deliveries').get() as { at: string | null }).at;

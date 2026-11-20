@@ -133,12 +133,27 @@ test('muestra el estado del receptor activo si hay lock vivo e inactivo si no ha
   const htmlInactivo = await getHtml('/webhooks');
   expect(htmlInactivo).toContain('Inactivo');
 
-  // Simular lock activo del residente
+  // Simular lock activo del residente (dentro de la ventana TTL de 30s)
   adm.db.query('INSERT INTO adm_lock (id, owner, pid, host, heartbeat_at) VALUES (1, ?, ?, ?, ?)')
     .run('residente-test', process.pid, 'localhost', Date.now());
 
   const htmlActivo = await getHtml('/webhooks');
-  expect(htmlActivo).toContain('Activo (residente en ejecución)');
+  expect(htmlActivo).toContain('Activo');
+});
+
+test('un latido de residente mayor a 30s caduca y se muestra como inactivo', async () => {
+  store = new Store(join(dir, 'fabrica.db'));
+  const adm = new AdmissionDb(store);
+
+  // Latido de hace 45 segundos (vencido respecto al TTL de 30s)
+  adm.db.query('INSERT INTO adm_lock (id, owner, pid, host, heartbeat_at) VALUES (1, ?, ?, ?, ?)')
+    .run('residente-test', process.pid, 'localhost', Date.now() - 45_000);
+
+  server = startWeb(dir, 0);
+  const html = await getHtml('/webhooks');
+  expect(html).toContain('Estado del residente');
+  expect(html).toContain('Inactivo');
+  expect(html).not.toContain('Activo');
 });
 
 test('búsqueda por ID, evento o resultado filtra la lista de entregas', async () => {

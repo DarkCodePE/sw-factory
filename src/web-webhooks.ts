@@ -88,7 +88,8 @@ export function webhooksPage(store: Store, url: URL, escape: Escape): { title: s
     <section>
       <h2>Estado del receptor</h2>
       ${facts([
-        ['Estado del servicio', status.active ? 'Activo (residente en ejecución)' : 'Inactivo'],
+        ['Estado del residente', status.active ? 'Activo' : 'Inactivo'],
+        ['Estado del receptor', 'No medido (escucha en --hook-port)'],
         ['Ruta receptora local', '<code>POST /github</code> (solo loopback 127.0.0.1)'],
         ['Autenticación', 'Firma HMAC-SHA256 (<code>X-Hub-Signature-256</code>)'],
         ['Secreto en entorno', status.secretConfigured ? 'Configurado (FAB_GITHUB_WEBHOOK_SECRET)' : 'No configurado'],
