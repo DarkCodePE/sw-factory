@@ -1,7 +1,7 @@
 import { afterEach, beforeEach, expect, test } from 'bun:test';
 import { mkdtempSync, readFileSync, readdirSync, rmSync, statSync } from 'node:fs';
 import { join } from 'node:path';
-import { defaultProfile, DEFAULT_DIGEST, listProfiles, saveProfile } from '../src/profile.ts';
+import { defaultProfile, DEFAULT_DIGEST, listProfiles, loadProfile, ROLES, saveProfile, type Profile } from '../src/profile.ts';
 import { Store, StoreError } from '../src/store.ts';
 import { startWeb } from '../src/web.ts';
 
@@ -16,7 +16,11 @@ async function login() {
 }
 const post = (path: string, data: Record<string, string>, extra: Record<string, string> = {}) => req(path, {
   method: 'POST', headers: { cookie, origin: base(), 'content-type': 'application/x-www-form-urlencoded', ...extra },
-  body: new URLSearchParams({ csrf, ws: 'prueba', ...data }),
+  body: new URLSearchParams({
+    csrf, ws: 'prueba', expectedAgent: store.getWorkstream(wsId).agent,
+    ...(path === '/perfiles/guardar' ? { base: store.getWorkstream(wsId).profile ?? DEFAULT_DIGEST } : {}),
+    ...data,
+  }),
 });
 const tpl = (over: Record<string, string> = {}) => {
   const p = defaultProfile(); const o: Record<string, string> = {};
@@ -117,7 +121,8 @@ test('restaurar valores por defecto asigna DEFAULT_DIGEST', async () => {
 test('no edita flags de aprobación ni muestra secretos', async () => {
   await login();
   const before = store.getWorkstream('prueba');
-  await post('/perfiles/guardar', { ...edited(), require_approval: '0', requireChangeApproval: '0' });
+  const flags = await post('/perfiles/guardar', { ...edited(), require_approval: '0', requireChangeApproval: '0' });
+  expect(flags.status).toBe(400);
   const after = store.getWorkstream('prueba');
   expect([after.requireApproval, after.requireChangeApproval]).toEqual([before.requireApproval, before.requireChangeApproval]);
   const page = await html('/perfiles');
@@ -169,4 +174,115 @@ test('T58-H3: guardar parte del perfil asignado (conserva su modelo), avisa del 
   expect(await html('/perfiles')).toContain('Se ocultó texto con aspecto de secreto');
   // ?digest= que no es un digest no se carga
   expect(await html('/perfiles?digest=../../etc/passwd')).not.toContain('Perfil guardado');
+});
+
+const roles = (over: Record<string, string> = {}) => ({
+  mode: 'roles', model: '',
+  ...Object.fromEntries(ROLES.flatMap(role => [[`roles.${role}.harness`, ''], [`roles.${role}.model`, '']])),
+  ...over,
+});
+
+test('vista por rol muestra resolución y origen en v1 y en la vista previa v2', async () => {
+  await login();
+  const v1 = saveProfile(dir, { ...defaultProfile(), harness: 'claude', model: 'histórico <dato>' }).digest;
+  store.assignProfile(wsId, v1, DEFAULT_DIGEST);
+  const legacy = await html('/perfiles');
+  expect(legacy).toContain('Resolución sin override de CLI');
+  expect(legacy).toContain('histórico &lt;dato&gt;');
+  expect(legacy).toContain('Predeterminado del adaptador');
+  expect(legacy).toContain('Modelo histórico de v1');
+  const next = saveProfile(dir, {
+    ...defaultProfile(), schemaVersion: 2, model: 'base-native',
+    roles: { code_review: { harness: 'codex', model: 'r-codex' }, qa: { harness: 'claude' } },
+  }).digest;
+  const page = await html(`/perfiles?digest=${next}`);
+  expect(page).toContain('Adaptador declarado');
+  expect(page).toContain('Modelo efectivo y origen');
+  const row = (name: string) => page.match(new RegExp(`<tr><th scope="row">${name}</th>.*?</tr>`))![0]!;
+  expect(row('Revisión de código')).toMatch(/codex.*Rol del perfil.*r-codex.*Rol del perfil/);
+  expect(row('QA')).toMatch(/claude.*Rol del perfil.*Predeterminado del adaptador.*adaptador/);
+  expect(row('Investigación')).toMatch(/native.*Workstream.*base-native.*Perfil/);
+  expect(legacy).toContain('/adaptador"');
+});
+
+test('modo roles edita por copia, hereda con vacío y conserva env, mcp, scorers, repo y plantilla enmascarada', async () => {
+  await login();
+  const secret = 'ghp_' + 'A1b2C3d4E5'.repeat(4);
+  const profile: Profile = {
+    ...defaultProfile(), schemaVersion: 2, harness: 'claude', model: 'old-default', repo: '/origin',
+    worker: { ...defaultProfile().worker, investigate: `plantilla con ${secret}` },
+    roles: { implement: { harness: 'claude', model: 'old-role', env: ['TRACKER_TOKEN'], mcp: ['tracker'] }, qa: { model: 'old-qa' } },
+    scorers: { judge: { scope: 'change', rubric: 'r', classes: [{ label: 'fail', score: 0 }, { label: 'pass', score: 1 }], sampling: 0.5, passing: 1 } },
+  };
+  const base = saveProfile(dir, profile).digest;
+  store.assignProfile(wsId, base, DEFAULT_DIGEST);
+  const page = await html('/perfiles');
+  expect(page).not.toContain(secret);
+  expect(page).not.toContain('plantilla con [REDACTED]');
+  expect(page).toContain('Se ocultó texto con aspecto de secreto');
+  const data = roles({ model: 'new-default', 'roles.code_review.harness': 'codex', 'roles.code_review.model': 'new-role', 'worker.investigate': '' });
+  const r = await post('/perfiles/guardar', data);
+  expect(r.status).toBe(303);
+  const digest = digestOf(r);
+  expect(loadProfile(dir, digest)).toEqual({
+    ...profile, model: 'new-default',
+    roles: { implement: { env: ['TRACKER_TOKEN'], mcp: ['tracker'] }, code_review: { harness: 'codex', model: 'new-role' } },
+  });
+  expect(digestOf(await post('/perfiles/guardar', data))).toBe(digest);
+  expect(loadProfile(dir, base)).toEqual(profile);
+  expect(store.getWorkstream(wsId).profile).toBe(base);
+  expect((await post('/perfiles/guardar', { 'worker.investigate': 'texto [REDACTED]' })).status).toBe(400);
+  expect((await post('/perfiles/guardar', { 'worker.investigate': 'plantilla sustituta' })).status).toBe(303);
+});
+
+test('v1 conserva el modelo histórico hasta que se introduce una configuración v2', async () => {
+  await login();
+  const profile = { ...defaultProfile(), model: 'histórico con espacios' };
+  const base = saveProfile(dir, profile).digest;
+  store.assignProfile(wsId, base, DEFAULT_DIGEST);
+  const same = await post('/perfiles/guardar', roles());
+  expect(same.status).toBe(303);
+  expect(digestOf(same)).toBe(base);
+  const data: Record<string, string> = roles({ 'roles.qa.harness': 'codex' });
+  delete data.model;
+  expect((await post('/perfiles/guardar', data)).status).toBe(400);
+  const promoted = await post('/perfiles/guardar', { ...data, model: '' });
+  expect(loadProfile(dir, digestOf(promoted))).toEqual({
+    ...defaultProfile(), schemaVersion: 2, roles: { qa: { harness: 'codex' } },
+  });
+  const withDefault = await post('/perfiles/guardar', roles({ model: 'nuevo' }));
+  expect(loadProfile(dir, digestOf(withDefault))).toMatchObject({ schemaVersion: 2, model: 'nuevo' });
+  expect(loadProfile(dir, base)).toEqual(profile);
+});
+
+test('el modo roles rechaza gramática, longitud, modelo no admitido, campos repetidos o desconocidos', async () => {
+  await login();
+  for (const model of ['-flag', 'dos palabras', 'fin\n', 'nul\x00', 'modelo!', 'a'.repeat(129)]) {
+    expect((await post('/perfiles/guardar', roles({ 'roles.qa.harness': 'codex', 'roles.qa.model': model }))).status).toBe(400);
+  }
+  expect((await post('/perfiles/guardar', roles({ 'roles.qa.harness': 'agy', 'roles.qa.model': 'm' }))).status).toBe(400);
+  expect((await post('/perfiles/guardar', roles({ 'roles.unknown.model': 'm' }))).status).toBe(400);
+  const form = new URLSearchParams({ csrf, ws: 'prueba', base: DEFAULT_DIGEST, expectedAgent: 'native', ...roles() });
+  form.append('roles.qa.model', 'duplicado');
+  expect((await req('/perfiles/guardar', {
+    method: 'POST', headers: { cookie, origin: base(), 'content-type': 'application/x-www-form-urlencoded' }, body: form,
+  })).status).toBe(400);
+  expect(listProfiles(dir)).toEqual([]);
+  const valid = 'a'.repeat(114) + '._:/@-xyz.A123';
+  expect(valid).toHaveLength(128);
+  const r = await post('/perfiles/guardar', roles({ 'roles.qa.harness': 'codex', 'roles.qa.model': valid }));
+  expect(loadProfile(dir, digestOf(r)).roles?.qa?.model).toBe(valid);
+});
+
+test('guardar rechaza un formulario cuyo digest o adaptador quedaron obsoletos', async () => {
+  await login();
+  const old = DEFAULT_DIGEST;
+  const d = saveProfile(dir, { ...defaultProfile(), schemaVersion: 2 }).digest;
+  store.assignProfile(wsId, d, old, 'native');
+  expect((await post('/perfiles/guardar', { ...roles(), base: old })).status).toBe(303);
+  expect(await html('/perfiles')).toContain('conflict');
+  store.setWorkstreamAgent(wsId, 'codex', 'native', d);
+  expect((await post('/perfiles/guardar', { ...roles(), expectedAgent: 'native' })).status).toBe(303);
+  expect(await html('/perfiles')).toContain('conflict');
+  expect(listProfiles(dir)).toEqual([d]);
 });

@@ -1,80 +1,220 @@
-// Editor web de perfiles (T58): guardar crea un perfil nuevo (digest nuevo); asignarlo es otra acción con evento.
+// Perfiles inmutables: la vista anticipa la resolución del pool y la asignación es una decisión aparte.
 import { join } from 'node:path';
+import { AGENT_NAMES } from './agents.ts';
 import { redact } from './manifest.ts';
-import { DEFAULT_DIGEST, loadProfile, resolveProfile, saveProfile, type Profile } from './profile.ts';
-import { Store, StoreError } from './store.ts';
+import { DEFAULT_DIGEST, ROLES, isProfileDigest, resolveProfile, resolveRole, saveProfile, type Profile, type Role } from './profile.ts';
+import { CONFINABLE_AGENTS } from './sandbox/confine.ts';
+import { Store, StoreError, WorkstreamBusyError } from './store.ts';
 
 type Escape = (value: unknown) => string;
-/** 7 plantillas de ≤32 KiB, codificadas como formulario (hasta ×3 por %XX). */
+/** Siete plantillas de hasta 32 KiB y los campos de configuración, codificados como formulario. */
 export const PROFILE_BODY_LIMIT = 1024 * 1024;
 export class ProfileInputError extends Error {}
 
-const FIELDS: [string, string][] = [
-  ['worker.rules', 'Reglas de workers'], ['worker.investigate', 'Investigación'], ['worker.implement', 'Implementación'],
-  ['validators.rules', 'Reglas de validadores'], ['validators.code_review', 'Revisión de código'],
-  ['validators.security_audit', 'Auditoría de seguridad'], ['validators.qa', 'QA'],
-];
-const get = (p: Profile, field: string) => (p as unknown as Record<string, Record<string, string>>)[field.split('.')[0]!]![field.split('.')[1]!]!;
-const isDigest = (s: string) => /^[0-9a-f]{64}$/.test(s);
+const ROLE_LABELS: Record<Role, string> = {
+  investigate: 'Investigación', implement: 'Implementación', code_review: 'Revisión de código',
+  security_audit: 'Auditoría de seguridad', qa: 'QA',
+};
+const TEMPLATES = [
+  ['worker', 'rules', 'Reglas de workers'], ['worker', 'investigate', ROLE_LABELS.investigate],
+  ['worker', 'implement', ROLE_LABELS.implement], ['validators', 'rules', 'Reglas de validadores'],
+  ['validators', 'code_review', ROLE_LABELS.code_review], ['validators', 'security_audit', ROLE_LABELS.security_audit],
+  ['validators', 'qa', ROLE_LABELS.qa],
+] as const;
+const roleFields = ROLES.flatMap(role => [`roles.${role}.harness`, `roles.${role}.model`]);
+const roleFormFields = ['model', ...roleFields];
+const saveFields = ['csrf', 'ws', 'base', 'expectedAgent', 'mode', ...TEMPLATES.map(([group, key]) => `${group}.${key}`)];
+const ASSIGN_FIELDS = ['csrf', 'ws', 'previous', 'expectedAgent', 'digest', 'confirm'];
+const MASK = '[REDACTED]';
+const masked = (value: string) => redact(value) !== value;
+const changesPending = 'Puedes activar la configuración cuando termine el trabajo vivo. Las próximas activities usarán la configuración vigente.';
+
+function adapterOptions(agents: readonly string[], current: string | undefined, escape: Escape) {
+  return agents.map(agent => `<option value="${escape(agent)}"${agent === current ? ' selected' : ''}>${escape(agent)}</option>`).join('');
+}
+
+function roleResolution(profile: Profile, agent: string, escape: Escape) {
+  const origins = { role: 'Rol del perfil', profile: 'Perfil', workstream: 'Workstream', adapter: 'Predeterminado del adaptador' };
+  const reasons = {
+    incompatible: 'El modelo declarado pertenece a otro adaptador.',
+    undeclared: 'No hay modelo declarado.',
+    legacy: 'El modelo histórico de v1 no se usa en ejecución.',
+  };
+  const code = (value: string | undefined | null, empty: string) => value == null ? empty : `<code>${escape(value)}</code>`;
+  const rows = ROLES.map(role => {
+    const cfg = profile.roles?.[role];
+    const resolved = resolveRole(profile, role, agent);
+    const reason = resolved.modelDefaultReason ? `<br><small>${reasons[resolved.modelDefaultReason]}</small>` : '';
+    const modelOrigin = resolved.model === null ? origins.adapter : `${code(resolved.model, '')} · ${origins[resolved.modelSource]}`;
+    return `<tr><th scope="row">${ROLE_LABELS[role]}</th><td>${code(cfg?.harness, 'Heredar del workstream')}</td><td>${code(resolved.adapter, '')} · ${origins[resolved.source === 'role' ? 'role' : 'workstream']}</td><td>${code(cfg?.model, 'Heredar si es compatible')}</td><td>${modelOrigin}${reason}</td></tr>`;
+  }).join('');
+  const model = profile.schemaVersion === 1
+    ? profile.model === undefined ? '' : ` · Modelo histórico de v1: ${code(profile.model, '')} (inactivo)`
+    : ` · Modelo predeterminado del perfil: ${code(profile.model, 'Heredar del adaptador')}`;
+  return `<p>Perfil v${profile.schemaVersion} · Adaptador del perfil: ${code(profile.harness, '')}${model}</p>
+    <p class="muted">Resolución sin override de CLI</p>
+    <div class="table-wrap"><table><thead><tr><th scope="col">Rol</th><th scope="col">Adaptador declarado</th><th scope="col">Adaptador efectivo y origen</th><th scope="col">Modelo declarado</th><th scope="col">Modelo efectivo y origen</th></tr></thead><tbody>${rows}</tbody></table></div>`;
+}
+
+function profileEditor(profile: Profile, hidden: string, escape: Escape) {
+  const modelInput = (name: string, label: string, value?: string) =>
+    `<label>${label}<input type="text" name="${name}" maxlength="128" value="${value && masked(value) ? MASK : escape(value ?? '')}" placeholder="Heredar"></label>`;
+  const roleInputs = ROLES.map(role => {
+    const cfg = profile.roles?.[role];
+    return `<fieldset><legend>${ROLE_LABELS[role]}</legend>
+      <label>Adaptador<select name="roles.${role}.harness"><option value="">Heredar del workstream</option>${adapterOptions(AGENT_NAMES, cfg?.harness, escape)}</select></label>
+      ${modelInput(`roles.${role}.model`, 'Modelo del rol', cfg?.model)}</fieldset>`;
+  }).join('');
+  let hasMasked = false;
+  const areas = TEMPLATES.map(([group, key, label]) => {
+    const value = template(profile, group, key);
+    const hide = masked(value);
+    hasMasked ||= hide;
+    // HTML descarta el primer salto tras <textarea>; el salto añadido conserva uno original.
+    return `<label for="f-${group}.${key}">${label}</label><textarea id="f-${group}.${key}" name="${group}.${key}" rows="8"${hide ? ' placeholder="Deja vacío para conservar la plantilla"' : ''}>\n${hide ? '' : escape(value)}</textarea>`;
+  }).join('');
+  const promotion = profile.schemaVersion === 1
+    ? '<p>El perfil se convierte a v2 si declaras un adaptador o modelo por rol, o un modelo predeterminado. Deja el modelo predeterminado vacío para heredar del adaptador.</p>'
+    : '<p>Deja un modelo vacío para heredar. Los modelos declarados solo se aplican a su adaptador.</p>';
+  return `<form action="/perfiles/guardar" method="post" class="web-action">${hidden}<input type="hidden" name="mode" value="roles">
+    ${promotion}${modelInput('model', 'Modelo predeterminado del perfil', profile.schemaVersion === 2 ? profile.model : undefined)}
+    ${roleInputs}<details><summary>Plantillas</summary>
+    ${hasMasked ? '<p class="notice">Se ocultó texto con aspecto de secreto. Deja la plantilla vacía para conservarla o escribe un reemplazo completo.</p>' : ''}
+    ${areas}</details><p>Guardar crea una copia para revisar y asignar al workstream.</p><button>Guardar como perfil nuevo</button></form>`;
+}
 
 export function profilesPage(store: Store, stateDir: string, url: URL, escape: Escape, csrf?: string) {
   const workstreams = store.listWorkstreams();
   const ws = url.searchParams.get('ws');
   const selected = ws ? store.getWorkstream(ws) : workstreams[0];
   if (!selected) return { title: 'Perfiles', body: '<p class="empty">No hay workstreams.</p>' };
-  const hidden = `<input type="hidden" name="csrf" value="${csrf}"><input type="hidden" name="ws" value="${escape(selected.slug)}">`;
-  const confirmForm = (digest: string, previous: string, label: string, text: string) => `<form action="/perfiles/asignar" method="post" class="web-action">${hidden}<input type="hidden" name="digest" value="${digest}"><input type="hidden" name="previous" value="${previous}"><p>${text}</p><label><input type="checkbox" name="confirm" value="yes" required> Confirmo el cambio de perfil de <b>${escape(selected.slug)}</b></label><button>${label}</button></form>`;
-  let current: { digest: string; profile: Profile };
+  const picker = `<form class="filters" action="/perfiles" method="get"><label>Workstream<select name="ws">${workstreams.map(w => `<option value="${escape(w.slug)}"${w.id === selected.id ? ' selected' : ''}>${escape(w.slug)}</option>`).join('')}</select></label><button>Ver</button></form>`;
+  const hidden = `<input type="hidden" name="csrf" value="${escape(csrf)}"><input type="hidden" name="ws" value="${escape(selected.slug)}"><input type="hidden" name="expectedAgent" value="${escape(selected.agent)}">`;
+  const confirmForm = (digest: string, previous: string, label: string) => `<form action="/perfiles/asignar" method="post" class="web-action">${hidden}<input type="hidden" name="digest" value="${digest}"><input type="hidden" name="previous" value="${previous}"><p>${changesPending}</p><label><input type="checkbox" name="confirm" value="yes" required> Confirmo el cambio de perfil de <b>${escape(selected.slug)}</b></label><button>${label}</button></form>`;
+  const restoreForm = (previous: string) => csrf && previous !== DEFAULT_DIGEST && isProfileDigest(previous) ? `<section><h2>Valores por defecto</h2>${confirmForm(DEFAULT_DIGEST, previous, 'Restaurar valores por defecto')}</section>` : '';
+  let current: ReturnType<typeof resolveProfile>;
   try { current = resolveProfile(stateDir, selected.profile); }
   catch {
-    // T58-H2: con el perfil roto la única salida desde la web es volver al de por defecto, con el digest asignado como «anterior».
-    const restore = csrf && selected.profile && isDigest(selected.profile) ? `<section><h2>Valores por defecto</h2>${confirmForm(DEFAULT_DIGEST, selected.profile, 'Restaurar valores por defecto', 'Vuelve al perfil por defecto de fab.')}</section>` : '';
-    return { title: 'Perfiles', body: `<p class="notice">El perfil asignado no está disponible o no supera la verificación de integridad.</p>${restore}` };
+    return { title: 'Perfiles', body: `${picker}<p class="notice">El perfil asignado no está disponible o no supera la verificación de integridad.</p>${restoreForm(selected.profile ?? DEFAULT_DIGEST)}` };
   }
-  let masked = false;
-  const areas = FIELDS.map(([name, label]) => {
-    const text = get(current.profile, name);
-    if (redact(text) !== text) masked = true;
-    return `<label for="f-${name}">${label}</label><textarea id="f-${name}" name="${name}" rows="8">${escape(text)}</textarea>`;
-  }).join('');
-  const picker = `<form class="filters" action="/perfiles" method="get"><label>Workstream<select name="ws">${workstreams.map(w => `<option value="${escape(w.slug)}"${w.id === selected.id ? ' selected' : ''}>${escape(w.slug)}</option>`).join('')}</select></label><button>Ver</button></form>`;
-  let saved = '';
   const d = url.searchParams.get('digest') ?? '';
-  if (isDigest(d)) {
+  let saved = '';
+  if (isProfileDigest(d)) {
     try {
-      loadProfile(stateDir, d);
-      saved = `<section><h2>Perfil guardado</h2><p><code>${d}</code> · ${url.searchParams.get('nuevo') === '1' ? 'Nuevo' : 'Ya existía'}${d === current.digest ? ' · Es el vigente' : ''}</p>${csrf && d !== current.digest ? confirmForm(d, current.digest, 'Asignar al workstream', 'Las activities futuras usarán este perfil; las que ya están en curso conservan el suyo.') : ''}</section>`;
+      const { profile } = resolveProfile(stateDir, d);
+      const status = d === current.digest ? 'Es el vigente' : url.searchParams.get('nuevo') === '1' ? 'Nuevo' : 'Ya existía';
+      const assign = csrf && d !== current.digest ? confirmForm(d, current.digest, 'Asignar al workstream') : '';
+      saved = `<section><h2>Perfil guardado</h2><p><code>${d}</code> · ${status}</p>${d !== current.digest ? roleResolution(profile, selected.agent, escape) : ''}${assign}</section>`;
     } catch { saved = '<p class="notice">El perfil guardado no está disponible.</p>'; }
   }
-  const write = csrf ? `<form action="/perfiles/guardar" method="post" class="web-action">${hidden}${areas}<button>Guardar como perfil nuevo</button><p class="muted">No modifica el perfil vigente ni los ficheros existentes: crea otro con su propio digest. Adaptador, modelo y roles se conservan; las aprobaciones no se editan aquí.</p></form>`
-    : '<p class="muted">Escritura no habilitada: abre fab web con --write.</p>';
-  const restore = csrf && current.digest !== DEFAULT_DIGEST ? `<section><h2>Valores por defecto</h2>${confirmForm(DEFAULT_DIGEST, current.digest, 'Restaurar valores por defecto', 'Vuelve al perfil por defecto de fab.')}</section>` : '';
-  return { title: 'Perfiles', body: `${picker}<p>Perfil vigente: <code>${escape(current.digest)}</code> · ${selected.profile ? 'Fijado' : 'Por defecto'}</p>${masked ? '<p class="notice">Se ocultó texto con aspecto de secreto; reescríbelo antes de guardar.</p>' : ''}${saved}<section><h2>Plantillas</h2>${write}</section>${restore}` };
+  const edit = csrf ? `<section><h2>Editar perfil</h2>${profileEditor(current.profile, `${hidden}<input type="hidden" name="base" value="${current.digest}">`, escape)}</section>` : '';
+  const agents = Array.from(new Set([selected.agent, ...AGENT_NAMES.filter(agent => CONFINABLE_AGENTS.includes(agent))]));
+  const adapterForm = csrf ? `<form action="/workstreams/${encodeURIComponent(selected.id)}/adaptador" method="post" class="web-action">
+    <input type="hidden" name="csrf" value="${escape(csrf)}"><input type="hidden" name="previous" value="${escape(selected.agent)}">
+    <input type="hidden" name="profileExpected" value="${current.digest}">
+    <label>Nuevo adaptador<select name="agent" required>${adapterOptions(agents, selected.agent, escape)}</select></label>
+    <p>${changesPending}</p>
+    <label><input type="checkbox" name="confirm" value="yes" required> Confirmo el cambio de adaptador de <b>${escape(selected.slug)}</b></label>
+    <button>Cambiar adaptador</button></form>` : '';
+  return { title: 'Perfiles', body: `${picker}${saved}<section><h2>Perfil vigente</h2><p><code>${current.digest}</code> · ${selected.profile ? 'Fijado' : 'Por defecto'}</p>
+    ${roleResolution(current.profile, selected.agent, escape)}</section>${edit}
+    <section><h2>Adaptador del workstream</h2><p>Actual: <code>${escape(selected.agent)}</code></p>${adapterForm}</section>${restoreForm(current.digest)}` };
 }
 
-/** Ejecuta guardar/asignar. Devuelve destino y resultado para el aviso; lanza ProfileInputError con el motivo si la entrada es inválida. */
+type TemplateGroup = (typeof TEMPLATES)[number][0];
+const template = (p: Profile, group: TemplateGroup, key: string) => (p[group] as unknown as Record<string, string>)[key]!;
+const normalizeLines = (s: string) => s.replace(/\r\n?/g, '\n');
+
+function checkFields(form: URLSearchParams, allowed: readonly string[]) {
+  const seen = new Set<string>();
+  for (const name of form.keys()) {
+    if (!allowed.includes(name) || seen.has(name)) throw new ProfileInputError('El formulario contiene campos desconocidos o repetidos.');
+    seen.add(name);
+  }
+}
+
+function editProfile(profile: Profile, form: URLSearchParams, editRoles: boolean): Profile {
+  for (const [group, key] of TEMPLATES) {
+    const input = form.get(`${group}.${key}`);
+    if (input === null) continue;
+    const original = template(profile, group, key);
+    const value = normalizeLines(input);
+    if (value === normalizeLines(original) || (!value && masked(original))) continue;
+    if (masked(original) && value.includes(MASK)) throw new ProfileInputError('Escribe un reemplazo completo para la plantilla enmascarada.');
+    (profile[group] as unknown as Record<string, string>)[key] = value;
+  }
+  if (!editRoles) return profile;
+  if (profile.schemaVersion === 1 && roleFormFields.every(name => form.get(name) === '')) return profile;
+  const modelValue = (name: string, original?: string) => {
+    const value = form.get(name)!;
+    return value === MASK && original && masked(original) ? original : value;
+  };
+  const model = modelValue('model', profile.schemaVersion === 2 ? profile.model : undefined);
+  profile.schemaVersion = 2;
+  if (model) profile.model = model;
+  else delete profile.model;
+
+  const roles: NonNullable<Profile['roles']> = {};
+  for (const role of ROLES) {
+    const cfg = { ...profile.roles?.[role] };
+    const harness = form.get(`roles.${role}.harness`)!;
+    const model = modelValue(`roles.${role}.model`, cfg.model);
+    if (harness) cfg.harness = harness;
+    else delete cfg.harness;
+    if (model) cfg.model = model;
+    else delete cfg.model;
+    if (Object.keys(cfg).length) roles[role] = cfg;
+  }
+  if (Object.keys(roles).length) profile.roles = roles;
+  else delete profile.roles;
+  return profile;
+}
+
+/** Guardar lee el perfil de origen y sus dos precondiciones en una sola transacción. */
 export function profileAction(stateDir: string, kind: 'guardar' | 'asignar', form: URLSearchParams): { destination: string; result: string } {
-  const slug = form.get('ws') ?? '';
+  const editRoles = kind === 'guardar' && form.get('mode') === 'roles';
+  checkFields(form, kind === 'asignar' ? ASSIGN_FIELDS : editRoles ? [...saveFields, ...roleFormFields] : saveFields);
+  if (kind === 'guardar' && ((form.has('mode') && !editRoles) || (editRoles && roleFormFields.some(name => !form.has(name))))) {
+    throw new ProfileInputError('Completa la configuración de todos los roles y del modelo predeterminado.');
+  }
+  const expectedAgent = form.get('expectedAgent');
+  const expected = form.get(kind === 'guardar' ? 'base' : 'previous') ?? '';
+  if (!expectedAgent || !isProfileDigest(expected)) throw new ProfileInputError('Vuelve a abrir Perfiles y revisa la configuración vigente.');
   const store = new Store(join(stateDir, 'fabrica.db'));
-  const previous = process.env.FAB_ACTOR; process.env.FAB_ACTOR = 'web';
+  const previous = process.env.FAB_ACTOR;
+  process.env.FAB_ACTOR = 'web';
   try {
-    const ws = store.getWorkstream(slug);
-    const to = (extra = '') => `/perfiles?ws=${encodeURIComponent(ws.slug)}${extra}`;
-    if (kind === 'guardar') {
-      const profile: Profile = JSON.parse(JSON.stringify(resolveProfile(stateDir, ws.profile).profile));
-      for (const [name] of FIELDS) {
-        // Los navegadores envían saltos CRLF: sin normalizar, una plantilla sin editar cambiaría de digest.
-        const text = (form.get(name) ?? '').replace(/\r\n?/g, '\n');
-        (profile as unknown as Record<string, Record<string, string>>)[name.split('.')[0]!]![name.split('.')[1]!] = text;
+    const ws = store.getWorkstream(form.get('ws') ?? '');
+    const destination = `/perfiles?ws=${encodeURIComponent(ws.slug)}`;
+    try {
+      if (kind === 'guardar') {
+        return store.withRetry(() => {
+          const current = store.getWorkstream(ws.id);
+          if ((current.profile ?? DEFAULT_DIGEST) !== expected || current.agent !== expectedAgent) {
+            throw new StoreError('conflict', 'la configuración vigente cambió');
+          }
+          let snapshot: Profile;
+          try { snapshot = resolveProfile(stateDir, current.profile).profile; }
+          catch { throw new ProfileInputError('El perfil de origen no está disponible o es corrupto.'); }
+          const profile = editProfile(snapshot, form, editRoles);
+          try {
+            const { digest, created } = saveProfile(stateDir, profile);
+            return { destination: `${destination}&digest=${digest}&nuevo=${created ? 1 : 0}`, result: 'ok' };
+          } catch (e) { throw new ProfileInputError(redact((e as Error).message)); }
+        });
       }
-      try {
-        const { digest, created } = saveProfile(stateDir, profile);
-        return { destination: to(`&digest=${digest}&nuevo=${created ? 1 : 0}`), result: 'ok' };
-      } catch (e) { throw new ProfileInputError((e as Error).message); }
+      const digest = form.get('digest') ?? '';
+      if (!isProfileDigest(digest) || form.get('confirm') !== 'yes') throw new ProfileInputError('Confirma el cambio de perfil.');
+      store.assignProfile(ws.id, digest, expected, expectedAgent);
+      return { destination, result: 'ok' };
+    } catch (e) {
+      if (e instanceof WorkstreamBusyError) return { destination, result: 'workstream_busy' };
+      if (e instanceof StoreError && e.code === 'invalid_input') throw new ProfileInputError(e.message);
+      if (e instanceof StoreError) return { destination, result: e.code };
+      throw e;
     }
-    const digest = form.get('digest') ?? '', expected = form.get('previous') ?? '';
-    if (!isDigest(digest) || !isDigest(expected) || form.get('confirm') !== 'yes') throw new ProfileInputError('Confirma el cambio de perfil.');
-    try { store.assignProfile(ws.id, digest, expected); return { destination: to(), result: 'ok' }; }
-    catch (e) { if (e instanceof StoreError) return { destination: to(), result: e.code }; throw e; }
-  } finally { if (previous === undefined) delete process.env.FAB_ACTOR; else process.env.FAB_ACTOR = previous; store.close(); }
+  } finally {
+    if (previous === undefined) delete process.env.FAB_ACTOR; else process.env.FAB_ACTOR = previous;
+    store.close();
+  }
 }
