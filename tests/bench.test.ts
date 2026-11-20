@@ -1,6 +1,6 @@
 import { afterEach, beforeEach, expect, test } from 'bun:test';
 import { Database } from 'bun:sqlite';
-import { mkdtempSync, readFileSync, readdirSync, rmSync, writeFileSync } from 'node:fs';
+import { mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { cancelBenchmark, createBenchmark, runBenchmark, type Variant } from '../src/bench.ts';
@@ -180,7 +180,7 @@ test('comparte la reserva irreversible de ids con improve en ambos sentidos', ()
 test('rechaza entradas inválidas sin consumir el id ni reclamar una corrida', async () => {
   const [one, two] = variants as [Variant, Variant];
   for (const [given, field] of [
-    [[one], 'variants'], [Array(9).fill(one), 'variants'],
+    [[one], 'variants'], [Array.from({ length: 9 }, (_, i) => ({ ...one, name: `v${i}` })), 'variants'],
     [[one, { ...two, name: '../bad' }], 'name'], [[one, { ...two, name: one.name }], 'name'],
     [[one, { ...two, agent: 'unknown' }], 'agent'],
     [[one, { ...two, profile: '' }], 'profile'], [[one, { ...two, profile: 'f'.repeat(64) }], 'profile'],
@@ -210,4 +210,48 @@ test('un adaptador no confinable falla antes de lanzar brazos', async () => {
   await expect(runBenchmark(db, dir, 'unconfined', { ...options, confine: true })).rejects.toThrow(/adaptador native no soportado/);
   expect(benchmark('unconfined')).toMatchObject({ status: 'failed', error: expect.any(String), finished_at: expect.any(String) });
   expect(rows('unconfined')).toEqual([]);
+});
+
+test('reanuda un benchmark huérfano en running desde la última fila, solo con resume', async () => {
+  create('whole');
+  create('orphan');
+  await runBenchmark(db, dir, 'whole', options);
+  await runBenchmark(db, dir, 'orphan', options);
+  // El proceso murió tras la octava fila: quedan ocho y el estado sigue en running.
+  db.exec("DELETE FROM experiment_runs WHERE experiment_id = 'orphan' AND rowid NOT IN (SELECT rowid FROM experiment_runs WHERE experiment_id = 'orphan' ORDER BY rowid LIMIT 8)");
+  db.exec("UPDATE benchmarks SET status = 'running', finished_at = NULL WHERE id = 'orphan'");
+  await expect(runBenchmark(db, dir, 'orphan', options)).rejects.toMatchObject({ code: 'invalid_transition' });
+  await expect(runBenchmark(db, dir, 'orphan', { ...options, resume: true, split: 'validation' })).rejects.toThrow(/split/);
+  await expect(runBenchmark(db, dir, 'orphan', { ...options, resume: true, repeats: 1 })).rejects.toThrow(/repeats/);
+  expect(rows('orphan')).toHaveLength(8);
+
+  expect(await runBenchmark(db, dir, 'orphan', { ...options, seed: 99, resume: true, concurrency: 2 })).toEqual({ seed: 7, runs: 12 });
+  const order = (id: string) => rows(id).map(r => [r.task_id, r.repeat, r.position, r.arm]);
+  expect(order('orphan')).toEqual(order('whole'));
+  expect(benchmark('orphan')).toMatchObject({ status: 'complete', error: null });
+  await expect(runBenchmark(db, dir, 'orphan', { ...options, resume: true })).rejects.toMatchObject({ code: 'invalid_transition' });
+}, 60_000);
+
+test('guarda confined = 1 solo con confine y 0 sin él', async () => {
+  create('plain');
+  await runBenchmark(db, dir, 'plain', { ...options, repeats: 1, split: 'validation' });
+  expect(rows('plain').every(r => (r as { confined?: number }).confined === 0)).toBe(true);
+  if (!Bun.which('bwrap')) return;
+  create('boxed');
+  await runBenchmark(db, dir, 'boxed', { ...options, repeats: 1, split: 'validation', confine: true });
+  const confined = db.query<{ confined: number }, []>("SELECT confined FROM experiment_runs WHERE experiment_id = 'boxed'").all();
+  expect(confined).toHaveLength(2);
+  expect(confined.every(r => r.confined === 1)).toBe(true);
+}, 60_000);
+
+test('un runArm que lanza deja una fila diagnóstica y un benchmark fallido', async () => {
+  create('throws');
+  // improve/throws es un fichero: mkdirSync de la raíz del brazo lanza ENOTDIR.
+  mkdirSync(join(dir, 'improve'), { recursive: true });
+  writeFileSync(join(dir, 'improve', 'throws'), '');
+  await expect(runBenchmark(db, dir, 'throws', { ...options, repeats: 1 })).rejects.toThrow();
+  const recorded = rows('throws');
+  expect(recorded.length).toBeGreaterThan(0);
+  expect(recorded.every(r => r.success === 0 && r.integrity_ok === null && !!r.error)).toBe(true);
+  expect(benchmark('throws')).toMatchObject({ status: 'failed', error: expect.any(String) });
 });
