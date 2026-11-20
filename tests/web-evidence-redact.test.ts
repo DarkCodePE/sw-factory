@@ -94,3 +94,12 @@ test('T77-H4: el texto corriente de logs, perfiles y configuración MCP no cambi
     '--password-stdin < f', 'curl https://x.test && tar -u f', 'cd "$PWD"', 'tokenizer: wordpiece']) expect(redact(t)).toBe(t);
   for (const t of ['pwd: zq9Xv7hunterK3', 'pass=zq9Xv7hunterK3', '--token zq9Xv7hunterK3', 'Cookie: sid=zq9Xv7hunterK3']) expect(redact(t)).not.toContain('zq9Xv7');
 });
+
+test.each([
+  ['Authorization: Negotiate', 'Authorization: Negotiate zq9Xv7hunterK3abc'], ['Authorization: ApiKey', 'Authorization: ApiKey zq9Xv7hunterK3'],
+  ['Authorization: esquema propio', 'Authorization: Custom zq9Xv7 hunterK3'], ['curl -sSu', 'curl -sSu admin:zq9Xv7hunterK3 https://x.test'],
+  ['cookie como clave JSON en texto', '{"cookie": "sid=zq9Xv7hunterK3; a=b", "n": 1}'], ['Set-Cookie JSON', '{"set-cookie": "zq9Xv7hunterK3"}'],
+])('T77-H5: %s', (_n, texto) => {
+  const out = redact(texto);
+  expect(out).not.toContain('zq9Xv7'); expect(redact(out)).toBe(out);
+});
