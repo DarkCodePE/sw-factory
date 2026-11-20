@@ -149,3 +149,8 @@ test('P2-H4: claves de más de 64 caracteres y `tokenized` no abren fugas', () =
   expect(redact(`--${'a'.repeat(70)}-token ${V}`)).not.toContain(V);
   expect(redact('tokenizer: wordpiece')).toBe('tokenizer: wordpiece');
 });
+
+test('P2-H6: Cookie corto con = se redacta y curl -Lu con una URL no', () => {
+  expect(redact('Cookie: a=b')).toBe('Cookie: [REDACTED]');
+  expect(redact('curl -Lu https://x.test')).toBe('curl -Lu https://x.test');
+});
