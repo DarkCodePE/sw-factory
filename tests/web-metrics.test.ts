@@ -6,6 +6,7 @@ import { Store } from '../src/store.ts';
 import { calculateMetrics, distribution } from '../src/metrics.ts';
 import { startWeb } from '../src/web.ts';
 import { metricsPage } from '../src/web-metrics.ts';
+import { changePrLink } from '../src/web-changes.ts';
 let dir: string, store: Store;
 const now = Date.parse('2026-11-19T12:00:00Z');
 beforeEach(() => { dir = mkdtempSync(join(tmpdir(), 'webf3-')); store = new Store(join(dir, 'fabrica.db')); store.createWorkstream({ slug: 'uno', goal: 'g', repo: '/synthetic', taskLimit: 2000 }); });
@@ -223,6 +224,7 @@ test('T82: rango libre con from y to; rangos inválidos se rechazan', () => {
 
   expect(() => calculateMetrics(store, dir, { from: 'bad' })).toThrow(URIError);
   expect(() => calculateMetrics(store, dir, { to: '2026-99-99' })).toThrow(URIError);
+  expect(() => calculateMetrics(store, dir, { to: '2026-02-31' })).toThrow(URIError);
   expect(() => calculateMetrics(store, dir, { from: '2026-11-20', to: '2026-11-10' })).toThrow(URIError);
   expect(() => calculateMetrics(store, dir, { range: 'invalido' as any })).toThrow(URIError);
 });
@@ -265,7 +267,12 @@ test('T82: gráficos SVG de series temporales, números coinciden con la tabla y
 
   // En el día sin datos (2026-11-19 para changes), la tabla tiene "Sin datos" y el SVG tiene hueco, nunca cero
   expect(html).toContain('<td>Sin datos</td>');
+  expect(html).not.toContain('<td>0</td>');
   expect(html).toContain('>hueco<');
+  const m = calculateMetrics(store, dir, { from: '2026-11-17', to: '2026-11-19' });
+  expect(m.daily.changes[2]).toBeNull();
+  expect(m.daily.costs[2]).toBeNull();
+  expect(m.daily.interventions[2]).toBeNull();
   // En coste para el día con coste desconocido (2026-11-18), la tabla tiene "No medido"
   expect(html).toContain('<td>No medido</td>');
   // En coste para 2026-11-17, el gráfico muestra 5.00 y la tabla 5.00 USD
@@ -386,4 +393,6 @@ test('T83: recordPrOpened solo admite https', () => {
   expect(() => store.recordPrOpened(c.id, 'javascript:alert(1)')).toThrow();
   store.recordPrOpened(c.id, 'https://github.com/owner/repo/pull/1');
   expect(store.getChangePrUrl(c.id)).toBe('https://github.com/owner/repo/pull/1');
+  expect(changePrLink({ getChangePrUrl: () => 'http://insecure.test' } as any, c.id)).toBe('No medido');
+  expect(changePrLink({ getChangePrUrl: () => 'javascript:alert(1)' } as any, c.id)).toBe('No medido');
 });
