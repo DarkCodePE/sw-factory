@@ -77,7 +77,7 @@ export function definitionPage(store: Store, stateDir: string | undefined, url: 
     const match = msg.match(/^([^ ]+) contiene una ruta local/);
     const detail = match
       ? `el fichero <code>${escape(match[1])}</code> contiene rutas locales no exportables.`
-      : 'contiene rutas locales o referencias no exportables.';
+      : 'referencia no exportable o error de definición.';
     return {
       title: 'Definición',
       body: `<div class="config">

@@ -6,7 +6,7 @@ import { exportDefinition } from '../src/definition.ts';
 import { defaultProfile, saveProfile } from '../src/profile.ts';
 import { Store } from '../src/store.ts';
 import { startWeb } from '../src/web.ts';
-import { FILE_VIEW_LIMIT } from '../src/web-definition.ts';
+import { FILE_VIEW_LIMIT, safeTruncateUtf8 } from '../src/web-definition.ts';
 
 let dir: string;
 let stateDir: string;
@@ -31,7 +31,7 @@ afterEach(() => {
   rmSync(dir, { recursive: true, force: true });
 });
 
-function seedWorkstream(opts: { slug?: string; bigSkill?: boolean } = {}): { slug: string; digest: string } {
+function seedWorkstream(opts: { slug?: string; bigSkill?: boolean; verify?: string[] } = {}): { slug: string; digest: string } {
   const slug = opts.slug ?? 'demo';
   if (opts.bigSkill) {
     mkdirSync(join(repoDir, '.agents', 'skills', 'grande'), { recursive: true });
@@ -56,7 +56,7 @@ function seedWorkstream(opts: { slug?: string; bigSkill?: boolean } = {}): { slu
     goal: 'Construir plataforma',
     repo: repoDir,
     profile: digest,
-    verify: ["bun test 'a b'"],
+    verify: opts.verify ?? ["bun test 'a b'"],
     protectedPaths: ['src/seguridad/**'],
   });
   return { slug, digest };
@@ -219,6 +219,18 @@ test('ignora archivo SKILL.md si la propia hoja es un symlink a un archivo exter
   expect(html).not.toContain('secreto en hoja symlink');
 });
 
+test('error genérico no relacionado con rutas locales muestra mensaje neutro', async () => {
+  const { digest } = seedWorkstream();
+  // Borrar el perfil en stateDir para forzar fallo que no sea de ruta local
+  rmSync(join(stateDir, 'profiles', `${digest}.json`), { force: true });
+
+  server = startWeb(stateDir, 0);
+  const html = await getHtml('/definicion?ws=demo');
+
+  expect(html).toContain('No se pudo generar el árbol de definición: referencia no exportable o error de definición.');
+  expect(html).not.toContain('contiene rutas locales');
+});
+
 test('un fichero grande se trunca con aviso', async () => {
   seedWorkstream({ bigSkill: true });
   server = startWeb(stateDir, 0);
@@ -249,6 +261,68 @@ test('el truncado de ficheros grandes respeta la frontera de caracter utf8 sin p
   expect(html).toContain('skills/utf8-boundary/SKILL.md');
   expect(html).toContain('Fichero grande truncado para visualización');
   expect(html).not.toContain('\uFFFD');
+});
+
+test('safeTruncateUtf8 corta correctamente caracteres multibyte de 2, 3 y 4 bytes en el borde sin corromper utf8 ni U+FFFD', () => {
+  // 1. Caracteres de 3 bytes: '€' (0xE2, 0x82, 0xAC)
+  const buf3 = Buffer.from('a'.repeat(9) + '€€');
+  // Límite en 10 u 11 bytes: solo cabe 1 o 2 bytes de '€', debe cortar en 9
+  expect(safeTruncateUtf8(buf3, 10)).toBe('a'.repeat(9));
+  expect(safeTruncateUtf8(buf3, 11)).toBe('a'.repeat(9));
+  // Límite en 12 bytes: cabe exactamente el primer '€' (9 + 3 = 12)
+  expect(safeTruncateUtf8(buf3, 12)).toBe('a'.repeat(9) + '€');
+  expect(safeTruncateUtf8(buf3, 12)).not.toContain('\uFFFD');
+
+  // 2. Caracteres de 4 bytes: '🦀' (0xF0, 0x9F, 0xA6, 0x80)
+  const buf4 = Buffer.from('a'.repeat(9) + '🦀🦀');
+  // Límite en 10, 11 o 12 bytes: solo caben 1, 2 o 3 bytes de '🦀', debe cortar en 9
+  expect(safeTruncateUtf8(buf4, 10)).toBe('a'.repeat(9));
+  expect(safeTruncateUtf8(buf4, 11)).toBe('a'.repeat(9));
+  expect(safeTruncateUtf8(buf4, 12)).toBe('a'.repeat(9));
+  // Límite en 13 bytes: cabe exactamente el primer '🦀' (9 + 4 = 13)
+  expect(safeTruncateUtf8(buf4, 13)).toBe('a'.repeat(9) + '🦀');
+  expect(safeTruncateUtf8(buf4, 13)).not.toContain('\uFFFD');
+});
+
+test('el truncado en web con caracteres de 3 y 4 bytes en el borde de 32 KiB no genera U+FFFD', async () => {
+  seedWorkstream();
+  // Colocar caracteres de 3 bytes ('€') y 4 bytes ('🦀') justo en el límite de 32 KiB
+  const padding3 = 'b'.repeat(FILE_VIEW_LIMIT - 2); // 32766 bytes
+  const skill3Content = padding3 + '€€€'; // '€' empieza en 32766 y ocupa 3 bytes -> se corta en 32768
+  const skill3Dir = join(repoDir, '.agents', 'skills', 'utf8-3byte');
+  mkdirSync(skill3Dir, { recursive: true });
+  writeFileSync(join(skill3Dir, 'SKILL.md'), skill3Content);
+
+  const padding4 = 'c'.repeat(FILE_VIEW_LIMIT - 2); // 32766 bytes
+  const skill4Content = padding4 + '🦀🦀🦀'; // '🦀' empieza en 32766 y ocupa 4 bytes -> se corta en 32768
+  const skill4Dir = join(repoDir, '.agents', 'skills', 'utf8-4byte');
+  mkdirSync(skill4Dir, { recursive: true });
+  writeFileSync(join(skill4Dir, 'SKILL.md'), skill4Content);
+
+  server = startWeb(stateDir, 0);
+  const html = await getHtml('/definicion?ws=demo');
+
+  expect(html).toContain('skills/utf8-3byte/SKILL.md');
+  expect(html).toContain('skills/utf8-4byte/SKILL.md');
+  expect(html).not.toContain('\uFFFD');
+});
+
+test('usa las clases css especificas de definicion en el html y estan definidas en la hoja de estilos', async () => {
+  seedWorkstream();
+  server = startWeb(stateDir, 0);
+
+  const html = await getHtml('/definicion?ws=demo');
+  expect(html).toContain('class="definition-file"');
+  expect(html).toContain('definition-summary');
+  expect(html).toContain('definition-nav');
+  expect(html).toContain('definition-tree');
+
+  const cssRes = await fetch(`http://127.0.0.1:${server.port}/style.css`);
+  expect(cssRes.status).toBe(200);
+  const css = await cssRes.text();
+  expect(css).toContain('.definition-file');
+  expect(css).toContain('.definition-summary');
+  expect(css).toContain('.definition-nav');
 });
 
 test('la pagina de definicion no contiene estilos en linea style= que violen la csp', async () => {
