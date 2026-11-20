@@ -71,8 +71,8 @@ export function evidencePath(changeId: string, file: string): string {
 // Palabras que delatan un valor secreto en una clave; `pass` y las cabeceras van aparte y exactas, para no atrapar «bypass» o «Cookie banner».
 const SECRET_WORDS = 'api[_-]?key|token|secret|password|passwd|pwd|credential|private[_-]?key';
 const SECRET_KEY = new RegExp(`${SECRET_WORDS}|^(?:pass|authorization|proxy-authorization|cookie|set-cookie)$`, 'i');
-// Valor: entre comillas con escapes, o hasta el siguiente separador.
-const VALUE = String.raw`("(?:[^"\\\n]|\\.){0,4096}"|'(?:[^'\\\n]|\\.){0,4096}'|[^\s"',}]+)`;
+// Valor: entre comillas con escapes, comilla sin cierre (corte de evidencia o valor enorme: hasta fin de línea), o hasta el siguiente separador.
+const VALUE = String.raw`("(?:[^"\\\n]|\\.){0,4096}"|'(?:[^'\\\n]|\\.){0,4096}'|["'][^\r\n]*|[^\s"',}]+)`;
 const quoted = (v: string) => /^["']/.test(v) ? `${v[0]}[REDACTED]${v[0]}` : '[REDACTED]';
 // Con la clave entre comillas (JSON), solo se sustituye un valor de texto: los números y literales (`"input_tokens": 12`) se conservan.
 const mask = (re: RegExp) => [re, (m: string, key: string, v: string) => /["']\s*[:=]\s*$/.test(key) && !/^["']/.test(v) ? m : key + quoted(v)] as const;

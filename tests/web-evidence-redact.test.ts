@@ -80,3 +80,11 @@ test('T77-H2: los contadores de tokens de un log stream-json no se redactan; los
   expect(JSON.parse(out)).toEqual({ usage: { input_tokens: 1234, output_tokens: 56 }, max_tokens: 8, stop: true, token: '[REDACTED]' });
   expect(redact('token=12345678')).toBe('token=[REDACTED]'); // fuera de JSON, un valor numérico sí es secreto
 });
+
+test.each([
+  ['comilla sin cierre', 'password: "zq9Xv7hunterK3 con resto'], ['comilla simple sin cierre', "token='zq9Xv7hunterK3"],
+  ['salto de línea dentro', 'secret="zq9Xv7hunterK3\nresto"'], ['valor de más de 4096', `password="${'zq9Xv7hunterK3'.repeat(400)}"`],
+])('T77-H3: %s no deja salir el valor', (_n, texto) => {
+  const out = redact(texto);
+  expect(out).not.toContain('zq9Xv7'); expect(out).toContain('[REDACTED]'); expect(redact(out)).toBe(out);
+});
