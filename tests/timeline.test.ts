@@ -3,14 +3,10 @@ import { changeTimeline } from '../src/admission/timeline.ts';
 import { Store } from '../src/store.ts';
 import { claimed } from './helpers/live.ts';
 
-const T_SCHEMA = `CREATE TABLE adm_turns (attempt_id TEXT PRIMARY KEY, activity_id TEXT NOT NULL, change_id TEXT NOT NULL, session_id TEXT NOT NULL,
-  generation INTEGER NOT NULL, plan TEXT NOT NULL, question_id TEXT, started_at TEXT NOT NULL, ended_at TEXT, outcome TEXT, exit_code INTEGER,
-  duration_ms INTEGER, cost_usd REAL, log TEXT)`; // esquema §2.1 del diseño; la tabla real es de T54a
 const d = (hm: string) => `2026-11-19T${hm}:00.000Z`;
 
 function setup() {
   const c = claimed(), a = c.claim();
-  c.adm.db.exec(T_SCHEMA);
   const sess = (gen: number, status = 'open', lost: string | null = null) => c.adm.db.query(
     "INSERT INTO adm_sessions(change_id, kind, generation, session_id, backend, cwd, status, lost_reason, created_at, model) VALUES (?,?,?,?,?,?,?,?,?,?)")
     .run(c.change.id, a.kind, gen, `s${gen}`, 'claude', '/w', status, lost, d('09:00'), gen === 1 ? 'sonnet' : null);
@@ -121,8 +117,8 @@ test('H3: la pregunta se asigna al turno de su activity que la hizo, no a otra a
 
 test('H4: solo las notas entregadas de este change y de ese intento', () => {
   const s = setup(); s.sess(1); s.turn('t1', 1, 'fresh', '10:00', '10:10', 'done'); s.turn('t2', 1, 'retry', '11:00', '11:10', 'done');
-  s.adm.db.exec(`CREATE TABLE change_notes (id TEXT, change_id TEXT, body TEXT, actor TEXT, attempt_id TEXT, delivered_at TEXT, created_at TEXT);
-    INSERT INTO change_notes VALUES ('n1','${s.change.id}','uno','dueño','t1','${d('10:00')}','${d('09:00')}'),
+  s.adm.db.exec('PRAGMA foreign_keys = OFF'); // 'otro' es un change que no existe: la fila ajena solo sirve para el filtro
+  s.adm.db.exec(`INSERT INTO change_notes(id, change_id, body, actor, attempt_id, delivered_at, created_at) VALUES ('n1','${s.change.id}','uno','dueño','t1','${d('10:00')}','${d('09:00')}'),
       ('n2','${s.change.id}','sin entregar','dueño','t1',NULL,'${d('09:01')}'),
       ('n3','${s.change.id}','tres','dueño','t2','${d('11:00')}','${d('09:02')}'),
       ('n4','otro','ajena','dueño','t1','${d('10:00')}','${d('09:03')}')`);
