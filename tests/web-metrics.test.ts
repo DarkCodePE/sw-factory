@@ -266,8 +266,8 @@ test('T82: gráficos SVG de series temporales, números coinciden con la tabla y
   expect(html).toContain('Coste por actor del primer evento');
 
   // En el día sin datos (2026-11-19 para changes), la tabla tiene "Sin datos" y el SVG tiene hueco, nunca cero
-  expect(html).toContain('<td>Sin datos</td>');
-  expect(html).not.toContain('<td>0</td>');
+  expect(html).toContain('<tr><th scope="row">2026-11-19</th><td>Sin datos</td></tr>');
+  expect(html).not.toContain('<tr><th scope="row">2026-11-19</th><td>0</td></tr>');
   expect(html).toContain('>hueco<');
   const m = calculateMetrics(store, dir, { from: '2026-11-17', to: '2026-11-19' });
   expect(m.daily.changes[2]).toBeNull();
