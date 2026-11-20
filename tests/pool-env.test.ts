@@ -61,7 +61,7 @@ function stubClaude(exit = 0) {
   writeFileSync(join(bin, 'claude'), `#!/bin/sh
 if [ ! -e "${out}/argv.txt" ]; then # solo el primer lanzamiento (la investigación)
 printf '%s\\n' "$@" > "${out}/argv.txt"
-prev=""; for a in "$@"; do if [ "$prev" = "--mcp-config" ]; then echo "$a" > "${out}/cfgpath.txt"; cat "$a" > "${out}/cfg.json" 2>/dev/null; fi; prev="$a"; done
+prev=""; for a in "$@"; do if [ "$prev" = "--mcp-config" ]; then echo "$a" > "${out}/cfgpath.txt"; cat "$a" > "${out}/cfg.json" 2>/dev/null; stat -c %a "$a" > "${out}/perm.txt"; fi; prev="$a"; done
 printenv TRACKER_TOKEN > "${out}/token.txt"
 fi
 printf 'STATUS: done\\n'
@@ -262,4 +262,45 @@ test('T72f: un change de canal vivo no lleva servidores del rol ni variables dec
   const turn = backend.turns[0]!;
   expect(turn.mcpServers).toEqual({});
   expect(turn.envDecl).toMatchObject({ channel: true, roleEnv: [], mcpRequired: [] });
+});
+
+// T72e-H4: huecos de test que la verificación encontró por mutación.
+test('H4/E3: la configuración MCP del disparo se escribe con permisos 0600', async () => {
+  registry(TRACKER);
+  const bin = stubClaude();
+  const { pool } = setup(v2({ investigate: { harness: 'claude', env: ['TRACKER_TOKEN'], mcp: ['tracker'] } }, 'claude'), { env: ['TRACKER_TOKEN'], mcp: ['tracker'] }, 'claude');
+  await withEnv({ PATH: `${bin}:${process.env.PATH}`, FABRICA_HOME: dir, TRACKER_TOKEN: CANARY }, async () => { await pool({ acceptAgentBinaries: true }); });
+  expect(readFileSync(join(out, 'perm.txt'), 'utf8').trim()).toBe('600');
+});
+
+test('H4/E10: MCP_NOT_SUPPORTED si el rol pide servidores y el adaptador no los admite', async () => {
+  registry(TRACKER);
+  const { pool, first } = setup(v2({ investigate: { mcp: ['tracker'] } }, 'claude'), { env: [], mcp: ['tracker'] }, 'fake');
+  await pool({ acceptAgentBinaries: true });
+  expect(first()).toMatchObject({ status: 'blocked', error: expect.stringContaining('MCP_NOT_SUPPORTED') });
+});
+
+test('H4/E7: el motivo del STATUS que imprime el agente sale limpio de la base', async () => {
+  const { pool, first } = setup(v2({ investigate: { env: ['CANARIO'] } }), { env: ['CANARIO'] });
+  await withEnv({ CANARIO: CANARY, FABRICA_FAKE_STATUS: `blocked: falta ${CANARY}` }, async () => { await pool(); });
+  expect(first().status).toBe('blocked');
+  expect(everything()).not.toContain(CANARY);
+});
+
+test('H4/E8: el human_action de un report vivo sale limpio de la base', async () => {
+  const { fakeLive } = await import('./helpers/live.ts');
+  const backend = fakeLive([{ output: 'x', reports: [{ state: 'awaiting', summary: 'espera', human_action: `pega ${CANARY}` }] }], { name: 'claude' });
+  const { pool } = setup(v2({ investigate: { harness: 'claude', env: ['TRACKER_TOKEN'] } }, 'claude'), { env: ['TRACKER_TOKEN'] }, 'claude');
+  await withEnv({ TRACKER_TOKEN: CANARY, FABRICA_HOME: dir }, async () => { await pool({ live: true, liveBackends: { claude: backend }, acceptAgentBinaries: true }); });
+  expect(everything()).not.toContain(CANARY);
+});
+
+test('H4/E22: runAgent limpia stderr (y el log de captura) con los valores entregados', async () => {
+  const { runAgent } = await import('../src/agents.ts');
+  const agent = { name: 'fake', command: () => ['sh', '-c', `echo "${CANARY}" >&2; exit 3`] } as never;
+  const capturePath = join(dir, 'cap.txt');
+  const r = await runAgent(agent, 'p', dir, 10_000, { scrub: { CANARIO: CANARY }, capturePath });
+  expect(r.stderr).toBe('[REDACTED:CANARIO]\n');
+  expect(r.output).toBe('[REDACTED:CANARIO]');
+  expect(readFileSync(capturePath, 'utf8')).not.toContain(CANARY);
 });
