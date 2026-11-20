@@ -295,6 +295,31 @@ test('T82: gráficos SVG de series temporales, números coinciden con la tabla y
   expect(html).toContain('<text x="170" y="103" text-anchor="middle" font-size="11" fill="var(--muted, #888)">hueco</text>');
   expect(html).toContain('<text x="114" y="103" text-anchor="middle" font-size="11" fill="var(--muted, #888)">hueco</text>');
 
+  // Aserciones específicas por gráfico (M33, M34)
+  const changesSvg = html.match(/<svg[^>]*aria-label="Changes creados por día[^>]*>[\s\S]*?<\/svg>/)?.[0] ?? '';
+  expect(changesSvg).toContain('<text x="170" y="103" text-anchor="middle" font-size="11" fill="var(--muted, #888)">hueco</text>');
+  expect(changesSvg).not.toContain('>0<');
+
+  const costeSvg = html.match(/<svg[^>]*aria-label="Coste por día[^>]*>[\s\S]*?<\/svg>/)?.[0] ?? '';
+  expect(costeSvg).toContain('<text x="114" y="103" text-anchor="middle" font-size="11" fill="var(--muted, #888)">hueco</text>');
+  expect(costeSvg).toContain('<text x="170" y="103" text-anchor="middle" font-size="11" fill="var(--muted, #888)">hueco</text>');
+  expect(costeSvg).not.toContain('>0<');
+  expect(costeSvg).not.toContain('>0.00<');
+
+  const intervencionesSvg = html.match(/<svg[^>]*aria-label="Intervenciones humanas por día[^>]*>[\s\S]*?<\/svg>/)?.[0] ?? '';
+  expect(intervencionesSvg).toContain('<text x="170" y="103" text-anchor="middle" font-size="11" fill="var(--muted, #888)">hueco</text>');
+  expect(intervencionesSvg).not.toContain('>0<');
+
+  const prSvg = html.match(/<svg[^>]*aria-label="PRs abiertos y fusionados por día[^>]*>[\s\S]*?<\/svg>/)?.[0] ?? '';
+  expect(prSvg).toContain('<text x="170" y="103" text-anchor="middle" font-size="11" fill="var(--muted, #888)">hueco</text>');
+  expect(prSvg).not.toContain('>0<');
+
+  // Aserción específica por tabla de coste (N15)
+  const costeTable = html.match(/<div class="table-wrap"><table><caption>Coste por día<\/caption>[\s\S]*?<\/table><\/div>/)?.[0] ?? '';
+  expect(costeTable).toContain('<tr><th scope="row">2026-11-18</th><td>No medido</td></tr>');
+  expect(costeTable).toContain('<tr><th scope="row">2026-11-19</th><td>Sin datos</td></tr>');
+  expect(costeTable).not.toContain('<tr><th scope="row">2026-11-19</th><td>No medido</td></tr>');
+
   expect(html).toContain('2026-11-17');
   expect(html).toContain('2026-11-18');
   expect(html).toContain('2026-11-19');
@@ -603,9 +628,9 @@ test('T83: detalle del change muestra enlace al PR, escapa URL, solo admite http
     const r1 = await fetch(`http://127.0.0.1:${server.port}/changes/${c1.id}`);
     expect(r1.status).toBe(200);
     const html1 = await r1.text();
-    expect(html1).toContain('https://github.com/org/repo/pull/99?param=1&amp;other=&lt;script&gt;');
+    expect(html1).toContain('https://github.com/org/repo/pull/99?param=1&amp;other=%3Cscript%3E');
     expect(html1).not.toContain('<script>');
-    expect(html1).toContain('<a href="https://github.com/org/repo/pull/99?param=1&amp;other=&lt;script&gt;"');
+    expect(html1).toContain('<a href="https://github.com/org/repo/pull/99?param=1&amp;other=%3Cscript%3E"');
 
     const r2 = await fetch(`http://127.0.0.1:${server.port}/changes/${c2.id}`);
     expect(r2.status).toBe(200);
@@ -632,3 +657,29 @@ test('T83: recordPrOpened solo admite https', () => {
   expect(changePrLink({ getChangePrUrl: () => 'http://insecure.test' } as any, c.id)).toBe('No medido');
   expect(changePrLink({ getChangePrUrl: () => 'javascript:alert(1)' } as any, c.id)).toBe('No medido');
 });
+
+test('T82-H11: huecos de test (COUNT DISTINCT en merge/abiertos, fallback change_links.pr_json y catch de URL inválida)', () => {
+  // 1. COUNT DISTINCT en merge_completed y pr_opened (N10, N11)
+  const c = store.createChange('uno', 'Change dos merges y dos PRs', '');
+  store.db.query("UPDATE changes SET created_at=? WHERE id=?").run('2026-11-18T00:00:00Z', c.id);
+  store.db.query("INSERT INTO events (workstream_id, change_id, severity, message, created_at) VALUES (?, ?, 'info', 'merge_completed', '2026-11-18T04:00:00Z')").run(c.workstreamId, c.id);
+  store.db.query("INSERT INTO events (workstream_id, change_id, severity, message, created_at) VALUES (?, ?, 'info', 'merge_completed', '2026-11-18T08:00:00Z')").run(c.workstreamId, c.id);
+  store.db.query("INSERT INTO events (workstream_id, change_id, severity, message, created_at) VALUES (?, ?, 'info', 'pr_opened: https://github.com/org/repo/pull/10', '2026-11-18T01:00:00Z')").run(c.workstreamId, c.id);
+  store.db.query("INSERT INTO events (workstream_id, change_id, severity, message, created_at) VALUES (?, ?, 'info', 'pr_opened: https://github.com/org/repo/pull/11', '2026-11-18T02:00:00Z')").run(c.workstreamId, c.id);
+  const prs = store.metricsDailyPrs([c.id], '2026-11-18T23:59:59Z');
+  expect(prs.merged.get('2026-11-18')).toBe(1);
+  expect(prs.opened.get('2026-11-18')).toBe(1);
+
+  // 2. Fallback change_links.pr_json cuando no hay evento de PR (M28)
+  const c2 = store.createChange('uno', 'Change con link pr_json', '');
+  store.db.exec("CREATE TABLE IF NOT EXISTS change_links (change_id TEXT PRIMARY KEY, source_system TEXT, source_key TEXT, source_url TEXT, pr_json TEXT)");
+  store.db.query("INSERT INTO change_links (change_id, pr_json) VALUES (?, ?)").run(c2.id, JSON.stringify({ url: 'https://github.com/org/repo/pull/55' }));
+  expect(store.getChangePrUrl(c2.id)).toBe('https://github.com/org/repo/pull/55');
+  expect(changePrLink(store, c2.id)).toContain('https://github.com/org/repo/pull/55');
+
+  // 3. changePrLink maneja URL malformada sin lanzar excepción (N21)
+  const c3 = store.createChange('uno', 'Change link malformado', '');
+  store.db.query("INSERT INTO change_links (change_id, pr_json) VALUES (?, ?)").run(c3.id, JSON.stringify({ url: 'https://^invalid^' }));
+  expect(changePrLink(store, c3.id)).toBe('No medido');
+});
+
