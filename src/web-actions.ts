@@ -396,12 +396,10 @@ async function readForm(req: Request, limit = 16384): Promise<URLSearchParams> {
       const { value, done } = await reader.read();
       if (done) break;
       bytes += value.byteLength;
-      if (bytes > limit) {
-        void reader.cancel().catch(() => {});
-        throw new InputError(413, 'El cuerpo es demasiado grande.');
-      }
-      chunks.push(value);
+      // Se descarta el resto sin guardarlo: cancelar antes dejaba la conexión persistente con bytes sin leer.
+      if (bytes <= limit) chunks.push(value);
     }
+    if (bytes > limit) throw new InputError(413, 'El cuerpo es demasiado grande.');
   } catch (error) {
     if (error instanceof Error && error.name === 'RequestBodyTooLarge') throw new InputError(413, 'El cuerpo es demasiado grande.');
     throw error;
