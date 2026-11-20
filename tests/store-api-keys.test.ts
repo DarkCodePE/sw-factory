@@ -50,6 +50,14 @@ test('crea una clave de 32 bytes, autentica ambos ámbitos y lista solo metadato
   }
 });
 
+test('H1: dos claves no comparten secreto ni hash', () => {
+  const [a, b] = [store.createApiKey('uno', 'read'), store.createApiKey('dos', 'read')];
+  const secret = (k: { id: string; key: string }) => k.key.slice(`fabk_${k.id}_`.length);
+  expect(secret(a)).not.toBe(secret(b));
+  const hashes = store.db.query<{ hash: string }, []>('SELECT hash FROM api_keys').all().map(r => r.hash);
+  expect(new Set(hashes).size).toBe(2);
+});
+
 test('A1: solo persiste el SHA-256 del secreto y no crea eventos', () => {
   const { id, key } = store.createApiKey('canario', 'read');
   const secret = key.slice(`fabk_${id}_`.length);
