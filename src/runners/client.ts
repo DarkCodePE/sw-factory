@@ -55,7 +55,7 @@ function transportEnv(): Record<string, string> {
   return env;
 }
 
-class Reader {
+export class Reader {
   private buf = Buffer.alloc(0);
   private it: AsyncIterator<Uint8Array>;
   constructor(stream: ReadableStream<Uint8Array>) { this.it = (stream as unknown as AsyncIterable<Uint8Array>)[Symbol.asyncIterator](); }
