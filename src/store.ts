@@ -2027,14 +2027,14 @@ export class Store {
       throw new StoreError('invalid_input', 'la URL del PR debe comenzar por https:// y tener un host válido');
     }
     const c = this.getChange(changeId);
-    const existing = this.db.query("SELECT 1 FROM events WHERE change_id = ? AND message GLOB 'pr_opened: *'").get(changeId);
+    const existing = this.db.query("SELECT 1 FROM events WHERE change_id = ? AND message = ?").get(changeId, `pr_opened: ${url}`);
     if (existing) return;
     this.event(c.workstreamId, 'info', `pr_opened: ${url}`, changeId);
   }
 
   /** Obtiene la URL del PR asociada a un change, si existe y es https://. Solo lectura local. */
   getChangePrUrl(changeId: string): string | null {
-    const ev = this.db.query("SELECT message FROM events WHERE change_id = ? AND message GLOB 'pr_opened: https://*' ORDER BY id ASC LIMIT 1").get(changeId) as { message: string } | null;
+    const ev = this.db.query("SELECT message FROM events WHERE change_id = ? AND message GLOB 'pr_opened: https://*' ORDER BY id DESC LIMIT 1").get(changeId) as { message: string } | null;
     if (ev) {
       const match = /^pr_opened:\s*(https:\/\/\S+)/i.exec(ev.message);
       if (match && match[1]) return match[1];

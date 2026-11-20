@@ -468,6 +468,16 @@ test('T82-H8: changeIndex llama a resolveChangeAttribution sin argumentos para e
   expect(list.find(x => x.id === c.id)?.creator).toBe('dave');
 });
 
+test('T83-H6: dos URLs distintas de PR registran sendos eventos y getChangePrUrl devuelve el último', () => {
+  const c = store.createChange('uno', 'Change dos PRs', '');
+  store.recordPrOpened(c.id, 'https://github.com/org/repo/pull/1');
+  store.recordPrOpened(c.id, 'https://github.com/org/repo/pull/2');
+
+  const evs = store.listEvents(c.workstreamId, 10, c.id).filter(e => typeof e.message === 'string' && e.message.startsWith('pr_opened:'));
+  expect(evs).toHaveLength(2);
+  expect(store.getChangePrUrl(c.id)).toBe('https://github.com/org/repo/pull/2');
+});
+
 test('T83-H1: repetir recordPrOpened no duplica el evento ni altera el conteo en metricsDailyPrs', () => {
   const c = store.createChange('uno', 'Change con PR repetido', '');
   store.recordPrOpened(c.id, 'https://github.com/org/repo/pull/1');
