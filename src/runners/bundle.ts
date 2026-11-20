@@ -1,15 +1,15 @@
 import { createHash, randomUUID } from 'node:crypto';
 import {
   closeSync, createReadStream, createWriteStream, fstatSync, lstatSync, mkdirSync, mkdtempSync,
-  openSync, realpathSync, renameSync, rmSync, writeFileSync, constants,
+  openSync, readdirSync, realpathSync, renameSync, rmSync, writeFileSync, constants,
 } from 'node:fs';
 import { tmpdir } from 'node:os';
-import { dirname, isAbsolute, join, relative, resolve, sep } from 'node:path';
+import { basename, dirname, isAbsolute, join, relative, resolve, sep } from 'node:path';
 import { Readable } from 'node:stream';
 import { pipeline } from 'node:stream/promises';
 import { GIT_SAFE_FLAGS } from '../worktrees.ts';
 
-// Los ficheros devueltos viven en directorios temporales propios del llamador.
+// Los ficheros devueltos viven en directorios temporales propios del llamador, que los borra con discardBundle.
 export interface Bundle {
   path: string;
   bytes: number;
@@ -28,6 +28,8 @@ export class RunnerResultRejected extends Error {
   }
 }
 
+// shortcut: el tope cuenta el bundle comprimido; un blob muy compresible ocupa mucho más al avanzar el worktree.
+// Subir a un tope de tamaño descomprimido si el runner deja de ser de confianza.
 const MAX_RESULT_BYTES = 64 * 1024 * 1024;
 const MAX_HEADER_BYTES = 1024 * 1024;
 const SHA1 = /^[0-9a-f]{40}$/i;
@@ -117,6 +119,12 @@ async function writeBundle(write: (path: string) => Promise<void>, maxBytes = In
   }
 }
 
+/** Borra el directorio temporal de un bundle que creó este módulo. Ignora cualquier otra ruta. */
+export function discardBundle(bundle: Bundle) {
+  const dir = dirname(bundle.path);
+  if (dirname(dir) === tmpdir() && basename(dir).startsWith('fab-bundle-')) rmSync(dir, { recursive: true, force: true });
+}
+
 function createBundle(context: Git, head: string, exclude: string[], maxBytes?: number) {
   const ref = `refs/fab/bundle/${randomUUID()}`;
   return writeBundle(async path => {
@@ -170,7 +178,11 @@ async function verifyBytes(bundle: Bundle, operation: (path: string) => Promise<
   }
 }
 
-async function unpackBundle(context: Git, path: string, head: string) {
+/**
+ * Desempaqueta en un directorio de objetos de cuarentena dentro del almacén y solo promueve el pack
+ * si el bundle supera las comprobaciones y `accept`: un bundle rechazado no deja objetos.
+ */
+async function unpackBundle(context: Git, path: string, head: string, accept?: (staged: Git) => Promise<void>) {
   const input = Bun.file(path);
   const header = Buffer.from(await input.slice(0, MAX_HEADER_BYTES).arrayBuffer());
   const end = header.indexOf('\n\n');
@@ -182,14 +194,33 @@ async function unpackBundle(context: Git, path: string, head: string) {
     throw new Error('el bundle debe anunciar solo el head declarado');
   }
 
-  // En el transporte de bundles, git fetch no pasa fetch.fsckObjects a index-pack.
-  const stream = Readable.toWeb(createReadStream(path, { start: end + 2 }), { strategy: { highWaterMark: 1 } });
-  // Bun y Node declaran por separado el tipo del mismo stream WHATWG.
-  const pack = stream as unknown as ReadableStream<Uint8Array>;
-  const git = startGit(context, ['index-pack', '--stdin', '--fix-thin', '--strict'], pack);
-  const [, code] = await Promise.all([new Response(git.stdout).arrayBuffer(), git.exited]);
-  if (code !== 0) throw new Error('git index-pack rechazó el pack del bundle');
-  if (!await commitId(context, head)) throw new Error('head recibido no es un commit');
+  const objects = realpathSync(
+    (await gitBytes(context, 'rev-parse', '--path-format=absolute', '--git-path', 'objects')).toString().trimEnd(),
+  );
+  if (/[:"\\\n]/.test(objects)) throw new Error('ruta de objetos no admitida');
+  const quarantine = mkdtempSync(join(objects, 'incoming-'));
+  try {
+    mkdirSync(join(quarantine, 'pack'));
+    const staged: Git = {
+      ...context, env: { ...context.env, GIT_OBJECT_DIRECTORY: quarantine, GIT_ALTERNATE_OBJECT_DIRECTORIES: objects },
+    };
+    // En el transporte de bundles, git fetch no pasa fetch.fsckObjects a index-pack.
+    const stream = Readable.toWeb(createReadStream(path, { start: end + 2 }), { strategy: { highWaterMark: 1 } });
+    // Bun y Node declaran por separado el tipo del mismo stream WHATWG.
+    const pack = stream as unknown as ReadableStream<Uint8Array>;
+    const git = startGit(staged, ['index-pack', '--stdin', '--fix-thin', '--strict'], pack);
+    const [, code] = await Promise.all([new Response(git.stdout).arrayBuffer(), git.exited]);
+    if (code !== 0) throw new Error('git index-pack rechazó el pack del bundle');
+    if (!await commitId(staged, head)) throw new Error('head recibido no es un commit');
+    await accept?.(staged);
+
+    // El .idx va el último: hasta entonces Git no ve el pack.
+    mkdirSync(join(objects, 'pack'), { recursive: true });
+    const names = readdirSync(join(quarantine, 'pack')).sort((a, b) => Number(a.endsWith('.idx')) - Number(b.endsWith('.idx')));
+    for (const name of names) renameSync(join(quarantine, 'pack', name), join(objects, 'pack', name));
+  } finally {
+    rmSync(quarantine, { recursive: true, force: true });
+  }
 }
 
 export async function makeJobBundle(repo: string, head: string, have: string[]): Promise<Bundle> {
@@ -283,6 +314,7 @@ export async function receiveJob(cacheDir: string, bundle: Bundle, head: string,
       const clone = { cwd: repoDir };
       await gitBytes(clone, 'remote', 'remove', 'origin');
       await gitBytes(clone, 'checkout', '--detach', '--no-recurse-submodules', sha);
+      // La caché guarda una sola punta; cada encargo la pisa y el clon local copia todo el almacén de objetos.
       await gitBytes(context, 'update-ref', 'refs/fab/cache/head', sha);
       return repoDir;
     } catch (error) {
@@ -321,6 +353,12 @@ export async function sealResult(
   await gitBytes(context, 'read-tree', parent);
   await gitBytes(context, 'add', '-A');
   const tree = (await gitBytes(context, 'write-tree')).toString().trim();
+  // `add -A` convierte un .git anidado en enlace a submódulo: perdería su contenido y leería un repositorio ajeno.
+  const changes = (await gitBytes(context, 'diff-tree', '-r', '-z', '--raw', '--no-renames', '--no-ext-diff', parent, tree))
+    .toString().split('\0');
+  for (let i = 0; i + 1 < changes.length; i += 2) {
+    if (/^:\d+ 160000 /.test(changes[i]!)) throw new Error('repositorio anidado en el resultado');
+  }
   const oldTree = (await gitBytes(context, 'rev-parse', `${parent}^{tree}`)).toString().trim();
   if (tree === oldTree) return null;
 
@@ -382,19 +420,13 @@ export async function importResult(
     const sha = checkedHead(bundle.head);
     const source = { cwd: repo };
     const target = await withoutFilters({ cwd: worktree });
-    const ref = `refs/fab/remote/${jobId}-${randomUUID()}`;
-
-    await verifyBytes(bundle, path => unpackBundle(source, path, sha), MAX_RESULT_BYTES);
-    await gitBytes(source, 'update-ref', ref, sha, '0'.repeat(40));
-    try {
-      const commit = (await gitBytes(source, 'cat-file', 'commit', sha)).toString();
+    await verifyBytes(bundle, path => unpackBundle(source, path, sha, async staged => {
+      const commit = (await gitBytes(staged, 'cat-file', 'commit', sha)).toString();
       const parents = commit.slice(0, commit.indexOf('\n\n')).split('\n').filter(line => line.startsWith('parent '));
       if (parents.length !== 1 || parents[0] !== `parent ${parent}`) {
         throw new Error('el único padre del resultado debe ser el head enviado');
       }
-    } finally {
-      await gitBytes(source, 'update-ref', '-d', ref, sha);
-    }
+    }), MAX_RESULT_BYTES);
     await assertExpectedWorktree(source, target, parent);
     await advanceWorktree(target, parent, sha);
     return sha;
