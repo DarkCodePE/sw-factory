@@ -13,6 +13,10 @@ import { dirname, resolve } from 'node:path';
 import { gitEvidence, writeManifest } from './manifest.ts';
 import { redact } from './evidence.ts';
 import { lastDue, parseCron } from './cron.ts';
+import {
+  assertNoteAttachmentMounts, assertPrivateNoteDatabase, NOTE_ATTACHMENT_HISTORY_MAX, NOTE_ATTACHMENT_MAX,
+  NOTE_ATTACHMENT_REMOTE, NOTE_ATTACHMENT_WAIT, noteAttachmentInventory, validateNoteAttachment, type NoteAttachment, type NoteAttachmentMeta, type NoteAttachmentTarget, type NoteAttachmentWait,
+} from './note-attachments.ts';
 
 import {
   type ActivityKind as BaseActivityKind,
@@ -233,7 +237,16 @@ export interface ChangeNote {
   activityId: string | null;
   attemptId: string | null;
   deliveredAt: string | null;
+  attachment?: NoteAttachmentMeta;
 }
+
+export interface ReservedChangeNote extends ChangeNote { attachmentBytes?: Uint8Array }
+export type HistoricalNoteBody = Pick<ChangeNote, 'id' | 'body' | 'createdAt'>;
+type NoteDelivery = (NoteAttachmentTarget & { fits?: (notes: ReservedChangeNote[]) => boolean })
+  | { blockedBy: 'remote' | 'transport' };
+const PLAIN_NOTE = '(attachment_name IS NULL AND attachment_bytes IS NULL)';
+const ATTACHMENT_EVENT = 'Adjuntos pendientes: ';
+const ATTACHMENT_READY = 'Adjuntos aptos para este turno.';
 
 export interface Activity {
   id: string;
@@ -477,6 +490,8 @@ function toChangeNote(r: Row): ChangeNote {
     activityId: r.activity_id as string | null,
     attemptId: r.attempt_id as string | null,
     deliveredAt: r.delivered_at as string | null,
+    ...(typeof r.attachment_name === 'string' && typeof r.attachment_size === 'number'
+      ? { attachment: { name: r.attachment_name, size: r.attachment_size } } : {}),
   };
 }
 
@@ -627,6 +642,8 @@ export class Store {
   }
 
   private migrate(): void {
+    this.addColumn('change_notes', 'attachment_name', 'TEXT');
+    this.addColumn('change_notes', 'attachment_bytes', 'BLOB');
     this.addColumn('activities', 'validator', 'TEXT');
     this.addColumn('workstreams', 'verify', 'TEXT');
     this.addColumn('workstreams', 'verify_setup', 'TEXT');
@@ -1372,7 +1389,37 @@ export class Store {
 
   // ---- notas del dueño ---------------------------------------------------
 
-  addChangeNote(changeId: string, body: string): ChangeNote {
+  noteRunnerIsRemote(workstreamId: string): boolean {
+    const runner = this.getWorkstream(workstreamId).runner;
+    return runner !== null && this.getRunner(runner).kind === 'ssh';
+  }
+
+  /** Comprobación barata (sin Git) del estado para avisar en la página antes de guardar. */
+  noteAttachmentStateProblem(): string | undefined {
+    try { assertPrivateNoteDatabase(this.dbPath); }
+    catch (error) { return (error as Error).message; }
+  }
+
+  /**
+   * Git corre aquí, antes de abrir la transacción IMMEDIATE del alta o de la reserva: dentro solo se compara
+   * el inventario con el estado. Si falla, dentro se repite y falla cerrado.
+   */
+  prepareNoteDelivery(target?: NoteAttachmentTarget): NoteAttachmentTarget {
+    try { return { ...target, inventory: noteAttachmentInventory(this.listWorkstreams().map(ws => ws.repo), target) }; }
+    catch { return { ...target }; }
+  }
+
+  hasPendingNoteAttachments(changeId: string): boolean {
+    return !!this.db.query(`SELECT 1 FROM change_notes WHERE change_id = ? AND delivered_at IS NULL AND NOT ${PLAIN_NOTE} LIMIT 1`).get(changeId);
+  }
+
+  assertNoteAttachmentState(target?: NoteAttachmentTarget): void {
+    assertPrivateNoteDatabase(this.dbPath);
+    assertNoteAttachmentMounts(this.dbPath, this.listWorkstreams().map(ws => ws.repo), target);
+  }
+
+  addChangeNote(changeId: string, body: string, attachment?: NoteAttachment): ChangeNote {
+    const prepared = attachment !== undefined ? this.prepareNoteDelivery() : undefined;
     return this.withRetry(() => {
       const change = this.getChange(changeId);
       if (isTerminalChange(change.status)) {
@@ -1387,33 +1434,112 @@ export class Store {
       ).get(changeId)!;
       if (n >= 20) throw new StoreError('limit_reached', 'el change tiene 20 notas sin entregar');
 
+      if (attachment !== undefined) {
+        const invalid = validateNoteAttachment(attachment);
+        if (invalid) throw new StoreError('invalid_input', invalid);
+        if (this.noteRunnerIsRemote(change.workstreamId)) {
+          throw new StoreError('invalid_input', NOTE_ATTACHMENT_REMOTE);
+        }
+        try { this.assertNoteAttachmentState(prepared); }
+        catch (error) { throw new StoreError('invalid_input', (error as Error).message); }
+        const { pending, total } = this.db.query<{ pending: number; total: number }, [string]>(`
+          SELECT COALESCE(SUM(CASE WHEN delivered_at IS NULL THEN length(attachment_bytes) ELSE 0 END), 0) AS pending,
+            COALESCE(SUM(length(attachment_bytes)), 0) AS total FROM change_notes WHERE change_id = ?
+        `).get(changeId)!;
+        if (pending + attachment.bytes.byteLength > NOTE_ATTACHMENT_MAX) {
+          throw new StoreError('limit_reached', 'El change admite hasta 65 536 bytes de adjuntos pendientes.');
+        }
+        if (total + attachment.bytes.byteLength > NOTE_ATTACHMENT_HISTORY_MAX) {
+          throw new StoreError('limit_reached', 'El change admite hasta 1 MiB de adjuntos en su histórico.');
+        }
+      }
+
       const id = randomUUID();
       const actor = process.env.FAB_ACTOR ?? userInfo().username;
       const createdAt = this.now();
-      this.db.query('INSERT INTO change_notes (id, change_id, body, actor, created_at) VALUES (?,?,?,?,?)')
-        .run(id, changeId, body, actor, createdAt);
-      this.event(change.workstreamId, 'info', `nota del dueño registrada (${id.slice(0, 8)}, ${bytes} bytes)`, changeId);
-      return { id, changeId, body, actor, createdAt, activityId: null, attemptId: null, deliveredAt: null };
+      const meta = attachment && { name: attachment.name, size: attachment.bytes.byteLength };
+      this.db.query(`INSERT INTO change_notes (id, change_id, body, actor, created_at, attachment_name, attachment_bytes)
+        VALUES (?,?,?,?,?,?,?)`).run(id, changeId, body, actor, createdAt, attachment?.name ?? null, attachment?.bytes ?? null);
+      this.event(change.workstreamId, 'info', `nota del dueño registrada (${id.slice(0, 8)}, ${bytes} bytes${meta ? `, adjunto de ${meta.size} bytes` : ''})`, changeId);
+      return { id, changeId, body, actor, createdAt, activityId: null, attemptId: null, deliveredAt: null, ...(meta && { attachment: meta }) };
     });
   }
 
   listChangeNotes(changeId: string): ChangeNote[] {
     // Una apertura de solo lectura puede encontrar una base anterior a las notas.
     if (!this.db.query("SELECT 1 FROM sqlite_schema WHERE type = 'table' AND name = 'change_notes'").get()) return [];
-    const rows = this.db.query<Row, [string]>(
-      'SELECT * FROM change_notes WHERE change_id = ? ORDER BY created_at, rowid'
-    ).all(changeId);
+    const columns = new Set(this.db.query<{ name: string }, []>('PRAGMA table_info(change_notes)').all().map(col => col.name));
+    const attachment = columns.has('attachment_name') && columns.has('attachment_bytes')
+      ? ', attachment_name, length(attachment_bytes) AS attachment_size' : '';
+    const rows = this.db.query<Row, [string]>(`SELECT id, change_id, body, actor, created_at, activity_id, attempt_id, delivered_at
+      ${attachment} FROM change_notes WHERE change_id = ? ORDER BY created_at, rowid`).all(changeId);
     return rows.map(toChangeNote);
   }
 
-  reserveNotes(changeId: string, activityId: string, attemptId: string): ChangeNote[] {
+  listHistoricalNoteBodies(changeId: string): HistoricalNoteBody[] {
+    return this.db.query<HistoricalNoteBody, [string]>(`SELECT id, body, created_at AS createdAt
+      FROM change_notes WHERE change_id = ? AND (${PLAIN_NOTE} OR delivered_at IS NOT NULL)
+      ORDER BY created_at, rowid`).all(changeId);
+  }
+
+  noteAttachmentWait(changeId: string): string | undefined {
+    const last = this.db.query<{ message: string }, [string, string, string]>(`SELECT message FROM events
+      WHERE change_id = ? AND (message LIKE ? OR message = ?) ORDER BY id DESC LIMIT 1`)
+      .get(changeId, ATTACHMENT_EVENT + '%', ATTACHMENT_READY)?.message;
+    return Object.values(NOTE_ATTACHMENT_WAIT).find(reason => ATTACHMENT_EVENT + reason === last);
+  }
+
+  reserveNotes(changeId: string, activityId: string, attemptId: string, delivery?: NoteDelivery): ReservedChangeNote[] {
     return this.withRetry(() => {
-      // Una reserva sin confirmar puede pertenecer a un intento interrumpido.
-      this.db.query(`UPDATE change_notes SET activity_id = ?, attempt_id = ?
-        WHERE change_id = ? AND delivered_at IS NULL`).run(activityId, attemptId, changeId);
-      const rows = this.db.query<Row, [string]>(`SELECT * FROM change_notes
-        WHERE change_id = ? AND delivered_at IS NULL ORDER BY created_at, rowid`).all(changeId);
-      return rows.map(toChangeNote);
+      const reserve = (filter: string) => {
+        // Una reserva sin confirmar puede pertenecer a un intento interrumpido.
+        this.db.query(`UPDATE change_notes SET activity_id = ?, attempt_id = ?
+          WHERE change_id = ? AND delivered_at IS NULL AND ${filter}`).run(activityId, attemptId, changeId);
+        return this.db.query<Row, [string, string, string]>(`SELECT * FROM change_notes
+          WHERE change_id = ? AND activity_id = ? AND attempt_id = ? AND delivered_at IS NULL AND ${filter}
+          ORDER BY created_at, rowid`).all(changeId, activityId, attemptId);
+      };
+      const pending = this.db.query(`SELECT 1 FROM change_notes WHERE change_id = ? AND delivered_at IS NULL AND NOT ${PLAIN_NOTE}`).get(changeId);
+      if (!pending) return reserve(PLAIN_NOTE).map(toChangeNote);
+
+      const { workstreamId } = this.getChange(changeId);
+      const previous = this.noteAttachmentWait(changeId);
+      const reason = (wait: NoteAttachmentWait) => {
+        if (previous !== NOTE_ATTACHMENT_WAIT[wait]) {
+          this.event(workstreamId, 'warning', ATTACHMENT_EVENT + NOTE_ATTACHMENT_WAIT[wait], changeId, activityId);
+        }
+        return reserve(PLAIN_NOTE).map(toChangeNote);
+      };
+      if (this.noteRunnerIsRemote(workstreamId) || (delivery && 'blockedBy' in delivery && delivery.blockedBy === 'remote')) return reason('remote');
+      if (!delivery || 'blockedBy' in delivery) return reason('transport');
+      const activity = this.getActivity(activityId);
+      if (activity.changeId !== changeId || activity.validator ||
+          (activity.kind !== 'investigation' && activity.kind !== 'implementation')) return reason('transport');
+      try { this.assertNoteAttachmentState(delivery); }
+      catch { return reason('state'); }
+
+      // El savepoint descarta la reserva provisional si el turno no puede llevar los adjuntos.
+      // Solo se leen BLOB de notas vinculadas a este intento y dentro de la misma transacción.
+      const tooLarge = new Error(), invalidFile = new Error();
+      try {
+        const notes = this.db.transaction(() => {
+          const batch = reserve('1 = 1').map(row => {
+            if (row.attachment_name === null && row.attachment_bytes === null) return toChangeNote(row);
+            const bytes = row.attachment_bytes;
+            if (typeof row.attachment_name !== 'string' || !(bytes instanceof Uint8Array)
+              || validateNoteAttachment({ name: row.attachment_name, bytes })) throw invalidFile;
+            return { ...toChangeNote({ ...row, attachment_size: bytes.byteLength }), attachmentBytes: bytes };
+          });
+          if (delivery.fits && !delivery.fits(batch)) throw tooLarge;
+          return batch;
+        })();
+        if (previous) this.event(workstreamId, 'info', ATTACHMENT_READY, changeId, activityId);
+        return notes;
+      } catch (error) {
+        if (error === tooLarge) return reason('size');
+        if (error === invalidFile) return reason('invalid');
+        throw error;
+      }
     });
   }
 

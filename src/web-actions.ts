@@ -4,6 +4,7 @@ import { join } from 'node:path';
 import { isRunnerName, Store, StoreError, WorkstreamBusyError } from './store.ts';
 import { AGENT_NAMES } from './agents.ts';
 import { isProfileDigest } from './profile.ts';
+import { assertPrivateNoteDatabase, NOTE_ATTACHMENT_REMOTE, NOTE_ATTACHMENT_STATE, validateNoteAttachment, type NoteAttachment } from './note-attachments.ts';
 import { linkTriagedSignal } from './admission/apply.ts';
 import { removeWorktree } from './worktrees.ts';
 import { SIGNAL_BODY_MAX, SIGNAL_TITLE_MAX } from './web-signals.ts';
@@ -17,6 +18,7 @@ import { saveAutoImproveProfile } from './web-improve-auto.ts';
 import { saveSuiteCandidate, suiteTaskForm } from './web-bench.ts';
 import type { Split } from './improve.ts';
 import { API_KEYS_PATH, API_KEY_CREATE_PATH, createApiKeyResponse, revokeApiKeyResponse, type ApiKeyUsage } from './web-api-keys.ts';
+import { noteForm } from './web-note-form.ts';
 import type { WebAuth } from './web-auth.ts';
 import { PROFILE_BODY_LIMIT, ProfileInputError, checkProfileFields, profileAction } from './web-profile.ts';
 import { enqueueBackfill, enqueueManual, ensureSchema, previewBackfill } from './scorers.ts';
@@ -32,7 +34,7 @@ const escape = (s: string) => redact(s).replace(/[&<>"']/g, c => ({ '&': '&amp;'
 const messages: Record<string, string> = {
   ok: 'Acción registrada.', conflict: 'conflict: el estado cambió o la acción ya se aplicó. Revisa el estado actual.',
   invalid_transition: 'invalid_transition: esta acción no corresponde al estado actual.',
-  limit_reached: 'limit_reached: el change ya tiene 20 notas sin entregar.',
+  limit_reached: 'limit_reached: el change alcanzó el límite de notas (20) o de adjuntos pendientes (64 KiB) o históricos (1 MiB).',
   skipped_open: 'Saltada: ya hay una señal o un change abierto de esta automation; no se creó ninguna señal.',
   skipped_inactive: 'Saltada: el workstream no está activo; no se creó ninguna señal.',
   not_found: 'not_found: no se encontró el registro.', invalid_input: 'invalid_input: revisa los datos de la acción.',
@@ -44,8 +46,10 @@ const runnerErrors: Record<string, string> = {
   invalid_input: 'Falta confirmar el envío al runner SSH.',
   not_found: 'No se encontró el runner o el workstream.',
 };
+// Textos fijos del Store (sin datos de la petición) que la página enseña tal cual para que el dueño sepa qué corregir.
+const FIXED_NOTICES = new Set<string>([NOTE_ATTACHMENT_REMOTE, ...Object.values(NOTE_ATTACHMENT_STATE)]);
 export function actionNotice(result?: string): string {
-  const message = messages[result ?? ''];
+  const message = messages[result ?? ''] ?? (FIXED_NOTICES.has(result ?? '') ? result : undefined);
   return message ? `<p class="notice" role="status">${message}</p>` : '';
 }
 
@@ -69,7 +73,7 @@ export function actionForms(store: Store, url: URL, csrf?: string): string {
     if (waiting || ['failed', 'blocked', 'quarantined', 'implemented'].includes(c.status)) body += form(`/changes/${id}/retry`, `<input type="hidden" name="revision" value="${retryRevision(store, id)}"><button>Reintentar change</button><p class="muted">Reencola la última activity fallida; si espera una respuesta, abandona esa espera.</p>`);
     if (!store.isTerminalChange(c.status)) {
       const planned = activities.some(a => ['pending', 'in_progress', 'waiting_reply'].includes(a.status));
-      body += form(`/changes/${id}/note`, `<fieldset><legend>Nota para el agente</legend><label for="note-body">Nota (máximo 8 KiB)</label><textarea id="note-body" name="body" rows="4" maxlength="8192" required></textarea><button>Guardar nota</button><p class="muted">No lanza ni interrumpe nada. Se entrega al empezar el siguiente turno de trabajo, una sola vez.${planned ? '' : ' Ahora no hay ningún turno previsto.'} Enviar dos veces crea dos notas.</p></fieldset>`);
+      body += noteForm(id, hidden, planned, store.noteRunnerIsRemote(c.workstreamId), store.noteAttachmentStateProblem(), escape);
     }
     if (!FINAL_STATUSES.includes(c.status)) body += form(`/changes/${id}/cancel`, `<fieldset><legend>Cancelar change</legend><label><input type="checkbox" name="confirm" value="yes" required> Confirmo: cancela el change y borra su worktree (igual que fab reject)</label><button>Cancelar change</button></fieldset>`);
     return `<section aria-label="Decisiones">${body}${suiteTaskForm(c, store.stateDir, url, escape, csrf)}</section>`;
@@ -90,7 +94,7 @@ export class InputError extends Error {
 
 type Raw = Record<string, string | undefined>;
 type Outcome = { destination: string; result: string; repo?: string };
-type Action = { path: RegExp; automationForm?: 'create' | 'update' | 'delete'; /** false: solo la web con sesión; la API con clave no la expone (decisión del dueño sobre H1). */ api?: false; httpErrors?: true; input: (raw: Raw) => Raw; run: (store: Store, id: string, input: Raw, out: Outcome, actor: string, stateDir: string) => void };
+type Action = { path: RegExp; automationForm?: 'create' | 'update' | 'delete'; /** false: solo la web con sesión; la API con clave no la expone (decisión del dueño sobre H1). */ api?: false; httpErrors?: true; input: (raw: Raw) => Raw; run: (store: Store, id: string, input: Raw, out: Outcome, actor: string, stateDir: string, attachment?: NoteAttachment) => void };
 
 type CheckAction = { path: RegExp; automationForm?: undefined; api: false; check: true };
 type WebResponseAction = { path: RegExp; automationForm?: undefined; api: false; respond: (stateDir: string, id: string, form: URLSearchParams, usage: ApiKeyUsage) => Response };
@@ -219,10 +223,11 @@ export const ACTIONS: Record<string, Action | CheckAction | WebResponseAction> =
   },
   'changes/note': {
     path: route('changes', 'note'),
-    input: pick('body'),
-    run: (store, id, input, out) => {
+    // El adjunto solo entra por multipart en la web; la API y el formulario antiguo lo rechazan.
+    input: raw => { if ('attachment' in raw) throw new InputError(400, 'Esta vía no admite adjuntos.'); return pick('body')(raw); },
+    run: (store, id, input, out, _actor, _stateDir, attachment) => {
       store.getChange(id); out.destination = `/changes/${id}`;
-      store.addChangeNote(id, input.body!);
+      store.addChangeNote(id, input.body!, attachment);
     },
   },
   'changes/rename': {
@@ -447,18 +452,23 @@ export const ACTIONS: Record<string, Action | CheckAction | WebResponseAction> =
 };
 
 /** Abre el Store escritor, fija el actor y ejecuta una acción. Lanza InputError si la entrada no vale; el resto de fallos van en `result`. */
-export async function performAction(stateDir: string, name: string, id: string, rawInput: Raw, actor: string): Promise<Outcome> {
+export async function performAction(stateDir: string, name: string, id: string, rawInput: Raw, actor: string, attachment?: NoteAttachment): Promise<Outcome> {
   const action = ACTIONS[name];
   if (!action || !('run' in action)) throw new InputError(404, 'Acción no encontrada.');
   const input = action.input(rawInput);
   const out: Outcome = { destination: '/', result: 'ok' };
+  if (attachment) {
+    // T96-H4: un estado no apto se rechaza antes de abrir el escritor (que ya tocaría la base y su WAL).
+    try { assertPrivateNoteDatabase(join(stateDir, 'fabrica.db')); }
+    catch (error) { out.destination = `/changes/${id}`; out.result = (error as Error).message; return out; }
+  }
   let store: Store | undefined;
   try {
     store = new Store(join(stateDir, 'fabrica.db'));
     const writer = store;
     // FAB_ACTOR es el patrón del Store. El tramo es síncrono: ningún await expone el actor a otra petición.
     const previous = process.env.FAB_ACTOR; process.env.FAB_ACTOR = actor;
-    try { writer.withRetry(() => action.run(writer, id, input, out, actor, stateDir)); }
+    try { writer.withRetry(() => action.run(writer, id, input, out, actor, stateDir, attachment)); }
     finally { if (previous === undefined) delete process.env.FAB_ACTOR; else process.env.FAB_ACTOR = previous; }
     if (out.repo) { await writer.waitForRelease(id); await removeWorktree(out.repo, stateDir, id); }
   } catch (error) {
@@ -474,34 +484,74 @@ export async function performAction(stateDir: string, name: string, id: string, 
       }
       throw new InputError(500, 'No se pudo registrar la acción.');
     }
-    out.result = error instanceof WorkstreamBusyError ? 'workstream_busy'
+    out.result = error instanceof StoreError && error.code === 'invalid_input' && FIXED_NOTICES.has(error.message) ? error.message
+      : error instanceof WorkstreamBusyError ? 'workstream_busy'
       : error instanceof StoreError && messages[error.code] ? error.code : 'error';
   } finally { store?.close(); }
   return out;
 }
 
-async function readForm(req: Request, limit = 16384): Promise<URLSearchParams> {
-  if (req.headers.get('content-type')?.split(';')[0]?.trim().toLowerCase() !== 'application/x-www-form-urlencoded') throw new InputError(415, 'Solo se admite application/x-www-form-urlencoded.');
-  if (Number(req.headers.get('content-length')) > limit) throw new InputError(413, 'El cuerpo es demasiado grande.');
-  // También se acota lo recibido cuando no hay Content-Length.
-  const reader = req.body?.getReader();
-  if (!reader) return new URLSearchParams();
-  const chunks: Uint8Array[] = [];
-  let bytes = 0;
+/** Lee el cuerpo contando bytes del stream: nunca materializa más de `limit`. */
+async function readBody(req: Request, limit: number): Promise<Buffer> {
+  const tooBig = () => new InputError(413, 'El cuerpo es demasiado grande.');
+  if (Number(req.headers.get('content-length')) > limit) throw tooBig();
+  const chunks: Uint8Array[] = []; let total = 0;
   try {
-    for (;;) {
-      const { value, done } = await reader.read();
-      if (done) break;
-      bytes += value.byteLength;
-      // Se descarta el resto sin guardarlo: cancelar antes dejaba la conexión persistente con bytes sin leer.
-      if (bytes <= limit) chunks.push(value);
+    for await (const chunk of req.body ?? []) {
+      total += chunk.byteLength;
+      // Pasado el tope se descarta sin guardar; Bun acota el resto (maxRequestBodySize) y la conexión queda limpia.
+      if (total <= limit) chunks.push(chunk);
     }
-    if (bytes > limit) throw new InputError(413, 'El cuerpo es demasiado grande.');
+    if (total > limit) throw tooBig();
   } catch (error) {
-    if (error instanceof Error && error.name === 'RequestBodyTooLarge') throw new InputError(413, 'El cuerpo es demasiado grande.');
+    if (error instanceof InputError) throw error;
+    if (error instanceof Error && error.name === 'RequestBodyTooLarge') throw tooBig();
     throw error;
-  } finally { reader.releaseLock(); }
-  return new URLSearchParams(Buffer.concat(chunks, bytes).toString('utf8'));
+  }
+  return Buffer.concat(chunks);
+}
+
+/** ¿La parte `attachment` trae un filename no vacío en su cabecera? Las cabeceras acaban en la primera línea en blanco de cada parte. */
+function attachmentPartNamed(body: Buffer, contentType: string): boolean {
+  const boundary = /boundary=(?:"([^"]+)"|([^;\s]+))/i.exec(contentType);
+  if (!boundary) return false;
+  return body.toString('latin1').split(`--${boundary[1] ?? boundary[2]}`).some(part => {
+    const header = part.split('\r\n\r\n', 1)[0]!;
+    return /^\r\ncontent-disposition:[^\r\n]*name="attachment"/i.test(header) && /filename="[^"]/i.test(header);
+  });
+}
+
+const NOTE_REQUEST_LIMIT = 80 * 1024;
+type RawFile = { name: string; bytes: Uint8Array };
+
+async function readForm(req: Request, limit = 16384, multipart = false): Promise<{ form: URLSearchParams; file?: RawFile }> {
+  const type = req.headers.get('content-type')?.split(';')[0]?.trim().toLowerCase();
+  if (type === 'multipart/form-data' && multipart) {
+    const bytes = await readBody(req, NOTE_REQUEST_LIMIT);
+    let data: FormData;
+    try { data = await new Response(new Uint8Array(bytes), { headers: { 'content-type': req.headers.get('content-type')! } }).formData(); }
+    catch { throw new InputError(400, 'Formulario multipart inválido.'); }
+    const form = new URLSearchParams(); let file: RawFile | undefined; const seen = new Set<string>();
+    for (const [key, value] of data.entries() as IterableIterator<[string, string | File]>) {
+      // Una parte desconocida o repetida invalida todo el envío.
+      if (seen.has(key) || !['csrf', 'body', 'attachment'].includes(key)) throw new InputError(400, 'Formulario multipart inválido.');
+      seen.add(key);
+      if (key === 'attachment') {
+        if (typeof value === 'string') throw new InputError(400, 'El adjunto debe ser un archivo.');
+        // El navegador manda una parte vacía sin nombre si no se eligió archivo. Bun pierde el nombre de un archivo vacío:
+        // se mira la cabecera de la parte attachment (nunca el texto de otras partes).
+        if (!value.name && value.size === 0) {
+          if (attachmentPartNamed(bytes, req.headers.get('content-type')!)) throw new InputError(400, 'El adjunto debe ocupar entre 1 y 65 536 bytes.');
+          continue;
+        }
+        file = { name: value.name ?? '', bytes: new Uint8Array(await value.arrayBuffer()) };
+      } else if (typeof value !== 'string') throw new InputError(400, 'Formulario multipart inválido.');
+      else form.set(key, value);
+    }
+    return { form, file };
+  }
+  if (type !== 'application/x-www-form-urlencoded') throw new InputError(415, multipart ? 'Solo se admite application/x-www-form-urlencoded o multipart/form-data.' : 'Solo se admite application/x-www-form-urlencoded.');
+  return { form: new URLSearchParams((await readBody(req, limit)).toString('utf8')) };
 }
 
 function automationFailure(stateDir: string, mode: NonNullable<Action['automationForm']>, id: string, csrf: string, fields: Raw, error: InputError): Response {
@@ -534,8 +584,10 @@ export async function webAction(req: Request, stateDir: string, port: number, au
   const action = name ? ACTIONS[name] : undefined;
   const fields: Raw = Object.create(null);
   try {
-    const form = await readForm(req, profilePath ? PROFILE_BODY_LIMIT : action?.automationForm ? AUTOMATION_FORM_LIMIT : 16384);
+    const { form, file } = await readForm(req, profilePath ? PROFILE_BODY_LIMIT : action?.automationForm ? AUTOMATION_FORM_LIMIT : 16384, name === 'changes/note');
     if (!auth.validCsrf(req, form.get('csrf') ?? '')) return new Response('CSRF rechazado.', { status: 403 });
+    const invalid = file && validateNoteAttachment(file);
+    if (invalid) throw new InputError(400, invalid);
     if (profilePath) {
       ({ destination, result } = profileAction(stateDir, profilePath[1] as 'guardar' | 'asignar', form));
       auth.rememberNotice(req, destination.split('?')[0]!, result);
@@ -563,7 +615,7 @@ export async function webAction(req: Request, stateDir: string, port: number, au
       delete fields.csrf;
       if (repeated) throw new InputError(400, 'El formulario contiene campos repetidos.');
     }
-    ({ destination, result } = await performAction(stateDir, name, id, fields, 'web'));
+    ({ destination, result } = await performAction(stateDir, name, id, fields, 'web', file));
     if (action.httpErrors && result !== 'ok') {
       const status = result === 'conflict' ? 409 : result === 'not_found' ? 404 : result === 'invalid_input' ? 400 : 500;
       return inertPage(runnerErrors[result] ?? 'No se pudo guardar el runner', status, '', { href: '/workstreams', text: 'Volver a workstreams' });

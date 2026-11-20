@@ -142,7 +142,7 @@ Estado en ${STATE_DIR} (cambiar con FABRICA_HOME). Agente predeterminado: native
 Agentes: ${AGENT_NAMES.join(', ')}`;
 
 function openStore(): Store {
-  mkdirSync(STATE_DIR, { recursive: true });
+  mkdirSync(STATE_DIR, { recursive: true, mode: 0o700 });
   return new Store(resolve(STATE_DIR, 'fabrica.db'));
 }
 
@@ -172,7 +172,7 @@ async function main(argv: string[]): Promise<number> {
   if (argv[0] === 'web') return webMain(argv.slice(1), STATE_DIR);
   if (argv[0] === 'jira' || argv[0] === 'pr') return connectorsMain(argv[0], argv.slice(1));
   if (argv[0] === 'agents') return agentsMain(argv.slice(1));
-  if (argv[0] === 'profile') { mkdirSync(STATE_DIR, { recursive: true }); return profileMain(argv.slice(1), STATE_DIR); }
+  if (argv[0] === 'profile') { mkdirSync(STATE_DIR, { recursive: true, mode: 0o700 }); return profileMain(argv.slice(1), STATE_DIR); }
   if (argv[0] === 'api-key') {
     const store = openStore();
     try { return apiKeyMain(argv.slice(1), store); } finally { store.close(); }

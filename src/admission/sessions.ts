@@ -5,7 +5,7 @@ import { randomUUID } from 'node:crypto';
 import { MAX_ACTIVITY_RETRIES } from '../enums.ts';
 import { SessionNotFoundError } from '../live/contract.ts';
 import { buildWorkerPrompt, notesBlock, type WorkerTemplates } from '../prompts.ts';
-import type { Activity, Store } from '../store.ts';
+import type { Activity, HistoricalNoteBody, ReservedChangeNote, Store } from '../store.ts';
 import { isChannelChange } from './channel.ts';
 import type { AdmissionDb } from './db.ts';
 
@@ -108,13 +108,16 @@ export function questionsBlock(adm: AdmissionDb, changeId: string): string {
     `- Question: ${r.text}\n  ${r.status === 'answered' ? `Answer (${r.answered_by ?? 'human'}): ${r.answer ?? ''}` : `(${r.status}, no answer)`}`).join('\n');
 }
 
-/** Prompt para sustituir una sesión perdida: activity, preguntas y respuestas, y todas las notas del dueño. */
-export function reconstructPrompt(store: Store, adm: AdmissionDb, activityId: string, ctx: { worktree: string; branch: string; factoryCommits?: boolean; templates?: WorkerTemplates }): string {
+/** Prompt para sustituir una sesión perdida: activity, preguntas y respuestas, y las notas históricas o reservadas para este intento. */
+export function reconstructPrompt(store: Store, adm: AdmissionDb, activityId: string, ctx: { worktree: string; branch: string; factoryCommits?: boolean; templates?: WorkerTemplates }, reserved: ReservedChangeNote[] = [], historical?: HistoricalNoteBody[]): string {
   const { activity, change, history } = store.activityContext(activityId);
   // B1: igual que el prompt del pool, el texto de un change de canal sale delimitado y con las plantillas del perfil.
   const prompt = buildWorkerPrompt({ workstream: store.getWorkstream(activity.workstreamId), change, activity, history, worktree: ctx.worktree, branch: ctx.branch,
     untrusted: isChannelChange(adm, change.id) }, { factoryCommits: ctx.factoryCommits }, ctx.templates);
-  return `${prompt}${questionsBlock(adm, change.id)}${notesBlock(store.listChangeNotes(change.id))}\n\n# Resumed work\nA previous session for this activity was lost. Inspect the working tree (git status, git log) to see what is already done and continue from there; do not start over.`;
+  const notes = new Map<string, HistoricalNoteBody | ReservedChangeNote>(
+    (historical ?? store.listHistoricalNoteBodies(change.id)).map(note => [note.id, note]));
+  for (const note of reserved) notes.set(note.id, note);
+  return `${prompt}${questionsBlock(adm, change.id)}${notesBlock([...notes.values()])}\n\n# Resumed work\nA previous session for this activity was lost. Inspect the working tree (git status, git log) to see what is already done and continue from there; do not start over.`;
 }
 
 /**

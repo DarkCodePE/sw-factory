@@ -3,6 +3,7 @@
 import { existsSync, mkdirSync, mkdtempSync, realpathSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { dirname, join, resolve } from 'node:path';
+import { withinMount, writableMounts } from './mounts.ts';
 import { agentEnv, type AgentEnvInput } from './env.ts';
 
 /** Adaptadores que corren confinados; el perfil exige uno de ellos a los jueces. */
@@ -19,18 +20,6 @@ export function assertConfinement(agent: string): string {
 
 const MCP_CONFIG_IN_SANDBOX = '/opt/fab-mcp/mcp.json';
 
-/** What the sandbox mounts writable: the worktree plus its Git metadata when that lives outside it (linked worktrees; no source checkout or state dir). */
-function writableMounts(worktree: string): string[] {
-  const writable = [worktree];
-  for (const flag of ['--absolute-git-dir', '--git-common-dir']) {
-    const p = Bun.spawnSync(['git', '-C', worktree, 'rev-parse', flag]);
-    if (p.exitCode !== 0) throw new Error('--confine: no se pudo resolver .git');
-    const path = realpathSync(resolve(worktree, p.stdout.toString().trim()));
-    if (!path.startsWith(worktree + '/')) writable.push(path);
-  }
-  return writable;
-}
-
 /**
  * Creates a host-owned dir (it will hold the turn token or be mounted) and fails closed unless no component of its path is a symlink
  * and it lies outside every writable mount. Else an agent could swap the dir (or an ancestor) for a symlink and make the host write/mount anywhere (T40, T41).
@@ -39,7 +28,7 @@ export function hostDir(dir: string, cwd: string): string {
   mkdirSync(dir, { recursive: true, mode: 0o700 });
   const real = realpathSync(dir);
   if (real !== resolve(dir)) throw new Error(`${dir}: la ruta contiene un symlink`);
-  if (writableMounts(realpathSync(cwd)).some(w => real === w || real.startsWith(w + '/'))) throw new Error(`${dir} cae dentro de un montaje escribible del sandbox`);
+  if (writableMounts(realpathSync(cwd)).some(w => withinMount(real, w))) throw new Error(`${dir} cae dentro de un montaje escribible del sandbox`);
   return real;
 }
 

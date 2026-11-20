@@ -17,12 +17,15 @@ const post = (data: Record<string, string> = {}, headers: Record<string, string>
   body: new URLSearchParams({ csrf, ...data }),
 });
 const notes = () => store.listChangeNotes(change);
+let repo: string;
 beforeEach(async () => {
   dir = mkdtempSync('/tmp/fab-web-notes-'); store = new Store(join(dir, 'fabrica.db'));
-  change = store.createChange(store.createWorkstream({ slug: 'p', goal: 'g', repo: '/repo' }).id, 'Change', 'd').id;
+  // Un repo real y ajeno al estado: la comprobación de adjuntos consulta sus worktrees.
+  repo = mkdtempSync('/tmp/fab-web-notes-repo-'); Bun.spawnSync(['git', 'init', '-q', repo]);
+  change = store.createChange(store.createWorkstream({ slug: 'p', goal: 'g', repo }).id, 'Change', 'd').id;
   server = startWeb(dir, 0, { write: true }); await login();
 });
-afterEach(() => { server?.stop(true); store?.close(); rmSync(dir, { recursive: true, force: true }); });
+afterEach(() => { server?.stop(true); store?.close(); rmSync(dir, { recursive: true, force: true }); rmSync(repo, { recursive: true, force: true }); });
 
 test('A5: sin --write no hay formulario y el POST da 405', async () => {
   server.stop(true); server = startWeb(dir, 0);
@@ -105,4 +108,169 @@ test('T56c-H3: sin turno previsto lo dice, y el actor de la lista se escapa', as
   store.db.query('UPDATE change_notes SET actor = ? WHERE change_id = ?').run('<b>ana</b>', change);
   const page = await html();
   expect(page).toContain('&lt;b&gt;ana&lt;/b&gt;'); expect(page).not.toContain('<b>ana</b>');
+});
+
+test('el selector y el aviso de transferencia preceden a guardar, y un runner SSH oculta el selector', async () => {
+  const page = await html();
+  expect(page).toContain('enctype="multipart/form-data"');
+  expect(page).toContain('type="file" name="attachment" accept=".txt,.md,.log,.json,.csv"');
+  expect(page).toContain('64 KiB');
+  expect(page.indexOf('proveedor del modelo')).toBeLessThan(page.indexOf('Guardar nota'));
+  expect(page).toContain('proveedor del modelo');
+  const ws = store.getChange(change).workstreamId;
+  store.createRunner({ name: 'remoto', kind: 'ssh', target: 'runner-ssh' });
+  store.setWorkstreamRunner(ws, 'remoto');
+  expect(await html()).toContain('El runner asignado es remoto');
+  expect(await html()).not.toContain('name="attachment"');
+});
+
+test('la vista escapa el nombre que guarda SQLite y muestra tamaño y estado, sin mostrar contenido', async () => {
+  const n = store.addChangeNote(change, 'nota con archivo');
+  store.db.query('UPDATE change_notes SET attachment_name = ?, attachment_bytes = ? WHERE id = ?')
+    .run('<b>datos</b>.txt', new TextEncoder().encode('CANARIO ARCHIVO PRIVADO'), n.id);
+  const page = await html();
+  expect(page).toContain('&lt;b&gt;datos&lt;/b&gt;.txt');
+  expect(page).toContain('23 bytes');
+  expect(page).toContain('Pendiente de entrega');
+  expect(page).toContain('turno local confinado');
+  expect(page).not.toContain('<b>datos</b>');
+  expect(page).not.toContain('CANARIO ARCHIVO PRIVADO');
+  store.db.query('UPDATE change_notes SET delivered_at = ? WHERE id = ?').run(store.now(), n.id);
+  const delivered = await html();
+  expect(delivered).toMatch(/Entregada <time>/);
+  expect(delivered).not.toContain('CANARIO ARCHIVO PRIVADO');
+});
+
+// T96d: recepción multipart acotada.
+const origin = () => `http://${server.host ?? '127.0.0.1'}:${server.port}`;
+type Part = { name: string; value: string | Uint8Array; filename?: string; type?: string };
+function multipart(parts: Part[]): { body: Uint8Array<ArrayBuffer>; type: string } {
+  const b = 'XBOUNDARYT96', enc = new TextEncoder(), out: Uint8Array[] = [];
+  for (const p of parts) {
+    out.push(enc.encode(`--${b}\r\nContent-Disposition: form-data; name="${p.name}"${p.filename !== undefined ? `; filename="${p.filename}"` : ''}\r\n${p.type ? `Content-Type: ${p.type}\r\n` : ''}\r\n`));
+    out.push(typeof p.value === 'string' ? enc.encode(p.value) : p.value, enc.encode('\r\n'));
+  }
+  out.push(enc.encode(`--${b}--\r\n`));
+  return { body: new Uint8Array(Buffer.concat(out)), type: `multipart/form-data; boundary=${b}` };
+}
+const upload = (parts: Part[], headers: Record<string, string> = {}, chunked = false) => {
+  const { body, type } = multipart(parts);
+  const payload = chunked ? new ReadableStream({ start(c) { c.enqueue(body); c.close(); } }) : new Blob([body]);
+  return req(`/changes/${change}/note`, { method: 'POST', headers: { cookie, origin: origin(), 'content-type': type, ...headers }, body: payload, ...(chunked ? { duplex: 'half' } : {}) } as RequestInit);
+};
+const file = (name = 'datos.txt', value: string | Uint8Array = 'contenido de consulta'): Part => ({ name: 'attachment', value, filename: name, type: 'text/plain' });
+const base = (): Part[] => [{ name: 'csrf', value: csrf }, { name: 'body', value: 'con archivo' }];
+
+test('T96d: multipart válido guarda nota y adjunto; el evento y la página no llevan bytes ni nombre crudo', async () => {
+  const r = await upload([...base(), file()]);
+  expect(r.status).toBe(303); expect(r.headers.get('location')).toBe(`/changes/${change}`);
+  expect(notes()).toMatchObject([{ body: 'con archivo', attachment: { name: 'datos.txt', size: 21 } }]);
+  const events = store.db.query('SELECT message FROM events').all().map((e: any) => e.message).join('\n');
+  expect(events).not.toContain('datos.txt'); expect(events).not.toContain('contenido de consulta');
+  expect(await html()).not.toContain('contenido de consulta');
+});
+
+test('T96d: parte de archivo vacía sin nombre (sin elegir) guarda solo la nota; también sin Content-Length', async () => {
+  expect((await upload([...base(), { name: 'attachment', value: '', filename: '' }])).status).toBe(303);
+  expect(notes()).toMatchObject([{ body: 'con archivo' }]); expect(notes()[0]!.attachment).toBeUndefined();
+  expect((await upload([...base(), file()], {}, true)).status).toBe(303);
+  expect(notes()).toHaveLength(2);
+});
+
+test('T96d: formulario urlencoded antiguo sigue funcionando', async () => {
+  expect((await post({ body: 'antigua' })).status).toBe(303);
+  expect(notes()).toMatchObject([{ body: 'antigua' }]);
+});
+
+test('T96d: nombres hostiles, extensión, binario, UTF-8 roto y exceso se rechazan sin escribir', async () => {
+  const bad: Part[] = [
+    file('../datos.txt'), file('a/datos.txt'), file('/etc/datos.txt'), file('datos.exe'), file('datos'), file('datos.txt '),
+    file('datos.txt', new Uint8Array([0x61, 0, 0x62])), file('datos.txt', new Uint8Array([0xff, 0xfe, 0xfd])),
+    file('datos.txt', 'a'.repeat(65_537)), file('datos.txt', ''),
+  ];
+  for (const f of bad) { const status = (await upload([...base(), f])).status; expect([f.filename, f.value.length, status === 413 ? 400 : status]).toEqual([f.filename, f.value.length, 400]); }
+  expect(notes()).toHaveLength(0);
+});
+
+test('T96d: partes desconocidas, repetidas o con archivo donde va texto se rechazan', async () => {
+  for (const extra of [[{ name: 'otro', value: 'x' }], [file(), file('dos.txt')], [{ name: 'body', value: 'otra' }, file()],
+    [{ name: 'attachment', value: 'texto sin archivo' }], [{ name: 'path', value: '/etc/passwd' }, file()]] as Part[][]) {
+    expect((await upload([...base(), ...extra])).status).toBe(400);
+  }
+  expect((await upload([{ name: 'csrf', value: csrf }, { name: 'body', value: 'x', filename: 'b.txt' }, file()])).status).toBe(400);
+  expect(notes()).toHaveLength(0);
+});
+
+test('T96d: el tope de 80 KiB vale con y sin Content-Length y no escribe nada', async () => {
+  const big = file('datos.txt', 'a'.repeat(90_000));
+  expect((await upload([...base(), big])).status).toBe(413);
+  expect((await upload([...base(), big], {}, true)).status).toBe(413);
+  expect(notes()).toHaveLength(0);
+});
+
+test('T96d: sin sesión 401, Origin o CSRF erróneos 403 y ninguna fila', async () => {
+  expect((await upload([...base(), file()], { cookie: '' })).status).toBe(401);
+  expect((await upload([...base(), file()], { origin: 'http://evil.test' })).status).toBe(403);
+  expect((await upload([{ name: 'csrf', value: 'mal' }, { name: 'body', value: 'x' }, file()])).status).toBe(403);
+  expect(notes()).toHaveLength(0);
+});
+
+test('T96d: multipart solo se admite en la nota; otras acciones dan 415', async () => {
+  const { body, type } = multipart([{ name: 'csrf', value: csrf }, { name: 'confirm', value: 'yes' }]);
+  const r = await req(`/changes/${change}/cancel`, { method: 'POST', headers: { cookie, origin: origin(), 'content-type': type }, body: new Blob([body]) });
+  expect(r.status).toBe(415);
+  expect(store.getChange(change).status).not.toBe('canceled');
+});
+
+test('T96d: la API con clave rechaza multipart y el campo attachment', async () => {
+  const key = store.createApiKey('agente', 'decide').key;
+  const api = (body: BodyInit, type: string) => req(`/api/v1/changes/${change}/note`, { method: 'POST', headers: { authorization: `Bearer ${key}`, 'content-type': type }, body });
+  const { body, type } = multipart([...base(), file()]);
+  expect((await api(new Blob([body]), type)).status).toBe(415);
+  expect((await api(JSON.stringify({ body: 'x', attachment: 'datos.txt' }), 'application/json')).status).toBe(400);
+  expect(notes()).toHaveLength(0);
+});
+
+test('T96-H1/H3: un estado no privado se avisa antes de guardar y el rechazo nombra la causa y el remedio', async () => {
+  const { chmodSync } = await import('node:fs');
+  chmodSync(dir, 0o755);
+  const page = await html();
+  expect(page).toContain('chmod 700'); expect(page).not.toContain('name="attachment"');
+  expect((await upload([...base(), file()])).status).toBe(303);
+  expect(notes()).toHaveLength(0);
+  expect(await html()).toContain('chmod 700');
+  chmodSync(dir, 0o700);
+  expect((await upload([...base(), file()])).status).toBe(303);
+  expect(notes()).toHaveLength(1);
+});
+
+test('T96-H3: un runner remoto rechaza la carga con su motivo, sin código genérico', async () => {
+  store.createRunner({ name: 'remoto', kind: 'ssh', target: 'runner-ssh' });
+  store.setWorkstreamRunner(store.getChange(change).workstreamId, 'remoto');
+  expect((await upload([...base(), file()])).status).toBe(303);
+  expect(notes()).toHaveLength(0);
+  const page = await html();
+  expect(page).toContain('El runner asignado es remoto.'); expect(page).not.toContain('revisa los datos de la acción');
+});
+
+test('T96-H4: un estado no apto se rechaza sin tocar la base ni su WAL', async () => {
+  const { chmodSync, watch } = await import('node:fs');
+  chmodSync(dir, 0o755);
+  const touched: string[] = [];
+  const watcher = watch(dir, (_event, name) => { if (name) touched.push(String(name)); });
+  try {
+    expect((await upload([...base(), file()])).status).toBe(303);
+    await Bun.sleep(100);
+  } finally { watcher.close(); }
+  expect(touched).toEqual([]);
+  expect(notes()).toHaveLength(0);
+});
+
+test('T96-H5: el texto de la nota que imita una cabecera de archivo no se confunde con un archivo vacío', async () => {
+  const mimic = 'x\r\n\r\nContent-Disposition: form-data; name="attachment"; filename="x.txt"\r\n\r\n';
+  const r = await upload([{ name: 'csrf', value: csrf }, { name: 'body', value: mimic }, { name: 'attachment', value: '', filename: '' }]);
+  expect(r.status).toBe(303);
+  expect(notes()).toHaveLength(1);
+  expect(notes()[0]!.attachment).toBeUndefined();
+  expect((await upload([...base(), { name: 'attachment', value: '', filename: 'vacio.txt' }])).status).toBe(400);
 });

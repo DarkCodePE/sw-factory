@@ -1,5 +1,6 @@
 // Worker pool: claims pending activities FIFO, runs one headless agent per activity
 // in the change's worktree, and records the result back in the store.
+import { reserveTurnPrompt } from './note-delivery.ts';
 import { runGates, runSetupAt, type GateStep } from './gates.ts';
 import { createHash, randomUUID } from 'node:crypto';
 import { existsSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
@@ -423,11 +424,15 @@ export async function processActivity(
       }));
       if (!confine) atomicEvidence(activityLog(opts.stateDir, change.id, a.id), `${run.stdout ?? ''}${run.stderr ?? ''}`);
     } else {
-      let notes = '';
+      let turnPrompt = prompt;
       if (role === 'investigate' || role === 'implement') {
         const attemptId = randomUUID();
-        notes = notesBlock(store.reserveNotes(change.id, a.id, attemptId));
-        if (notes) notesAttemptId = attemptId;
+        const delivery = reserveTurnPrompt(store, a, attemptId, {
+          cwd: path, remote: !!remote, confine, adapter, promptStdin: agent.promptStdin,
+          persistentMounts: [join(resolve(opts.stateDir), 'live')],
+        }, notes => prompt + notesBlock(notes));
+        turnPrompt = delivery.prompt;
+        if (delivery.reserved) notesAttemptId = attemptId;
       }
       if (remote) {
         const head = gitEvidence(path, 'rev-parse', 'HEAD');
@@ -437,7 +442,7 @@ export async function processActivity(
         try {
           const done = await runRemoteAgent({ name: remote.name, target: remote.target! }, {
             activityId: a.id, attempt, adapter, model, readOnly, expectChanges: !a.validator && a.kind === 'implementation',
-            prompt: prompt + notes, repo: ws.repo, worktree: path, head, base: baseSha, timeoutMs: turnTimeoutMs(opts) ?? 20 * 60_000,
+            prompt: turnPrompt, repo: ws.repo, worktree: path, head, base: baseSha, timeoutMs: turnTimeoutMs(opts) ?? 20 * 60_000,
             ...(typeof remote.options.maxBundleMb === 'number' ? { maxBundleMb: remote.options.maxBundleMb } : {}),
             repoKey: createHash('sha256').update(ws.id).digest('hex'), signal: abortController.signal,
             onSpawn: pgid => store.setActivityAgentPgid(a.id, pgid),
@@ -460,7 +465,7 @@ export async function processActivity(
           log(`[${workerId}] ${a.validator ?? a.kind} runner ${remote.name}: ${err.code}`);
           return;
         }
-      } else run = await runAgent(confine ? agent : captureAgent, prompt + notes, path, turnTimeoutMs(opts), {
+      } else run = await runAgent(confine ? agent : captureAgent, turnPrompt, path, turnTimeoutMs(opts), {
         confine,
         model: model ?? undefined,
         envDecl: access.decl, scrub, mcpConfig: mcpConfigPath,
