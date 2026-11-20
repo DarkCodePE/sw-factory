@@ -98,12 +98,13 @@ test('una entrega sin firma aparece como rechazada sin cuerpo', async () => {
   expect(html).not.toContain('number: 42');
 });
 
-test('lista entregas con su resultado (woke, coalesced, ignored_event, ignored_repo, rejected) y tamaño', async () => {
+test('lista entregas con su resultado (woke, coalesced, ignored_event, ignored_repo) y tamaño', async () => {
   store = new Store(join(dir, 'fabrica.db'));
   const adm = new AdmissionDb(store);
-  const t0 = new Date(Date.now() - 10000).toISOString();
-  const t1 = new Date(Date.now() - 5000).toISOString();
-  const t2 = new Date().toISOString();
+  const t0 = new Date(Date.now() - 15000).toISOString();
+  const t1 = new Date(Date.now() - 10000).toISOString();
+  const t2 = new Date(Date.now() - 5000).toISOString();
+  const t3 = new Date().toISOString();
 
   adm.db.query('INSERT INTO adm_hook_deliveries (delivery_id, event, received_at, bytes, result) VALUES (?, ?, ?, ?, ?)')
     .run('del-woke-1', 'issues', t0, 512, 'woke');
@@ -111,6 +112,8 @@ test('lista entregas con su resultado (woke, coalesced, ignored_event, ignored_r
     .run('del-coal-2', 'issues', t1, 512, 'coalesced');
   adm.db.query('INSERT INTO adm_hook_deliveries (delivery_id, event, received_at, bytes, result) VALUES (?, ?, ?, ?, ?)')
     .run('del-ign-3', 'ping', t2, 64, 'ignored_event');
+  adm.db.query('INSERT INTO adm_hook_deliveries (delivery_id, event, received_at, bytes, result) VALUES (?, ?, ?, ?, ?)')
+    .run('del-repo-4', 'issues', t3, 256, 'ignored_repo');
 
   server = startWeb(dir, 0);
   const html = await getHtml('/webhooks');
@@ -121,8 +124,11 @@ test('lista entregas con su resultado (woke, coalesced, ignored_event, ignored_r
   expect(html).toContain('Coalescida');
   expect(html).toContain('del-ign-3');
   expect(html).toContain('Evento ignorado');
+  expect(html).toContain('del-repo-4');
+  expect(html).toContain('Repo ignorado');
   expect(html).toContain('512 B');
   expect(html).toContain('64 B');
+  expect(html).toContain('256 B');
 });
 
 test('muestra el estado del receptor activo si hay lock vivo e inactivo si no hay lock', async () => {
@@ -168,16 +174,76 @@ test('búsqueda por ID, evento o resultado filtra la lista de entregas', async (
 
   server = startWeb(dir, 0);
 
+  // Búsqueda por ID exacto o parcial
+  const searchId = await getHtml('/webhooks?q=uuid-alpha');
+  expect(searchId).toContain('del-uuid-alpha');
+  expect(searchId).not.toContain('del-uuid-beta');
+
+  // Búsqueda por evento
   const searchEvent = await getHtml('/webhooks?q=comment');
   expect(searchEvent).toContain('del-uuid-beta');
   expect(searchEvent).not.toContain('del-uuid-alpha');
 
+  // Búsqueda por resultado crudo (woke)
+  const searchRawResult = await getHtml('/webhooks?q=woke');
+  expect(searchRawResult).toContain('del-uuid-alpha');
+  expect(searchRawResult).not.toContain('del-uuid-beta');
+
+  // Búsqueda por resultado formateado o etiqueta
   const searchResult = await getHtml('/webhooks?q=ignored_repo');
   expect(searchResult).toContain('del-uuid-beta');
   expect(searchResult).not.toContain('del-uuid-alpha');
 
   const searchNone = await getHtml('/webhooks?q=inexistente');
   expect(searchNone).toContain('Ninguna entrega coincide con la búsqueda.');
+});
+
+test('escapa el valor del parámetro de búsqueda q en el input del formulario contra XSS', async () => {
+  store = new Store(join(dir, 'fabrica.db'));
+  new AdmissionDb(store);
+  server = startWeb(dir, 0);
+
+  const maliciousQ = '"><script>alert("xss")</script>';
+  const html = await getHtml(`/webhooks?q=${encodeURIComponent(maliciousQ)}`);
+  expect(html).not.toContain(maliciousQ);
+  expect(html).toContain('&quot;&gt;&lt;script&gt;alert(&quot;xss&quot;)&lt;/script&gt;');
+});
+
+test('lista entregas en orden descendente por fecha de recepción', async () => {
+  store = new Store(join(dir, 'fabrica.db'));
+  const adm = new AdmissionDb(store);
+  const tOld = new Date(Date.now() - 60_000).toISOString();
+  const tNew = new Date(Date.now()).toISOString();
+
+  adm.db.query('INSERT INTO adm_hook_deliveries (delivery_id, event, received_at, bytes, result) VALUES (?, ?, ?, ?, ?)')
+    .run('del-first-earlier', 'issues', tOld, 100, 'woke');
+  adm.db.query('INSERT INTO adm_hook_deliveries (delivery_id, event, received_at, bytes, result) VALUES (?, ?, ?, ?, ?)')
+    .run('del-second-later', 'issues', tNew, 100, 'woke');
+
+  server = startWeb(dir, 0);
+  const html = await getHtml('/webhooks');
+  const posNew = html.indexOf('del-second-later');
+  const posOld = html.indexOf('del-first-earlier');
+  expect(posNew).toBeGreaterThan(-1);
+  expect(posOld).toBeGreaterThan(-1);
+  expect(posNew).toBeLessThan(posOld);
+});
+
+test('resumen de últimas 24h contabiliza solo entregas dentro de la ventana de 24 horas', async () => {
+  store = new Store(join(dir, 'fabrica.db'));
+  const adm = new AdmissionDb(store);
+  const inside24h = new Date(Date.now() - 3600_000).toISOString();
+  const outside24h = new Date(Date.now() - 100_000_000).toISOString();
+
+  adm.db.query('INSERT INTO adm_hook_deliveries (delivery_id, event, received_at, bytes, result) VALUES (?, ?, ?, ?, ?)')
+    .run('del-recent', 'issues', inside24h, 100, 'woke');
+  adm.db.query('INSERT INTO adm_hook_deliveries (delivery_id, event, received_at, bytes, result) VALUES (?, ?, ?, ?, ?)')
+    .run('del-ancient', 'issues', outside24h, 100, 'ignored_event');
+
+  server = startWeb(dir, 0);
+  const html = await getHtml('/webhooks');
+  expect(html).toContain('Aceptada (despertó): 1');
+  expect(html).not.toContain('Evento ignorado: 1');
 });
 
 test('escapa caracteres peligrosos en ID y evento contra XSS', async () => {
