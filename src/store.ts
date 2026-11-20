@@ -3,7 +3,7 @@
 // cannot double-claim or overwrite each other's results.
 import { DEFAULT_DIGEST, resolveProfile } from './profile.ts';
 import { Database } from 'bun:sqlite';
-import { randomUUID } from 'node:crypto';
+import { createHash, randomBytes, randomUUID, timingSafeEqual } from 'node:crypto';
 import { userInfo } from 'node:os';
 import { closeSync, existsSync, fstatSync, openSync, readFileSync } from 'node:fs';
 import { dirname, resolve } from 'node:path';
@@ -116,6 +116,20 @@ type AutomationRun =
   | { result: 'created'; signalId: string }
   | { result: 'skipped_open' | 'skipped_inactive'; signalId?: never };
 
+type ApiKeyScope = 'read' | 'decide';
+
+interface ApiKeyIdentity {
+  id: string;
+  name: string;
+  scope: ApiKeyScope;
+}
+
+interface ApiKeyMetadata extends ApiKeyIdentity {
+  createdAt: string;
+  createdBy: string;
+  revokedAt: string | null;
+}
+
 export interface Change {
   id: string;
   workstreamId: string;
@@ -203,6 +217,14 @@ CREATE TABLE IF NOT EXISTS automations (
   last_result TEXT,
   last_signal_id TEXT,
   UNIQUE (workstream_id, name));
+CREATE TABLE IF NOT EXISTS api_keys (
+  id TEXT PRIMARY KEY,
+  name TEXT NOT NULL UNIQUE,
+  scope TEXT NOT NULL CHECK (scope IN ('read','decide')),
+  hash TEXT NOT NULL,
+  created_at TEXT NOT NULL,
+  created_by TEXT NOT NULL,
+  revoked_at TEXT);
 CREATE TABLE IF NOT EXISTS changes (
   id TEXT PRIMARY KEY, workstream_id TEXT NOT NULL REFERENCES workstreams(id) ON DELETE CASCADE,
   title TEXT NOT NULL, description TEXT NOT NULL, status TEXT NOT NULL, branch TEXT,
@@ -938,6 +960,73 @@ export class Store {
       }
       return notes.length;
     });
+  }
+
+  // ---- claves de API -----------------------------------------------------
+
+  createApiKey(name: string, scope: ApiKeyScope): { id: string; key: string } {
+    if (typeof name !== 'string' || !/^[a-z0-9][a-z0-9-]{0,40}$/.test(name)) {
+      throw new StoreError('invalid_input', 'nombre de clave API inválido');
+    }
+    if (scope !== 'read' && scope !== 'decide') {
+      throw new StoreError('invalid_input', 'ámbito de clave API inválido');
+    }
+    return this.withRetry(() => {
+      if (this.db.query('SELECT 1 FROM api_keys WHERE name = ?').get(name)) {
+        throw new StoreError('conflict', 'ya existe una clave API con ese nombre');
+      }
+      const { count } = this.db.query<{ count: number }, []>(
+        'SELECT COUNT(*) AS count FROM api_keys WHERE revoked_at IS NULL',
+      ).get()!;
+      if (count >= 20) {
+        throw new StoreError('limit_reached', 'ya hay 20 claves API activas');
+      }
+      const id = randomBytes(6).toString('hex');
+      const secret = randomBytes(32).toString('base64url');
+      const hash = createHash('sha256').update(secret).digest('hex');
+      this.db.query(
+        `INSERT INTO api_keys (id, name, scope, hash, created_at, created_by) VALUES (?,?,?,?,?,?)`,
+      ).run(id, name, scope, hash, this.now(), process.env.FAB_ACTOR ?? userInfo().username);
+      return { id, key: `fabk_${id}_${secret}` };
+    });
+  }
+
+  listApiKeys(): ApiKeyMetadata[] {
+    if (!this.hasApiKeysTable()) return [];
+    return this.db.query<ApiKeyMetadata, []>(
+      `SELECT id, name, scope, created_at AS createdAt, created_by AS createdBy, revoked_at AS revokedAt
+       FROM api_keys ORDER BY created_at, name`,
+    ).all();
+  }
+
+  revokeApiKey(idOrName: string): void {
+    this.withRetry(() => {
+      // Si un nombre coincide con el id de otra clave, el id tiene prioridad.
+      const { changes } = this.db.query(
+        `UPDATE api_keys SET revoked_at = COALESCE(revoked_at, ?)
+         WHERE id = (SELECT id FROM api_keys WHERE id = ? OR name = ? ORDER BY (id = ?) DESC LIMIT 1)`,
+      ).run(this.now(), idOrName, idOrName, idOrName);
+      if (changes === 0) throw new StoreError('not_found', 'clave API no encontrada');
+    });
+  }
+
+  verifyApiKey(key: string): ApiKeyIdentity | null {
+    const match = /^fabk_([a-f0-9]{12})_([A-Za-z0-9_-]{43})$/.exec(key);
+    if (!match || !this.hasApiKeysTable()) return null;
+    const [, id, secret] = match;
+    const row = this.db.query<ApiKeyIdentity & { hash: string }, [string]>(
+      'SELECT id, name, scope, hash FROM api_keys WHERE id = ? AND revoked_at IS NULL',
+    ).get(id!);
+    if (!row) return null;
+    const stored = Buffer.from(row.hash);
+    const candidate = Buffer.from(createHash('sha256').update(secret!).digest('hex'));
+    if (stored.length !== candidate.length || !timingSafeEqual(stored, candidate)) return null;
+    return { id: row.id, name: row.name, scope: row.scope };
+  }
+
+  private hasApiKeysTable(): boolean {
+    // Un lector puede abrir una base anterior a esta tabla sin migrarla.
+    return this.db.query("SELECT 1 FROM sqlite_schema WHERE type = 'table' AND name = 'api_keys'").get() !== null;
   }
 
   // ---- activities --------------------------------------------------------
