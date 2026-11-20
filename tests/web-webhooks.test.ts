@@ -90,12 +90,27 @@ test('una entrega sin firma aparece como rechazada sin cuerpo', async () => {
   server = startWeb(dir, 0);
   const html = await getHtml('/webhooks');
 
-  // La web debe reflejar el rechazo por falta de firma
-  expect(html).toContain('Entregas rechazadas (sin firma)');
-  expect(html).toContain('1');
+  // La web debe reflejar exactamente la celda de rechazo con contador 1 y fecha
+  expect(html).toMatch(/<dt>Entregas rechazadas[^<]*<\/dt><dd>1 \(última: <time>/);
   // Invariante de seguridad: ningún cuerpo de petición se guarda ni se publica
   expect(html).not.toContain('opened');
   expect(html).not.toContain('number: 42');
+
+  // Enviar dos rechazos más y verificar que el contador incrementa a 3
+  const hook2 = startHook({
+    port: 0,
+    secret: SECRET_CANARY,
+    repo: 'owner/repo',
+    adm,
+    wake: () => {},
+    now: () => Date.now(),
+  });
+  await fetch(`http://127.0.0.1:${hook2.port}/github`, { method: 'POST', body: 'rechazo-2' });
+  await fetch(`http://127.0.0.1:${hook2.port}/github`, { method: 'POST', body: 'rechazo-3' });
+  hook2.stop();
+
+  const html2 = await getHtml('/webhooks');
+  expect(html2).toMatch(/<dt>Entregas rechazadas[^<]*<\/dt><dd>3 \(última: <time>/);
 });
 
 test('lista entregas con su resultado (woke, coalesced, ignored_event, ignored_repo) y tamaño', async () => {

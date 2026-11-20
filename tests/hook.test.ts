@@ -35,7 +35,7 @@ function setup(over: { repo?: string } = {}) {
 }
 
 test('B2: sin firma, sha1, hex de otra longitud, otro secreto o cuerpo alterado: 401, sin fila y sin despertar', async () => {
-  const { post, rows, woke } = setup();
+  const { post, rows, woke, adm } = setup();
   const body = payload(), hex = sign(body).slice(7);
   for (const sig of [null, `sha1=${hex.slice(0, 40)}`, `sha256=${hex}00`, sign(body, 'otro-secreto-largo-1'), sign(body + ' ')]) {
     const res = await post({ body, sig });
@@ -44,6 +44,14 @@ test('B2: sin firma, sha1, hex de otra longitud, otro secreto o cuerpo alterado:
   }
   expect(rows()).toEqual([]);
   expect(woke.n).toBe(0);
+  expect(adm.getRejectedHooks().count).toBe(5);
+
+  // 404, 405 y entregas firmadas no incrementan el contador de rechazos
+  await post({ path: '/otra-ruta' });
+  await post({ method: 'GET' });
+  expect(adm.getRejectedHooks().count).toBe(5);
+  await post(); // entrega válida 202
+  expect(adm.getRejectedHooks().count).toBe(5);
 });
 
 test('entrega válida: 202 sin cuerpo, una fila con solo metadatos y un despertar', async () => {
