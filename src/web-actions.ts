@@ -2,6 +2,7 @@
 import { createHash } from 'node:crypto';
 import { join } from 'node:path';
 import { Store, StoreError } from './store.ts';
+import { validateNoteAttachment, type NoteAttachment } from './note-attachments.ts';
 import { linkTriagedSignal } from './admission/apply.ts';
 import { removeWorktree } from './worktrees.ts';
 import { SIGNAL_BODY_MAX, SIGNAL_TITLE_MAX } from './web-signals.ts';
@@ -22,7 +23,7 @@ const escape = (s: string) => redact(s).replace(/[&<>"']/g, c => ({ '&': '&amp;'
 const messages: Record<string, string> = {
   ok: 'Acción registrada.', conflict: 'conflict: el estado cambió o la acción ya se aplicó. Revisa el estado actual.',
   invalid_transition: 'invalid_transition: esta acción no corresponde al estado actual.',
-  limit_reached: 'limit_reached: el change ya tiene 20 notas sin entregar.',
+  limit_reached: 'limit_reached: el change alcanzó el límite de notas (20) o de adjuntos pendientes (64 KiB) o históricos (1 MiB).',
   skipped_open: 'Saltada: ya hay una señal o un change abierto de esta automation; no se creó ninguna señal.',
   skipped_inactive: 'Saltada: el workstream no está activo; no se creó ninguna señal.',
   not_found: 'not_found: no se encontró el registro.', invalid_input: 'invalid_input: revisa los datos de la acción.',
@@ -74,7 +75,7 @@ export class InputError extends Error {
 
 type Raw = Record<string, string | undefined>;
 type Outcome = { destination: string; result: string; repo?: string };
-type Action = { path: RegExp; /** false: solo la web con sesión; la API con clave no la expone (decisión del dueño sobre H1). */ api?: false; input: (raw: Raw) => Raw; run: (store: Store, id: string, input: Raw, out: Outcome, actor: string, stateDir: string) => void };
+type Action = { path: RegExp; /** false: solo la web con sesión; la API con clave no la expone (decisión del dueño sobre H1). */ api?: false; input: (raw: Raw) => Raw; run: (store: Store, id: string, input: Raw, out: Outcome, actor: string, stateDir: string, attachment?: NoteAttachment) => void };
 
 const text = (raw: Raw, key: string) => raw[key] ?? '';
 const limit = (value: string, max = 8192) => { if (Buffer.byteLength(value) > max) throw new InputError(413, 'El texto supera 8 KiB.'); };
@@ -122,10 +123,11 @@ export const ACTIONS: Record<string, Action> = {
   },
   'changes/note': {
     path: route('changes', 'note'),
-    input: pick('body'),
-    run: (store, id, input, out) => {
+    // El adjunto solo entra por multipart en la web; la API y el formulario antiguo lo rechazan.
+    input: raw => { if ('attachment' in raw) throw new InputError(400, 'Esta vía no admite adjuntos.'); return pick('body')(raw); },
+    run: (store, id, input, out, _actor, _stateDir, attachment) => {
       store.getChange(id); out.destination = `/changes/${id}`;
-      store.addChangeNote(id, input.body!);
+      store.addChangeNote(id, input.body!, attachment);
     },
   },
   'changes/rename': {
@@ -276,7 +278,7 @@ export const ACTIONS: Record<string, Action> = {
 };
 
 /** Abre el Store escritor, fija el actor y ejecuta una acción. Lanza InputError si la entrada no vale; el resto de fallos van en `result`. */
-export async function performAction(stateDir: string, name: string, id: string, rawInput: Raw, actor: string): Promise<Outcome> {
+export async function performAction(stateDir: string, name: string, id: string, rawInput: Raw, actor: string, attachment?: NoteAttachment): Promise<Outcome> {
   const action = ACTIONS[name];
   if (!action) throw new InputError(404, 'Acción no encontrada.');
   const input = action.input(rawInput);
@@ -287,7 +289,7 @@ export async function performAction(stateDir: string, name: string, id: string, 
     const writer = store;
     // FAB_ACTOR es el patrón del Store. El tramo es síncrono: ningún await expone el actor a otra petición.
     const previous = process.env.FAB_ACTOR; process.env.FAB_ACTOR = actor;
-    try { writer.withRetry(() => action.run(writer, id, input, out, actor, stateDir)); }
+    try { writer.withRetry(() => action.run(writer, id, input, out, actor, stateDir, attachment)); }
     finally { if (previous === undefined) delete process.env.FAB_ACTOR; else process.env.FAB_ACTOR = previous; }
     if (out.repo) { await writer.waitForRelease(id); await removeWorktree(out.repo, stateDir, id); }
   } catch (error) {
@@ -296,18 +298,56 @@ export async function performAction(stateDir: string, name: string, id: string, 
   return out;
 }
 
-async function readForm(req: Request, limit = 16384): Promise<URLSearchParams> {
-  if (req.headers.get('content-type')?.split(';')[0]?.trim().toLowerCase() !== 'application/x-www-form-urlencoded') throw new InputError(415, 'Solo se admite application/x-www-form-urlencoded.');
-  if (Number(req.headers.get('content-length')) > limit) throw new InputError(413, 'El cuerpo es demasiado grande.');
-  // Bun limita la recepción a 16 KiB antes de materializar el cuerpo (startWeb).
-  let body: ArrayBuffer;
-  try { body = await req.arrayBuffer(); }
-  catch (error) {
-    if (error instanceof Error && error.name === 'RequestBodyTooLarge') throw new InputError(413, 'El cuerpo es demasiado grande.');
+/** Lee el cuerpo contando bytes del stream: nunca materializa más de `limit`. */
+async function readBody(req: Request, limit: number): Promise<Buffer> {
+  const tooBig = () => new InputError(413, 'El cuerpo es demasiado grande.');
+  if (Number(req.headers.get('content-length')) > limit) throw tooBig();
+  const chunks: Uint8Array[] = []; let total = 0;
+  try {
+    for await (const chunk of req.body ?? []) {
+      total += chunk.byteLength;
+      // Pasado el tope se descarta sin guardar; Bun acota el resto (maxRequestBodySize) y la conexión queda limpia.
+      if (total <= limit) chunks.push(chunk);
+    }
+    if (total > limit) throw tooBig();
+  } catch (error) {
+    if (error instanceof InputError) throw error;
+    if (error instanceof Error && error.name === 'RequestBodyTooLarge') throw tooBig();
     throw error;
   }
-  if (body.byteLength > limit) throw new InputError(413, 'El cuerpo es demasiado grande.');
-  return new URLSearchParams(Buffer.from(body).toString('utf8'));
+  return Buffer.concat(chunks);
+}
+
+const NOTE_REQUEST_LIMIT = 80 * 1024;
+type RawFile = { name: string; bytes: Uint8Array };
+
+async function readForm(req: Request, limit = 16384, multipart = false): Promise<{ form: URLSearchParams; file?: RawFile }> {
+  const type = req.headers.get('content-type')?.split(';')[0]?.trim().toLowerCase();
+  if (type === 'multipart/form-data' && multipart) {
+    const bytes = await readBody(req, NOTE_REQUEST_LIMIT);
+    let data: FormData;
+    try { data = await new Response(new Uint8Array(bytes), { headers: { 'content-type': req.headers.get('content-type')! } }).formData(); }
+    catch { throw new InputError(400, 'Formulario multipart inválido.'); }
+    const form = new URLSearchParams(); let file: RawFile | undefined; const seen = new Set<string>();
+    for (const [key, value] of data.entries() as IterableIterator<[string, string | File]>) {
+      // Una parte desconocida o repetida invalida todo el envío.
+      if (seen.has(key) || !['csrf', 'body', 'attachment'].includes(key)) throw new InputError(400, 'Formulario multipart inválido.');
+      seen.add(key);
+      if (key === 'attachment') {
+        if (typeof value === 'string') throw new InputError(400, 'El adjunto debe ser un archivo.');
+        // El navegador manda una parte vacía sin nombre si no se eligió archivo. Bun pierde el nombre de un archivo vacío: se mira la cabecera.
+        if (!value.name && value.size === 0) {
+          if (/name="attachment";\s*filename="[^"]/i.test(bytes.toString('latin1'))) throw new InputError(400, 'El adjunto debe ocupar entre 1 y 65 536 bytes.');
+          continue;
+        }
+        file = { name: value.name ?? '', bytes: new Uint8Array(await value.arrayBuffer()) };
+      } else if (typeof value !== 'string') throw new InputError(400, 'Formulario multipart inválido.');
+      else form.set(key, value);
+    }
+    return { form, file };
+  }
+  if (type !== 'application/x-www-form-urlencoded') throw new InputError(415, multipart ? 'Solo se admite application/x-www-form-urlencoded o multipart/form-data.' : 'Solo se admite application/x-www-form-urlencoded.');
+  return { form: new URLSearchParams((await readBody(req, limit)).toString('utf8')) };
 }
 
 export async function webAction(req: Request, stateDir: string, port: number, auth: WebAuth): Promise<Response> {
@@ -316,14 +356,16 @@ export async function webAction(req: Request, stateDir: string, port: number, au
   let destination = '/'; let result = 'ok';
   try {
     const profilePath = /^\/perfiles\/(guardar|asignar)$/.exec(new URL(req.url).pathname);
-    const form = await readForm(req, profilePath ? PROFILE_BODY_LIMIT : 16384);
+    const pathname = new URL(req.url).pathname;
+    const { form, file } = await readForm(req, profilePath ? PROFILE_BODY_LIMIT : 16384, ACTIONS['changes/note']!.path.test(pathname));
     if (!auth.validCsrf(req, form.get('csrf') ?? '')) return new Response('CSRF rechazado.', { status: 403 });
+    const invalid = file && validateNoteAttachment(file);
+    if (invalid) throw new InputError(400, invalid);
     if (profilePath) {
       ({ destination, result } = profileAction(stateDir, profilePath[1] as 'guardar' | 'asignar', form));
       auth.rememberNotice(req, destination.split('?')[0]!, result);
       return new Response(null, { status: 303, headers: { Location: destination } });
     }
-    const pathname = new URL(req.url).pathname;
     const name = Object.keys(ACTIONS).find(n => ACTIONS[n]!.path.test(pathname));
     if (!name) return new Response('Acción no encontrada.', { status: 404 });
     const raw = ACTIONS[name]!.path.exec(pathname)![1]!;
@@ -332,7 +374,7 @@ export async function webAction(req: Request, stateDir: string, port: number, au
     // Con claves repetidas gana la primera, como form.get.
     const fields: Raw = {};
     for (const [k, v] of form) if (!(k in fields)) fields[k] = v;
-    ({ destination, result } = await performAction(stateDir, name, id, fields, 'web'));
+    ({ destination, result } = await performAction(stateDir, name, id, fields, 'web', file));
   } catch (error) {
     if (error instanceof InputError) return new Response(error.message, { status: error.status, headers: error.status === 413 ? { Connection: 'close' } : {} });
     if (error instanceof ProfileInputError) return new Response(error.message, { status: 400 });
