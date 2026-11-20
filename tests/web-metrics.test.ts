@@ -478,6 +478,16 @@ test('T83-H6: dos URLs distintas de PR registran sendos eventos y getChangePrUrl
   expect(store.getChangePrUrl(c.id)).toBe('https://github.com/org/repo/pull/2');
 });
 
+test('T83-H7: recordPrOpened guarda URL canónica normalizada y rechaza barras invertidas o triple barra', () => {
+  const c = store.createChange('uno', 'Change canonical url', '');
+  store.recordPrOpened(c.id, 'HTTPS://GitHub.com/org/repo/pull/1');
+  expect(store.getChangePrUrl(c.id)).toBe('https://github.com/org/repo/pull/1');
+
+  const c2 = store.createChange('uno', 'Change bad urls', '');
+  expect(() => store.recordPrOpened(c2.id, 'https:///x')).toThrow();
+  expect(() => store.recordPrOpened(c2.id, 'https:\\\\h\\\\x')).toThrow();
+});
+
 test('T83-H1: repetir recordPrOpened no duplica el evento ni altera el conteo en metricsDailyPrs', () => {
   const c = store.createChange('uno', 'Change con PR repetido', '');
   store.recordPrOpened(c.id, 'https://github.com/org/repo/pull/1');

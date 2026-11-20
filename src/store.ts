@@ -2020,16 +2020,20 @@ export class Store {
 
   /** Registra el PR abierto como evento de change. La URL debe comenzar por https:// y tener host válido. */
   recordPrOpened(changeId: string, url: string): void {
+    let cleanUrl: string;
     try {
-      const u = new URL(url);
-      if (u.protocol !== 'https:' || !u.hostname) throw new Error();
+      const trimmed = url.trim();
+      if (trimmed.includes('\\')) throw new Error();
+      const u = new URL(trimmed);
+      if (u.protocol !== 'https:' || !u.hostname || trimmed.startsWith('https:///') || trimmed.startsWith('HTTPS:///')) throw new Error();
+      cleanUrl = u.href;
     } catch {
       throw new StoreError('invalid_input', 'la URL del PR debe comenzar por https:// y tener un host válido');
     }
     const c = this.getChange(changeId);
-    const existing = this.db.query("SELECT 1 FROM events WHERE change_id = ? AND message = ?").get(changeId, `pr_opened: ${url}`);
+    const existing = this.db.query("SELECT 1 FROM events WHERE change_id = ? AND message = ?").get(changeId, `pr_opened: ${cleanUrl}`);
     if (existing) return;
-    this.event(c.workstreamId, 'info', `pr_opened: ${url}`, changeId);
+    this.event(c.workstreamId, 'info', `pr_opened: ${cleanUrl}`, changeId);
   }
 
   /** Obtiene la URL del PR asociada a un change, si existe y es https://. Solo lectura local. */
