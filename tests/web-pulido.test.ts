@@ -240,7 +240,7 @@ test('T94: seleccionar todo, marcar y quitar «visto», copiar; el sondeo conser
   const boxes = lis.map(l => l.c);
   const store_ = new Map<string, string>(); const clicks: ((e: unknown) => void)[] = [];
   const copied: string[] = [];
-  const doc = { querySelectorAll: (s: string) => s === '[data-sel]' ? boxes : s === '[data-sel]:checked' ? boxes.filter(b => b.checked) : lis, addEventListener: (_: string, f: (e: unknown) => void) => { clicks.push(f); }, body: {} };
+  const doc = { querySelectorAll: (s: string) => s === '[data-sel]' ? boxes : s === '[data-sel]:checked' ? boxes.filter(b => b.checked) : lis, addEventListener: (_: string, f: (e: unknown) => void) => { clicks.push(f); }, body: {}, querySelector: () => null };
   const win: Record<string, unknown> = {};
   new Function('window', 'document', 'localStorage', 'MutationObserver', 'navigator', INBOX_JS)(win, doc, { getItem: (k: string) => store_.get(k) ?? null, setItem: (k: string, v: string) => store_.set(k, v) }, class { observe() {} }, { clipboard: { writeText: async (v: string) => { copied.push(v); } } });
   const click = (attrs: Record<string, string>) => { const t = { dataset: attrs, textContent: '', matches: (s: string) => Object.keys(attrs).some(k => s.split(',').includes(`[data-${k.replace(/[A-Z]/g, c => `-${c.toLowerCase()}`)}]`)) }; for (const f of clicks) f({ target: { closest: (sel: string) => t.matches(sel) ? t : null } }); return t; };
@@ -315,4 +315,15 @@ test('T94-H4: una casilla con foco no frena el sondeo y el texto de «Copiar id�
   new Function('window', 'document', 'localStorage', 'MutationObserver', 'navigator', INBOX_JS)(win, doc, { getItem: () => null, setItem() {} }, class { observe() {} }, {});
   (win.fabPrepare as (r: unknown) => void)({ querySelectorAll: (s: string) => s === '[data-copy]' ? [received] : [] });
   expect(received.textContent).toBe('Copiado'); // igual al vivo: el <main> no cambia y no se sustituye
+});
+
+test('T97-H1: un adaptador con coma no se parte y un filtro ausente se ve en el selector', async () => {
+  const c = store.createChange(ws, 'Coma', 'd'); const a = store.listActivities({ changeId: c.id })[0]!;
+  store.db.query("UPDATE activities SET agent='uno,dos' WHERE id=?").run(a.id);
+  expect(store.changeIndex().find(x => x.id === c.id)!.agents).toEqual(['uno,dos']);
+  expect(applyQuery(store.changeIndex(), q('agent=dos'))).toHaveLength(0);
+  server = startWeb(dir, 0);
+  expect(await get('/changes')).toContain('<option value="uno,dos">');
+  const html = await get('/changes?agent=nadie');
+  expect(html).toContain('<option value="nadie" selected>'); expect(html).toContain('No hay changes para estos filtros');
 });

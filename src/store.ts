@@ -1090,10 +1090,10 @@ export class Store {
     const count = new Map<string, number>(); const agents = new Map<string, Set<string>>(); const roles = new Map<string, Set<string>>();
     const add = (m: Map<string, Set<string>>, id: string, v: unknown) => { if (typeof v === 'string' && v) m.set(id, (m.get(id) ?? new Set()).add(v)); };
     const hasAgent = cols('activities').has('agent');
-    for (const r of this.db.query(`SELECT change_id, COUNT(*) AS n, ${hasAgent ? 'GROUP_CONCAT(DISTINCT agent)' : 'NULL'} AS agents, GROUP_CONCAT(DISTINCT COALESCE(validator, kind)) AS roles FROM activities GROUP BY change_id`).all() as Row[]) {
-      const id = r.change_id as string; count.set(id, r.n as number);
-      for (const a of String(r.agents ?? '').split(',')) add(agents, id, a);
-      for (const a of String(r.roles ?? '').split(',')) add(roles, id, a);
+    for (const r of this.db.query('SELECT change_id, COUNT(*) AS n FROM activities GROUP BY change_id').all() as Row[]) count.set(r.change_id as string, r.n as number);
+    // Sin agregar con GROUP_CONCAT: un adaptador con coma en el nombre se partiría.
+    for (const r of this.db.query(`SELECT DISTINCT change_id, ${hasAgent ? 'agent' : 'NULL'} AS agent, COALESCE(validator, kind) AS role FROM activities`).all() as Row[]) {
+      add(agents, r.change_id as string, r.agent); add(roles, r.change_id as string, r.role);
     }
     const rows = (ws ? this.db.query('SELECT * FROM changes WHERE workstream_id = ? ORDER BY created_at').all(ws.id) : this.db.query('SELECT * FROM changes ORDER BY created_at').all()) as Row[];
     return rows.map(r => ({ ...toChange(r), source: source.get(r.id as string) ?? null, creator: creator.get(r.id as string) ?? null,

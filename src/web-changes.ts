@@ -41,7 +41,8 @@ export function changesView(ui: Ui, all: ChangeSummary[], f: Query, ws: string, 
   const sel = (cond: boolean) => cond ? ' selected' : '';
   const actors = [...new Set(all.map(c => c.creator).filter((a): a is string => a !== null))].sort();
   const agents = [...new Set(all.flatMap(c => c.agents))].sort(); const roles = [...new Set(all.flatMap(c => c.roles))].sort();
-  const pick = (name: string, label: string, values: string[], cur: string) => `<label>${label}<select name="${name}"><option value="">Todos</option>${values.map(v => `<option value="${e(v)}"${sel(cur === v)}>${e(v)}</option>`).join('')}<option value="${UNKNOWN}"${sel(cur === UNKNOWN)}>No medido</option></select></label>`;
+  // Un valor de la URL que no está en los datos se conserva en el selector: si no, «Todos» mentiría sobre un filtro a cero filas.
+  const pick = (name: string, label: string, known: string[], cur: string) => { const values = cur && cur !== UNKNOWN && !known.includes(cur) ? [...known, cur] : known; return `<label>${label}<select name="${name}"><option value="">Todos</option>${values.map(v => `<option value="${e(v)}"${sel(cur === v)}>${e(v)}</option>`).join('')}<option value="${UNKNOWN}"${sel(cur === UNKNOWN)}>No medido</option></select></label>`; };
   const base = { ws, q: f.q, sort: f.sort, dir: f.dir, from: f.from, to: f.to, cfrom: f.cfrom, cto: f.cto, source: f.source, actor: f.actor, agent: f.agent, role: f.role };
   // Los contadores cuentan lo que el enlace mostrará: el resto de filtros se conserva, el estado no.
   const scoped = applyQuery(all, { ...f, status: '' });
