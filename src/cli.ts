@@ -11,7 +11,7 @@ import { AGENT_NAMES } from './agents.ts';
 import { agentsMain } from './agents-verify.ts';
 import { mcpListMain } from './mcp-registry.ts';
 import { profileMain } from './profile-cli.ts';
-import { CODE_LEAVES_WARNING, runnerMain } from './runner-cli.ts';
+import { CODE_LEAVES_WARNING, runnerMain, serveMain } from './runner-cli.ts';
 import { improveMain } from './improve-cli.ts';
 import type { ReviewDecision, WorkstreamState } from './enums.ts';
 import { runPool } from './pool.ts';
@@ -89,7 +89,8 @@ const HELP = `fab — agente de código y fábrica de software local
   fab improve report <id> | delete <id>   experimentos pareados (fase 1: sin cualificación ni rollout)
   fab ws list
   fab runner add <nombre> --ssh <alias> [--max-bundle-mb N] | --local [--confine]   runner remoto (el código sale de tu máquina) o local
-  fab runner list [--json] | enable <nombre> | disable <nombre> | rm <nombre>
+  fab runner list [--json] | enable <nombre> | disable <nombre> | rm <nombre> | check <nombre>
+  fab runner serve --root <dir>   lado runner (lo arranca sshd por el comando forzado)
   fab ws runner <ws> <nombre> | --none   asigna o quita el runner del workstream
   fab profile export [--out f] | import <f> | inspect <digest> | list   perfiles de instrucciones inmutables por digest
   fab ws state <slug> <active|paused|archived>
@@ -152,6 +153,8 @@ async function main(argv: string[]): Promise<number> {
   if (argv[0] === 'jira' || argv[0] === 'pr') return connectorsMain(argv[0], argv.slice(1));
   if (argv[0] === 'agents') return agentsMain(argv.slice(1));
   if (argv[0] === 'profile') { mkdirSync(STATE_DIR, { recursive: true }); return profileMain(argv.slice(1), STATE_DIR); }
+  // `serve` es el lado runner: no abre el Store (el runner no tiene base, R1).
+  if (argv[0] === 'runner' && argv[1] === 'serve') return serveMain(argv.slice(2));
   if (argv[0] === 'runner') {
     const store = openStore();
     try { return await runnerMain(argv.slice(1), store); } catch (err) {

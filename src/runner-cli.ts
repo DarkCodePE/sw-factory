@@ -1,6 +1,8 @@
 // fab runner add|list|enable|disable|rm|check. Gestión (T74a); solo `check` abre una conexión (T74e).
 import { parseArgs } from 'node:util';
 import { StoreError, type Runner, type Store } from './store.ts';
+import { resolve } from 'node:path';
+import { serveSession } from './runners/serve.ts';
 import { RunnerError, checkRunner, type RemoteRunner, type Transport } from './runners/client.ts';
 
 export const CODE_LEAVES_WARNING = 'con un runner remoto el código de este workstream sale de tu máquina hacia';
@@ -55,4 +57,15 @@ export async function runnerMain(argv: string[], store: Store, transport?: Trans
     }
   } else throw new StoreError('invalid_input', 'fab runner add|list|enable|disable|rm|check');
   return 0;
+}
+
+/** Lado runner: lo arranca `sshd` por el comando forzado de `authorized_keys`. Ignora `SSH_ORIGINAL_COMMAND` y todo argumento que no sea `--root`. */
+export async function serveMain(args: string[]): Promise<number> {
+  let root: string | undefined;
+  try { root = parseArgs({ args, options: { root: { type: 'string' } }, strict: true }).values.root; } catch { root = undefined; }
+  if (!root) { console.error('uso: fab runner serve --root <dir>'); return 2; }
+  const ac = new AbortController();
+  for (const sig of ['SIGHUP', 'SIGTERM'] as const) process.on(sig, () => ac.abort());
+  const write = (b: string | Buffer) => new Promise<void>(r => { process.stdout.write(b, () => r()); });
+  return serveSession(resolve(root), Bun.stdin.stream(), write, { signal: ac.signal });
 }
