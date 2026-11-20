@@ -1,5 +1,6 @@
 // API local de lectura (/api/v1). Solo habla con el Store, abierto en readonly; la autenticación es la clave `fabk_…`.
 import { Store, StoreError } from './store.ts';
+import type { ApiKeyUsage } from './web-api-keys.ts';
 import { redact } from './evidence.ts';
 import { ACTIONS, InputError, performAction, retryRevision } from './web-actions.ts';
 
@@ -62,11 +63,11 @@ async function mutate(req: Request, path: string, stateDir: string, actor: strin
 }
 
 /** Orden de comprobaciones de T71 §3.3 (el filtro de Host lo hace el servidor antes de llamar). `write` solo existe con `fab web --write`. */
-export async function handleApi(req: Request, url: URL, openStore: () => Store, write?: { stateDir: string }): Promise<Response> {
+export async function handleApi(req: Request, url: URL, openStore: () => Store, write?: { stateDir: string }, usage?: ApiKeyUsage): Promise<Response> {
   if (req.method === 'OPTIONS') return fail(405, 'method_not_allowed', 'método no permitido');
   const bearer = /^Bearer (fabk_\S+)$/.exec(req.headers.get('authorization') ?? '');
   let store: Store | undefined;
-  let key: { name: string; scope: string } | null = null;
+  let key: ReturnType<Store['verifyApiKey']>;
   try {
     store = openStore();
     key = bearer ? store.verifyApiKey(bearer[1]!) : null;
@@ -78,11 +79,14 @@ export async function handleApi(req: Request, url: URL, openStore: () => Store, 
       if (key.scope !== 'decide') return fail(403, 'forbidden', 'la clave no tiene ámbito decide');
     } else {
       const data = req.method === 'GET' ? route(store, url, path) : undefined;
-      return data === undefined ? fail(req.method === 'GET' ? 404 : 405, req.method === 'GET' ? 'not_found' : 'method_not_allowed', req.method === 'GET' ? 'ruta no encontrada' : 'método no permitido') : json(200, { ok: true, data });
+      if (data === undefined) return fail(req.method === 'GET' ? 404 : 405, req.method === 'GET' ? 'not_found' : 'method_not_allowed', req.method === 'GET' ? 'ruta no encontrada' : 'método no permitido');
+      const response = json(200, { ok: true, data });
+      return usage?.observe(key.id, response) ?? response;
     }
   } catch (e) {
     if (e instanceof StoreError) return fail(STATUS[e.code] ?? 500, e.code, e.message);
     return fail(500, 'error', 'error interno');
   } finally { store?.close(); }
-  return mutate(req, url.pathname.slice('/api/v1'.length), write!.stateDir, `api:${key.name}`);
+  const apply = () => mutate(req, url.pathname.slice('/api/v1'.length), write!.stateDir, `api:${key.name}`);
+  return usage ? usage.observeMutation(key.id, apply) : apply();
 }

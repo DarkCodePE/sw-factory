@@ -182,3 +182,72 @@ test('readonly verifica y lista sin modificar ficheros, también ante una base a
     writer.close();
   }
 });
+
+test('revocar estrictamente por id no recurre al nombre de una clave', () => {
+  const missingId = '0123456789ab';
+  const key = store.createApiKey(missingId, 'read');
+  expect(() => store.revokeApiKey({ id: missingId })).toThrow(expect.objectContaining({ code: 'not_found' }));
+  expect(store.verifyApiKey(key.key)?.id).toBe(key.id);
+  store.revokeApiKey({ id: key.id });
+  now = revoked;
+  store.revokeApiKey({ id: key.id });
+  expect(store.listApiKeys()[0]?.revokedAt).toBe(initial);
+});
+
+test('el alta toma el bloqueo de escritura antes de insertar', () => {
+  let competitor: Database | undefined;
+  const writer = new Store(store.dbPath, { clock: () => {
+    // En WAL una transacción DEFERRED de lectura no impediría este BEGIN.
+    if (competitor) expect(() => competitor!.exec('BEGIN IMMEDIATE')).toThrow(/database is locked/);
+    return new Date(initial);
+  } });
+  try {
+    competitor = new Database(store.dbPath);
+    writer.createApiKey('serie', 'read');
+  } finally {
+    competitor?.close();
+    writer.close();
+  }
+});
+
+test('dos procesos concurrentes respetan el nombre único y la última plaza', async () => {
+  async function compete(names: [string, string]) {
+    const source = `
+      import { Store } from ${JSON.stringify(new URL('../src/store.ts', import.meta.url).pathname)};
+      const writer = new Store(process.argv[1]);
+      try {
+        process.send('ready');
+        await Bun.stdin.text();
+        try { writer.createApiKey(process.argv[2], 'read'); console.log('ok'); }
+        catch (error) { console.log(error.code); }
+      } finally { writer.close(); }
+    `;
+    const start = (name: string) => {
+      const { promise: ready, resolve, reject } = Promise.withResolvers<void>();
+      const child = Bun.spawn(['bun', '-e', source, store.dbPath, name], {
+        stdin: 'pipe', stdout: 'pipe', stderr: 'inherit',
+        ipc(message) { if (message === 'ready') resolve(); },
+      });
+      void child.exited.then(code => reject(new Error(`el escritor salió antes de competir (${code})`)));
+      return { child, ready };
+    };
+    const writers = names.map(start);
+    try {
+      await Promise.all(writers.map(w => w.ready));
+      for (const { child } of writers) child.stdin.end();
+      return (await Promise.all(writers.map(async ({ child }) => {
+        expect(await child.exited).toBe(0);
+        return (await new Response(child.stdout).text()).trim();
+      }))).sort();
+    } finally {
+      for (const { child } of writers) if (child.exitCode === null) child.kill();
+      await Promise.all(writers.map(({ child }) => child.exited));
+    }
+  }
+
+  expect(await compete(['compartido', 'compartido'])).toEqual(['conflict', 'ok']);
+  expect(store.listApiKeys().map(k => k.name)).toEqual(['compartido']);
+  for (let i = 0; i < 18; i++) store.createApiKey(`previa-${i}`, 'read');
+  expect(await compete(['candidata-a', 'candidata-b'])).toEqual(['limit_reached', 'ok']);
+  expect(store.listApiKeys()).toHaveLength(20);
+}, 15_000);

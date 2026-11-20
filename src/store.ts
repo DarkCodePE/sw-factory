@@ -134,6 +134,8 @@ type AutomationRun =
   | { result: 'created'; signalId: string }
   | { result: 'skipped_open' | 'skipped_inactive'; signalId?: never };
 
+export const API_KEY_ACTIVE_LIMIT = 20;
+
 type ApiKeyScope = 'read' | 'decide';
 
 interface ApiKeyIdentity {
@@ -1285,8 +1287,8 @@ export class Store {
       const { count } = this.db.query<{ count: number }, []>(
         'SELECT COUNT(*) AS count FROM api_keys WHERE revoked_at IS NULL',
       ).get()!;
-      if (count >= 20) {
-        throw new StoreError('limit_reached', 'ya hay 20 claves API activas');
+      if (count >= API_KEY_ACTIVE_LIMIT) {
+        throw new StoreError('limit_reached', `ya hay ${API_KEY_ACTIVE_LIMIT} claves API activas`);
       }
       const id = randomBytes(6).toString('hex');
       const secret = randomBytes(32).toString('base64url');
@@ -1306,13 +1308,15 @@ export class Store {
     ).all();
   }
 
-  revokeApiKey(idOrName: string): void {
+  revokeApiKey(target: string | { id: string }): void {
     this.withRetry(() => {
-      // Si un nombre coincide con el id de otra clave, el id tiene prioridad.
+      // La CLI conserva la búsqueda por nombre con prioridad del id. La web identifica una fila por id.
+      const id = typeof target === 'string' ? target : target.id;
+      const name = typeof target === 'string' ? target : null;
       const { changes } = this.db.query(
         `UPDATE api_keys SET revoked_at = COALESCE(revoked_at, ?)
          WHERE id = (SELECT id FROM api_keys WHERE id = ? OR name = ? ORDER BY (id = ?) DESC LIMIT 1)`,
-      ).run(this.now(), idOrName, idOrName, idOrName);
+      ).run(this.now(), id, name, id);
       if (changes === 0) throw new StoreError('not_found', 'clave API no encontrada');
     });
   }
