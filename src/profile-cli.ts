@@ -21,7 +21,7 @@ export function profileMain(argv: string[], stateDir: string): number {
       if (!arg) throw fail('usage: fab profile inspect <digest>');
       const p = arg === DEFAULT_DIGEST ? defaultProfile() : loadProfile(stateDir, arg);
       console.log(`digest ${profileDigest(p)}\nharness ${p.harness}${p.model ? ` model ${p.model}` : ''}${p.repo ? ` repo ${p.repo}` : ''}\n${canonicalJson(p).length} bytes canónicos`);
-      for (const [role, c] of Object.entries(p.roles ?? {})) console.log(`${role}  ${c.harness ?? p.harness}  ${c.model ?? '(por defecto)'}`);
+      for (const [role, c] of Object.entries(p.roles ?? {})) console.log(`${role}  ${c.harness ?? '(workstream)'}  ${c.model ?? p.model ?? '(por defecto)'}`);
       console.log(JSON.stringify(p, null, 2));
     } else if (sub === 'list') {
       console.log(`${DEFAULT_DIGEST}  (por defecto)`);

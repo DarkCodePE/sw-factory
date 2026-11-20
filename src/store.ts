@@ -688,9 +688,10 @@ export class Store {
 
   setAutomationEnabled(id: string, enabled: boolean): Automation {
     return this.withRetry(() => {
-      const row = this.db.query<Row, [number, string]>(
-        'UPDATE automations SET enabled = ? WHERE id = ? RETURNING *',
-      ).get(Number(enabled), id);
+      const row = this.db.query<Row, [number, string, number, string]>(
+        // Al reactivar, el suelo pasa a ahora: lo que venció durante la pausa no se recupera.
+        'UPDATE automations SET last_due_at = CASE WHEN ? = 1 AND enabled = 0 THEN ? ELSE last_due_at END, enabled = ? WHERE id = ? RETURNING *',
+      ).get(Number(enabled), this.now(), Number(enabled), id);
       const automation = this.requireAutomation(id, row);
       this.event(automation.workstreamId, 'info', `automation ${automation.name} ${enabled ? 'activada' : 'pausada'}`);
       return automation;
@@ -712,16 +713,33 @@ export class Store {
       : this.db.query<{ id: string }, [string]>('SELECT id FROM automations WHERE enabled = 1 AND workstream_id = ?')
         .all(this.getWorkstream(workstream).id);
     const results: ({ id: string } & AutomationRun)[] = [];
+    const dueOf = (row: Row) => {
+      const a = toAutomation(row);
+      const floor = new Date(a.lastDueAt ?? a.createdAt);
+      if (Number.isNaN(floor.getTime())) throw new Error('last_due_at ilegible');
+      return lastDue(parseCron(a.cron), floor, now);
+    };
     for (const { id } of candidates) {
-      const result = this.withRetry(() => {
-        // Releer la fila con el lock de escritura: otro proceso pudo dispararla, pausarla o borrarla.
-        const row = this.db.query<Row, [string]>('SELECT * FROM automations WHERE id = ? AND enabled = 1').get(id);
-        if (!row) return null;
-        const automation = toAutomation(row);
-        const due = lastDue(parseCron(automation.cron), new Date(automation.lastDueAt ?? automation.createdAt), now);
-        return due ? this.fireAutomation(automation, due.toISOString(), true) : null;
-      });
-      if (result) results.push({ id, ...result });
+      let peek: Row | null = null;
+      try {
+        peek = this.db.query<Row, [string]>('SELECT * FROM automations WHERE id = ? AND enabled = 1').get(id);
+        // Sin vencimiento no se abre transacción de escritura.
+        if (!peek || !dueOf(peek)) continue;
+        const result = this.withRetry(() => {
+          // Releer la fila con el lock de escritura: otro proceso pudo dispararla, pausarla o borrarla.
+          const row = this.db.query<Row, [string]>('SELECT * FROM automations WHERE id = ? AND enabled = 1').get(id);
+          const due = row && dueOf(row);
+          return due ? this.fireAutomation(toAutomation(row), due.toISOString(), true) : null;
+        });
+        if (result) results.push({ id, ...result });
+      } catch (error) {
+        // Una fila rara no para a las demás; el aviso sale una vez por mensaje.
+        if (!peek) throw error;
+        const message = `automation ${String(peek.name)}: no se puede procesar (${(error as Error).message}), se salta`;
+        const seen = this.db.query('SELECT 1 FROM events WHERE workstream_id = ? AND message = ? LIMIT 1')
+          .get(String(peek.workstream_id), message);
+        if (!seen) this.event(String(peek.workstream_id), 'warning', message);
+      }
     }
     return results;
   }
