@@ -1,7 +1,9 @@
 // Adaptación HTTP: las transiciones, el cercado y los eventos siguen en los comandos existentes.
 import { createHash } from 'node:crypto';
 import { join } from 'node:path';
-import { Store, StoreError } from './store.ts';
+import { Store, StoreError, WorkstreamBusyError } from './store.ts';
+import { AGENT_NAMES } from './agents.ts';
+import { isProfileDigest } from './profile.ts';
 import { linkTriagedSignal } from './admission/apply.ts';
 import { removeWorktree } from './worktrees.ts';
 import { SIGNAL_BODY_MAX, SIGNAL_TITLE_MAX } from './web-signals.ts';
@@ -11,7 +13,7 @@ import { AdmissionDb, hasAdmission } from './admission/db.ts';
 import { answerQuestion } from './admission/answers.ts';
 import { resetSessionCap } from './admission/sessions.ts';
 import type { WebAuth } from './web-auth.ts';
-import { PROFILE_BODY_LIMIT, ProfileInputError, profileAction } from './web-profile.ts';
+import { PROFILE_BODY_LIMIT, ProfileInputError, checkProfileFields, profileAction } from './web-profile.ts';
 import { enqueueBackfill, enqueueManual, ensureSchema, previewBackfill } from './scorers.ts';
 import { archiveWorkstream, createWorkstream, workstreamSettings, workstreamState, wsFields } from './web-ws.ts';
 
@@ -25,6 +27,7 @@ const messages: Record<string, string> = {
   skipped_open: 'Saltada: ya hay una señal o un change abierto de esta automation; no se creó ninguna señal.',
   skipped_inactive: 'Saltada: el workstream no está activo; no se creó ninguna señal.',
   not_found: 'not_found: no se encontró el registro.', invalid_input: 'invalid_input: revisa los datos de la acción.',
+  workstream_busy: 'El workstream tiene trabajo vivo. Reintenta cuando termine el turno o se resuelva la espera o reanudación.',
   error: 'No se pudo registrar la acción. Revisa el estado antes de volver a intentarlo.',
 };
 export function actionNotice(result?: string): string {
@@ -85,6 +88,7 @@ const titleOf = (raw: Raw) => {
 // Valida y normaliza los campos de una acción; el orden de las comprobaciones es el de F2.
 const pick = (...keys: string[]) => (raw: Raw): Raw => { for (const k of keys) limit(text(raw, k)); return Object.fromEntries(keys.map(k => [k, text(raw, k)])); };
 const route = (entity: string, verb: string) => new RegExp(`^/${entity}/([^/]+)/${verb}$`);
+const ADAPTER_FIELDS = ['agent', 'previous', 'profileExpected', 'confirm'] as const;
 const findSignal = (store: Store, id: string) => {
   const s = [...store.listWorkstreams()].flatMap(w => store.listSignals(w.id)).find(s => s.id === id);
   if (!s) throw new StoreError('not_found', 'señal inexistente');
@@ -267,6 +271,23 @@ export const ACTIONS: Record<string, Action> = {
     input: raw => ({ state: raw.state }),
     run: (store, id, input, out) => { out.destination = '/workstreams'; workstreamState(store, id, input.state); },
   },
+  'workstreams/adaptador': {
+    path: route('workstreams', 'adaptador'),
+    api: false,
+    input: raw => {
+      const input = pick(...ADAPTER_FIELDS)(raw);
+      if (!AGENT_NAMES.includes(input.agent!) || !input.previous || !isProfileDigest(input.profileExpected!) || input.confirm !== 'yes') {
+        throw new InputError(400, 'Revisa y confirma el cambio de adaptador del workstream.');
+      }
+      return input;
+    },
+    run: (store, id, input, out) => {
+      out.destination = '/perfiles';
+      const ws = store.getWorkstream(id);
+      out.destination = `/perfiles?ws=${encodeURIComponent(ws.slug)}`;
+      store.setWorkstreamAgent(ws.id, input.agent!, input.previous!, input.profileExpected!);
+    },
+  },
   'workstreams/archive': {
     path: route('workstreams', 'archive'),
     input: raw => ({ confirm: raw.confirm }),
@@ -290,7 +311,8 @@ export async function performAction(stateDir: string, name: string, id: string, 
     finally { if (previous === undefined) delete process.env.FAB_ACTOR; else process.env.FAB_ACTOR = previous; }
     if (out.repo) { await writer.waitForRelease(id); await removeWorktree(out.repo, stateDir, id); }
   } catch (error) {
-    out.result = error instanceof StoreError && messages[error.code] ? error.code : 'error';
+    out.result = error instanceof WorkstreamBusyError ? 'workstream_busy'
+      : error instanceof StoreError && messages[error.code] ? error.code : 'error';
   } finally { store?.close(); }
   return out;
 }
@@ -298,7 +320,7 @@ export async function performAction(stateDir: string, name: string, id: string, 
 async function readForm(req: Request, limit = 16384): Promise<URLSearchParams> {
   if (req.headers.get('content-type')?.split(';')[0]?.trim().toLowerCase() !== 'application/x-www-form-urlencoded') throw new InputError(415, 'Solo se admite application/x-www-form-urlencoded.');
   if (Number(req.headers.get('content-length')) > limit) throw new InputError(413, 'El cuerpo es demasiado grande.');
-  // Bun limita la recepción a 16 KiB antes de materializar el cuerpo (startWeb).
+  // Bun aplica el límite global de recepción antes de materializar el cuerpo.
   let body: ArrayBuffer;
   try { body = await req.arrayBuffer(); }
   catch (error) {
@@ -328,7 +350,8 @@ export async function webAction(req: Request, stateDir: string, port: number, au
     const raw = ACTIONS[name]!.path.exec(pathname)![1]!;
     const id = name.endsWith('/create') ? '' : decodeURIComponent(raw);
     if (id && !/^[\w-]+$/.test(id)) throw new InputError(400, 'Identificador inválido.');
-    // Con claves repetidas gana la primera, como form.get.
+    if (name === 'workstreams/adaptador') checkProfileFields(form, ['csrf', ...ADAPTER_FIELDS]);
+    // Las acciones antiguas conservan el comportamiento de form.get.
     const fields: Raw = {};
     for (const [k, v] of form) if (!(k in fields)) fields[k] = v;
     ({ destination, result } = await performAction(stateDir, name, id, fields, 'web'));

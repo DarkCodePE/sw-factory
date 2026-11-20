@@ -286,3 +286,18 @@ test('guardar rechaza un formulario cuyo digest o adaptador quedaron obsoletos',
   expect(await html('/perfiles')).toContain('conflict');
   expect(listProfiles(dir)).toEqual([d]);
 });
+
+test('un modelo enmascarado no se envía y el marcador conserva su valor original', async () => {
+  await login();
+  const model = 'ghp_' + 'Q2a3C4d5H6'.repeat(4);
+  const profile: Profile = { ...defaultProfile(), schemaVersion: 2, harness: 'claude', model, roles: { qa: { model } } };
+  store.setWorkstreamAgent(wsId, 'claude', 'native', DEFAULT_DIGEST);
+  const digest = saveProfile(dir, profile).digest;
+  store.assignProfile(wsId, digest, DEFAULT_DIGEST);
+  const page = await html('/perfiles');
+  expect(page).not.toContain(model);
+  expect(page).toContain('name="model" maxlength="128" value="[REDACTED]"');
+  const r = await post('/perfiles/guardar', roles({ model: '[REDACTED]', 'roles.qa.model': '[REDACTED]' }));
+  expect(digestOf(r)).toBe(digest);
+  expect(loadProfile(dir, digest)).toEqual(profile);
+});

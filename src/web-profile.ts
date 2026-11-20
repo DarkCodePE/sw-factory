@@ -125,7 +125,7 @@ type TemplateGroup = (typeof TEMPLATES)[number][0];
 const template = (p: Profile, group: TemplateGroup, key: string) => (p[group] as unknown as Record<string, string>)[key]!;
 const normalizeLines = (s: string) => s.replace(/\r\n?/g, '\n');
 
-function checkFields(form: URLSearchParams, allowed: readonly string[]) {
+export function checkProfileFields(form: URLSearchParams, allowed: readonly string[]) {
   const seen = new Set<string>();
   for (const name of form.keys()) {
     if (!allowed.includes(name) || seen.has(name)) throw new ProfileInputError('El formulario contiene campos desconocidos o repetidos.');
@@ -173,7 +173,7 @@ function editProfile(profile: Profile, form: URLSearchParams, editRoles: boolean
 /** Guardar lee el perfil de origen y sus dos precondiciones en una sola transacción. */
 export function profileAction(stateDir: string, kind: 'guardar' | 'asignar', form: URLSearchParams): { destination: string; result: string } {
   const editRoles = kind === 'guardar' && form.get('mode') === 'roles';
-  checkFields(form, kind === 'asignar' ? ASSIGN_FIELDS : editRoles ? [...saveFields, ...roleFormFields] : saveFields);
+  checkProfileFields(form, kind === 'asignar' ? ASSIGN_FIELDS : editRoles ? [...saveFields, ...roleFormFields] : saveFields);
   if (kind === 'guardar' && ((form.has('mode') && !editRoles) || (editRoles && roleFormFields.some(name => !form.has(name))))) {
     throw new ProfileInputError('Completa la configuración de todos los roles y del modelo predeterminado.');
   }

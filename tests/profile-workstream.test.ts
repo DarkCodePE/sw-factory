@@ -4,7 +4,7 @@ import { join } from 'node:path';
 import { AdmissionDb } from '../src/admission/db.ts';
 import { ThreadLinks } from '../src/admission/links.ts';
 import { SessionStore } from '../src/admission/sessions.ts';
-import { DEFAULT_DIGEST, defaultProfile, resolveRole, saveProfile, type Profile } from '../src/profile.ts';
+import { DEFAULT_DIGEST, ROLES, defaultProfile, resolveRole, saveProfile, type Profile } from '../src/profile.ts';
 import { Store } from '../src/store.ts';
 
 let dir: string, store: Store, ws: string;
@@ -85,7 +85,7 @@ test.each(['hilo', 'señal'] as const)('evidencia de canal por %s exige todos lo
     adm.db.query('INSERT INTO adm_thread_signals(thread_id, signal_id, scope, created_at) VALUES (?, ?, ?, ?)').run(thread, signal.id, 'investigate', adm.iso());
   }
   expect(() => store.assignProfile(ws, old, next, 'claude')).toThrow(/qa.*confinable/);
-  const allConfined = save(v2());
+  const allConfined = save(v2({ roles: Object.fromEntries(ROLES.map(role => [role, { harness: 'claude' }])) }));
   store.db.query('UPDATE workstreams SET agent = ? WHERE id = ?').run('droid', ws);
   expect(() => store.assignProfile(ws, allConfined, next, 'droid')).toThrow(/fallback.*confinable/);
   store.db.query('UPDATE workstreams SET profile = ? WHERE id = ?').run('a'.repeat(64), ws);
@@ -126,6 +126,32 @@ test('impide activar con trabajo reclamado, en espera y reencolado para reanudar
   expect(store.answerAwaiting(a.id, 'q')).toBe(true);
   blocked();
   store.db.query("UPDATE adm_sessions SET status = 'closed' WHERE session_id = ?").run(session.sessionId);
+  store.assignProfile(ws, digest, DEFAULT_DIGEST, 'claude');
+  expect(store.getActivity(a.id).status).toBe('pending');
+  expect(store.getWorkstream(ws).profile).toBe(digest);
+});
+
+test('sin evidencia de canal, un modelo efectivo nuevo también exige un adaptador confinable', () => {
+  const prior = save(v2({ roles: { qa: { harness: 'droid', model: 'anterior' } } }));
+  store.db.query('UPDATE workstreams SET profile = ? WHERE id = ?').run(prior, ws);
+  const next = save(v2({ roles: { qa: { harness: 'droid', model: 'nuevo' } } }));
+  expect(() => store.assignProfile(ws, next, prior, 'claude')).toThrow(/qa.*confinable/);
+  expect(store.getWorkstream(ws).profile).toBe(prior);
+});
+
+test('una pendiente nueva no continúa sesiones de otro tipo ni generaciones anteriores', () => {
+  const change = activeChange();
+  const a = store.listActivities({ changeId: change.id })[0]!;
+  const adm = new AdmissionDb(store);
+  const sessions = new SessionStore(adm);
+  const meta = { backend: 'claude', cwd: '/repo' };
+  const other = sessions.begin(change.id, a.kind === 'implementation' ? 'investigation' : 'implementation', meta);
+  sessions.markLaunched(other.session.sessionId);
+  const first = sessions.begin(change.id, a.kind, meta);
+  sessions.markLaunched(first.session.sessionId);
+  adm.db.query(`INSERT INTO adm_sessions(change_id, kind, generation, session_id, backend, cwd, created_at)
+    VALUES (?, ?, 2, 'todavía-no-lanzada', 'claude', '/repo', ?)`).run(change.id, a.kind, adm.iso());
+  const digest = save(v2());
   store.assignProfile(ws, digest, DEFAULT_DIGEST, 'claude');
   expect(store.getActivity(a.id).status).toBe('pending');
   expect(store.getWorkstream(ws).profile).toBe(digest);
