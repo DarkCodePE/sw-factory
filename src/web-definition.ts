@@ -51,6 +51,11 @@ export function definitionPage(store: Store, stateDir: string | undefined, url: 
   try {
     files = buildDefinition(store, stateDir, selected.slug);
   } catch (error) {
+    const msg = (error as Error).message ?? '';
+    const match = msg.match(/^([^ ]+) contiene una ruta local/);
+    const detail = match
+      ? `el fichero <code>${escape(match[1])}</code> contiene rutas locales no exportables.`
+      : 'contiene rutas locales o referencias no exportables.';
     return {
       title: 'Definición',
       body: `<div class="config">
@@ -58,7 +63,7 @@ export function definitionPage(store: Store, stateDir: string | undefined, url: 
         <section>
           <h2>Árbol de definición</h2>
           <div class="notice">
-            <p>No se pudo generar el árbol de definición: ${escape((error as Error).message)}</p>
+            <p>No se pudo generar el árbol de definición: ${detail}</p>
           </div>
         </section>
       </div>`,

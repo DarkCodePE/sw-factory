@@ -1,6 +1,6 @@
 import { afterEach, beforeEach, expect, test } from 'bun:test';
 import { existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
-import { tmpdir } from 'node:os';
+import { homedir, tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { exportDefinition } from '../src/definition.ts';
 import { defaultProfile, saveProfile } from '../src/profile.ts';
@@ -115,6 +115,21 @@ test('el árbol no contiene rutas absolutas ni valores de entorno', async () => 
   // Solo nombres de variables de entorno en profile.json, nunca valores secretos
   expect(html).toContain('GH_TOKEN');
   expect(html).toContain('API_KEY');
+});
+
+test('error al generar definicion no filtra rutas locales ni el directorio home en el html', async () => {
+  seedWorkstream();
+  // Crear una skill que contiene una ruta local (el home del usuario)
+  const leakSkillDir = join(repoDir, '.agents', 'skills', 'leak');
+  mkdirSync(leakSkillDir, { recursive: true });
+  writeFileSync(join(leakSkillDir, 'SKILL.md'), `Ruta del home: ${homedir()}`);
+
+  server = startWeb(stateDir, 0);
+  const html = await getHtml('/definicion?ws=demo');
+
+  expect(html).toContain('No se pudo generar el árbol de definición');
+  expect(html).not.toContain(homedir());
+  expect(html).not.toContain(repoDir);
 });
 
 test('un fichero grande se trunca con aviso', async () => {
