@@ -217,6 +217,27 @@ for (const operation of ['INSERT INTO', 'UPDATE']) {
   });
 }
 
+for (const operation of ['INSERT INTO', 'UPDATE']) {
+  test(`T54a H2/H3: un error de SQLite que no es de contención en ${operation} adm_turns no relanza el turno`, async () => {
+    const { run, change } = setup();
+    const query = store.db.query.bind(store.db);
+    store.db.query = sql => {
+      if (sql.startsWith(`${operation} adm_turns`)) throw Object.assign(new Error('disco lleno'), { code: 'SQLITE_FULL' });
+      return query(sql);
+    };
+    const backend = fakeLive([done()]);
+    try {
+      expect((await run(backend)).status).toBe('completed');
+    } finally {
+      store.db.query = query;
+    }
+    expect(backend.turns).toHaveLength(1);
+    expect(store.db.query('SELECT generation, status FROM adm_sessions WHERE change_id = ?').all(change.id)).toEqual([{ generation: 1, status: 'open' }]);
+    expect(store.db.query("SELECT message FROM events WHERE change_id = ? AND message LIKE 'no se pudo registrar el turno%'").all(change.id))
+      .toEqual([{ message: expect.stringContaining('disco lleno') }]);
+  });
+}
+
 test('T54a abre una base de admisión anterior y añade adm_turns sin borrar sesiones', () => {
   const { change } = setup();
   store.db.exec('DROP TABLE IF EXISTS adm_turns');
