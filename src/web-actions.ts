@@ -10,6 +10,7 @@ import { redact } from './manifest.ts';
 import { AdmissionDb, hasAdmission } from './admission/db.ts';
 import { answerQuestion } from './admission/answers.ts';
 import { resetSessionCap } from './admission/sessions.ts';
+import { API_KEYS_PATH, API_KEY_CREATE_PATH, createApiKeyResponse, revokeApiKeyResponse } from './web-api-keys.ts';
 import type { WebAuth } from './web-auth.ts';
 import { PROFILE_BODY_LIMIT, ProfileInputError, profileAction } from './web-profile.ts';
 import { enqueueBackfill, enqueueManual, ensureSchema, previewBackfill } from './scorers.ts';
@@ -75,6 +76,8 @@ type Raw = Record<string, string | undefined>;
 type Outcome = { destination: string; result: string; repo?: string };
 type Action = { path: RegExp; /** false: solo la web con sesión; la API con clave no la expone (decisión del dueño sobre H1). */ api?: false; input: (raw: Raw) => Raw; run: (store: Store, id: string, input: Raw, out: Outcome, actor: string, stateDir: string) => void };
 
+type WebResponseAction = { path: RegExp; api: false; respond: (stateDir: string, id: string, form: URLSearchParams) => Response };
+
 const text = (raw: Raw, key: string) => raw[key] ?? '';
 const limit = (value: string, max = 8192) => { if (Buffer.byteLength(value) > max) throw new InputError(413, 'El texto supera 8 KiB.'); };
 const titleOf = (raw: Raw) => {
@@ -93,7 +96,9 @@ const findSignal = (store: Store, id: string) => {
 };
 
 // Registro único de acciones: los formularios de la web y, después, la API pasan por aquí.
-export const ACTIONS: Record<string, Action> = {
+export const ACTIONS: Record<string, Action | WebResponseAction> = {
+  'api-keys/create': { api: false, path: new RegExp(`^${API_KEY_CREATE_PATH}$`), respond: createApiKeyResponse },
+  'api-keys/revoke': { api: false, path: route(API_KEYS_PATH.slice(1), 'revocar'), respond: revokeApiKeyResponse },
   'activities/review': {
     path: route('activities', 'review'),
     input: raw => {
@@ -277,7 +282,7 @@ export const ACTIONS: Record<string, Action> = {
 /** Abre el Store escritor, fija el actor y ejecuta una acción. Lanza InputError si la entrada no vale; el resto de fallos van en `result`. */
 export async function performAction(stateDir: string, name: string, id: string, rawInput: Raw, actor: string): Promise<Outcome> {
   const action = ACTIONS[name];
-  if (!action) throw new InputError(404, 'Acción no encontrada.');
+  if (!action || 'respond' in action) throw new InputError(404, 'Acción no encontrada.');
   const input = action.input(rawInput);
   const out: Outcome = { destination: '/', result: 'ok' };
   let store: Store | undefined;
@@ -325,7 +330,14 @@ export async function webAction(req: Request, stateDir: string, port: number, au
     const pathname = new URL(req.url).pathname;
     const name = Object.keys(ACTIONS).find(n => ACTIONS[n]!.path.test(pathname));
     if (!name) return new Response('Acción no encontrada.', { status: 404 });
-    const raw = ACTIONS[name]!.path.exec(pathname)![1]!;
+    const action = ACTIONS[name]!;
+    const raw = action.path.exec(pathname)![1] ?? '';
+    if ('respond' in action) {
+      const response = action.respond(stateDir, raw, form);
+      const location = response.headers.get('location');
+      if (response.status === 303 && location) auth.rememberNotice(req, location, 'ok');
+      return response;
+    }
     const id = name.endsWith('/create') ? '' : decodeURIComponent(raw);
     if (id && !/^[\w-]+$/.test(id)) throw new InputError(400, 'Identificador inválido.');
     // Con claves repetidas gana la primera, como form.get.

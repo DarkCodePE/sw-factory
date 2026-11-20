@@ -8,6 +8,7 @@ import { jiraConfiguredInEnv } from './connectors/jira.ts';
 import { activityMetadata, redact } from './evidence.ts';
 import { listProfiles, resolveProfile } from './profile.ts';
 import { detectSandbox } from './sandbox/detect.ts';
+import { API_KEYS_PATH } from './web-api-keys.ts';
 import type { Store, Workstream } from './store.ts';
 
 type Escape = (value: unknown) => string;
@@ -169,7 +170,7 @@ export async function configPage(store: Store, stateDir: string, url: URL, escap
       ['Aislamiento de red disponible', yesNo(sandbox.network)],
       [`Última sonda de egress del workstream (últimas ${EGRESS_SCAN_LIMIT} activities)`, egress],
     ])}</section>
-    <section><h2>Integraciones</h2>${facts([
+    <section><h2>Integraciones</h2><p><a href="${API_KEYS_PATH}">Claves API</a></p>${facts([
       ['Jira (entorno)', configured(jiraConfiguredInEnv())],
       ['GitHub (entorno)', configured(!!(process.env.GH_TOKEN?.trim() || process.env.GITHUB_TOKEN?.trim()))],
     ])}</section>
