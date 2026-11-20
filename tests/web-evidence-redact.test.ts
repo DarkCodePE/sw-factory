@@ -100,7 +100,7 @@ const PATOLOGICAS: Record<string, (n: number) => string> = {
   'token=': n => 'token='.repeat(n / 6), comillas: n => '"'.repeat(n), 'comilla escapada': n => '\\"'.repeat(n / 2), curl: n => 'curl '.repeat(n / 5), 'curl -x': n => 'curl -x '.repeat(n / 8),
   'url con :': n => 'http://a:a'.repeat(n / 10), 'url con :a:a': n => 'http://' + 'a:'.repeat(n / 2), 'PEM sin cierre': n => '-----BEGIN PRIVATE KEY-----\n'.repeat(n / 28),
   'authorization:': n => 'authorization:'.repeat(n / 14), 'authorization + espacios': n => 'authorization:' + ' '.repeat(n), 'pwd=': n => 'pwd='.repeat(n / 4), 'pass:': n => 'pass:'.repeat(n / 5),
-  Bearer: n => 'Bearer '.repeat(n / 7), letras: n => 'a'.repeat(n), jwt: n => 'eyJ' + 'a.'.repeat(n / 2), 'clave larga': n => 'a_'.repeat(n / 2) + 'token',
+  '-eyJ': n => '-eyJ'.repeat(n / 4), 'eyJa-': n => 'eyJa-'.repeat(n / 5), Bearer: n => 'Bearer '.repeat(n / 7), letras: n => 'a'.repeat(n), jwt: n => 'eyJ' + 'a.'.repeat(n / 2), 'clave larga': n => 'a_'.repeat(n / 2) + 'token',
   "password: '": n => "password: '".repeat(n / 11), 'valor con salto': n => 'password="a\n'.repeat(n / 12),
 };
 const mejor = (f: () => void) => { let t = Infinity; for (let i = 0; i < 2; i++) { const t0 = performance.now(); f(); t = Math.min(t, performance.now() - t0); } return t; };
@@ -153,4 +153,11 @@ test('P2-H4: claves de más de 64 caracteres y `tokenized` no abren fugas', () =
 test('P2-H6: Cookie corto con = se redacta y curl -Lu con una URL no', () => {
   expect(redact('Cookie: a=b')).toBe('Cookie: [REDACTED]');
   expect(redact('curl -Lu https://x.test')).toBe('curl -Lu https://x.test');
+});
+
+test('P3-H1: un JWT normal se redacta entero; la cabecera acotada no deja salir uno largo razonable', () => {
+  const seg = (n: number) => 'A'.repeat(n);
+  for (const jwt of [`eyJ${seg(36)}.${seg(120)}.${seg(43)}`, `eyJ${seg(1500)}.${seg(9000)}.${seg(86)}`]) {
+    expect(redact(`Authorization-x ${jwt} fin`)).toBe('Authorization-x [REDACTED] fin');
+  }
 });

@@ -107,7 +107,8 @@ export const RULES: Rule[] = [
   sub(/\b(?:AKIA|ASIA)[A-Z0-9]{16}\b/g, '[REDACTED]'),
   sub(/\b(?:gh[pousr]_[A-Za-z0-9]{16,}|github_pat_[A-Za-z0-9_]{16,})\b/g, '[REDACTED]'),
   sub(/\bxox[baprs]-[A-Za-z0-9-]{10,}\b/g, '[REDACTED]'),
-  sub(/\beyJ[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+\b/g, '[REDACTED]'),
+  // La cabecera acotada: con `-` en la clase y un `\b` delante, cada `eyJ` de `-eyJ-eyJ…` reinicia un recorrido hasta el final de la racha.
+  sub(/\beyJ[A-Za-z0-9_-]{1,2048}\.[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+\b/g, '[REDACTED]'),
   sub(/\b([a-z][a-z0-9+.-]{0,31}:\/\/)[^\s/@:]+:[^\s/@]+@/gi, '$1[REDACTED]@'),
   sub(/\bglpat-[A-Za-z0-9_-]{16,}/g, '[REDACTED]'),
   sub(/\bnpm_[A-Za-z0-9]{20,}\b/g, '[REDACTED]'),
