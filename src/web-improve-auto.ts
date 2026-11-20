@@ -13,13 +13,17 @@ export function autoImprovePage(store: Store, stateDir: string, url: URL, escape
   const slug = url.searchParams.get('ws');
   const ws = slug ? store.getWorkstream(slug) : workstreams[0];
   if (!ws) return { title, body: '<p class="empty">Crea un workstream para configurar la automejora.</p>' };
-  const current = resolveProfile(stateDir, ws.profile);
+  const picker = `<form action="/automejora" method="get" class="filters"><label>Workstream<select name="ws">${workstreams.map(w => `<option value="${escape(w.slug)}"${w.id === ws.id ? ' selected' : ''}>${escape(w.slug)}</option>`).join('')}</select></label><button>Ver</button></form>`;
+  let current: ReturnType<typeof resolveProfile>;
+  try { current = resolveProfile(stateDir, ws.profile); }
+  catch {
+    return { title, body: `${picker}<p class="notice">El perfil asignado no está disponible o no supera la verificación de integridad. <a href="/perfiles?ws=${enc(ws.slug)}">Revisa Perfiles</a>.</p>` };
+  }
   const legacy = getConfig(store, ws.id);
   const policy = current.profile.autoImprove;
   const thresholds = policy ?? legacy ?? DEFAULT_AUTO_THRESHOLD;
   const scorers = Object.entries(current.profile.scorers ?? {}).filter(([, def]) => def.scope !== 'change');
-  const picker = `<form action="/automejora" method="get" class="filters"><label>Workstream<select name="ws">${workstreams.map(w => `<option value="${escape(w.slug)}"${w.id === ws.id ? ' selected' : ''}>${escape(w.slug)}</option>`).join('')}</select></label><button>Ver</button></form>`;
-  const summary = `<p>Perfil vigente <code>${current.digest}</code></p><p>Automejora ${legacy?.enabled ? 'habilitada' : 'deshabilitada'} para este workstream. ${policy ? 'Se usa la política del perfil.' : 'Se usan los valores del workstream o sus valores por defecto.'}</p>`;
+  const summary = `<p>Perfil vigente <code>${current.digest}</code></p><p>Automejora ${legacy?.enabled ? 'habilitada' : 'deshabilitada'} para este workstream. ${policy ? `Manda la política del perfil${legacy ? '; los valores de <code>fab improve auto-config</code> (ventana, mínimo y umbral) no tienen efecto mientras este perfil esté asignado' : ''}.` : 'Se usan los valores del workstream o sus valores por defecto.'}</p>`;
   const requested = url.searchParams.get('digest') ?? '';
   let saved = '';
   if (csrf && isDigest(requested)) {

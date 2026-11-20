@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, expect, test } from 'bun:test';
-import { mkdtempSync, readFileSync, rmSync } from 'node:fs';
+import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { createCandidate, evaluateThreshold, getConfig, proposeTemplate, setConfig } from '../src/improve-auto.ts';
 import { defaultProfile, DEFAULT_DIGEST, listProfiles, loadProfile, saveProfile } from '../src/profile.ts';
@@ -80,7 +80,9 @@ test('guardar crea un perfil con digest, conserva el vigente y deja la asignaci�
   expect(store.getWorkstream(wsId).profile).toBe(digest);
   expect(getConfig(store, wsId)).toEqual({ workstreamId: wsId, ...cfg });
   expect(readFileSync(join(dir, 'profiles', `${digest}.json`), 'utf8')).toBe(before);
-  const assign = await post({ ws: 'prueba', digest: saved.digest, confirm: 'yes' }, '/perfiles/asignar');
+  // T84 valida los campos exactos de /perfiles/asignar: no puede ir con los de la política.
+  const assign = await req('/perfiles/asignar', { method: 'POST', headers: { cookie, origin: base(), 'content-type': 'application/x-www-form-urlencoded' },
+    body: new URLSearchParams({ csrf, ws: 'prueba', digest: saved.digest, previous: digest, expectedAgent: 'fake', confirm: 'yes' }) });
   expect(assign.status).toBe(303);
   expect(store.getWorkstream(wsId).profile).toBe(saved.digest);
   const active = await html(page);
@@ -152,4 +154,24 @@ test('un perfil v1 conserva su esquema y la API con clave decide no guarda esta 
   const saved = await save({ 'scorer.tests': '' });
   expect(loadProfile(dir, saved.digest)).toMatchObject({ schemaVersion: 1, autoImprove: { scorers: [] } });
   expect(store.getWorkstream(wsId).profile).toBeNull();
+});
+
+test('T91-H1: la página dice que manda la política del perfil y que auto-config no tiene efecto', async () => {
+  setConfig(store, wsId, cfg);
+  await login();
+  expect(await html(page)).not.toContain('no tienen efecto');
+  const saved = (await save()).digest;
+  store.assignProfile(wsId, saved, digest);
+  const active = await html(page);
+  expect(active).toContain('Manda la política del perfil');
+  expect(active).toContain('no tienen efecto mientras este perfil esté asignado');
+});
+
+test('T91-H2: con el perfil vigente corrupto la página responde 200 con aviso y enlace a Perfiles, no 500', async () => {
+  rmSync(join(dir, 'profiles', `${digest}.json`)); writeFileSync(join(dir, 'profiles', `${digest}.json`), '{no json');
+  const r = await req(page);
+  expect(r.status).toBe(200);
+  const body = await r.text();
+  expect(body).toContain('no está disponible');
+  expect(body).toContain('href="/perfiles?ws=prueba"');
 });

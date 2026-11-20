@@ -3,7 +3,7 @@ import { parseArgs } from 'node:util';
 import { AGENT_NAMES } from './agents.ts';
 import { createCandidate, dismissCandidate, evaluateThreshold, getConfig, listCandidates, setConfig, tick } from './improve-auto.ts';
 import { createExperiment, deleteExperiment, experimentRunsJson, reportExperiment, runExperiment, SPLITS, type Split } from './improve.ts';
-import { DEFAULT_AUTO_THRESHOLD, ROLES, type Role } from './profile.ts';
+import { DEFAULT_AUTO_THRESHOLD, ROLES, resolveProfile, type Role } from './profile.ts';
 import { StoreError, type Store } from './store.ts';
 
 const TICK_MS = 5 * 60_000;
@@ -43,6 +43,10 @@ export async function improveMain(argv: string[], store: Store, stateDir: string
         minScores: Number(values.min ?? old?.minScores ?? DEFAULT_AUTO_THRESHOLD.minScores), threshold: Number(values.threshold ?? old?.threshold ?? DEFAULT_AUTO_THRESHOLD.threshold),
       });
       console.log(`automejora de ${ws} ${getConfig(store, ws)!.enabled ? 'activada' : 'desactivada'}`);
+      // T91-H1: la política del perfil vigente gana a estos valores; que quien los endurece por aquí lo sepa.
+      let policy = false;
+      try { policy = !!resolveProfile(stateDir, store.getWorkstream(ws).profile).profile.autoImprove; } catch { /* perfil ilegible: no hay política que avisar */ }
+      if (policy) console.error(`aviso: el perfil vigente de ${ws} trae su propia política autoImprove: manda sobre ${values.window || values.min || values.threshold ? '--window, --min y --threshold (se guardaron pero no tendrán efecto)' : 'la ventana, el mínimo y el umbral de esta configuración'}.`);
     } else if (sub === 'auto') {
       const ws = need(id, '<workstream>');
       if (values.agent && !AGENT_NAMES.includes(values.agent)) throw new StoreError('invalid_input', `unknown agent ${values.agent}`);

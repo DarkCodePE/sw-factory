@@ -108,3 +108,16 @@ test('auto --agent desconocido: error; subcomando desconocido lista los nuevos',
   expect(await run('x')).toBe(1);
   expect(err.join()).toContain('dismiss');
 });
+
+test('T91-H1: auto-config avisa cuando el perfil vigente trae su política, sobre todo si se pasan flags que no tendrán efecto', async () => {
+  expect(await baseConfig()).toBe(0);
+  expect(err.join('\n')).not.toContain('autoImprove'); // sin política: nada que avisar
+  const withPolicy = saveProfile(dir, { ...baseProfile, autoImprove: { threshold: 0.1, window: 1, minScores: 1, scorers: ['tests'], instructions: '' } }).digest;
+  store.assignProfile(wsId, withPolicy, base);
+  err.length = 0;
+  expect(await run('auto-config', 'ws', '--window', '60', '--min', '50', '--threshold', '1')).toBe(0);
+  expect(err.join('\n')).toContain('--window, --min y --threshold (se guardaron pero no tendrán efecto)');
+  err.length = 0;
+  expect(await run('auto-config', 'ws', '--enable')).toBe(0);
+  expect(err.join('\n')).toContain('manda sobre la ventana, el mínimo y el umbral');
+});
