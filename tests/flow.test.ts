@@ -124,3 +124,22 @@ test('triar apunta a la primera etapa que de verdad existe y un change en cuaren
   store.db.query("UPDATE changes SET status='quarantined' WHERE id=?").run(ch.id);
   expect(stage(ch.id)).toBe('stopped');
 });
+
+test('T53-H3: declined → Hecho, failed → Detenido, waiting_reply → su etapa, solo cuentan señales new y existen las aristas falla y rechazar', () => {
+  const ws = mk('reglas', { verify: ['true'], requireChangeApproval: true });
+  const ch = (status: string, kind?: string, astatus?: string) => {
+    const c = store.createChange(ws.id, status, '');
+    store.db.query('DELETE FROM activities WHERE change_id=?').run(c.id);
+    store.db.query('UPDATE changes SET status=? WHERE id=?').run(status, c.id);
+    if (kind) store.db.query('INSERT INTO activities(id,workstream_id,change_id,kind,status,retry_count,created_at) VALUES (?,?,?,?,?,0,?)').run(crypto.randomUUID(), ws.id, c.id, kind, astatus!, new Date().toISOString());
+    return c.id;
+  };
+  expect(stage(ch('declined'))).toBe('done');
+  expect(stage(ch('failed'))).toBe('stopped');
+  expect(stage(ch('in_progress', 'implementation', 'waiting_reply'))).toBe('implementation');
+  expect(stage(ch('in_progress', 'investigation', 'waiting_reply'))).toBe('investigation');
+  store.addSignal(ws.id, 'a', 'b'); const ign = store.addSignal(ws.id, 'c', 'd'); store.ignoreSignal(ign.id);
+  expect(stageCounts(store, ws.id).signal).toBe(1);
+  const edges = flowGraph(ws).edges.map(e => `${e.from}>${e.to}:${e.label}`);
+  for (const e of ['gates>stopped:falla', 'implementation>stopped:falla', 'change_review>done:rechazar', 'spec_review>done:rechazar']) expect(edges).toContain(e);
+});

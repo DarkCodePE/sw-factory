@@ -76,11 +76,16 @@ export function stageOf(change: Change, activities: Activity[]): StageId {
   return 'stopped';
 }
 
-export function stageCounts(store: Store, wsId: string): Record<StageId, number> {
-  const counts = Object.fromEntries(STAGE_ORDER.map(s => [s, 0])) as Record<StageId, number>;
+/** Etapa de cada change del workstream: la usan los recuentos y el filtro `stage` de /changes, para que un nodo enlace a lo que cuenta. */
+export function changeStages(store: Store, wsId: string): Map<string, StageId> {
   const byChange = new Map<string, Activity[]>();
   for (const a of store.listActivities({ workstream: wsId })) byChange.set(a.changeId, [...(byChange.get(a.changeId) ?? []), a]);
-  for (const c of store.listChanges(wsId)) counts[stageOf(c, byChange.get(c.id) ?? [])]++;
+  return new Map(store.listChanges(wsId).map(c => [c.id, stageOf(c, byChange.get(c.id) ?? [])]));
+}
+
+export function stageCounts(store: Store, wsId: string): Record<StageId, number> {
+  const counts = Object.fromEntries(STAGE_ORDER.map(s => [s, 0])) as Record<StageId, number>;
+  for (const stage of changeStages(store, wsId).values()) counts[stage]++;
   counts.signal = store.listSignals(wsId, 'new').length;
   return counts;
 }

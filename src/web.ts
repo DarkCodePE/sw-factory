@@ -19,6 +19,7 @@ import { turnsSection, notesSection, turnLogRoute } from './web-turns.ts';
 import { signalsView } from './web-signals.ts';
 import { automationsView } from './web-automations.ts';
 import { workstreamsBody, wizardPage } from './web-ws.ts';
+import { changeStages } from './flow.ts';
 import { actionForms, actionNotice, webAction } from './web-actions.ts';
 import { WEB_ACTION_STYLE } from './web-actions-style.ts';
 import { handleApi, isApiPath } from './web-api.ts';
@@ -81,7 +82,9 @@ function page(store: Store, stateDir: string, url: URL, csrf?: string): { title:
   if (url.pathname === '/workstreams/nuevo') return wizardPage(store, stateDir, url, csrf);
   if (url.pathname === '/changes') {
     const f = parseQuery(url.searchParams);
-    const all = store.changeIndex(ws);
+    const stage = url.searchParams.get('stage');
+    const stages = stage && ws ? changeStages(store, store.getWorkstream(ws).id) : null;
+    const all = store.changeIndex(ws).filter(c => !stages || stages.get(c.id) === stage);
     const statuses = [...new Set([...Object.values(ChangeStatus), 'blocked', 'quarantined', ...all.map(c => c.status)])];
     return { title: 'Changes', body: changesView(ui, all, f, ws ?? '', store.listWorkstreams(), statuses) };
   }

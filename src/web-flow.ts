@@ -5,8 +5,6 @@ import { flowGraph, stageCounts, type FlowNode } from './flow.ts';
 type Esc = (v: unknown) => string;
 const enc = encodeURIComponent;
 const W = 220, H = 76, BOX = 140, TOP = 90; // paso entre columnas, alto de fila, ancho y margen superior del dibujo
-/** Estado de change más cercano a cada etapa, para el enlace del nodo. */
-const FILTER: Record<string, string> = { change_review: 'in_review', spec_review: 'in_review', investigation: 'pending', implementation: 'pending', gates: 'implemented', validators: 'implemented', merge: 'implemented', done: 'completed', stopped: 'blocked' };
 const KIND_LABEL: Record<FlowNode['kind'], string> = { entrada: 'Entrada', agente: 'Agente', puerta_humana: 'Puerta humana', 'automático': 'Automático', final: 'Final' };
 
 const gate = (n: FlowNode) => n.kind !== 'puerta_humana' ? '—' : n.open === undefined ? 'Humana (fab merge)' : n.open ? 'Abierta: sin revisión humana' : 'Cerrada: requiere revisión';
@@ -28,8 +26,8 @@ function svg(nodes: FlowNode[], edges: { from: string; to: string; label: string
   }).join('');
   const boxes = nodes.map(n => {
     const p = pos.get(n.id)!;
-    const f = n.id === 'signal' ? '' : FILTER[n.id];
-    const href = `/changes?ws=${enc(slug)}${f ? `&amp;status=${f}` : ''}`;
+    // El enlace lleva a lo que el nodo cuenta: las señales a /signals, el resto a los changes de esa etapa.
+    const href = n.id === 'signal' ? '/signals' : `/changes?ws=${enc(slug)}&amp;stage=${n.id}`;
     const count = n.id === 'signal' ? `${counts[n.id] ?? 0} nuevas` : `${counts[n.id] ?? 0} changes`;
     return `<a href="${href}"><g class="fl-node ${n.open ? 'fl-open' : ''}"><rect x="${p.x - BOX / 2}" y="${p.y - 30}" width="${BOX}" height="60" rx="6"/><text x="${p.x}" y="${p.y - 10}" text-anchor="middle" class="fl-name">${esc(n.label)}</text><text x="${p.x}" y="${p.y + 8}" text-anchor="middle">${esc(count)}</text>${n.open ? `<text x="${p.x}" y="${p.y + 24}" text-anchor="middle" class="fl-warn">Sin revisión humana</text>` : ''}</g></a>`;
   }).join('');

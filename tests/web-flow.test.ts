@@ -81,3 +81,21 @@ test('sin ws y con un único workstream muestra su flujo; con varios, un selecto
   const html = await (await get('/flujo')).text();
   expect(html).toContain('Elige un workstream');
 });
+
+test('T53-H1/H2: la tabla cuenta changes reales y cada nodo enlaza a los changes que cuenta', async () => {
+  seed({ verify: ['true'] }, ['uno', 'dos']);
+  const store = new Store(join(dir, 'fabrica.db'));
+  const ids = store.listChanges('demo').map(c => c.id);
+  store.db.query('DELETE FROM activities WHERE change_id = ?').run(ids[0]);
+  store.db.query("UPDATE changes SET status='declined' WHERE id = ?").run(ids[0]); // «Hecho: 1» con un declined
+  store.close();
+  const html = await (await get('/flujo?ws=demo')).text();
+  expect(html).toMatch(/<th scope="row">Revisión del change<\/th>[^]*?<td>1<\/td><\/tr>/); // recuento distinto de cero en la tabla
+  expect(html).toContain('href="/changes?ws=demo&amp;stage=done"');
+  expect(html).toContain('href="/signals"');
+  const done = await (await get('/changes?ws=demo&stage=done')).text();
+  expect(done).toContain('uno'); expect(done).not.toContain('>dos<');
+  expect(done).toContain('1 changes');
+  const rest = await (await get('/changes?ws=demo&stage=change_review')).text();
+  expect(rest).toContain('dos'); expect(rest).not.toContain('>uno<');
+});
