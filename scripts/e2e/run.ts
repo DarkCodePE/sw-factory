@@ -10,8 +10,10 @@ import { ACTIONS } from '../../src/web-actions.ts';
 import { crearRepo, sembrar, type Semilla } from './sembrar.ts';
 
 const ROOT = resolve(import.meta.dir, '../..');
-const CAPTURAS = join(ROOT, 'docs/research/warp-platform/capturas-e2e');
-const SESSION = 'fab-e2e';
+// Fuera de git por defecto (.e2e/ está en .gitignore); E2E_CAPTURAS lleva las capturas a otra carpeta, p. ej. la de docs.
+const CAPTURAS = process.env.E2E_CAPTURAS ? resolve(process.env.E2E_CAPTURAS) : join(ROOT, '.e2e/capturas');
+// Sufijo por proceso: dos ejecuciones a la vez (dos worktrees) no comparten navegador.
+const SESSION = `fab-e2e-${process.pid}`;
 const TOPE_MS = 20_000;
 
 type Estado = 'ok' | 'fallo' | 'conocido';
@@ -85,8 +87,9 @@ async function arrancarWeb(write: boolean): Promise<{ url: string; login?: strin
   let salida = '';
   const limite = Date.now() + TOPE_MS;
   for (;;) {
-    const m = /(http:\/\/127\.0\.0\.1:(\d+)\S*)/.exec(salida);
-    if (m && (!write || m[1]!.includes('/auth?token='))) return { url: `http://127.0.0.1:${m[2]}`, login: write ? m[1] : undefined, parar: () => proc.kill() };
+    // Con --write el enlace va al host único fab-<hex>.localhost (T75); sin él, a 127.0.0.1.
+    const m = /(http:\/\/([\w.-]+):(\d+)\S*)/.exec(salida);
+    if (m && (!write || m[1]!.includes('/auth?token='))) return { url: `http://${m[2]}:${m[3]}`, login: write ? m[1] : undefined, parar: () => proc.kill() };
     if (Date.now() > limite) { proc.kill(); throw new Error(`fab web no arrancó: ${salida}`); }
     const { value, done } = await Promise.race([reader.read(), Bun.sleep(200).then(() => ({ value: undefined, done: false }))]);
     if (value) salida += new TextDecoder().decode(value);
@@ -272,12 +275,14 @@ async function recorrido(login: string) {
 
   await flujo('automation: ejecutar, pausar y activar', async () => {
     const a = semilla.automation, t0 = turnos(), run0 = enCurso();
+    const cambiosTotal = () => leer(s => (s.db.query('SELECT count(*) n FROM changes').get() as { n: number }).n);
+    const changes0 = cambiosTotal();
     const senales = () => leer(s => (s.db.query("SELECT count(*) n FROM signals WHERE source=?").get(`automation:${a}`) as { n: number }).n);
     eq(senales(), 0, 'señales de la automation antes');
     let marca = ultimoEvento();
     abrir('/automations'); foto('automations');
     click(`${form(`/automations/${a}/run`)} button`); registrada('aviso de ejecutar');
-    eq(senales(), 1, 'señales de la automation tras ejecutar'); eq(turnos(), t0, 'turnos'); eq(enCurso(), run0, 'activities en curso');
+    eq(senales(), 1, 'señales de la automation tras ejecutar'); eq(turnos(), t0, 'turnos'); eq(enCurso(), run0, 'activities en curso'); eq(cambiosTotal(), changes0, 'ejecutar no tria: ningún change nuevo (D-D)');
     eq(leer(s => s.listAutomations().find(x => x.id === a)!.lastResult), 'created', 'último resultado');
     eventosDe(marca);
     marca = ultimoEvento();
@@ -426,9 +431,12 @@ async function seguridad() {
       eq((await http(`${w.url}/changes/${c}/note`, { method: 'POST', headers: { ...form, cookie, origin: 'http://evil.example' }, body: cuerpo(csrf) })).status, 403, 'POST con Origin ajeno');
       eq((await http(`${w.url}/changes/${c}/note`, { method: 'POST', headers: { ...form, cookie }, body: cuerpo(csrf) })).status, 403, 'POST sin Origin');
       eq((await http(`${w.url}/changes/${c}/note`, { method: 'POST', headers: { ...form, cookie, origin: w.url }, body: cuerpo('malo') })).status, 403, 'POST con CSRF inválido');
+      eq((await http(`${w.url}/changes/${c}/cancel`, { method: 'POST', headers: { ...form, cookie, origin: w.url }, body: `csrf=${encodeURIComponent(csrf)}` })).status, 400, 'cancelar sin confirmación en el servidor');
+      eq(cambio(c).status === 'canceled', false, 'el change no se canceló sin confirmar');
       eq(leer(s => s.listChangeNotes(c).length), notas0, 'una petición rechazada escribió en el Store');
       const port = Number(new URL(w.url).port);
       eq(await crudo(port, `GET / HTTP/1.1\r\nHost: evil.example:${port}\r\nConnection: close\r\n\r\n`), 403, 'GET con Host ajeno');
+      eq(await crudo(port, `GET / HTTP/1.1\r\nHost: 127.0.0.1:${port}\r\nConnection: close\r\n\r\n`), 403, 'GET por loopback con la sesión de escritura (T75)');
       eq(await crudo(port, `POST /changes/${c}/note HTTP/1.1\r\nHost: evil.example\r\nContent-Length: 0\r\nConnection: close\r\n\r\n`), 403, 'POST con Host ajeno');
     } finally { w.parar(); }
 
@@ -451,4 +459,5 @@ const resumen = { fecha: new Date().toISOString(), total: resultados.length, ok:
 mkdirSync(CAPTURAS, { recursive: true });
 writeFileSync(join(CAPTURAS, 'resumen.json'), JSON.stringify(resumen, null, 2) + '\n');
 console.log(`\ne2e: ${resumen.ok} ok · ${resumen.conocidos} fallos conocidos · ${resumen.fallos} fallos · ${CAPTURAS}/resumen.json`);
+for (const r of resultados.filter(r => r.estado === 'fallo')) console.log(`FALLO ${r.flujo}: ${r.detalle.split('\n').slice(0, 3).join(' | ')}`);
 process.exit(resumen.fallos ? 1 : 0);
