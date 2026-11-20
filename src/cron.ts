@@ -78,3 +78,30 @@ export const lastDue = (cron: Cron, floor: Date, now: Date): Date | null => {
   }
   return null;
 };
+
+/** Atajos de §2.4 → expresión cron (UTC). */
+export function scheduleExpr(v: { cron?: string; every?: string; at?: string; weekday?: string }): string {
+  if (v.cron !== undefined) {
+    if (v.every || v.at || v.weekday) throw new Error('--cron no se combina con --every, --at ni --weekday');
+    return v.cron;
+  }
+  const num = (s: string, what: string, max: number) => {
+    if (!/^\d{1,2}$/.test(s) || Number(s) > max) throw new Error(`${what} inválido: «${s}»`);
+    return Number(s);
+  };
+  if (v.every === 'hour') {
+    const m = /^:(\d{1,2})$/.exec(v.at ?? '');
+    if (!m || v.weekday !== undefined) throw new Error('--every hour pide --at :MM y no admite --weekday');
+    return `${num(m[1]!, 'minuto', 59)} * * * *`;
+  }
+  if (v.every !== 'day' && v.every !== 'week') throw new Error('indica --cron o --every hour|day|week');
+  const m = /^(\d{1,2}):(\d{2})$/.exec(v.at ?? '');
+  if (!m) throw new Error(`--every ${v.every} pide --at HH:MM`);
+  const hm = `${num(m[2]!, 'minuto', 59)} ${num(m[1]!, 'hora', 23)}`;
+  if (v.every === 'day') {
+    if (v.weekday !== undefined) throw new Error('--weekday solo va con --every week');
+    return `${hm} * * *`;
+  }
+  if (v.weekday === undefined) throw new Error('--every week pide --weekday 0-6 (domingo 0)');
+  return `${hm} * * ${num(v.weekday, 'día de la semana', 6)}`;
+}
