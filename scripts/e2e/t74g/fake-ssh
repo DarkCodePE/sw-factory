@@ -1,0 +1,10 @@
+#!/bin/sh
+# ssh falso para T74g: ignora destino y opciones, anota el argv y ejecuta `fab runner serve` en local
+# con el mismo stdin/stdout. El cliente solo hereda PATH, HOME…, así que el arnés instala una copia
+# con los @MARCADORES@ ya sustituidos. Imita a sshd con comando forzado: entorno mínimo, sin el de casa.
+printf '%s\n' "$*" >> '@LOG@/ssh-argv'
+[ -f '@LOG@/ssh-down' ] && exit 255   # simula red caída o clave de host rechazada: sale antes del hello
+# Lo que casa escribe en la sesión se guarda aparte (captura para buscar credenciales).
+CAP='@LOG@'/session-in.$(date +%s%N).$$
+tee "$CAP" | env -i HOME='@RHOME@' PATH='@RPATH@' LANG=C.UTF-8 SSH_ORIGINAL_COMMAND="$*" \
+  '@BUN@' '@CLI@' runner serve --root '@ROOT@'
