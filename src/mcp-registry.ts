@@ -18,7 +18,7 @@ const REF = /^(?:Bearer )?\$\{([A-Z_][A-Z0-9_]{0,63})\}$/;
 const FORBIDDEN_EXACT = new Set(['PATH', 'HOME', 'TMPDIR', 'NODE_OPTIONS']);
 const FORBIDDEN_PREFIX = ['LD_', 'BUN_', 'GIT_CONFIG', 'FAB_', 'FABRICA_'];
 
-/** Variables que cambian el cargador, git o la propia fab (T71 §4.2); también las usará el perfil. */
+/** Variables que cambian el cargador, git o la propia fab (T71 §4.2). Única lista: la usan el registro, el perfil y el Store. */
 export const isForbiddenEnvName = (n: string): boolean => FORBIDDEN_EXACT.has(n) || FORBIDDEN_PREFIX.some(p => n.startsWith(p));
 
 export class McpRegistryError extends Error {}

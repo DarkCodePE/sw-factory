@@ -9,7 +9,7 @@ import { parseArgs } from 'node:util';
 import { captureMain } from './manifest-capture.ts';
 import { AGENT_NAMES } from './agents.ts';
 import { agentsMain } from './agents-verify.ts';
-import { mcpListMain } from './mcp-registry.ts';
+import { loadMcpRegistry, mcpListMain, McpRegistryError } from './mcp-registry.ts';
 import { profileMain } from './profile-cli.ts';
 import { CODE_LEAVES_WARNING, runnerMain, serveMain } from './runner-cli.ts';
 import { improveMain } from './improve-cli.ts';
@@ -83,6 +83,7 @@ const HELP = `fab — agente de código y fábrica de software local
   fab ws create <slug> --repo <path> --goal <text> [--agent ${AGENT_NAMES.join('|')}]
                 [--verify <comando>] [--verify-setup <comando>] [--protect <glob>] [--protect-none] [--profile <digest>] [--concurrency N] [--task-limit N] [--no-change-approval] [--no-spec-approval]
   fab ws env <ws> [--allow NOMBRE… | --import <fichero> | --none | --legacy]   variables permitidas (solo nombres)
+                                                                               un valor de menos de 8 caracteres no se limpia de la salida ni de los ficheros
   fab ws mcp <ws> [--allow nombre… | --none | --legacy]                        servidores MCP permitidos
   fab improve create --experiment-id <id> --baseline <digest> --candidate <digest> --suite <archivo>
   fab improve run <id> --split development|validation|qualification --repeats N [--agent <name>] [--seed N]
@@ -273,6 +274,12 @@ async function main(argv: string[]): Promise<number> {
           else if (values.legacy) names = null;
           else if (values.import !== undefined) names = readNameList(values.import);
           if (names !== undefined) {
+            if (!isEnv && names?.length) {
+              let reg;
+              try { reg = loadMcpRegistry(STATE_DIR); } catch (e) { if (e instanceof McpRegistryError) throw new StoreError('invalid_input', `fab ws mcp: ${e.message}`); throw e; }
+              const unknown = names!.filter(n => !(n in reg));
+              if (unknown.length) throw new StoreError('invalid_input', `fab ws mcp: no está en el registro MCP (mcp-servers.json): ${unknown.join(', ')}`);
+            }
             const upd = isEnv ? store.setWorkstreamEnvAllow(ws.id, names) : store.setWorkstreamMcpAllow(ws.id, names);
             console.log(`${upd.slug} ${sub}: ${(isEnv ? upd.envAllow : upd.mcpAllow)?.join(', ') ?? 'modo anterior'}`);
           } else {

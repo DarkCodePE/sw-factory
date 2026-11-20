@@ -107,7 +107,24 @@ test('CLI: --import lee nombres con comentarios; una línea con = falla sin camb
   expect(new Store(db).getWorkstream('w').envAllow).toEqual(['UNO_X', 'DOS_X']);
 });
 
+const registry = (...names: string[]) => writeFileSync(join(dir, 'mcp-servers.json'), JSON.stringify({ servers: Object.fromEntries(names.map(n => [n, { url: `https://${n}.example.com/mcp`, headers: {} }])) }));
+
+test('CLI: ws mcp --allow comprueba que el nombre existe en el registro (T72b-H3)', async () => {
+  registry('tracker');
+  const bad = await cli(['ws', 'mcp', 'w', '--allow', 'tracker', '--allow', 'traker']);
+  expect(bad.code).not.toBe(0);
+  expect(bad.err).toContain('traker');
+  expect(new Store(db).getWorkstream('w').mcpAllow).toBeNull();
+  expect((await cli(['ws', 'mcp', 'w', '--allow', 'tracker'])).code).toBe(0);
+  expect((await cli(['ws', 'mcp', 'w', '--none'])).code).toBe(0); // vaciar no pide registro
+});
+
+test('CLI: ws env --help documenta que un valor de menos de 8 caracteres no se limpia (T72e-H3)', async () => {
+  expect((await cli(['--help'])).out).toContain('menos de 8 caracteres');
+});
+
 test('CLI: ws mcp --allow, --none, --legacy y rechazo de nombres inválidos', async () => {
+  registry('tracker', 'docs');
   expect((await cli(['ws', 'mcp', 'w', '--allow', 'tracker', '--allow', 'docs'])).code).toBe(0);
   expect(new Store(db).getWorkstream('w').mcpAllow).toEqual(['tracker', 'docs']);
   expect((await cli(['ws', 'mcp', 'w', '--none'])).code).toBe(0);

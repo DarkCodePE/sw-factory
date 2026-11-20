@@ -1,7 +1,7 @@
 import { expect, test } from 'bun:test';
 import { mkdtempSync, rmSync, readFileSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
-import { agentEnv } from '../src/sandbox/env.ts';
+import { agentEnv, NATIVE_VARS } from '../src/sandbox/env.ts';
 import { confineAgent } from '../src/sandbox/confine.ts';
 import { runAgent } from '../src/agents.ts';
 
@@ -115,4 +115,20 @@ test('una variable declarada no pisa la base del sandbox (HOME, PATH)', () => {
     const c = confineAgent('fake', ['sh', '-c', 'true'], root, { HOME: '/host', PATH: '/host/bin' }, undefined, undefined, undefined, { wsAllow: ['HOME', 'PATH'], roleEnv: ['HOME', 'PATH'] });
     try { expect(c.env.HOME).toBe('/home/agent'); expect(c.env.PATH).toContain('/opt/fab-runtime'); } finally { c.cleanup(); }
   } finally { rmSync(root, { recursive: true, force: true }); }
+});
+
+test('T72e-H1: en modo declarado native y agy conservan FABRICA_LLM_* y FABRICA_HOME; el resto de FABRICA_ no', () => {
+  const h = { ...host, FABRICA_LLM_API_KEY: 'k', FABRICA_LLM_BASE_URL: 'u', FABRICA_LLM_MODEL: 'm', FABRICA_HOME: '/estado', FABRICA_OTRA: 'x' };
+  for (const adapter of ['native', 'agy'])
+    for (const confined of [false, true])
+      expect(Object.keys(agentEnv({ ...base, adapter, confined, wsAllow: [], host: h }).env).filter(k => k.startsWith('FABRICA_')).sort())
+        .toEqual(['FABRICA_HOME', 'FABRICA_LLM_API_KEY', 'FABRICA_LLM_BASE_URL', 'FABRICA_LLM_MODEL']);
+});
+
+test('T72e-H1: la lista cubre las FABRICA_* que lee src/agent/ (salvo las que no son del agente)', () => {
+  const leen = new Set<string>();
+  for (const f of new Bun.Glob('**/*.ts').scanSync('src/agent')) for (const m of readFileSync(join('src/agent', f), 'utf8').matchAll(/process\.env\.(FABRICA_[A-Z_]+)/g)) leen.add(m[1]!);
+  // Opcionales (búsqueda, red, tiempos): hoy no se pasan; si hace falta alguna, se añade a NATIVE_VARS.
+  const opcionales = new Set(['FABRICA_SEARCH_URL', 'FABRICA_SEARCH_API_KEY', 'FABRICA_SEARCH_PROVIDER', 'FABRICA_FETCH_ALLOW_PRIVATE', 'FABRICA_STREAM_IDLE_MS', 'FABRICA_EGRESS_PROBE_FILE']);
+  expect([...leen].filter(n => !opcionales.has(n) && !NATIVE_VARS.includes(n))).toEqual([]);
 });
