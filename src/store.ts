@@ -2016,17 +2016,11 @@ export class Store {
     this.event(c.workstreamId, 'info', `pr_opened: ${url}`, changeId);
   }
 
-  /** Registra el merge del change como evento. */
-  recordMerged(changeId: string): void {
-    const c = this.getChange(changeId);
-    this.event(c.workstreamId, 'info', 'merge_completed', changeId);
-  }
-
   /** Obtiene la URL del PR asociada a un change, si existe y es https://. Solo lectura local. */
   getChangePrUrl(changeId: string): string | null {
-    const ev = this.db.query("SELECT message FROM events WHERE change_id = ? AND (message GLOB 'pr_opened: https://*' OR message GLOB 'pr_opened https://*' OR message GLOB 'pr opened: https://*') ORDER BY id ASC LIMIT 1").get(changeId) as { message: string } | null;
+    const ev = this.db.query("SELECT message FROM events WHERE change_id = ? AND message GLOB 'pr_opened: https://*' ORDER BY id ASC LIMIT 1").get(changeId) as { message: string } | null;
     if (ev) {
-      const match = /pr_?opened:?\s*(https:\/\/\S+)/i.exec(ev.message);
+      const match = /^pr_opened:\s*(https:\/\/\S+)/i.exec(ev.message);
       if (match && match[1]) return match[1];
     }
     const hasLinks = this.db.query("SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'change_links'").get();
@@ -2057,8 +2051,8 @@ export class Store {
   /** PRs abiertos y fusionados agrupados por día para series temporales. */
   metricsDailyPrs(changeIds: string[], until: string): { opened: Map<string, number>; merged: Map<string, number> } {
     if (!changeIds.length) return { opened: new Map(), merged: new Map() };
-    const prOpen = "(message GLOB 'pr_opened: https://*' OR message GLOB 'pr_opened https://*' OR message GLOB 'pr opened: https://*')";
-    const merge = "(message IN ('merge_completed','merged','change merged') OR message LIKE 'merge_completed:%' OR message LIKE 'merged:%')";
+    const prOpen = "message GLOB 'pr_opened: https://*'";
+    const merge = "message = 'merge_completed'";
     const openedRows = this.db.query(`SELECT substr(created_at, 1, 10) AS day, COUNT(DISTINCT change_id) AS n
       FROM events WHERE change_id IN (${changeIds.map(() => '?').join(',')}) AND julianday(created_at) <= julianday(?)
       AND ${prOpen} GROUP BY substr(created_at, 1, 10)`).all(...changeIds, until) as Array<{ day: string; n: number }>;
@@ -2073,8 +2067,8 @@ export class Store {
     if (!changeIds.length) return [];
     const review = "(message = 'change_review approved' OR message LIKE 'change_review approved:%' OR message = 'change_review commented' OR message LIKE 'change_review commented:%' OR message = 'change_review declined' OR message LIKE 'change_review declined:%' OR message = 'investigation approved' OR message LIKE 'investigation approved:%' OR message = 'investigation commented' OR message LIKE 'investigation commented:%' OR message = 'investigation declined' OR message LIKE 'investigation declined:%')";
     const terminal = "(message IN ('change completed','change canceled','change_review declined','investigation declined') OR message LIKE 'change_review declined:%' OR message LIKE 'investigation declined:%' OR message LIKE 'blocked:%' OR message LIKE 'quarantined:%' OR message GLOB 'change_review failed permanently:*' OR message GLOB 'investigation failed permanently:*' OR message GLOB 'implementation failed permanently:*' OR message GLOB 'steward failed permanently:*' OR message GLOB 'gates failed permanently:*')";
-    const prOpen = "(message GLOB 'pr_opened: https://*' OR message GLOB 'pr_opened https://*' OR message GLOB 'pr opened: https://*')";
-    const merge = "(message IN ('merge_completed','merged','change merged') OR message LIKE 'merge_completed:%' OR message LIKE 'merged:%')";
+    const prOpen = "message GLOB 'pr_opened: https://*'";
+    const merge = "message = 'merge_completed'";
     return this.db.query(`SELECT change_id AS changeId,
       MIN(CASE WHEN message = 'investigation awaiting spec review' THEN created_at END) AS reviewAt,
       MIN(CASE WHEN ${review} THEN created_at END) AS decisionAt,

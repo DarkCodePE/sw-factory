@@ -392,6 +392,39 @@ test('T82-H6: change a las 23:00 del día to entra en la cohorte y Todo el histo
   expect(htmlAll).toContain('Las series temporales diarias de «Todo el historial» muestran como máximo los últimos 90 días');
 });
 
+test('T83-H3: guardas de ciclo PR/merge y selección del primer evento (MIN) sin alias no estándar', () => {
+  const c1 = store.createChange('uno', 'Change fechas invertidas', '');
+  store.db.query("UPDATE changes SET created_at=? WHERE id=?").run('2026-11-18T10:00:00Z', c1.id);
+  store.event(c1.workstreamId, 'info', 'pr_opened: https://github.com/org/repo/pull/1', c1.id);
+  store.db.query("UPDATE events SET created_at=? WHERE change_id=? AND message LIKE 'pr_opened%'").run('2026-11-18T09:00:00Z', c1.id);
+  store.event(c1.workstreamId, 'info', 'merge_completed', c1.id);
+  store.db.query("UPDATE events SET created_at=? WHERE change_id=? AND message='merge_completed'").run('2026-11-18T08:00:00Z', c1.id);
+
+  const c2 = store.createChange('uno', 'Change múltiples eventos', '');
+  store.db.query("UPDATE changes SET created_at=? WHERE id=?").run('2026-11-18T00:00:00Z', c2.id);
+  store.db.query("INSERT INTO events (workstream_id, change_id, severity, message, created_at) VALUES (?, ?, 'info', 'pr_opened: https://github.com/org/repo/pull/2', '2026-11-18T02:00:00Z')").run(c2.workstreamId, c2.id);
+  store.db.query("INSERT INTO events (workstream_id, change_id, severity, message, created_at) VALUES (?, ?, 'info', 'pr_opened: https://github.com/org/repo/pull/2', '2026-11-18T06:00:00Z')").run(c2.workstreamId, c2.id);
+  store.db.query("INSERT INTO events (workstream_id, change_id, severity, message, created_at) VALUES (?, ?, 'info', 'merge_completed', '2026-11-18T04:00:00Z')").run(c2.workstreamId, c2.id);
+  store.db.query("INSERT INTO events (workstream_id, change_id, severity, message, created_at) VALUES (?, ?, 'info', 'merge_completed', '2026-11-18T08:00:00Z')").run(c2.workstreamId, c2.id);
+
+  const m = calculateMetrics(store, dir, { range: '7', now });
+  const kickoff = m.prCycles.find(c => c.name === 'Kickoff → PR')!;
+  const merge = m.prCycles.find(c => c.name === 'PR → merge')!;
+
+  expect(kickoff.samples).toBe(1);
+  expect(kickoff.median).toBe(2 * 3600000);
+  expect(merge.samples).toBe(1);
+  expect(merge.median).toBe(2 * 3600000);
+
+  const c3 = store.createChange('uno', 'Change con alias raro', '');
+  store.db.query("INSERT INTO events (workstream_id, change_id, severity, message, created_at) VALUES (?, ?, 'info', 'pr opened: https://github.com/org/repo/pull/3', '2026-11-18T01:00:00Z')").run(c3.workstreamId, c3.id);
+  store.db.query("INSERT INTO events (workstream_id, change_id, severity, message, created_at) VALUES (?, ?, 'info', 'merged', '2026-11-18T02:00:00Z')").run(c3.workstreamId, c3.id);
+  const evs = store.metricsEvents([c3.id], new Date().toISOString());
+  expect(evs[0]?.prOpenedAt).toBeNull();
+  expect(evs[0]?.mergedAt).toBeNull();
+  expect(store.getChangePrUrl(c3.id)).toBeNull();
+});
+
 test('T83-H1: repetir recordPrOpened no duplica el evento ni altera el conteo en metricsDailyPrs', () => {
   const c = store.createChange('uno', 'Change con PR repetido', '');
   store.recordPrOpened(c.id, 'https://github.com/org/repo/pull/1');
