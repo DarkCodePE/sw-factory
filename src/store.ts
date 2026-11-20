@@ -1073,17 +1073,36 @@ export class Store {
    */
   changeIndex(workstream?: string): ChangeSummary[] {
     const ws = workstream ? this.getWorkstream(workstream) : undefined;
-    const has = (t: string) => this.db.query("SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = ?").get(t) !== null;
-    const source = new Map<string, ChangeSource>();
-    const mark = (sql: string, map: (r: Row) => ChangeSource) => { for (const r of this.db.query(sql).all() as Row[]) source.set(r.change_id as string, map(r)); };
-    mark('SELECT change_id FROM signals WHERE change_id IS NOT NULL', () => 'cli');
-    if (has('adm_thread_changes')) mark('SELECT change_id FROM adm_thread_changes', () => 'channel');
-    if (has('change_links')) mark('SELECT change_id, source_system FROM change_links WHERE source_system IS NOT NULL', r => r.source_system === 'jira' ? 'jira' : 'channel');
-    if (has('jira_imports')) mark('SELECT s.change_id FROM jira_imports i JOIN signals s ON s.id = i.signal_id WHERE s.change_id IS NOT NULL', () => 'jira');
-    const creator = new Map((this.db.query('SELECT change_id, actor FROM events WHERE id IN (SELECT MIN(id) FROM events WHERE change_id IS NOT NULL GROUP BY change_id)').all() as Row[])
-      .map(r => [r.change_id as string, (r.actor as string | null) ?? null]));
     const rows = (ws ? this.db.query('SELECT * FROM changes WHERE workstream_id = ? ORDER BY created_at').all(ws.id) : this.db.query('SELECT * FROM changes ORDER BY created_at').all()) as Row[];
+    const { source, creator } = this.resolveChangeAttribution(rows.map(r => r.id as string));
     return rows.map(r => ({ ...toChange(r), source: source.get(r.id as string) ?? null, creator: creator.get(r.id as string) ?? null }));
+  }
+
+  /** Resuelve fuente y creador para un conjunto de changes acotado (o todos si se omite). */
+  resolveChangeAttribution(changeIds?: string[]): { source: Map<string, ChangeSource>; creator: Map<string, string | null> } {
+    if (changeIds && !changeIds.length) return { source: new Map(), creator: new Map() };
+    const has = (t: string) => this.db.query("SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = ?").get(t) !== null;
+    const filter = changeIds ? ` WHERE change_id IN (${changeIds.map(() => '?').join(',')})` : '';
+    const filterAnd = changeIds ? ` AND change_id IN (${changeIds.map(() => '?').join(',')})` : '';
+    const params = changeIds ?? [];
+
+    const source = new Map<string, ChangeSource>();
+    const mark = (sql: string, sqlParams: string[], map: (r: Row) => ChangeSource) => {
+      for (const r of this.db.query(sql).all(...sqlParams) as Row[]) source.set(r.change_id as string, map(r));
+    };
+    mark(`SELECT change_id FROM signals WHERE change_id IS NOT NULL${filterAnd}`, params, () => 'cli');
+    if (has('adm_thread_changes')) mark(`SELECT change_id FROM adm_thread_changes${filter}`, params, () => 'channel');
+    if (has('change_links')) mark(`SELECT change_id, source_system FROM change_links WHERE source_system IS NOT NULL${filterAnd}`, params, r => r.source_system === 'jira' ? 'jira' : 'channel');
+    if (has('jira_imports')) {
+      const jiraFilter = changeIds ? ` AND s.change_id IN (${changeIds.map(() => '?').join(',')})` : '';
+      mark(`SELECT s.change_id FROM jira_imports i JOIN signals s ON s.id = i.signal_id WHERE s.change_id IS NOT NULL${jiraFilter}`, params, () => 'jira');
+    }
+
+    const creatorFilter = changeIds ? ` AND change_id IN (${changeIds.map(() => '?').join(',')})` : '';
+    const creator = new Map((this.db.query(`SELECT change_id, actor FROM events WHERE id IN (SELECT MIN(id) FROM events WHERE change_id IS NOT NULL${creatorFilter} GROUP BY change_id)`).all(...params) as Row[])
+      .map(r => [r.change_id as string, (r.actor as string | null) ?? null]));
+
+    return { source, creator };
   }
 
   setChangeBranch(changeId: string, branch: string): void {
@@ -1994,15 +2013,7 @@ export class Store {
     const total = (this.db.query(`SELECT COUNT(*) AS n FROM changes WHERE ${where}`).get(...params) as { n: number }).n;
     const rows = this.db.query(`SELECT * FROM changes WHERE ${where} ORDER BY julianday(created_at) DESC, id LIMIT ?`)
       .all(...params, limit) as Row[];
-    const has = (t: string) => this.db.query("SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = ?").get(t) !== null;
-    const source = new Map<string, ChangeSource>();
-    const mark = (sql: string, map: (r: Row) => ChangeSource) => { for (const r of this.db.query(sql).all() as Row[]) source.set(r.change_id as string, map(r)); };
-    mark('SELECT change_id FROM signals WHERE change_id IS NOT NULL', () => 'cli');
-    if (has('adm_thread_changes')) mark('SELECT change_id FROM adm_thread_changes', () => 'channel');
-    if (has('change_links')) mark('SELECT change_id, source_system FROM change_links WHERE source_system IS NOT NULL', r => r.source_system === 'jira' ? 'jira' : 'channel');
-    if (has('jira_imports')) mark('SELECT s.change_id FROM jira_imports i JOIN signals s ON s.id = i.signal_id WHERE s.change_id IS NOT NULL', () => 'jira');
-    const creator = new Map((this.db.query('SELECT change_id, actor FROM events WHERE id IN (SELECT MIN(id) FROM events WHERE change_id IS NOT NULL GROUP BY change_id)').all() as Row[])
-      .map(r => [r.change_id as string, (r.actor as string | null) ?? null]));
+    const { source, creator } = this.resolveChangeAttribution(rows.map(r => r.id as string));
     const changes: ChangeSummary[] = rows.map(r => ({ ...toChange(r), source: source.get(r.id as string) ?? null, creator: creator.get(r.id as string) ?? null }));
     return { changes, total };
   }

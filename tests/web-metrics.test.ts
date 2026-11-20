@@ -435,6 +435,21 @@ test('T83-H4: recordPrOpened exige URL https válida con host y rechaza https://
   expect(() => store.recordPrOpened(c.id, 'https://github.com/org/repo/pull/1')).not.toThrow();
 });
 
+test('T82-H7: resolveChangeAttribution reutiliza la resolución de fuente y creador acotada a la cohorte', () => {
+  const c1 = seed(1, 10, 'uno', '2026-11-18T00:00:00Z');
+  store.db.query("INSERT INTO signals (id, workstream_id, title, body, status, change_id, created_at) VALUES ('s10', ?, 't', 'b', 'triaged', ?, '2026-11-18T00:00:00Z')")
+    .run(c1.workstreamId, c1.id);
+  store.db.query("UPDATE events SET actor='carol' WHERE change_id=? AND id IN (SELECT MIN(id) FROM events WHERE change_id=?)").run(c1.id, c1.id);
+
+  const empty = (store as any).resolveChangeAttribution([]);
+  expect(empty.source.size).toBe(0);
+  expect(empty.creator.size).toBe(0);
+
+  const attr = (store as any).resolveChangeAttribution([c1.id]);
+  expect(attr.source.get(c1.id)).toBe('cli');
+  expect(attr.creator.get(c1.id)).toBe('carol');
+});
+
 test('T83-H1: repetir recordPrOpened no duplica el evento ni altera el conteo en metricsDailyPrs', () => {
   const c = store.createChange('uno', 'Change con PR repetido', '');
   store.recordPrOpened(c.id, 'https://github.com/org/repo/pull/1');
