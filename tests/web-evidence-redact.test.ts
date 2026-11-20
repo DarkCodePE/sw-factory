@@ -4,7 +4,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { Store } from '../src/store.ts';
 import { startWeb } from '../src/web.ts';
-import { readEvidence, redact, redactField } from '../src/evidence.ts';
+import { RULES, readEvidence, redact, redactField } from '../src/evidence.ts';
 
 // Los once casos de H4, con valores sintéticos. `valor` es lo que no debe salir.
 const V = 'zq9Xv7hunterK3';
@@ -61,18 +61,7 @@ test('T77a: evidencia JSON histórica y truncada', () => {
   expect(readEvidence(dir, 'c.log')!.text).not.toContain('aaaa');
 });
 
-test('T77a: redact es lineal con entradas largas', () => {
-  const t0 = performance.now();
-  redact('curl ' + 'curl -x '.repeat(20000)); redact('"' + 'a\\'.repeat(100000)); redact('password: ' + '"'.repeat(100000));
-  expect(performance.now() - t0).toBeLessThan(5000);
-});
 
-test('T77-H1: rachas largas de guiones y de palabras con guion no son cuadráticas (tiempo acotado)', () => {
-  for (const t of ['-'.repeat(256 * 1024), '--a'.repeat(80000), 'a-'.repeat(128 * 1024), '--token'.repeat(30000), 'x_token-'.repeat(30000)]) {
-    const t0 = performance.now(); redact(t);
-    expect(performance.now() - t0).toBeLessThan(1500);
-  }
-});
 
 test('T77-H2: los contadores de tokens de un log stream-json no se redactan; los textos secretos sí', () => {
   const linea = '{"usage":{"input_tokens":1234,"output_tokens":56},"max_tokens":8,"stop":true,"token":"zq9Xv7hunterK3"}';
@@ -102,4 +91,29 @@ test.each([
 ])('T77-H5: %s', (_n, texto) => {
   const out = redact(texto);
   expect(out).not.toContain('zq9Xv7'); expect(redact(out)).toBe(out);
+});
+
+// Entradas patológicas para regexes con retroceso. Cada regla de RULES se mide sola: con 4× la entrada, un coste lineal tarda ~4× y uno cuadrático ~16×.
+const PATOLOGICAS: Record<string, (n: number) => string> = {
+  guiones: n => '-'.repeat(n), 'a-': n => 'a-'.repeat(n / 2), '--a': n => '--a'.repeat(n / 3), '--token': n => '--token'.repeat(n / 7), 'x_token-': n => 'x_token-'.repeat(n / 8),
+  espacios: n => ' '.repeat(n), 'Cookie: + espacios': n => 'Cookie:' + ' '.repeat(n), 'Cookie: x repetido': n => 'Cookie: x '.repeat(n / 10),
+  'token=': n => 'token='.repeat(n / 6), comillas: n => '"'.repeat(n), 'comilla escapada': n => '\\"'.repeat(n / 2), curl: n => 'curl '.repeat(n / 5), 'curl -x': n => 'curl -x '.repeat(n / 8),
+  'url con :': n => 'http://a:a'.repeat(n / 10), 'url con :a:a': n => 'http://' + 'a:'.repeat(n / 2), 'PEM sin cierre': n => '-----BEGIN PRIVATE KEY-----\n'.repeat(n / 28),
+  'authorization:': n => 'authorization:'.repeat(n / 14), 'authorization + espacios': n => 'authorization:' + ' '.repeat(n), 'pwd=': n => 'pwd='.repeat(n / 4), 'pass:': n => 'pass:'.repeat(n / 5),
+  Bearer: n => 'Bearer '.repeat(n / 7), letras: n => 'a'.repeat(n), jwt: n => 'eyJ' + 'a.'.repeat(n / 2), 'clave larga': n => 'a_'.repeat(n / 2) + 'token',
+  "password: '": n => "password: '".repeat(n / 11), 'valor con salto': n => 'password="a\n'.repeat(n / 12),
+};
+const mejor = (f: () => void) => { let t = Infinity; for (let i = 0; i < 2; i++) { const t0 = performance.now(); f(); t = Math.min(t, performance.now() - t0); } return t; };
+
+test('T77-H1/P2-H1: ninguna regla de RULES es cuadrática con entradas patológicas (crece con la entrada, no con su cuadrado)', () => {
+  const lentas: string[] = [];
+  RULES.forEach((regla, i) => {
+    for (const [nombre, gen] of Object.entries(PATOLOGICAS)) {
+      const pequena = gen(16384), grande = gen(65536);
+      const t1 = mejor(() => regla(pequena)), t4 = mejor(() => regla(grande));
+      // Por debajo de 50 ms no hay nada que medir; por encima, 4× la entrada no puede costar más de ~9×.
+      if (t4 > 50 && t4 / Math.max(t1, 2) > 9) lentas.push(`regla ${i} · ${nombre}: ${t1.toFixed(0)} ms → ${t4.toFixed(0)} ms`);
+    }
+  });
+  expect(lentas).toEqual([]);
 });
