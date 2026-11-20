@@ -285,6 +285,11 @@ export async function performAction(stateDir: string, name: string, id: string, 
   if (!action) throw new InputError(404, 'Acción no encontrada.');
   const input = action.input(rawInput);
   const out: Outcome = { destination: '/', result: 'ok' };
+  if (attachment) {
+    // T96-H4: un estado no apto se rechaza antes de abrir el escritor (que ya tocaría la base y su WAL).
+    try { assertPrivateNoteDatabase(join(stateDir, 'fabrica.db')); }
+    catch (error) { out.destination = `/changes/${id}`; out.result = (error as Error).message; return out; }
+  }
   let store: Store | undefined;
   try {
     store = new Store(join(stateDir, 'fabrica.db'));

@@ -252,3 +252,25 @@ test('T96-H3: un runner remoto rechaza la carga con su motivo, sin código gené
   const page = await html();
   expect(page).toContain('El runner asignado es remoto.'); expect(page).not.toContain('revisa los datos de la acción');
 });
+
+test('T96-H4: un estado no apto se rechaza sin tocar la base ni su WAL', async () => {
+  const { chmodSync, watch } = await import('node:fs');
+  chmodSync(dir, 0o755);
+  const touched: string[] = [];
+  const watcher = watch(dir, (_event, name) => { if (name) touched.push(String(name)); });
+  try {
+    expect((await upload([...base(), file()])).status).toBe(303);
+    await Bun.sleep(100);
+  } finally { watcher.close(); }
+  expect(touched).toEqual([]);
+  expect(notes()).toHaveLength(0);
+});
+
+test('T96-H5: el texto de la nota que imita una cabecera de archivo no se confunde con un archivo vacío', async () => {
+  const mimic = 'x\r\n\r\nContent-Disposition: form-data; name="attachment"; filename="x.txt"\r\n\r\n';
+  const r = await upload([{ name: 'csrf', value: csrf }, { name: 'body', value: mimic }, { name: 'attachment', value: '', filename: '' }]);
+  expect(r.status).toBe(303);
+  expect(notes()).toHaveLength(1);
+  expect(notes()[0]!.attachment).toBeUndefined();
+  expect((await upload([...base(), { name: 'attachment', value: '', filename: 'vacio.txt' }])).status).toBe(400);
+});
