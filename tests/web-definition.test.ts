@@ -100,7 +100,7 @@ test('coincide exactamente con fab definition export y muestra el contenido de c
     const articleRegex = new RegExp(`<article id="${fileId}"[\\s\\S]*?<pre tabindex="0"><code>([\\s\\S]*?)<\\/code><\\/pre>`);
     const match = html.match(articleRegex);
     expect(match).not.toBeNull();
-    const renderedContent = unescapeHtml(match![1]);
+    const renderedContent = unescapeHtml(match![1] ?? '');
     const diskContent = readFileSync(join(exportTarget, relPath), 'utf8');
     expect(renderedContent).toBe(diskContent);
   }

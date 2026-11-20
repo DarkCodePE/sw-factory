@@ -19,11 +19,13 @@ export function safeTruncateUtf8(buf: Buffer, maxBytes: number): string {
   if (buf.byteLength <= maxBytes) return buf.toString('utf8');
   let end = maxBytes;
   let i = end - 1;
-  while (i >= 0 && i >= end - 4 && (buf[i] & 0xC0) === 0x80) {
+  while (i >= 0 && i >= end - 4) {
+    const byte = buf[i];
+    if (byte === undefined || (byte & 0xC0) !== 0x80) break;
     i--;
   }
-  if (i >= 0 && (buf[i] & 0x80) !== 0) {
-    const lead = buf[i];
+  const lead = i >= 0 ? buf[i] : undefined;
+  if (lead !== undefined && (lead & 0x80) !== 0) {
     const seqLen = (lead & 0xE0) === 0xC0 ? 2
       : (lead & 0xF0) === 0xE0 ? 3
       : (lead & 0xF8) === 0xF0 ? 4 : 1;
