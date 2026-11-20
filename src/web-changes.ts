@@ -75,10 +75,16 @@ const apply=(root=document)=>{const s=read();root.querySelectorAll('[data-seen-i
 window.fabPrepare=apply;document.addEventListener('click',ev=>{const b=ev.target.closest&&ev.target.closest('[data-seen]');if(!b)return;const li=b.closest('[data-seen-id]');const s=read();const id=li.dataset.seenId;s.has(id)?s.delete(id):s.add(id);write(s);apply()});
 new MutationObserver(()=>apply()).observe(document.body,{childList:true,subtree:true});apply()})();`;
 
-/** Enlace al PR de un change; solo admite https:// y se escapa; 'No medido' si falta o no es https. */
+/** Enlace al PR de un change; solo admite https:// y se escapa; 'No medido' si falta o no es https con host. */
 export function changePrLink(store: Store, changeId: string): string {
   const url = store.getChangePrUrl(changeId);
-  if (!url || !url.startsWith('https://')) return 'No medido';
+  if (!url) return 'No medido';
+  try {
+    const u = new URL(url);
+    if (u.protocol !== 'https:' || !u.hostname) return 'No medido';
+  } catch {
+    return 'No medido';
+  }
   const esc = (v: string) => v.replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[c]!);
   return `<a href="${esc(url)}">${esc(url)}</a>`;
 }

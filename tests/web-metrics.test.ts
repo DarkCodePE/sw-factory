@@ -425,6 +425,16 @@ test('T83-H3: guardas de ciclo PR/merge y selección del primer evento (MIN) sin
   expect(store.getChangePrUrl(c3.id)).toBeNull();
 });
 
+test('T83-H4: recordPrOpened exige URL https válida con host y rechaza https:// vacío', () => {
+  const c = store.createChange('uno', 'Change url host', '');
+  expect(() => store.recordPrOpened(c.id, 'https://')).toThrow();
+  expect(() => store.recordPrOpened(c.id, 'https://?query')).toThrow();
+  expect(() => store.recordPrOpened(c.id, 'https://#hash')).toThrow();
+  expect(() => store.recordPrOpened(c.id, 'not-a-url')).toThrow();
+  expect(() => store.recordPrOpened(c.id, 'http://github.com/org/repo/pull/1')).toThrow();
+  expect(() => store.recordPrOpened(c.id, 'https://github.com/org/repo/pull/1')).not.toThrow();
+});
+
 test('T83-H1: repetir recordPrOpened no duplica el evento ni altera el conteo en metricsDailyPrs', () => {
   const c = store.createChange('uno', 'Change con PR repetido', '');
   store.recordPrOpened(c.id, 'https://github.com/org/repo/pull/1');

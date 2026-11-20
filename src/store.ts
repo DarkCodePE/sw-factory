@@ -2007,9 +2007,14 @@ export class Store {
     return { changes, total };
   }
 
-  /** Registra el PR abierto como evento de change. La URL debe comenzar por https://. */
+  /** Registra el PR abierto como evento de change. La URL debe comenzar por https:// y tener host válido. */
   recordPrOpened(changeId: string, url: string): void {
-    if (!url.startsWith('https://')) throw new StoreError('invalid_input', 'la URL del PR debe comenzar por https://');
+    try {
+      const u = new URL(url);
+      if (u.protocol !== 'https:' || !u.hostname) throw new Error();
+    } catch {
+      throw new StoreError('invalid_input', 'la URL del PR debe comenzar por https:// y tener un host válido');
+    }
     const c = this.getChange(changeId);
     const existing = this.db.query("SELECT 1 FROM events WHERE change_id = ? AND message GLOB 'pr_opened: *'").get(changeId);
     if (existing) return;
