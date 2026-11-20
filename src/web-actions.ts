@@ -69,7 +69,7 @@ export class InputError extends Error {
 
 type Raw = Record<string, string | undefined>;
 type Outcome = { destination: string; result: string; repo?: string };
-type Action = { path: RegExp; input: (raw: Raw) => Raw; run: (store: Store, id: string, input: Raw, out: Outcome, actor: string, stateDir: string) => void };
+type Action = { path: RegExp; /** false: solo la web con sesión; la API con clave no la expone (decisión del dueño sobre H1). */ api?: false; input: (raw: Raw) => Raw; run: (store: Store, id: string, input: Raw, out: Outcome, actor: string, stateDir: string) => void };
 
 const text = (raw: Raw, key: string) => raw[key] ?? '';
 const limit = (value: string, max = 8192) => { if (Buffer.byteLength(value) > max) throw new InputError(413, 'El texto supera 8 KiB.'); };
@@ -232,6 +232,7 @@ export const ACTIONS: Record<string, Action> = {
   },
   // T60/T61: ajustes, estado, archivo y alta de workstreams. Mismo Store, actor y validación que antes de T71c.
   'workstreams/create': {
+    api: false,
     path: /^\/(workstreams)\/nuevo$/,
     input: wsFields,
     run: (store, _id, input, out, _actor, stateDir) => { out.destination = '/workstreams'; createWorkstream(store, stateDir, input as ReturnType<typeof wsFields>); },
@@ -242,6 +243,7 @@ export const ACTIONS: Record<string, Action> = {
     run: (store, id, input, out) => { out.destination = '/workstreams'; workstreamSettings(store, id, input); },
   },
   'workstreams/state': {
+    api: false,
     path: route('workstreams', 'state'),
     input: raw => ({ state: raw.state }),
     run: (store, id, input, out) => { out.destination = '/workstreams'; workstreamState(store, id, input.state); },

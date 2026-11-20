@@ -33,6 +33,7 @@ function route(store: Store, url: URL, path: string): unknown {
 const redactChange = <T extends { title: string; description: string }>(c: T): T => ({ ...c, title: rd(c.title), description: rd(c.description) });
 const redactActivity = <T extends { result: string | null; error: string | null; reviewComment: string | null }>(a: T): T => ({ ...a, result: rd(a.result), error: rd(a.error), reviewComment: rd(a.reviewComment) });
 
+const apiAction = (path: string) => Object.keys(ACTIONS).find(n => ACTIONS[n]!.api !== false && ACTIONS[n]!.path.test(path));
 const BODY_MAX = 16384;
 const tooBig = () => fail(413, 'payload_too_large', 'el cuerpo supera 16 KiB');
 
@@ -46,7 +47,7 @@ async function mutate(req: Request, path: string, stateDir: string, actor: strin
   let body: unknown;
   try { body = JSON.parse(Buffer.from(buf).toString('utf8')); } catch { return fail(400, 'invalid_input', 'JSON inválido'); }
   if (!body || typeof body !== 'object' || Array.isArray(body) || Object.values(body).some(v => typeof v !== 'string')) return fail(400, 'invalid_input', 'el cuerpo debe ser un objeto con valores de texto');
-  const name = Object.keys(ACTIONS).find(n => ACTIONS[n]!.path.test(path))!;
+  const name = apiAction(path)!;
   const id = name.endsWith('/create') ? '' : ACTIONS[name]!.path.exec(path)![1]!;
   if (id && !/^[\w-]+$/.test(id)) return fail(400, 'invalid_input', 'identificador inválido');
   try {
@@ -71,7 +72,7 @@ export async function handleApi(req: Request, url: URL, openStore: () => Store, 
     if (!key) return fail(401, 'unauthorized', 'clave ausente o inválida');
     const path = url.pathname.slice('/api/v1'.length);
     if (req.method === 'POST') {
-      if (!Object.values(ACTIONS).some(a => a.path.test(path))) return fail(404, 'not_found', 'ruta no encontrada');
+      if (!apiAction(path)) return fail(404, 'not_found', 'ruta no encontrada');
       if (!write) return fail(405, 'method_not_allowed', 'el servidor está en solo lectura');
       if (key.scope !== 'decide') return fail(403, 'forbidden', 'la clave no tiene ámbito decide');
     } else {

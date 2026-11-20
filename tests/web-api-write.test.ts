@@ -53,6 +53,16 @@ test('A5: merge, gate y rutas ajenas a ACTIONS dan 404; las rutas salen de ACTIO
   expect(Object.keys(ACTIONS).sort()).toEqual(['activities/review', 'activities/score', 'automations/disable', 'automations/enable', 'automations/run', 'changes/cancel', 'changes/note', 'changes/rename', 'changes/retry', 'questions/answer', 'scorers/backfill', 'signals/create', 'signals/ignore', 'signals/triage', 'workstreams/archive', 'workstreams/create', 'workstreams/settings', 'workstreams/state']);
 });
 
+test('H1: una clave decide no crea ni activa workstreams (api: false); settings y archive siguen', async () => {
+  const body = { slug: 'nuevo', goal: 'x', repo: dir, verify: 'sh -c "id"' };
+  expect((await post('/workstreams/nuevo', body)).status).toBe(404);
+  expect(store.listWorkstreams().map(w => w.slug)).toEqual(['prueba']);
+  const id = store.listWorkstreams()[0]!.id;
+  expect((await post(`/workstreams/${id}/state`, { state: 'active' })).status).toBe(404);
+  expect(ACTIONS['workstreams/create']!.api).toBe(false); expect(ACTIONS['workstreams/state']!.api).toBe(false);
+  expect((await post(`/workstreams/${id}/settings`, { goal: 'otro', concurrency: '1', task_limit: '5' })).status).not.toBe(404);
+});
+
 test('415, 413 y JSON inválido', async () => {
   expect((await post(`/changes/${change}/note`, { body: 'x' }, { type: 'text/plain' })).status).toBe(415);
   expect((await post(`/changes/${change}/note`, { body: 'x' }, { type: null })).status).toBe(415);
