@@ -339,3 +339,34 @@ test('T95-H2: JIRA_HOSTNAME con puerto o con esquema enlaza el mismo host y nada
   expect(safeUrl('https://jira.y.example/b', { JIRA_HOSTNAME: 'https://jira.y.example' })).not.toBeNull();
   expect(safeUrl('https://jira.y.example/b', { JIRA_HOSTNAME: 'https://jira.y.example/ruta' })).toBeNull(); // host mal formado: se ignora
 });
+
+// ---- G3-H1: huecos de test de la verificación -------------------------------------------------------------------
+test('G3-H1: hosts parecidos, cto inclusivo, dir inválido con título, columna de activities y paleta oscura explícita', async () => {
+  for (const bad of ['https://evilgithub.com/o', 'https://evilatlassian.net/b', 'https://github.com.atlassian.com/x']) expect(safeUrl(bad, {}), bad).toBeNull();
+  expect(safeUrl('https://gist.github.com/o', {})).toBeNull();
+  seed();
+  expect(titles('cto=2026-03-01')).toContain('Auto'); // el día `cto` entra (inclusivo)
+  expect(titles('sort=title&dir=raro')).toEqual(['Auto', 'Cli', 'Sin datos']); // inválido = natural (título ascendente)
+  server = startWeb(dir, 0);
+  const rows = (await get('/changes')).match(/<tr><td><a href="\/changes\/[^"]+">Auto<\/a>.*?<\/tr>/)![0]!;
+  expect(rows).toContain('<td>2</td>'); // dos activities: el número sale de los datos
+  expect(WEB_STYLE).toMatch(/:root\[data-theme=dark\]\{color-scheme:dark;--bg:#191e1b/); // el selector trae la paleta, no solo existe
+});
+test('G3-H1: dos adaptadores en un change, fijar con el almacenamiento roto y pr.number no numérico', async () => {
+  const c = store.createChange(ws, 'Dos', 'd'); const a = store.listActivities({ changeId: c.id })[0]!;
+  store.db.query("UPDATE activities SET agent='a1' WHERE id=?").run(a.id);
+  store.db.query("INSERT INTO activities(id,workstream_id,change_id,kind,status,created_at,agent) VALUES ('x2',?,?,'implementation','pending','2026-01-01','a2')").run(ws, c.id);
+  expect(store.changeIndex().find(x => x.id === c.id)!.agents).toEqual(['a1', 'a2']);
+  expect(titles('agent=a2')).toEqual(['Dos']);
+  store.db.exec('CREATE TABLE change_links (change_id TEXT PRIMARY KEY, source_system TEXT, source_key TEXT, source_url TEXT, pr_json TEXT)');
+  store.db.query('INSERT INTO change_links(change_id,pr_json) VALUES (?,?)').run(c.id, JSON.stringify({ repo: 'o/r', number: '4', url: 'https://github.com/o/r/pull/4' }));
+  expect(store.changeLinks(c.id).pr).toBeUndefined(); // un número que no es número no se muestra como «#undefined»
+  // fijar con localStorage que lanza: no rompe y la lista sigue
+  const mkLi = (slug: string, i: number) => ({ dataset: { ws: slug, i: String(i) }, hidden: false, hasAttribute: () => false, querySelector: () => ({ hidden: true, setAttribute() {}, textContent: '' }), closest() { return this; } });
+  const lis = [mkLi('x', 0), mkLi('y', 1)]; let onClick: (e: unknown) => void = () => {};
+  const ul = { children: lis as unknown[], appendChild() {}, querySelector: () => null };
+  const nav = { querySelector: (s: string) => s === 'ul' ? ul : null, addEventListener: (_: string, f: (e: unknown) => void) => { onClick = f; } };
+  const broken = { getItem() { throw new Error('x'); }, setItem() { throw new Error('x'); } };
+  new Function('document', 'localStorage', SIDEBAR_JS)({ querySelector: () => nav }, broken);
+  expect(() => onClick({ target: { closest: (sel: string) => sel === '[data-ws-pin]' ? lis[1] : lis[1] } })).not.toThrow();
+});
