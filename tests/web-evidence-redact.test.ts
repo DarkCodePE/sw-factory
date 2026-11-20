@@ -127,3 +127,17 @@ test.each([
 test('P2-H2: un -u de otro comando tras && o | no se toca', () => {
   for (const t of ['curl https://x.test && tar -u f', 'curl https://x.test | sort -u', 'curl https://x.test ; cp -u a b']) expect(redact(t)).toBe(t);
 });
+
+test.each([
+  ['MYSQL_PWD=', 'MYSQL_PWD=zq9Xv7hunterK3'], ['DB_PWD:', 'DB_PWD: zq9Xv7hunterK3'], ['pass=$VAR', 'pass=$zq9Xv7hunterK3'], ['pass=.valor', 'pass=.zq9Xv7hunterK3'],
+  ['pass=/valor', 'pass=/zq9Xv7hunterK3'], ['pass=~valor', 'pass=~zq9Xv7hunterK3'], ['clave JSON pwd', '{"pwd":"zq9Xv7hunterK3"}'],
+])('P2-H3: %s se redacta', (_n, texto) => {
+  expect(redact(texto)).not.toContain('zq9Xv7');
+});
+test('P2-H3: pwd, db_pwd y env.MYSQL_PWD se redactan también en la evidencia JSON, en disco y en la web', () => {
+  writeFileSync(join(dir, 'p.json'), JSON.stringify({ pwd: V, db_pwd: V, env: { MYSQL_PWD: V }, nota: 'bypass' }));
+  const t = readEvidence(dir, 'p.json')!.text;
+  expect(t).not.toContain(V); expect(t).toContain('bypass');
+  expect(redactField('db_pwd', V)).toBe('[REDACTED]'); expect(redactField('cwd', 'x')).toBe('x');
+  expect(redact('pwd: /repo')).toBe('pwd: /repo');
+});
