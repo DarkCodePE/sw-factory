@@ -161,8 +161,10 @@ export interface Change {
   updatedAt: string;
 }
 
-export type ChangeSource = 'cli' | 'channel' | 'jira';
-export interface ChangeSummary extends Change { source: ChangeSource | null; creator: string | null }
+export type ChangeSource = 'cli' | 'channel' | 'jira' | 'automation';
+/** `agents` y `roles` salen de las activities; vacíos = «No medido». `roles` es el validador o, si no hay, el tipo. */
+export interface ChangeSummary extends Change { source: ChangeSource | null; creator: string | null; activityCount: number; agents: string[]; roles: string[] }
+export interface ChangeLinks { source?: { system: string; key: string; url: string }; pr?: { repo: string; number: number; url: string } }
 
 export interface ChangeNote {
   id: string;
@@ -1076,14 +1078,43 @@ export class Store {
     const has = (t: string) => this.db.query("SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = ?").get(t) !== null;
     const source = new Map<string, ChangeSource>();
     const mark = (sql: string, map: (r: Row) => ChangeSource) => { for (const r of this.db.query(sql).all() as Row[]) source.set(r.change_id as string, map(r)); };
+    const cols = (t: string) => new Set((this.db.query(`PRAGMA table_info(${t})`).all() as Row[]).map(r => r.name as string));
     mark('SELECT change_id FROM signals WHERE change_id IS NOT NULL', () => 'cli');
+    // Las bases anteriores a T68 no tienen `signals.source`: un Store de solo lectura no puede migrarlas.
+    if (cols('signals').has('source')) mark("SELECT change_id FROM signals WHERE change_id IS NOT NULL AND source LIKE 'automation:%'", () => 'automation');
     if (has('adm_thread_changes')) mark('SELECT change_id FROM adm_thread_changes', () => 'channel');
     if (has('change_links')) mark('SELECT change_id, source_system FROM change_links WHERE source_system IS NOT NULL', r => r.source_system === 'jira' ? 'jira' : 'channel');
     if (has('jira_imports')) mark('SELECT s.change_id FROM jira_imports i JOIN signals s ON s.id = i.signal_id WHERE s.change_id IS NOT NULL', () => 'jira');
     const creator = new Map((this.db.query('SELECT change_id, actor FROM events WHERE id IN (SELECT MIN(id) FROM events WHERE change_id IS NOT NULL GROUP BY change_id)').all() as Row[])
       .map(r => [r.change_id as string, (r.actor as string | null) ?? null]));
+    const count = new Map<string, number>(); const agents = new Map<string, Set<string>>(); const roles = new Map<string, Set<string>>();
+    const add = (m: Map<string, Set<string>>, id: string, v: unknown) => { if (typeof v === 'string' && v) m.set(id, (m.get(id) ?? new Set()).add(v)); };
+    const hasAgent = cols('activities').has('agent');
+    for (const r of this.db.query(`SELECT change_id, COUNT(*) AS n, ${hasAgent ? 'GROUP_CONCAT(DISTINCT agent)' : 'NULL'} AS agents, GROUP_CONCAT(DISTINCT COALESCE(validator, kind)) AS roles FROM activities GROUP BY change_id`).all() as Row[]) {
+      const id = r.change_id as string; count.set(id, r.n as number);
+      for (const a of String(r.agents ?? '').split(',')) add(agents, id, a);
+      for (const a of String(r.roles ?? '').split(',')) add(roles, id, a);
+    }
     const rows = (ws ? this.db.query('SELECT * FROM changes WHERE workstream_id = ? ORDER BY created_at').all(ws.id) : this.db.query('SELECT * FROM changes ORDER BY created_at').all()) as Row[];
-    return rows.map(r => ({ ...toChange(r), source: source.get(r.id as string) ?? null, creator: creator.get(r.id as string) ?? null }));
+    return rows.map(r => ({ ...toChange(r), source: source.get(r.id as string) ?? null, creator: creator.get(r.id as string) ?? null,
+      activityCount: count.get(r.id as string) ?? 0, agents: [...(agents.get(r.id as string) ?? [])].sort(), roles: [...(roles.get(r.id as string) ?? [])].sort() }));
+  }
+
+  /** Fuente y PR del change, sin crear tablas (sirve a un Store readonly). Los valores son datos no confiables. */
+  changeLinks(changeId: string): ChangeLinks {
+    const has = (t: string) => this.db.query("SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = ?").get(t) !== null;
+    const out: ChangeLinks = {};
+    const row = has('change_links') ? this.db.query('SELECT * FROM change_links WHERE change_id = ?').get(changeId) as Row | null : null;
+    if (row?.source_system && row.source_key && row.source_url) out.source = { system: String(row.source_system), key: String(row.source_key), url: String(row.source_url) };
+    else if (has('jira_imports')) {
+      const i = this.db.query('SELECT i.issue_key, i.source_url FROM jira_imports i JOIN signals s ON s.id = i.signal_id WHERE s.change_id = ?').get(changeId) as Row | null;
+      if (i?.source_url) out.source = { system: 'jira', key: String(i.issue_key), url: String(i.source_url) };
+    }
+    try {
+      const pr = row?.pr_json ? JSON.parse(String(row.pr_json)) as Record<string, unknown> : null;
+      if (pr && typeof pr.url === 'string' && typeof pr.number === 'number') out.pr = { repo: String(pr.repo ?? ''), number: pr.number, url: pr.url };
+    } catch { /* pr_json corrupto: el bloque no se muestra */ }
+    return out;
   }
 
   setChangeBranch(changeId: string, branch: string): void {
