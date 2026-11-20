@@ -74,7 +74,8 @@ type BenchmarkRow = { id: string; status: string; variants: string; created_at: 
 export function listBenchmarks(db: Database) {
   if (!hasBenchmarks(db)) return [];
   return db.query<BenchmarkRow, []>('SELECT id, status, variants, created_at FROM benchmarks ORDER BY created_at DESC, id').all()
-    .map(row => ({ ...row, variants: JSON.parse(row.variants) as Variant[] }));
+    // T88-H1: una fila con `variants` que no es JSON no tumba la lista entera: `null` = ilegible.
+    .map(row => ({ ...row, variants: (() => { try { return JSON.parse(row.variants) as Variant[]; } catch { return null; } })() }));
 }
 
 export function getBenchmark(db: Database, id: string) {

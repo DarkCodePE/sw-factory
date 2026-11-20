@@ -22,12 +22,12 @@ export function benchmarksPage(store: Store, url: URL, escape: (value: unknown) 
   if (!match[1]) {
     const all = listBenchmarks(store.db);
     const q = url.searchParams.get('q') ?? '', agent = url.searchParams.get('agent') ?? '', status = url.searchParams.get('status') ?? '';
-    const agents = [...new Set(all.flatMap(b => b.variants.map(v => v.agent)))].sort();
+    const agents = [...new Set(all.flatMap(b => (b.variants ?? []).map(v => v.agent)))].sort();
     const option = (value: string, label: string, current: string) => `<option value="${escape(value)}"${value === current ? ' selected' : ''}>${escape(label)}</option>`;
     const filters = `<form method="get" action="/benchmarks" class="filters"><label>Nombre<input type="search" name="q" value="${escape(q)}"></label><label>Adaptador<select name="agent">${option('', 'Todos', agent)}${agents.map(a => option(a, a, agent)).join('')}</select></label><label>Estado<select name="status">${option('', 'Todos', status)}${Object.entries(STATUS).map(([s, label]) => option(s, label, status)).join('')}</select></label><button>Filtrar</button></form>`;
     const filtered = all.filter(b => b.id.toLowerCase().includes(q.trim().toLowerCase()) &&
-      (!agent || b.variants.some(v => v.agent === agent)) && (!status || b.status === status));
-    const rows = filtered.map(b => `<tr><td><a href="/benchmarks/${enc(b.id)}">${escape(b.id)}</a></td><td>${escape(STATUS[b.status] ?? b.status)}</td><td>${b.variants.length}</td><td>${escape([...new Set(b.variants.map(v => v.agent))].join(', '))}</td><td><time>${escape(b.created_at)}</time></td></tr>`).join('');
+      (!agent || (b.variants ?? []).some(v => v.agent === agent)) && (!status || b.status === status));
+    const rows = filtered.map(b => `<tr><td><a href="/benchmarks/${enc(b.id)}">${escape(b.id)}</a></td><td>${escape(STATUS[b.status] ?? b.status)}</td><td>${b.variants ? b.variants.length : 'Variantes ilegibles'}</td><td>${escape([...new Set((b.variants ?? []).map(v => v.agent))].join(', '))}</td><td><time>${escape(b.created_at)}</time></td></tr>`).join('');
     const list = rows ? `<div class="table-wrap"><table><thead><tr><th>Benchmark</th><th>Estado</th><th>Variantes</th><th>Adaptadores</th><th>Creado</th></tr></thead><tbody>${rows}</tbody></table></div>` :
       `<p class="empty">${all.length ? 'Ningún benchmark coincide con los filtros.' : 'No hay benchmarks. Se crean con fab bench create.'}</p>`;
     return { title: 'Benchmarks', body: filters + list };

@@ -161,3 +161,34 @@ test('un change en curso y un servidor sin escritura no ofrecen ni aceptan gener
   expect((await post(path, '', {})).status).toBe(405);
   expect(await html('/benchmarks')).toContain('No hay benchmarks');
 });
+
+test('T88-H2: cada filtro funciona por separado (estado y adaptador)', async () => {
+  benchmark('uno', 'claude'); benchmark('dos', 'fake');
+  store.db.query("UPDATE benchmarks SET status='running' WHERE id='dos'").run();
+  const porEstado = await html('/benchmarks?status=running'); // M11: sin filtro de estado, saldría también «uno»
+  expect(porEstado).toContain('href="/benchmarks/dos"');
+  expect(porEstado).not.toContain('href="/benchmarks/uno"');
+  const porAdaptador = await html('/benchmarks?agent=claude'); // M12: sin filtro de adaptador, saldría también «dos»
+  expect(porAdaptador).toContain('href="/benchmarks/uno"');
+  expect(porAdaptador).not.toContain('href="/benchmarks/dos"');
+});
+
+test('T88-H2: «Cancelar» solo se ofrece mientras el benchmark no ha terminado', async () => {
+  for (const status of ['pending', 'running', 'scoring', 'complete', 'failed', 'canceled']) {
+    benchmark(`b-${status}`); store.db.query('UPDATE benchmarks SET status=? WHERE id=?').run(status, `b-${status}`);
+  }
+  await login();
+  for (const status of ['pending', 'running', 'scoring']) expect(await html(`/benchmarks/b-${status}`)).toContain(`/benchmarks/b-${status}/cancel`);
+  for (const status of ['complete', 'failed', 'canceled']) expect(await html(`/benchmarks/b-${status}`)).not.toContain(`/benchmarks/b-${status}/cancel`); // M07
+});
+
+test('T88-H1: una fila con variants ilegible no tumba la lista y se marca', async () => {
+  benchmark('sana'); benchmark('rota');
+  store.db.query("UPDATE benchmarks SET variants='{no json' WHERE id='rota'").run();
+  const r = await req('/benchmarks');
+  expect(r.status).toBe(200);
+  const list = await r.text();
+  expect(list).toContain('href="/benchmarks/sana"');
+  expect(list).toContain('href="/benchmarks/rota"');
+  expect(list).toContain('Variantes ilegibles');
+});
