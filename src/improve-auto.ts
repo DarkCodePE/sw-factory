@@ -271,6 +271,7 @@ export function recoverStuck(store: Store, wsId: string): void {
  * (pending → proposed → ready). Apagado sin configuración o con `enabled = 0`. Nunca asigna el perfil (D-H): `ready` espera al dueño.
  */
 export async function tick(store: Store, stateDir: string, wsId: string, opts: TickOptions = {}): Promise<void> {
+  ensureSchema(store.db); // getConfig ya no crea el esquema (lectura de la web): tick sí escribe
   if (!getConfig(store, wsId)?.enabled) return;
   recoverStuck(store, wsId);
   for (const role of ROLES) {
