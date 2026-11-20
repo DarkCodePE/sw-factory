@@ -44,7 +44,14 @@ function setup() {
   const reply = (questionId: string) =>
     expect(answerQuestion(store, adm, { questionId, answer: 'rojo', by: 'maint' })).toBe('answered');
   const recover = () => store.requeueOrphans(ws.id, '9999-01-01T00:00:00.000Z', () => true);
-  return { ws, change, adm, stateDir, run, reply, recover };
+  const runAbortable = async (backend: ReturnType<typeof fakeLive>, abortController: AbortController) => {
+    const activity = store.claimActivity(ws.id, 'worker')!;
+    await processActivity(store, activity, 'worker', {
+      workstream: ws.id, stateDir, live: true, liveBackends: { fake: backend }, log: () => {},
+    }, abortController);
+    return store.getActivity(activity.id);
+  };
+  return { ws, change, adm, stateDir, run, runAbortable, reply, recover };
 }
 
 test('sin notas conserva byte a byte los prompts fresco y de respuesta', async () => {
@@ -186,4 +193,24 @@ test('apply-report recupera sin reservar ni entregar una nota nueva', async () =
   expect((await run(backend)).status).toBe('completed');
   expect(backend.turns).toHaveLength(1);
   expect(store.listChangeNotes(change.id)).toEqual([note]);
+});
+
+test('un turno abortado no confirma la nota reservada (H3)', async () => {
+  const { change, runAbortable } = setup();
+  const note = store.addChangeNote(change.id, 'Nota de un turno abortado');
+  const abortController = new AbortController();
+  const backend = fakeLive([{ reports: [DONE], before: () => abortController.abort() }]);
+  await runAbortable(backend, abortController);
+  expect(backend.turns[0]!.prompt).toContain(note.body);
+  expect(store.listChangeNotes(change.id)[0]).toMatchObject({ attemptId: backend.turns[0]!.attemptId, deliveredAt: null });
+});
+
+test('si falla la reserva no queda sesión marcada ni se gasta una generación (H1)', async () => {
+  const { adm, run } = setup();
+  const backend = fakeLive([{ reports: [DONE] }]);
+  store.reserveNotes = () => { throw new Error('contención sostenida'); };
+  expect((await run(backend)).status).toBe('pending');
+  expect(backend.turns).toHaveLength(0);
+  expect(adm.db.query('SELECT COUNT(*) AS n FROM adm_sessions WHERE launched_at IS NOT NULL').get()).toEqual({ n: 0 });
+  expect(adm.db.query('SELECT COUNT(*) AS n FROM adm_turns').get()).toEqual({ n: 0 });
 });
