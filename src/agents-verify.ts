@@ -71,10 +71,10 @@ export function sha256Of(path: string): string {
 }
 
 /** Estado de un binario de agente: ok, distinto, no instalado o sin pin. */
-export function agentBinStatus(agent: string, home: string = factoryHome()): AgentBinStatus {
+export function agentBinStatus(agent: string, home: string = factoryHome(), digestOf: (path: string) => string = sha256Of): AgentBinStatus {
   const pin = home ? loadPins(home)[agent] ?? null : null;
   const path = resolveBinary(agent);
-  const digest = path ? sha256Of(path) : null;
+  const digest = path ? digestOf(path) : null;
   let verdict: AgentBinVerdict;
   if (!path) verdict = 'no_instalado';
   else if (pin && digest !== pin) verdict = 'distinto';
