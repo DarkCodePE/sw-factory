@@ -295,3 +295,63 @@ test('H1: si el sellado rechaza el resultado, serve contesta result_rejected (no
   expect(s.has('result')).toBe(false);
   expect(readdirSync(join(root, 'jobs'))).toEqual([]);
 });
+
+test('T98-H1/H2: un fallo tras el spawn borra el scratch confinado y el error no lleva el detalle interno', async () => {
+  const scratch = join(tmp, 'scratch'); mkdirSync(scratch);
+  const savedTmp = process.env.TMPDIR, savedSleep = process.env.FABRICA_FAKE_SLEEP;
+  process.env.TMPDIR = scratch; process.env.FABRICA_FAKE_SLEEP = '30';
+  let pid: number | undefined;
+  const s = session({ timer: () => { [pid] = bwrapOf(); throw new Error('fallo sintético al armar el plazo'); } });
+  try {
+    hello(s); await until(() => s.has('hello'), 'hello');
+    await sendJob(s);
+    expect(await s.done).toBe(1);
+    expect(readdirSync(scratch).filter(n => n.startsWith('fab-confine-'))).toEqual([]); // M20: sin `cleanup()` quedaría el directorio
+    const message = String(s.messages().at(-1)!.message);
+    expect(message).toContain('control de ejecución');
+    expect(message).not.toContain('fallo sintético'); // M25: la fase se nombra, el detalle no viaja
+  } finally {
+    s.end();
+    if (pid !== undefined) { try { process.kill(-pid, 'SIGKILL'); } catch {} }
+    if (savedTmp === undefined) delete process.env.TMPDIR; else process.env.TMPDIR = savedTmp;
+    if (savedSleep === undefined) delete process.env.FABRICA_FAKE_SLEEP; else process.env.FABRICA_FAKE_SLEEP = savedSleep;
+  }
+});
+
+/** Registra las señales a procesos y los temporizadores de 2 s (el SIGKILL diferido de `runAgentJob`). */
+function spyKills() {
+  const signals: Array<[number, unknown]> = [], timers: unknown[] = [], cleared = new Set<unknown>();
+  const kill = process.kill, set = globalThis.setTimeout, clear = globalThis.clearTimeout;
+  process.kill = ((pid: number, sig?: string | number) => { if (sig === 'SIGTERM' || sig === 'SIGKILL') signals.push([pid, sig]); return kill.call(process, pid, sig as never); }) as typeof process.kill;
+  globalThis.setTimeout = ((fn: never, ms?: number, ...rest: never[]) => { const h = set(fn, ms, ...rest); if (ms === 2000) timers.push(h); return h; }) as unknown as typeof setTimeout;
+  globalThis.clearTimeout = ((h?: never) => { cleared.add(h); return clear(h); }) as typeof clearTimeout;
+  return { signals, timers, cleared, restore() { process.kill = kill; globalThis.setTimeout = set; globalThis.clearTimeout = clear; } };
+}
+
+test('T98-H3: cancelar y terminar el agente cancela el SIGKILL diferido; un plazo tardío no señala un grupo ya terminado', async () => {
+  const savedSleep = process.env.FABRICA_FAKE_SLEEP;
+  process.env.FABRICA_FAKE_SLEEP = '30';
+  const spy = spyKills();
+  try {
+    const s = session({ timer: fire => { queueMicrotask(fire); return () => {}; } }); // el plazo vence ya: SIGTERM y temporizador de SIGKILL
+    hello(s); await until(() => s.has('hello'), 'hello');
+    await sendJob(s, { expectChanges: false });
+    expect(await s.done).toBe(0);
+    expect(spy.timers).toHaveLength(1);
+    expect(spy.timers.every(h => spy.cleared.has(h))).toBe(true); // M22: sin clearTimeout seguiría vivo y dispararía SIGKILL tarde
+  } finally { spy.restore(); }
+  delete process.env.FABRICA_FAKE_SLEEP;
+  const late = spyKills();
+  try {
+    let fire!: () => void;
+    const s = session({ timer: f => { fire = f; return () => {}; } });
+    hello(s); await until(() => s.has('hello'), 'hello');
+    await sendJob(s, { expectChanges: false });
+    expect(await s.done).toBe(0);
+    expect(s.has('result')).toBe(true);
+    late.signals.length = 0; late.timers.length = 0;
+    fire(); // el plazo llega cuando el agente ya terminó: el PID pudo reutilizarse
+    expect(late.signals).toEqual([]); // M21: sin la guarda `finished` se enviaría SIGTERM
+    expect(late.timers).toEqual([]);
+  } finally { late.restore(); if (savedSleep !== undefined) process.env.FABRICA_FAKE_SLEEP = savedSleep; }
+});
