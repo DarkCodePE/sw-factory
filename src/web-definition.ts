@@ -128,7 +128,7 @@ export function definitionPage(store: Store, stateDir: string | undefined, url: 
         <span>Solo lectura</span>
       </div>
       <p class="muted">
-        El árbol de definición se genera íntegramente en memoria y coincide con <code>fab definition export</code>.
+        El árbol de definición se genera íntegramente en memoria y refleja el contenido de <code>fab definition export</code> (los secretos o credenciales detectados se muestran redactados por seguridad).
         No contiene rutas absolutas ni valores de entorno. Para editar o añadir ficheros, crea un Pull Request (catálogo §7.10).
       </p>
 

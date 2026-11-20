@@ -211,6 +211,14 @@ test('la pagina de definicion no contiene estilos en linea style= que violen la 
   expect(html).not.toMatch(/style=["'][^"']*["']/);
 });
 
+test('aclara en la definicion que los secretos detectados se muestran redactados', async () => {
+  seedWorkstream();
+  server = startWeb(stateDir, 0);
+
+  const html = await getHtml('/definicion?ws=demo');
+  expect(html).toContain('secretos o credenciales detectados se muestran redactados');
+});
+
 test('la página no escribe en disco', async () => {
   seedWorkstream();
   server = startWeb(stateDir, 0);
