@@ -1987,14 +1987,36 @@ export class Store {
   }
 
   /** Cohorte acotada para métricas; solo SELECT, sin cargar cuerpos de eventos. */
-  metricsCohort(workstream: string | undefined, since: string | null, until: string, limit: number): { changes: Change[]; total: number } {
+  metricsCohort(workstream: string | undefined, since: string | null, until: string, limit: number): { changes: ChangeSummary[]; total: number } {
     const wsId = workstream ? this.getWorkstream(workstream).id : null;
     const where = '(? IS NULL OR workstream_id = ?) AND (? IS NULL OR julianday(created_at) >= julianday(?)) AND julianday(created_at) <= julianday(?)';
     const params = [wsId, wsId, since, since, until];
     const total = (this.db.query(`SELECT COUNT(*) AS n FROM changes WHERE ${where}`).get(...params) as { n: number }).n;
-    const changes = (this.db.query(`SELECT * FROM changes WHERE ${where} ORDER BY julianday(created_at) DESC, id LIMIT ?`)
-      .all(...params, limit) as Row[]).map(toChange);
+    const rows = this.db.query(`SELECT * FROM changes WHERE ${where} ORDER BY julianday(created_at) DESC, id LIMIT ?`)
+      .all(...params, limit) as Row[];
+    const has = (t: string) => this.db.query("SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = ?").get(t) !== null;
+    const source = new Map<string, ChangeSource>();
+    const mark = (sql: string, map: (r: Row) => ChangeSource) => { for (const r of this.db.query(sql).all() as Row[]) source.set(r.change_id as string, map(r)); };
+    mark('SELECT change_id FROM signals WHERE change_id IS NOT NULL', () => 'cli');
+    if (has('adm_thread_changes')) mark('SELECT change_id FROM adm_thread_changes', () => 'channel');
+    if (has('change_links')) mark('SELECT change_id, source_system FROM change_links WHERE source_system IS NOT NULL', r => r.source_system === 'jira' ? 'jira' : 'channel');
+    if (has('jira_imports')) mark('SELECT s.change_id FROM jira_imports i JOIN signals s ON s.id = i.signal_id WHERE s.change_id IS NOT NULL', () => 'jira');
+    const creator = new Map((this.db.query('SELECT change_id, actor FROM events WHERE id IN (SELECT MIN(id) FROM events WHERE change_id IS NOT NULL GROUP BY change_id)').all() as Row[])
+      .map(r => [r.change_id as string, (r.actor as string | null) ?? null]));
+    const changes: ChangeSummary[] = rows.map(r => ({ ...toChange(r), source: source.get(r.id as string) ?? null, creator: creator.get(r.id as string) ?? null }));
     return { changes, total };
+  }
+
+  /** Intervenciones humanas agrupadas por día para series temporales. */
+  metricsDailyInterventions(changeIds: string[], until: string): Map<string, number> {
+    if (!changeIds.length) return new Map();
+    const review = "(message = 'change_review approved' OR message LIKE 'change_review approved:%' OR message = 'change_review commented' OR message LIKE 'change_review commented:%' OR message = 'change_review declined' OR message LIKE 'change_review declined:%' OR message = 'investigation approved' OR message LIKE 'investigation approved:%' OR message = 'investigation commented' OR message LIKE 'investigation commented:%' OR message = 'investigation declined' OR message LIKE 'investigation declined:%')";
+    const rows = this.db.query(`SELECT substr(created_at, 1, 10) AS day, COUNT(*) AS n
+      FROM events WHERE change_id IN (${changeIds.map(() => '?').join(',')}) AND julianday(created_at) <= julianday(?)
+      AND (${review} OR message GLOB 'human reply received (question *); re-queued' OR message GLOB 'change retried (*)')
+      AND (message NOT GLOB '* failed permanently:*' OR activity_id NOT IN (SELECT id FROM activities WHERE validator IS NOT NULL))
+      GROUP BY substr(created_at, 1, 10)`).all(...changeIds, until) as Array<{ day: string; n: number }>;
+    return new Map(rows.map(r => [r.day, r.n]));
   }
 
   /** Hitos y acciones humanas registrados. No interpreta texto de issues; ignora el agotamiento de reintentos de un validador (su cuarentena, bloqueo y reintento humano sí cuentan). */

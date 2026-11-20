@@ -210,3 +210,90 @@ test('N2: change completed y canceled sin activity siguen siendo terminales', ()
   expect(store.db.query("SELECT activity_id FROM events WHERE message='change completed'").get()).toEqual({ activity_id: null });
   expect(calculateMetrics(store, dir).cycles[3]?.samples).toBe(1);
 });
+
+test('T82: rango libre con from y to; rangos inválidos se rechazan', () => {
+  seed(1, 1, 'uno', '2026-11-10T12:00:00Z');
+  seed(1, 2, 'uno', '2026-11-15T12:00:00Z');
+  seed(1, 4, 'uno', '2026-11-17T12:00:00Z');
+  seed(1, 8, 'uno', '2026-11-20T12:00:00Z');
+
+  const m = calculateMetrics(store, dir, { from: '2026-11-14', to: '2026-11-18', now });
+  expect(m.count).toBe(2);
+  expect(m.cost.total).toBe(6);
+
+  expect(() => calculateMetrics(store, dir, { from: 'bad' })).toThrow(URIError);
+  expect(() => calculateMetrics(store, dir, { to: '2026-99-99' })).toThrow(URIError);
+  expect(() => calculateMetrics(store, dir, { from: '2026-11-20', to: '2026-11-10' })).toThrow(URIError);
+  expect(() => calculateMetrics(store, dir, { range: 'invalido' as any })).toThrow(URIError);
+});
+
+test('T82: coste por fuente y por actor del primer evento', () => {
+  const c1 = seed(1, 10, 'uno', '2026-11-18T00:00:00Z');
+  const c2 = seed(1, 20, 'uno', '2026-11-18T01:00:00Z');
+  const c3 = seed(1, null, 'uno', '2026-11-18T02:00:00Z');
+
+  store.db.query("INSERT INTO signals (id, workstream_id, title, body, status, change_id, created_at) VALUES ('s1', ?, 't', 'b', 'triaged', ?, '2026-11-18T00:00:00Z')")
+    .run(c1.workstreamId, c1.id);
+  store.db.exec("CREATE TABLE IF NOT EXISTS change_links (change_id TEXT PRIMARY KEY, source_system TEXT, source_key TEXT, source_url TEXT, pr_json TEXT)");
+  store.db.query("INSERT INTO change_links (change_id, source_system, source_key, source_url) VALUES (?, 'jira', 'PROJ-1', 'https://jira/PROJ-1')")
+    .run(c2.id);
+
+  store.db.query("UPDATE events SET actor='alice' WHERE change_id=? AND id IN (SELECT MIN(id) FROM events WHERE change_id=?)").run(c1.id, c1.id);
+  store.db.query("UPDATE events SET actor='bob' WHERE change_id=? AND id IN (SELECT MIN(id) FROM events WHERE change_id=?)").run(c2.id, c2.id);
+
+  const m = calculateMetrics(store, dir, { range: '7', now });
+  expect(m.cost.sources.find(s => s.name === 'CLI')).toEqual({ name: 'CLI', measured: 10, unknown: 0, total: 10 });
+  expect(m.cost.sources.find(s => s.name === 'Jira')).toEqual({ name: 'Jira', measured: 20, unknown: 0, total: 20 });
+  expect(m.cost.sources.find(s => s.name === 'No medido')).toEqual({ name: 'No medido', measured: null, unknown: 1, total: null });
+
+  expect(m.cost.actors.find(a => a.name === 'alice')).toEqual({ name: 'alice', measured: 10, unknown: 0, total: 10 });
+  expect(m.cost.actors.find(a => a.name === 'bob')).toEqual({ name: 'bob', measured: 20, unknown: 0, total: 20 });
+  expect(m.cost.actors.find(a => a.name === 'No medido')).toEqual({ name: 'No medido', measured: null, unknown: 1, total: null });
+});
+
+test('T82: gráficos SVG de series temporales, números coinciden con la tabla y días sin datos son huecos', () => {
+  seed(1, 5, 'uno', '2026-11-17T10:00:00Z');
+  seed(1, null, 'uno', '2026-11-18T10:00:00Z');
+
+  const { body: html } = metricsPage(store, dir, new URL('http://127.0.0.1:4310/metricas?from=2026-11-17&to=2026-11-19'));
+  expect(html).toContain('Series temporales');
+  expect(html).toContain('Changes creados por día');
+  expect(html).toContain('Coste por día');
+  expect(html).toContain('Intervenciones humanas por día');
+  expect(html).toContain('Coste por fuente del change');
+  expect(html).toContain('Coste por actor del primer evento');
+
+  // En el día sin datos (2026-11-19 para changes), la tabla tiene "Sin datos" y el SVG tiene hueco, nunca cero
+  expect(html).toContain('<td>Sin datos</td>');
+  expect(html).toContain('>hueco<');
+  // En coste para el día con coste desconocido (2026-11-18), la tabla tiene "No medido"
+  expect(html).toContain('<td>No medido</td>');
+  // En coste para 2026-11-17, el gráfico muestra 5.00 y la tabla 5.00 USD
+  expect(html).toContain('>5.00<');
+  expect(html).toContain('5.00 USD');
+
+  expect(html).toContain('2026-11-17');
+  expect(html).toContain('2026-11-18');
+  expect(html).toContain('2026-11-19');
+});
+
+test('T82 HTTP: rango libre vía HTTP y rechazo de rangos inválidos', async () => {
+  seed(1, 2); store.close();
+  const server = startWeb(dir, 0), base = `http://127.0.0.1:${server.port}/metricas`;
+  try {
+    const ok = await fetch(`${base}?from=2026-11-17&to=2026-11-19`);
+    expect(ok.status).toBe(200);
+    const html = await ok.text();
+    expect(html).toContain('Series temporales');
+    expect(ok.headers.get('content-security-policy')).toContain("default-src 'none'");
+
+    // Rangos inválidos devuelven 400
+    expect((await fetch(`${base}?from=invalido`)).status).toBe(400);
+    expect((await fetch(`${base}?to=2026-13-40`)).status).toBe(400);
+    expect((await fetch(`${base}?from=2026-11-20&to=2026-11-10`)).status).toBe(400);
+    expect((await fetch(`${base}?range=otra_cosa`)).status).toBe(400);
+  } finally {
+    server.stop(true);
+    store = new Store(join(dir, 'fabrica.db'));
+  }
+});
