@@ -1074,7 +1074,7 @@ export class Store {
   changeIndex(workstream?: string): ChangeSummary[] {
     const ws = workstream ? this.getWorkstream(workstream) : undefined;
     const rows = (ws ? this.db.query('SELECT * FROM changes WHERE workstream_id = ? ORDER BY created_at').all(ws.id) : this.db.query('SELECT * FROM changes ORDER BY created_at').all()) as Row[];
-    const { source, creator } = this.resolveChangeAttribution(rows.map(r => r.id as string));
+    const { source, creator } = this.resolveChangeAttribution();
     return rows.map(r => ({ ...toChange(r), source: source.get(r.id as string) ?? null, creator: creator.get(r.id as string) ?? null }));
   }
 

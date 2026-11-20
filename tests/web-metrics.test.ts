@@ -450,6 +450,24 @@ test('T82-H7: resolveChangeAttribution reutiliza la resolución de fuente y crea
   expect(attr.creator.get(c1.id)).toBe('carol');
 });
 
+test('T82-H8: changeIndex llama a resolveChangeAttribution sin argumentos para evitar límite de parámetros SQL', () => {
+  const c = store.createChange('uno', 'Change de index', '');
+  store.db.query("INSERT INTO signals (id, workstream_id, title, body, status, change_id, created_at) VALUES ('s20', ?, 't', 'b', 'triaged', ?, '2026-11-18T00:00:00Z')")
+    .run(c.workstreamId, c.id);
+  store.db.query("UPDATE events SET actor='dave' WHERE change_id=? AND id IN (SELECT MIN(id) FROM events WHERE change_id=?)").run(c.id, c.id);
+
+  let calledWith: string[] | undefined = ['sentinel'];
+  const orig = store.resolveChangeAttribution.bind(store);
+  store.resolveChangeAttribution = (ids?: string[]) => {
+    calledWith = ids;
+    return orig(ids);
+  };
+  const list = store.changeIndex('uno');
+  expect(calledWith).toBeUndefined();
+  expect(list.find(x => x.id === c.id)?.source).toBe('cli');
+  expect(list.find(x => x.id === c.id)?.creator).toBe('dave');
+});
+
 test('T83-H1: repetir recordPrOpened no duplica el evento ni altera el conteo en metricsDailyPrs', () => {
   const c = store.createChange('uno', 'Change con PR repetido', '');
   store.recordPrOpened(c.id, 'https://github.com/org/repo/pull/1');
