@@ -175,7 +175,7 @@ export function buildMaterial(store: Store, stateDir: string, a: Activity, scope
 
 // ---- corredor -----------------------------------------------------------------------------------
 
-interface Row { id: string; scorer: string; profile_digest: string; scope: ScorerScope; subject_activity_id: string; change_id: string; workstream_id: string; attempts: number }
+export interface Row { id: string; scorer: string; profile_digest: string; scope: ScorerScope; subject_activity_id: string; change_id: string; workstream_id: string; attempts: number }
 
 /** Reclama una fila `pending` (o `running` con lease vencido) de forma atómica; null si no queda ninguna. */
 function claim(store: Store): Row | null {
@@ -192,8 +192,8 @@ function claim(store: Store): Row | null {
   });
 }
 
-type Outcome = { status: 'done'; label: string; score: number; passed: boolean; rationale: string } | { status: 'failed' | 'skipped'; error: string };
-type Launch = (adapter: string, prompt: string, cwd: string, model: string | undefined, signal?: AbortSignal) => Promise<AgentRun>;
+export type Outcome = { status: 'done'; label: string; score: number; passed: boolean; rationale: string } | { status: 'failed' | 'skipped'; error: string };
+export type Launch = (adapter: string, prompt: string, cwd: string, model: string | undefined, signal?: AbortSignal) => Promise<AgentRun>;
 
 export interface RunPendingOpts {
   max?: number; budgetUsd?: number; agentOverride?: string; signal?: AbortSignal; log?: (m: string) => void;
@@ -204,9 +204,10 @@ export interface RunPendingOpts {
 const defaultLaunch: Launch = (adapter, prompt, cwd, model, signal) =>
   runAgent(getAgent(adapter), prompt, cwd, TIMEOUT_MS, { confine: true, readOnly: true, signal, ...(model ? { model } : {}) });
 
-async function judge(store: Store, stateDir: string, row: Row, o: RunPendingOpts, meter: { agent?: string; model?: string; cost?: number; ms?: number }): Promise<Outcome> {
+/** `profileDir` es donde vive el perfil del juez (por defecto `stateDir`); un benchmark juzga el Store de un brazo con el perfil del benchmark. */
+export async function judge(store: Store, stateDir: string, row: Row, o: Pick<RunPendingOpts, 'agentOverride' | 'signal' | 'launch'>, meter: { agent?: string; model?: string; cost?: number; ms?: number }, profileDir = stateDir): Promise<Outcome> {
   let p: { profile: Profile } | null = null;
-  try { p = resolveProfile(stateDir, row.profile_digest); } catch { /* perfil desaparecido */ }
+  try { p = resolveProfile(profileDir, row.profile_digest); } catch { /* perfil desaparecido */ }
   const def = p?.profile.scorers?.[row.scorer];
   if (!p || !def) return { status: 'skipped', error: 'el perfil ya no define este juez' };
   const own = def.harness ?? p.profile.harness;

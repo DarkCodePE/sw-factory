@@ -23,15 +23,23 @@ export function benchmarkSummary(db: Database, id: string) {
   try { b = db.query('SELECT suite_digest, judge_profile, status, error FROM benchmarks WHERE id = ?').get(id) as typeof b; } catch { b = null; }
   if (!b) throw new StoreError('not_found', `benchmark ${id} no existe`);
   const rows = db.query('SELECT * FROM experiment_runs WHERE experiment_id = ? ORDER BY rowid').all(id) as Record<string, any>[];
+  const scored = db.query(`SELECT r.arm, s.scorer, s.score, s.passed FROM benchmark_scores s JOIN experiment_runs r ON r.rowid = s.run_rowid
+    WHERE s.benchmark_id = ?`).all(id) as { arm: string; scorer: string; score: number | null; passed: number | null }[];
   const variants = [...new Set(rows.map(r => r.arm as string))].map(arm => {
     const r = rows.filter(x => x.arm === arm);
+    // Un juez sin puntuar (score nulo) no entra en la tasa: se cuenta aparte, nunca como suspenso.
+    const judges = [...new Set(scored.filter(x => x.arm === arm).map(x => x.scorer))].sort().map(scorer => {
+      const j = scored.filter(x => x.arm === arm && x.scorer === scorer), ok = j.filter(x => x.score !== null);
+      const passed = ok.filter(x => x.passed === 1).length;
+      return { scorer, scored: ok.length, unscored: j.length - ok.length, passed, pass_rate: ok.length ? passed / ok.length : null, mean_score: ok.length ? mean(ok.map(x => x.score!)) : null };
+    });
     const cost = r.map(x => x.cost_usd as number | null).filter((c): c is number => c !== null);
     return {
       variant: arm, agent: r[0]!.agent as string, profile: r[0]!.profile_digest as string, n: r.length,
       success_rate: mean(r.map(x => x.success as number)), mean_diff_lines: mean(r.map(x => x.diff_lines as number)),
       mean_duration_ms: mean(r.map(x => x.duration_ms as number)),
       // Coste desconocido es null («—»), nunca 0; `cost_known` dice cuántas filas lo informaron.
-      mean_cost_usd: cost.length ? mean(cost) : null, cost_known: cost.length,
+      mean_cost_usd: cost.length ? mean(cost) : null, cost_known: cost.length, judges,
     };
   });
   return { benchmark: id, status: b.status, error: b.error, suite_digest: b.suite_digest, judge_profile: b.judge_profile, variants };
@@ -45,7 +53,14 @@ export function reportBenchmarkText(db: Database, id: string): string {
   const table = [head, ...s.variants.map(v => [v.variant, v.agent, String(v.n), v.success_rate.toFixed(3), v.mean_diff_lines.toFixed(1), (v.mean_duration_ms / 1000).toFixed(1),
     v.mean_cost_usd === null ? '—' : v.mean_cost_usd.toFixed(4) + (v.cost_known < v.n ? ` (${v.cost_known}/${v.n})` : '')])];
   const w = head.map((_, c) => Math.max(...table.map(r => r[c]!.length)));
-  return lines.concat(table.map(r => r.map((x, c) => x.padEnd(w[c]!)).join('  ').trimEnd())).join('\n');
+  lines.push(...table.map(r => r.map((x, c) => x.padEnd(w[c]!)).join('  ').trimEnd()));
+  if (s.judge_profile) {
+    lines.push('', `jueces (perfil ${s.judge_profile.slice(0, 12)}, avisos: no cambian el resultado)`);
+    for (const v of s.variants) for (const j of v.judges)
+      lines.push(`  ${v.variant}  ${j.scorer}  aprobado ${j.pass_rate === null ? '—' : `${(j.pass_rate * 100).toFixed(0)}% (${j.passed}/${j.scored})`}  puntuación media ${j.mean_score === null ? '—' : j.mean_score.toFixed(2)}${j.unscored ? `  sin puntuar ${j.unscored}` : ''}`);
+  }
+  // R6: `agente` es el del workstream de la variante.
+  return lines.concat('', 'agente: adaptador del workstream; el de cada rol (perfil v2) está en activities.agent del Store del brazo.').join('\n');
 }
 
 export async function benchMain(argv: string[], store: Store, stateDir: string): Promise<number> {
