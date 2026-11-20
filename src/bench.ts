@@ -101,28 +101,38 @@ function planJobs(tasks: SuiteTask[], variants: Variant[], repeats: number, seed
   return jobs;
 }
 
-export async function runBenchmark(db: Database, stateDir: string, id: string, o: Omit<RunOptions, 'agent'>): Promise<{ seed: number; runs: number }> {
+// resume: retoma un benchmark que quedó en `running` porque su proceso murió. No puede distinguirlo de uno vivo: lo decide quien llama.
+export async function runBenchmark(db: Database, stateDir: string, id: string, o: Omit<RunOptions, 'agent'> & { resume?: boolean }): Promise<{ seed: number; runs: number }> {
   const benchmark = getBenchmark(db, id);
-  if (benchmark.status !== 'pending') throw invalidState(id, benchmark.status, 'ejecutar');
+  const resuming = !!o.resume && benchmark.status === 'running';
+  if (benchmark.status !== 'pending' && !resuming) throw invalidState(id, benchmark.status, 'ejecutar');
   if (!SPLITS.includes(o.split)) throw bad(`split debe ser ${SPLITS.join('|')}`);
   if (!Number.isSafeInteger(o.repeats) || o.repeats < 1) throw bad('--repeats debe ser un entero ≥ 1');
   const concurrency = o.concurrency ?? 1;
   if (!Number.isSafeInteger(concurrency) || concurrency < 1) throw bad('--concurrency debe ser un entero ≥ 1');
-  const seed = o.seed ?? Math.floor(Math.random() * 2 ** 31);
+  // Las filas se escriben en el orden del plan: las ya guardadas son los primeros trabajos.
+  const done = resuming
+    ? db.query<{ seed: number; split: string; n: number }, [string]>('SELECT min(seed) AS seed, min(split) AS split, count(*) AS n FROM experiment_runs WHERE experiment_id = ?').get(id)!
+    : { seed: null, split: o.split, n: 0 };
+  if (done.n && done.split !== o.split) throw bad(`el benchmark ${id} ya corrió el split ${done.split}`);
+  const seed = done.n ? done.seed! : o.seed ?? Math.floor(Math.random() * 2 ** 31);
   if (!Number.isSafeInteger(seed)) throw bad('--seed debe ser un entero seguro');
 
   const tasks = (JSON.parse(benchmark.suite) as Suite).tasks.filter(t => t.split === o.split);
   if (!tasks.length) throw bad(`la suite no tiene tareas en el split ${o.split}`);
   const variants = JSON.parse(benchmark.variants) as Variant[];
   const jobs = planJobs(tasks, variants, o.repeats, seed);
-  const claimed = db.query("UPDATE benchmarks SET status = 'running' WHERE id = ? AND status = 'pending'").run(id);
-  if (claimed.changes !== 1) throw invalidState(id, getBenchmark(db, id).status, 'ejecutar');
+  if (done.n > jobs.length) throw bad(`--repeats da ${jobs.length} trabajos y el benchmark ya tiene ${done.n} filas`);
+  if (!resuming) {
+    const claimed = db.query("UPDATE benchmarks SET status = 'running' WHERE id = ? AND status = 'pending'").run(id);
+    if (claimed.changes !== 1) throw invalidState(id, getBenchmark(db, id).status, 'ejecutar');
+  }
 
   const finish = db.query<never, [string, string, string | null, string]>(`UPDATE benchmarks SET status = ?, finished_at = ?, error = ?
     WHERE id = ? AND status = 'running'`);
   const status = db.query<{ status: string }, [string]>('SELECT status FROM benchmarks WHERE id = ?');
   const running = () => status.get(id)?.status === 'running';
-  let runs = 0;
+  let runs = done.n;
   try {
     if (o.confine) for (const agent of new Set(variants.map(v => v.agent))) assertConfinement(agent);
     const batch = `${Date.now().toString(36)}-${randomUUID().slice(0, 8)}`;
@@ -147,7 +157,7 @@ export async function runBenchmark(db: Database, stateDir: string, id: string, o
       }
     };
 
-    let cursor = 0;
+    let cursor = done.n;
     let stopped = false;
     const workers = await Promise.allSettled(Array.from({ length: Math.min(concurrency, jobs.length) }, async () => {
       try {
