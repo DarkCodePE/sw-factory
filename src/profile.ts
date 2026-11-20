@@ -3,24 +3,33 @@
 import { createHash } from 'node:crypto';
 import { existsSync, mkdirSync, readFileSync, readdirSync, renameSync, rmSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
-import { AGENT_NAMES } from './agents.ts';
+import { AGENT_NAMES, MODEL_AGENTS } from './agents.ts';
 import { COMMIT_LINE, DEFAULT_WORKER_TEMPLATES, type WorkerTemplates } from './prompts.ts';
 import { DEFAULT_VALIDATOR_TEMPLATES, type ValidatorTemplates } from './validators/prompts.ts';
 
+export const ROLES = ['investigate', 'implement', 'code_review', 'security_audit', 'qa'] as const;
+export type Role = (typeof ROLES)[number];
+export interface RoleConfig { harness?: string; model?: string }
+
 export interface Profile {
-  schemaVersion: 1;
+  schemaVersion: 1 | 2;
   /** Adaptador para el que se escribió el perfil; es identidad, no se impone al workstream. */
   harness: string;
   model?: string;
   repo?: string;
   worker: WorkerTemplates;
   validators: ValidatorTemplates;
+  /** Solo v2: adaptador y modelo por rol; cada rol y cada campo son opcionales. */
+  roles?: Partial<Record<Role, RoleConfig>>;
 }
 
 const MAX_TEMPLATE = 32 * 1024;
 const WORKER_KEYS = ['rules', 'investigate', 'implement'];
 const VALIDATOR_KEYS = ['rules', 'code_review', 'security_audit', 'qa'];
 const TOP_KEYS = ['schemaVersion', 'harness', 'model', 'repo', 'worker', 'validators'];
+const TOP_KEYS_V2 = [...TOP_KEYS, 'roles'];
+// El primer carácter no puede ser `-`: el modelo viaja como elemento de argv y no debe leerse como flag.
+const MODEL_RE = /^[A-Za-z0-9][A-Za-z0-9._:/@-]{0,127}$/;
 
 /** JSON con claves ordenadas y sin espacios: misma semántica, mismos bytes. */
 export function canonicalJson(value: unknown): string {
@@ -53,10 +62,30 @@ function templates(raw: unknown, keys: string[], where: string): void {
 export function validateProfile(raw: unknown): Profile {
   if (!raw || typeof raw !== 'object' || Array.isArray(raw)) throw new Error('perfil inválido: debe ser un objeto JSON');
   const o = raw as Record<string, unknown>;
-  for (const k of Object.keys(o)) if (!TOP_KEYS.includes(k)) throw new Error(`perfil inválido: clave desconocida ${k}`);
-  if (o.schemaVersion !== 1) throw new Error('perfil inválido: schemaVersion debe ser 1');
+  if (o.schemaVersion !== 1 && o.schemaVersion !== 2) throw new Error('perfil inválido: schemaVersion debe ser 1 o 2');
+  const v2 = o.schemaVersion === 2;
+  for (const k of Object.keys(o)) if (!(v2 ? TOP_KEYS_V2 : TOP_KEYS).includes(k)) throw new Error(`perfil inválido: clave desconocida ${k}`);
   if (typeof o.harness !== 'string' || !AGENT_NAMES.includes(o.harness)) throw new Error(`perfil inválido: harness debe ser uno de ${AGENT_NAMES.join(', ')}`);
   for (const k of ['model', 'repo'] as const) if (o[k] !== undefined && (typeof o[k] !== 'string' || !o[k])) throw new Error(`perfil inválido: ${k} debe ser un texto no vacío`);
+  if (v2) {
+    const modelOk = (m: unknown, adapter: string, where: string) => {
+      if (m === undefined) return;
+      if (typeof m !== 'string' || !MODEL_RE.test(m)) throw new Error(`perfil inválido: ${where} debe cumplir ${MODEL_RE}`);
+      if (!MODEL_AGENTS.includes(adapter)) throw new Error(`perfil inválido: ${where}: el adaptador ${adapter} no admite modelo`);
+    };
+    modelOk(o.model, o.harness, 'model');
+    if (o.roles !== undefined) {
+      if (!o.roles || typeof o.roles !== 'object' || Array.isArray(o.roles)) throw new Error('perfil inválido: roles debe ser un objeto');
+      for (const [role, cfg] of Object.entries(o.roles)) {
+        if (!(ROLES as readonly string[]).includes(role)) throw new Error(`perfil inválido: clave desconocida roles.${role}`);
+        if (!cfg || typeof cfg !== 'object' || Array.isArray(cfg)) throw new Error(`perfil inválido: roles.${role} debe ser un objeto`);
+        const c = cfg as RoleConfig;
+        for (const k of Object.keys(c)) if (k !== 'harness' && k !== 'model') throw new Error(`perfil inválido: clave desconocida roles.${role}.${k}`);
+        if (c.harness !== undefined && (typeof c.harness !== 'string' || !AGENT_NAMES.includes(c.harness))) throw new Error(`perfil inválido: roles.${role}.harness debe ser uno de ${AGENT_NAMES.join(', ')}`);
+        modelOk(c.model, c.harness ?? o.harness, `roles.${role}.model`);
+      }
+    }
+  }
   templates(o.worker, WORKER_KEYS, 'worker');
   templates(o.validators, VALIDATOR_KEYS, 'validators');
   const w = o.worker as Record<string, string>, v = o.validators as Record<string, string>;
@@ -65,6 +94,25 @@ export function validateProfile(raw: unknown): Profile {
   if (!v.rules!.includes('STATUS:') || !v.rules!.includes('VERDICT:')) throw new Error('perfil inválido: validators.rules debe exigir STATUS: y VERDICT:');
   if (!w.implement!.includes(COMMIT_LINE)) throw new Error('perfil inválido: worker.implement debe conservar la línea de commit (la fábrica la sustituye para agentes sin acceso a .git)');
   return o as unknown as Profile;
+}
+
+/** Rol de una activity, o null si no lanza agente con rol propio (gates, change_review humano, steward). */
+export function roleOf(a: { kind: string; validator: string | null }): Role | null {
+  if (a.validator) return (ROLES as readonly string[]).includes(a.validator) ? (a.validator as Role) : null;
+  return a.kind === 'investigation' ? 'investigate' : a.kind === 'implementation' ? 'implement' : null;
+}
+
+/**
+ * Adaptador y modelo de una activity: override de la CLI > rol del perfil v2 > workstream.
+ * Un modelo solo vale para el adaptador con el que se declaró. Con v1 es siempre lo de antes.
+ */
+export function resolveRole(profile: Profile, role: Role | null, wsAgent: string, override?: string): { adapter: string; model: string | null; source: 'override' | 'role' | 'workstream' } {
+  if (profile.schemaVersion !== 2) return { adapter: override ?? wsAgent, model: null, source: override ? 'override' : 'workstream' };
+  const cfg = role ? profile.roles?.[role] : undefined;
+  const adapter = override ?? cfg?.harness ?? wsAgent;
+  const model = cfg?.model !== undefined && adapter === (cfg.harness ?? profile.harness) ? cfg.model
+    : profile.model !== undefined && adapter === profile.harness ? profile.model : null;
+  return { adapter, model, source: override ? 'override' : cfg?.harness ? 'role' : 'workstream' };
 }
 
 const profilesDir = (stateDir: string) => join(stateDir, 'profiles');

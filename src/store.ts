@@ -129,6 +129,9 @@ export interface Activity {
   /** Perfil de instrucciones y sha de fab con los que corrió; null si aún no empezó. */
   profileDigest: string | null;
   fabSha: string | null;
+  /** Adaptador y modelo pedido del último intento; null si no empezó, es anterior a T57 o se usó el modelo por defecto. */
+  agent: string | null;
+  model: string | null;
   /** Pregunta abierta de un turno vivo (solo en `waiting_reply`) y su plazo. */
   questionId: string | null;
   waitUntil: string | null;
@@ -244,6 +247,8 @@ function toActivity(r: Row): Activity {
     agentPgid: (r.agent_pgid as number | null) ?? null,
     profileDigest: (r.profile_digest as string | null) ?? null,
     fabSha: (r.fab_sha as string | null) ?? null,
+    agent: (r.agent as string | null) ?? null,
+    model: (r.model as string | null) ?? null,
     questionId: (r.question_id as string | null) ?? null,
     waitUntil: (r.wait_until as string | null) ?? null,
   };
@@ -378,6 +383,8 @@ export class Store {
     this.addColumn('workstreams', 'profile', 'TEXT');
     this.addColumn('activities', 'profile_digest', 'TEXT');
     this.addColumn('activities', 'fab_sha', 'TEXT');
+    this.addColumn('activities', 'agent', 'TEXT');
+    this.addColumn('activities', 'model', 'TEXT');
     this.addColumn('activities', 'question_id', 'TEXT');
     this.addColumn('activities', 'wait_until', 'TEXT');
     this.db.exec('CREATE INDEX IF NOT EXISTS idx_activities_lease ON activities(status, lease_expires_at);');
@@ -1162,9 +1169,10 @@ export class Store {
   }
 
   /** Registra con qué perfil y qué sha de fab corre la activity (va al run.json). */
-  setActivityProvenance(activityId: string, profileDigest: string, fabSha: string | null): void {
+  setActivityProvenance(activityId: string, profileDigest: string, fabSha: string | null, run?: { agent: string; model: string | null }): void {
     this.withRetry(() => {
-      this.db.query('UPDATE activities SET profile_digest = ?, fab_sha = ? WHERE id = ?').run(profileDigest, fabSha, activityId);
+      if (run) this.db.query('UPDATE activities SET profile_digest = ?, fab_sha = ?, agent = ?, model = ? WHERE id = ?').run(profileDigest, fabSha, run.agent, run.model, activityId);
+      else this.db.query('UPDATE activities SET profile_digest = ?, fab_sha = ? WHERE id = ?').run(profileDigest, fabSha, activityId);
     });
   }
 

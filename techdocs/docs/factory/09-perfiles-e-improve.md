@@ -16,6 +16,8 @@ Dos piezas complementarias: un **perfil** es el conjunto inmutable de instruccio
 
 ## Perfil de instrucciones (`profile.ts`)
 
+El esquema base se muestra abajo. La [página de perfiles por rol](14-t57-perfiles-por-rol.md) describe la selección de adaptador y modelo en v2.
+
 ```mermaid
 classDiagram
     class Profile {
@@ -42,13 +44,13 @@ classDiagram
 ```
 
 - **Identidad por contenido.** `profileDigest = sha256(canonicalJson(perfil))`; `canonicalJson` ordena claves y omite `undefined`, de modo que misma semántica ⇒ mismos bytes (`src/profile.ts:26-35`).
-- **Validación estricta** (`validateProfile`, `:53-68`): objeto, sin claves desconocidas, `schemaVersion === 1`, `harness ∈ AGENT_NAMES`, plantillas no vacías y ≤ 32 KiB. Además exige marcas que el pool necesita para leer el resultado: `worker.rules` contiene `STATUS:`; `validators.rules` contiene `STATUS:` y `VERDICT:`; `worker.implement` conserva `COMMIT_LINE` (la factory la sustituye para agentes sin acceso a `.git`).
+- **Validación estricta** (`validateProfile`, `:53-68`): objeto, sin claves desconocidas, `schemaVersion` igual a `1` o `2`, `harness ∈ AGENT_NAMES`, plantillas no vacías y ≤ 32 KiB. Además exige marcas que el pool necesita para leer el resultado: `worker.rules` contiene `STATUS:`; `validators.rules` contiene `STATUS:` y `VERDICT:`; `worker.implement` conserva `COMMIT_LINE` (la factory la sustituye para agentes sin acceso a `.git`).
 - **Almacén direccionado por contenido.** `<stateDir>/profiles/<digest>.json`, escritura con `wx`, modo `0444` y `rename`; reimportar el mismo perfil es idempotente y verifica la integridad (`:70-87`).
 - **Carga con re-verificación.** `loadProfile` revalida el esquema y exige que el contenido en disco reproduzca el digest pedido; si no, "perfil corrupto" (`:90-97`).
 - **Perfil por defecto.** `defaultProfile()` (harness `native`) construido con las plantillas actuales; su digest es `DEFAULT_DIGEST` (`:37-39`, `:103`). `resolveProfile(stateDir, digest)` devuelve el por defecto si el digest es nulo o igual a `DEFAULT_DIGEST` (`:106-110`). Un workstream con perfil por defecto guarda `NULL` en `workstreams.profile` (`src/store.ts:388`).
 - **Fijación al crear el workstream.** `--profile <digest>` valida con `resolveProfile` antes de insertar (`src/store.ts:363-365`).
 - **Procedencia.** Antes de cada activity el pool guarda `profile_digest` y `fab_sha` (`src/pool.ts:130-131`, `src/store.ts:1034-1038`). `fabSha()`: `FAB_SHA` si lo fija el empaquetado; si no, el HEAD del checkout de donde corre; si no, `null` (`src/profile.ts:112-121`).
-- **`harness` es identidad, no imposición:** el perfil dice para qué adaptador se escribió, pero no obliga al workstream a usarlo (`:12`).
+- **`harness` de primer nivel** identifica el adaptador del perfil. En v2 también vincula los modelos cuyo bloque carece de adaptador propio.
 
 CLI (`profile-cli.ts`): `fab profile export [--out f]` (exporta el perfil por defecto), `import <archivo>`, `inspect <digest>`, `list` (`src/profile-cli.ts:7-34`).
 
