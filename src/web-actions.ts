@@ -1,7 +1,7 @@
 // Adaptación HTTP: las transiciones, el cercado y los eventos siguen en los comandos existentes.
 import { createHash } from 'node:crypto';
 import { join } from 'node:path';
-import { Store, StoreError } from './store.ts';
+import { isRunnerName, Store, StoreError } from './store.ts';
 import { linkTriagedSignal } from './admission/apply.ts';
 import { removeWorktree } from './worktrees.ts';
 import { SIGNAL_BODY_MAX, SIGNAL_TITLE_MAX } from './web-signals.ts';
@@ -14,6 +14,7 @@ import type { WebAuth } from './web-auth.ts';
 import { PROFILE_BODY_LIMIT, ProfileInputError, profileAction } from './web-profile.ts';
 import { enqueueBackfill, enqueueManual, ensureSchema, previewBackfill } from './scorers.ts';
 import { archiveWorkstream, createWorkstream, workstreamSettings, workstreamState, wsFields } from './web-ws.ts';
+import { RUNNER_CHECK_PATH, type runnerCheckAction } from './web-runner-check.ts';
 
 // Cancelar vale para todo change que no haya terminado bien o por decisión: igual que `fab reject`, también limpia failed, blocked y quarantined.
 const FINAL_STATUSES = ['completed', 'canceled', 'declined'];
@@ -73,7 +74,8 @@ export class InputError extends Error {
 
 type Raw = Record<string, string | undefined>;
 type Outcome = { destination: string; result: string; repo?: string };
-type Action = { path: RegExp; /** false: solo la web con sesión; la API con clave no la expone (decisión del dueño sobre H1). */ api?: false; input: (raw: Raw) => Raw; run: (store: Store, id: string, input: Raw, out: Outcome, actor: string, stateDir: string) => void };
+type StoreAction = { path: RegExp; /** false: solo la web con sesión. */ api?: false; httpErrors?: true; input: (raw: Raw) => Raw; run: (store: Store, id: string, input: Raw, out: Outcome, actor: string, stateDir: string) => void };
+type Action = StoreAction | { path: RegExp; api: false; check: true };
 
 const text = (raw: Raw, key: string) => raw[key] ?? '';
 const limit = (value: string, max = 8192) => { if (Buffer.byteLength(value) > max) throw new InputError(413, 'El texto supera 8 KiB.'); };
@@ -272,12 +274,28 @@ export const ACTIONS: Record<string, Action> = {
     input: raw => ({ confirm: raw.confirm }),
     run: (store, id, input, out) => { out.destination = '/workstreams'; archiveWorkstream(store, id, input.confirm); },
   },
+  'workstreams/runner': {
+    api: false,
+    httpErrors: true,
+    path: route('workstreams', 'runner'),
+    input: ({ runner, expected, confirm, confirm_ssh }) => {
+      if (runner === undefined || (runner !== '' && !isRunnerName(runner)) || expected === undefined || confirm !== 'yes') {
+        throw new InputError(400, 'Elige un runner y confirma la selección.');
+      }
+      return { runner, expected, confirm_ssh };
+    },
+    run: (store, id, { runner, expected, confirm_ssh }, out) => {
+      out.destination = '/workstreams';
+      store.setWorkstreamRunner(id, runner || null, { expected: expected || null, confirmSsh: confirm_ssh === 'yes' });
+    },
+  },
+  'runners/check': { path: RUNNER_CHECK_PATH, api: false, check: true },
 };
 
 /** Abre el Store escritor, fija el actor y ejecuta una acción. Lanza InputError si la entrada no vale; el resto de fallos van en `result`. */
 export async function performAction(stateDir: string, name: string, id: string, rawInput: Raw, actor: string): Promise<Outcome> {
   const action = ACTIONS[name];
-  if (!action) throw new InputError(404, 'Acción no encontrada.');
+  if (!action || !('run' in action)) throw new InputError(404, 'Acción no encontrada.');
   const input = action.input(rawInput);
   const out: Outcome = { destination: '/', result: 'ok' };
   let store: Store | undefined;
@@ -309,7 +327,8 @@ async function readForm(req: Request, limit = 16384): Promise<URLSearchParams> {
   return new URLSearchParams(Buffer.from(body).toString('utf8'));
 }
 
-export async function webAction(req: Request, stateDir: string, port: number, auth: WebAuth): Promise<Response> {
+export async function webAction(req: Request, stateDir: string, port: number, auth: WebAuth,
+  runnerCheck: ReturnType<typeof runnerCheckAction>, extendCheckTimeout: () => void): Promise<Response> {
   if (!auth.sessionCsrf(req)) return new Response('Se necesita una sesión local.', { status: 401 });
   if (req.headers.get('origin') !== `http://${auth.host}:${port}`) return new Response('Origin rechazado.', { status: 403 });
   let destination = '/'; let result = 'ok';
@@ -325,13 +344,19 @@ export async function webAction(req: Request, stateDir: string, port: number, au
     const pathname = new URL(req.url).pathname;
     const name = Object.keys(ACTIONS).find(n => ACTIONS[n]!.path.test(pathname));
     if (!name) return new Response('Acción no encontrada.', { status: 404 });
-    const raw = ACTIONS[name]!.path.exec(pathname)![1]!;
+    const action = ACTIONS[name]!;
+    const raw = action.path.exec(pathname)![1]!;
     const id = name.endsWith('/create') ? '' : decodeURIComponent(raw);
+    if ('check' in action) return await runnerCheck(id, extendCheckTimeout);
     if (id && !/^[\w-]+$/.test(id)) throw new InputError(400, 'Identificador inválido.');
     // Con claves repetidas gana la primera, como form.get.
     const fields: Raw = {};
     for (const [k, v] of form) if (!(k in fields)) fields[k] = v;
     ({ destination, result } = await performAction(stateDir, name, id, fields, 'web'));
+    if (action.httpErrors && result !== 'ok') {
+      const status = result === 'conflict' ? 409 : result === 'not_found' ? 404 : result === 'invalid_input' ? 400 : 500;
+      return new Response(messages[result], { status });
+    }
   } catch (error) {
     if (error instanceof InputError) return new Response(error.message, { status: error.status, headers: error.status === 413 ? { Connection: 'close' } : {} });
     if (error instanceof ProfileInputError) return new Response(error.message, { status: 400 });

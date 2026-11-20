@@ -9,6 +9,8 @@ import { WEB_STYLE } from './web-style.ts';
 import { experimentsPage } from './web-experiments.ts';
 import { NOTIFY, NOTIFY_ID, inboxCounts } from './web-notify.ts';
 import { configPage } from './web-config.ts';
+import { runnersPage } from './web-runners.ts';
+import { runnerCheckAction, type RunnerCheckOptions } from './web-runner-check.ts';
 import { PROFILE_BODY_LIMIT, profilesPage } from './web-profile.ts';
 
 import { INBOX_JS, changesView, inboxView, parseQuery, type Ui } from './web-changes.ts';
@@ -113,8 +115,9 @@ function page(store: Store, stateDir: string, url: URL, csrf?: string): { title:
 
 const loopback = (port: number) => [`127.0.0.1:${port}`, `localhost:${port}`];
 
-export function startWeb(stateDir: string, port = 4310, options: { write?: boolean } = {}) {
+export function startWeb(stateDir: string, port = 4310, options: { write?: boolean; runnerCheck?: RunnerCheckOptions } = {}) {
   const auth = options.write ? new WebAuth() : undefined;
+  const runnerCheck = runnerCheckAction(stateDir, options.runnerCheck);
   const openStore = () => new Store(join(stateDir, 'fabrica.db'), { readonly: true });
   const initial = openStore();
   try { initial.listWorkstreams(); } finally { initial.close(); }
@@ -129,20 +132,23 @@ export function startWeb(stateDir: string, port = 4310, options: { write?: boole
       if (isApiPath(url.pathname)) return handleApi(req, url, openStore, auth ? { stateDir } : undefined);
       const isMetrics = url.pathname === '/metricas';
       const isConfig = url.pathname === '/config';
+      const isRunners = url.pathname === '/config/runners';
+      const csrf = auth?.sessionCsrf(req);
       const isFlow = url.pathname === '/flujo';
       const isProfiles = url.pathname === '/perfiles';
-      const manual = isConfig || isProfiles; // sin sondeo: no pisar lo que se escribe
+      const manual = isConfig || isRunners || isProfiles; // sin sondeo: no pisar lo que se escribe
       const isExperiments = url.pathname === '/experimentos' || url.pathname.startsWith('/experimentos/');
       const readAsset = READ_ASSETS.get(url.pathname);
-      const readOnlyRoute = isFlow || isMetrics || isConfig || isExperiments || readAsset !== undefined;
+      const readOnlyRoute = isFlow || isMetrics || isConfig || isRunners || isExperiments || readAsset !== undefined;
       if (req.method === 'POST' && auth && !readOnlyRoute) {
         let response: Response;
-        try { response = await webAction(req, stateDir, server.port!, auth); }
+        try { response = await webAction(req, stateDir, server.port!, auth, runnerCheck, () => server.timeout(req, 35)); }
         catch { return respond('No se pudo registrar la acción.', 500, 'text/plain; charset=utf-8'); }
         for (const [key, value] of Object.entries(HEADERS)) response.headers.set(key, value);
         return response;
       }
       if (req.method !== 'GET' && req.method !== 'HEAD') return respond('Método no permitido', 405, 'text/plain; charset=utf-8');
+      if (isRunners && !csrf) return respond('Se necesita una sesión local.', 401, 'text/plain; charset=utf-8');
       let store: Store | undefined;
       try {
         if (url.pathname === '/auth' && auth) {
@@ -157,11 +163,11 @@ export function startWeb(stateDir: string, port = 4310, options: { write?: boole
         store = openStore();
         const log = turnLogRoute(store.db, stateDir, url.pathname);
         if (log) return respond(log.body, log.status, 'text/plain; charset=utf-8');
-        const content = isMetrics ? metricsPage(store, stateDir, url, auth?.sessionCsrf(req)) : isConfig ? await configPage(store, stateDir, url, escape) : isProfiles ? profilesPage(store, stateDir, url, escape, auth?.sessionCsrf(req)) : isExperiments ? experimentsPage(store.db, url.pathname) : isFlow ? flowPage(store, url, escape) : page(store, stateDir, url, auth?.sessionCsrf(req));
+        const content = isMetrics ? metricsPage(store, stateDir, url, auth?.sessionCsrf(req)) : isConfig ? await configPage(store, stateDir, url, escape, csrf) : isRunners ? runnersPage(store, csrf!) : isProfiles ? profilesPage(store, stateDir, url, escape, auth?.sessionCsrf(req)) : isExperiments ? experimentsPage(store.db, url.pathname) : isFlow ? flowPage(store, url, escape) : page(store, stateDir, url, auth?.sessionCsrf(req));
         if (!content) return respond('Página no encontrada', 404, 'text/plain; charset=utf-8');
         content.body = actionNotice(req.method === 'GET' ? auth?.takeNotice(req, url.pathname) : undefined) + content.body;
         const workstreams = store.listWorkstreams();
-        return respond(`<!doctype html><html lang="es"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><title>${escape(content.title)} · fab</title><link rel="stylesheet" href="/style.css">${isMetrics ? '<link rel="stylesheet" href="/metrics.css">' : manual ? '' : '<script src="/poll.js" defer></script><script src="/inbox.js" defer></script><script src="/notify.js" defer></script>'}</head><body><a class="skip" href="#contenido">Saltar al contenido</a><aside><a class="brand" href="/">fab<span>Fábrica local</span></a><nav aria-label="Navegación principal"><a href="/"${url.pathname === '/' ? ' aria-current="page"' : ''}>Bandeja</a><a href="/changes"${url.pathname.startsWith('/changes') ? ' aria-current="page"' : ''}>Changes</a><a href="/signals"${url.pathname === '/signals' ? ' aria-current="page"' : ''}>Señales</a><a href="/automations"${url.pathname === '/automations' ? ' aria-current="page"' : ''}>Automations</a><a href="/workstreams"${url.pathname === '/workstreams' ? ' aria-current="page"' : ''}>Workstreams</a><a href="/flujo"${isFlow ? ' aria-current="page"' : ''}>Flujo</a><a href="/metricas"${isMetrics ? ' aria-current="page"' : ''}>Métricas</a><a href="/config"${isConfig ? ' aria-current="page"' : ''}>Configuración</a><a href="/perfiles"${isProfiles ? ' aria-current="page"' : ''}>Perfiles</a><a href="/experimentos"${isExperiments ? ' aria-current="page"' : ''}>Experimentos</a></nav><nav aria-label="Workstreams"><h2>Workstreams</h2>${workstreams.map(w => `<a href="/changes?ws=${enc(w.slug)}">${escape(w.slug)}</a>`).join('') || '<p>Sin workstreams</p>'}</nav><p class="local">${auth ? (auth.sessionCsrf(req) ? 'Escritura habilitada' : 'Escritura: abre el enlace de la terminal') : 'Solo lectura'}${isMetrics ? '<br>Actualización manual' : manual ? '' : '<br>Actualización cada 2 s'}</p>${isMetrics || manual ? '' : `<button type="button" id="${NOTIFY_ID}" hidden>Avisos: no</button>`}</aside><main id="contenido" data-inbox="${escape(JSON.stringify(inboxCounts(store.inbox().map(a => a.reviewStatus === 'awaiting' ? 'awaiting' : a.status), labels)))}"><header><h1>${escape(content.title)}</h1></header>${content.body}</main></body></html>`);
+        return respond(`<!doctype html><html lang="es"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><title>${escape(content.title)} · fab</title><link rel="stylesheet" href="/style.css">${isMetrics ? '<link rel="stylesheet" href="/metrics.css">' : manual ? '' : '<script src="/poll.js" defer></script><script src="/inbox.js" defer></script><script src="/notify.js" defer></script>'}</head><body><a class="skip" href="#contenido">Saltar al contenido</a><aside><a class="brand" href="/">fab<span>Fábrica local</span></a><nav aria-label="Navegación principal"><a href="/"${url.pathname === '/' ? ' aria-current="page"' : ''}>Bandeja</a><a href="/changes"${url.pathname.startsWith('/changes') ? ' aria-current="page"' : ''}>Changes</a><a href="/signals"${url.pathname === '/signals' ? ' aria-current="page"' : ''}>Señales</a><a href="/automations"${url.pathname === '/automations' ? ' aria-current="page"' : ''}>Automations</a><a href="/workstreams"${url.pathname === '/workstreams' ? ' aria-current="page"' : ''}>Workstreams</a><a href="/flujo"${isFlow ? ' aria-current="page"' : ''}>Flujo</a><a href="/metricas"${isMetrics ? ' aria-current="page"' : ''}>Métricas</a><a href="/config"${isConfig || isRunners ? ' aria-current="page"' : ''}>Configuración</a><a href="/perfiles"${isProfiles ? ' aria-current="page"' : ''}>Perfiles</a><a href="/experimentos"${isExperiments ? ' aria-current="page"' : ''}>Experimentos</a></nav><nav aria-label="Workstreams"><h2>Workstreams</h2>${workstreams.map(w => `<a href="/changes?ws=${enc(w.slug)}">${escape(w.slug)}</a>`).join('') || '<p>Sin workstreams</p>'}</nav><p class="local">${auth ? (auth.sessionCsrf(req) ? 'Escritura habilitada' : 'Escritura: abre el enlace de la terminal') : 'Solo lectura'}${isMetrics ? '<br>Actualización manual' : manual ? '' : '<br>Actualización cada 2 s'}</p>${isMetrics || manual ? '' : `<button type="button" id="${NOTIFY_ID}" hidden>Avisos: no</button>`}</aside><main id="contenido" data-inbox="${isRunners ? '' : escape(JSON.stringify(inboxCounts(store.inbox().map(a => a.reviewStatus === 'awaiting' ? 'awaiting' : a.status), labels)))}"><header><h1>${escape(content.title)}</h1></header>${content.body}</main></body></html>`);
       } catch (error) {
         if (error instanceof StoreError && error.code === 'not_found') return respond('Registro no encontrado', 404, 'text/plain; charset=utf-8');
         if (error instanceof URIError) return respond('Ruta inválida', 400, 'text/plain; charset=utf-8');
