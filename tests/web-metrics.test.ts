@@ -321,6 +321,22 @@ test('T82-H1: el rango libre rechaza más de 366 días con 400', async () => {
   }
 });
 
+test('T82-H2: range=custom sin fechas y jueces con custom devuelven 400', async () => {
+  expect(() => calculateMetrics(store, dir, { range: 'custom' })).toThrow(URIError);
+  const server = startWeb(dir, 0);
+  try {
+    const base = `http://127.0.0.1:${server.port}/metricas`;
+    const resCustomNoDates = await fetch(`${base}?ws=&range=custom&from=&to=`);
+    expect(resCustomNoDates.status).toBe(400);
+
+    const resJuecesCustom = await fetch(`${base}?tab=jueces&range=custom`);
+    expect(resJuecesCustom.status).toBe(400);
+  } finally {
+    server.stop(true);
+    store = new Store(join(dir, 'fabrica.db'));
+  }
+});
+
 test('T83: ciclo con PR (kickoff→PR, PR→primera revisión humana, PR→merge); tramos exactos con eventos sintéticos', () => {
   const c1 = store.createChange('uno', 'Change con PR', '');
   store.db.query("UPDATE changes SET created_at=?, status='completed' WHERE id=?").run('2026-11-18T00:00:00Z', c1.id);

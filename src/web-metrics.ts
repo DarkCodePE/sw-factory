@@ -102,7 +102,7 @@ function dailyPrTable(title: string, days: string[], prs: Array<{ opened: number
 const tabs = (active: string, q: string) => `<nav aria-label="Secciones de métricas" class="tabs"><a href="/metricas${q}"${active === 'resumen' ? ' aria-current="page"' : ''}>Resumen</a> <a href="/metricas?tab=jueces${q ? '&amp;' + q.slice(1) : ''}"${active === 'jueces' ? ' aria-current="page"' : ''}>Jueces</a></nav>`;
 export function metricsPage(store: Store, stateDir: string, url: URL, csrf?: string): { title: string; body: string } {
   if (url.searchParams.get('tab') === 'jueces') {
-    if (!['7', '30', 'all', 'custom'].includes(url.searchParams.get('range') ?? '7')) throw new URIError('Rango inválido');
+    if (!['7', '30', 'all'].includes(url.searchParams.get('range') ?? '7')) throw new URIError('Rango inválido');
     return { title: 'Métricas · Jueces', body: tabs('jueces', '') + scorersPanel(store, stateDir, url, csrf) };
   }
   const page = metricsSummary(store, stateDir, url);
@@ -115,6 +115,7 @@ function metricsSummary(store: Store, stateDir: string, url: URL): { title: stri
   const to = url.searchParams.get('to')?.trim() || undefined;
   const range = rangeParam ?? (from || to ? 'custom' : '7');
   if (!['7', '30', 'all', 'custom'].includes(range)) throw new URIError('Rango inválido');
+  if (range === 'custom' && !from && !to) throw new URIError('Rango inválido');
   const m = calculateMetrics(store, stateDir, { ws, range: range as MetricsRange, from, to });
   const link = (c: { id: string; title: string }) => `<a href="/changes/${encodeURIComponent(c.id)}">${esc(c.title)}</a>`;
   const groups = (name: string, rows: typeof m.cost.adapters, unit = 'Activities') => table(name, ['Grupo', 'Coste total', 'Subtotal medido', `${unit} sin coste medido`], rows.map(g => [esc(g.name), money(g.total), money(g.measured), String(g.unknown)]));

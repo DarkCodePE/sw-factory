@@ -55,6 +55,7 @@ export function calculateMetrics(store: Store, stateDir: string, options: { ws?:
     since = from ? new Date(`${from}T00:00:00.000Z`).toISOString() : null;
     until = to ? new Date(`${to}T23:59:59.999Z`).toISOString() : new Date(now).toISOString();
   } else {
+    if (range === 'custom') throw new URIError('Rango inválido');
     range ??= 'all';
     since = range === 'all' ? null : new Date(now - Number(range) * 86400000).toISOString();
     until = new Date(now).toISOString();
