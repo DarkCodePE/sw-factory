@@ -149,7 +149,7 @@ test('búsqueda por ID, evento o resultado filtra la lista de entregas', async (
   adm.db.query('INSERT INTO adm_hook_deliveries (delivery_id, event, received_at, bytes, result) VALUES (?, ?, ?, ?, ?)')
     .run('del-uuid-alpha', 'issues', now, 100, 'woke');
   adm.db.query('INSERT INTO adm_hook_deliveries (delivery_id, event, received_at, bytes, result) VALUES (?, ?, ?, ?, ?)')
-    .run('del-uuid-beta', 'issue_comment', now, 200, 'rejected');
+    .run('del-uuid-beta', 'issue_comment', now, 200, 'ignored_repo');
 
   server = startWeb(dir, 0);
 
@@ -157,7 +157,7 @@ test('búsqueda por ID, evento o resultado filtra la lista de entregas', async (
   expect(searchEvent).toContain('del-uuid-beta');
   expect(searchEvent).not.toContain('del-uuid-alpha');
 
-  const searchResult = await getHtml('/webhooks?q=rechazada');
+  const searchResult = await getHtml('/webhooks?q=ignored_repo');
   expect(searchResult).toContain('del-uuid-beta');
   expect(searchResult).not.toContain('del-uuid-alpha');
 
@@ -200,4 +200,20 @@ test('solo lectura: POST a /webhooks devuelve 405 Method Not Allowed', async () 
   });
   expect(resWrite.status).toBe(405);
   expect(resWrite.headers.get('allow')).toBe('GET, HEAD');
+});
+
+test('adm_hook_deliveries conserva el check constraint original sin rejected', () => {
+  store = new Store(join(dir, 'fabrica.db'));
+  const adm = new AdmissionDb(store);
+  const now = new Date().toISOString();
+
+  // Insertar un valor permitido funciona
+  adm.db.query('INSERT INTO adm_hook_deliveries (delivery_id, event, received_at, bytes, result) VALUES (?, ?, ?, ?, ?)')
+    .run('del-valid', 'issues', now, 100, 'woke');
+
+  // Insertar 'rejected' debe fallar por CHECK constraint al revertirse el cambio de esquema
+  expect(() => {
+    adm.db.query('INSERT INTO adm_hook_deliveries (delivery_id, event, received_at, bytes, result) VALUES (?, ?, ?, ?, ?)')
+      .run('del-invalid', 'issues', now, 100, 'rejected');
+  }).toThrow(/CHECK constraint failed/);
 });

@@ -78,7 +78,7 @@ CREATE UNIQUE INDEX IF NOT EXISTS adm_questions_open ON adm_questions(activity_i
 -- Avisos firmados de GitHub (T69b): solo metadatos, nunca el cuerpo. Las 500 más recientes.
 CREATE TABLE IF NOT EXISTS adm_hook_deliveries (
   delivery_id TEXT PRIMARY KEY, event TEXT NOT NULL, received_at TEXT NOT NULL, bytes INTEGER NOT NULL,
-  result TEXT NOT NULL CHECK (result IN ('woke','coalesced','ignored_event','ignored_repo','rejected')));
+  result TEXT NOT NULL CHECK (result IN ('woke','coalesced','ignored_event','ignored_repo')));
 -- Rechazos de avisos sin firma o con firma inválida (T87-H1 Opción B): solo recuento y fecha del último.
 CREATE TABLE IF NOT EXISTS adm_hook_rejections (
   id INTEGER PRIMARY KEY CHECK (id = 1),
