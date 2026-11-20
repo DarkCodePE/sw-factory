@@ -327,3 +327,12 @@ test('T97-H1: un adaptador con coma no se parte y un filtro ausente se ve en el 
   const html = await get('/changes?agent=nadie');
   expect(html).toContain('<option value="nadie" selected>'); expect(html).toContain('No hay changes para estos filtros');
 });
+
+test('T95-H2: JIRA_HOSTNAME con puerto o con esquema enlaza el mismo host y nada más', () => {
+  const env = { JIRA_HOSTNAME: 'jira.x.example:8443' };
+  expect(safeUrl('https://jira.x.example:8443/browse/K-1', env)).not.toBeNull();
+  expect(safeUrl('https://jira.x.example/browse/K-1', env)).toBeNull(); // otro puerto = otro host
+  expect(safeUrl('https://jira.x.example:9999/browse/K-1', env)).toBeNull();
+  expect(safeUrl('https://jira.y.example/b', { JIRA_HOSTNAME: 'https://jira.y.example' })).not.toBeNull();
+  expect(safeUrl('https://jira.y.example/b', { JIRA_HOSTNAME: 'https://jira.y.example/ruta' })).toBeNull(); // host mal formado: se ignora
+});

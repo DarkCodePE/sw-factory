@@ -1,4 +1,5 @@
 // Lista de changes y bandeja con filtros, orden y agrupación. Solo presenta datos del Store (changeIndex, inbox).
+import { hostname as jiraHost } from './connectors/jira.ts';
 import type { Activity, ChangeLinks, ChangeSource, ChangeSummary } from './store.ts';
 
 export interface Ui { escape(v: unknown): string; badge(status: string): string; labels: Record<string, string> }
@@ -77,12 +78,14 @@ export function roleLink(ui: Ui, a: Pick<Activity, 'kind' | 'validator'>, slug: 
   return field ? `<a href="/perfiles?ws=${enc(slug)}#f-${ui.escape(field)}">${ui.escape(text)}</a>` : '';
 }
 
-// Solo https a hosts conocidos (GitHub, Jira Cloud y el JIRA_HOSTNAME configurado); lo demás es texto.
+// Solo https a hosts conocidos (GitHub, Jira Cloud y el JIRA_HOSTNAME del entorno, con su puerto, normalizado como el conector).
+// No se leen los `.env` de Jira: la web no abre ficheros de credenciales; con el host solo en un fichero, el enlace sale como texto.
 export function safeUrl(raw: string, env: Record<string, string | undefined> = process.env): string | null {
+  let jira = '';
+  try { if (env.JIRA_HOSTNAME?.trim()) jira = jiraHost(env.JIRA_HOSTNAME.trim()).toLowerCase(); } catch { /* host mal formado: no se confía en él */ }
   try {
     const u = new URL(raw);
-    const jira = env.JIRA_HOSTNAME?.trim().toLowerCase();
-    const ok = u.protocol === 'https:' && !u.username && !u.password && (u.hostname === 'github.com' || u.hostname.endsWith('.atlassian.net') || (!!jira && u.hostname === jira.replace(/^https?:\/\//, '').replace(/\/.*$/, '')));
+    const ok = u.protocol === 'https:' && !u.username && !u.password && (u.hostname === 'github.com' || u.hostname.endsWith('.atlassian.net') || (!!jira && u.host === jira));
     return ok ? u.href : null;
   } catch { return null; }
 }
