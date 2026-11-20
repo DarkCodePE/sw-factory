@@ -26,6 +26,8 @@ import { actionForms, actionNotice, webAction } from './web-actions.ts';
 import { WEB_ACTION_STYLE } from './web-actions-style.ts';
 import { handleApi, isApiPath } from './web-api.ts';
 import { FLOW_STYLE, flowPage } from './web-flow.ts';
+import { webhooksPage } from './web-webhooks.ts';
+import { definitionPage } from './web-definition.ts';
 
 const escape = (value: unknown): string => redact(String(value ?? '')).replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[c]!);
 const enc = encodeURIComponent;
@@ -156,14 +158,16 @@ export function startWeb(stateDir: string, port = 4310, options: { write?: boole
       const isConfig = url.pathname === '/config';
       const isFlow = url.pathname === '/flujo';
       const isProfiles = url.pathname === '/perfiles';
-      const manual = isConfig || isProfiles; // sin sondeo: no pisar lo que se escribe
+      const isDefinition = url.pathname === '/definicion';
+      const manual = isConfig || isProfiles || isDefinition; // sin sondeo: no pisar lo que se escribe
       const isExperiments = url.pathname === '/experimentos' || url.pathname.startsWith('/experimentos/');
+      const isWebhooks = url.pathname === '/webhooks';
       const readAsset = READ_ASSETS.get(url.pathname);
-      const readOnlyRoute = isFlow || isMetrics || isConfig || isExperiments || readAsset !== undefined;
+      const readOnlyRoute = isFlow || isMetrics || isConfig || isExperiments || isWebhooks || isDefinition || readAsset !== undefined;
       const shell = (store: Store, content: { title: string; body: string }, nav: URL = url, still = manual) => {
         const workstreams = store.listWorkstreams();
         const inboxStatuses = store.inbox().map(a => a.reviewStatus === 'awaiting' ? 'awaiting' : a.status);
-        return `<!doctype html><html lang="es"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><title>${escape(content.title)} · fab</title><link rel="stylesheet" href="/style.css"><script src="/theme.js"></script><script src="/sidebar.js" defer></script>${isMetrics ? '<link rel="stylesheet" href="/metrics.css">' : still ? '' : '<script src="/poll.js" defer></script><script src="/inbox.js" defer></script><script src="/notify.js" defer></script>'}</head><body><a class="skip" href="#contenido">Saltar al contenido</a><aside><a class="brand" href="/">fab<span>Fábrica local</span></a><nav aria-label="Navegación principal"><a href="/"${nav.pathname === '/' ? ' aria-current="page"' : ''}>Bandeja${inboxStatuses.length ? ` <strong class="count" aria-label="${inboxStatuses.length} en la bandeja">${inboxStatuses.length}</strong>` : ''}</a><a href="/changes"${nav.pathname.startsWith('/changes') ? ' aria-current="page"' : ''}>Changes</a><a href="/signals"${nav.pathname === '/signals' ? ' aria-current="page"' : ''}>Señales</a><a href="/automations"${nav.pathname === '/automations' ? ' aria-current="page"' : ''}>Automations</a><a href="/workstreams"${nav.pathname === '/workstreams' ? ' aria-current="page"' : ''}>Workstreams</a><a href="/flujo"${isFlow ? ' aria-current="page"' : ''}>Flujo</a><a href="/metricas"${isMetrics ? ' aria-current="page"' : ''}>Métricas</a><a href="/config"${isConfig ? ' aria-current="page"' : ''}>Configuración</a><a href="/perfiles"${isProfiles ? ' aria-current="page"' : ''}>Perfiles</a><a href="/experimentos"${isExperiments ? ' aria-current="page"' : ''}>Experimentos</a></nav>${sidebarNav(workstreams, escape)}<p class="local">${auth ? (auth.sessionCsrf(req) ? 'Escritura habilitada' : 'Escritura: abre el enlace de la terminal') : 'Solo lectura'}${isMetrics ? '<br>Actualización manual' : still ? '' : '<br>Actualización cada 2 s'}</p>${themeControl}${isMetrics || still ? '' : `<button type="button" id="${NOTIFY_ID}" hidden>Avisos: no</button>`}</aside><main id="contenido" data-inbox="${escape(JSON.stringify(inboxCounts(inboxStatuses, labels)))}"><header><h1>${escape(content.title)}</h1></header>${content.body}</main></body></html>`;
+        return `<!doctype html><html lang="es"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><title>${escape(content.title)} · fab</title><link rel="stylesheet" href="/style.css"><script src="/theme.js"></script><script src="/sidebar.js" defer></script>${isMetrics ? '<link rel="stylesheet" href="/metrics.css">' : still ? '' : '<script src="/poll.js" defer></script><script src="/inbox.js" defer></script><script src="/notify.js" defer></script>'}</head><body><a class="skip" href="#contenido">Saltar al contenido</a><aside><a class="brand" href="/">fab<span>Fábrica local</span></a><nav aria-label="Navegación principal"><a href="/"${nav.pathname === '/' ? ' aria-current="page"' : ''}>Bandeja${inboxStatuses.length ? ` <strong class="count" aria-label="${inboxStatuses.length} en la bandeja">${inboxStatuses.length}</strong>` : ''}</a><a href="/changes"${nav.pathname.startsWith('/changes') ? ' aria-current="page"' : ''}>Changes</a><a href="/signals"${nav.pathname === '/signals' ? ' aria-current="page"' : ''}>Señales</a><a href="/automations"${nav.pathname === '/automations' ? ' aria-current="page"' : ''}>Automations</a><a href="/workstreams"${nav.pathname === '/workstreams' ? ' aria-current="page"' : ''}>Workstreams</a><a href="/flujo"${isFlow ? ' aria-current="page"' : ''}>Flujo</a><a href="/metricas"${isMetrics ? ' aria-current="page"' : ''}>Métricas</a><a href="/config"${isConfig ? ' aria-current="page"' : ''}>Configuración</a><a href="/definicion"${isDefinition ? ' aria-current="page"' : ''}>Definición</a><a href="/perfiles"${isProfiles ? ' aria-current="page"' : ''}>Perfiles</a><a href="/experimentos"${isExperiments ? ' aria-current="page"' : ''}>Experimentos</a><a href="/webhooks"${isWebhooks ? ' aria-current="page"' : ''}>Webhooks</a></nav>${sidebarNav(workstreams, escape)}<p class="local">${auth ? (auth.sessionCsrf(req) ? 'Escritura habilitada' : 'Escritura: abre el enlace de la terminal') : 'Solo lectura'}${isMetrics ? '<br>Actualización manual' : still ? '' : '<br>Actualización cada 2 s'}</p>${themeControl}${isMetrics || still ? '' : `<button type="button" id="${NOTIFY_ID}" hidden>Avisos: no</button>`}</aside><main id="contenido" data-inbox="${escape(JSON.stringify(inboxCounts(inboxStatuses, labels)))}"><header><h1>${escape(content.title)}</h1></header>${content.body}</main></body></html>`;
       };
       if (req.method === 'POST' && auth && !readOnlyRoute) {
         let response: Response;
@@ -183,12 +187,13 @@ export function startWeb(stateDir: string, port = 4310, options: { write?: boole
           return response;
         }
         if (url.pathname === '/style.css') return respond(WEB_STYLE + WEB_ACTION_STYLE + FLOW_STYLE + THEME_STYLE + SIDEBAR_STYLE + '.count{font-size:13px;margin-left:6px}.bulk{display:flex;gap:8px;flex-wrap:wrap;margin:12px 0}.links{margin:8px 0}', 200, 'text/css; charset=utf-8');
+        if (url.pathname === '/definition') return new Response(null, { status: 301, headers: { Location: `/definicion${url.search}`, ...HEADERS } });
         if (url.pathname === '/poll.js') return respond(POLL, 200, 'text/javascript; charset=utf-8');
         if (readAsset) return respond(readAsset.body, 200, readAsset.type);
         store = openStore();
         const log = turnLogRoute(store.db, stateDir, url.pathname);
         if (log) return respond(log.body, log.status, 'text/plain; charset=utf-8');
-        const content = isMetrics ? metricsPage(store, stateDir, url, auth?.sessionCsrf(req)) : isConfig ? await configPage(store, stateDir, url, escape) : isProfiles ? profilesPage(store, stateDir, url, escape, auth?.sessionCsrf(req)) : isExperiments ? experimentsPage(store.db, url.pathname) : isFlow ? flowPage(store, url, escape) : page(store, stateDir, url, auth?.sessionCsrf(req));
+        const content = isMetrics ? metricsPage(store, stateDir, url, auth?.sessionCsrf(req)) : isConfig ? await configPage(store, stateDir, url, escape) : isProfiles ? profilesPage(store, stateDir, url, escape, auth?.sessionCsrf(req)) : isExperiments ? experimentsPage(store.db, url.pathname) : isFlow ? flowPage(store, url, escape) : isWebhooks ? webhooksPage(store, url, escape) : isDefinition ? definitionPage(store, stateDir, url, escape) : page(store, stateDir, url, auth?.sessionCsrf(req));
         if (!content) return respond('Página no encontrada', 404, 'text/plain; charset=utf-8');
         content.body = actionNotice(req.method === 'GET' ? auth?.takeNotice(req, url.pathname) : undefined) + content.body;
         return respond(shell(store, content));

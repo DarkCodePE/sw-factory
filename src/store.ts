@@ -167,6 +167,25 @@ export interface ChangeAttribution extends Change { source: ChangeSource | null;
 export interface ChangeSummary extends ChangeAttribution { activityCount: number; agents: string[]; roles: string[] }
 export interface ChangeLinks { source?: { system: string; key: string; url: string }; pr?: { repo: string; number: number; url: string } }
 
+export interface WebhookDelivery {
+  delivery_id: string;
+  event: string;
+  received_at: string;
+  bytes: number;
+  result: string;
+}
+
+export interface WebhookReceptorStatus {
+  hasTable: boolean;
+  active: boolean;
+  endpoint: string;
+  totalDeliveries: number;
+  lastDeliveryAt: string | null;
+  last24h: { result: string; count: number }[];
+  rejectedCount: number;
+  lastRejectedAt: string | null;
+}
+
 export interface ChangeNote {
   id: string;
   changeId: string;
@@ -2141,5 +2160,72 @@ export class Store {
     const ws = this.getWorkstream(workstream);
     return (this.db.query('SELECT COUNT(*) AS n FROM events WHERE workstream_id = ? AND change_id = ?')
       .get(ws.id, changeId) as { n: number }).n;
+  }
+
+  /** ¿Existen las tablas de webhooks (adm_hook_deliveries)? */
+  hasWebhookTables(): boolean {
+    return this.db.query("SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'adm_hook_deliveries'").get() !== null;
+  }
+
+  /** Lista de entregas de webhooks (metadatos, nunca cuerpos ni secretos). */
+  listWebhookDeliveries(limit = 100): WebhookDelivery[] {
+    if (!this.hasWebhookTables()) return [];
+    return this.db.query('SELECT delivery_id, event, received_at, bytes, result FROM adm_hook_deliveries ORDER BY rowid DESC LIMIT ?')
+      .all(limit) as WebhookDelivery[];
+  }
+
+  /** Estado del receptor de webhooks y recuento de entregas recientes. */
+  webhookReceptorStatus(): WebhookReceptorStatus {
+    const hasTable = this.hasWebhookTables();
+    if (!hasTable) {
+      return {
+        hasTable: false,
+        active: false,
+        endpoint: '/github',
+        totalDeliveries: 0,
+        lastDeliveryAt: null,
+        last24h: [],
+        rejectedCount: 0,
+        lastRejectedAt: null,
+      };
+    }
+    let active = false;
+    const hasLock = this.db.query("SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'adm_lock'").get() !== null;
+    if (hasLock) {
+      const lock = this.db.query('SELECT heartbeat_at FROM adm_lock WHERE id = 1').get() as { heartbeat_at: number } | null;
+      if (lock && this.clock().getTime() - lock.heartbeat_at <= 30_000) active = true;
+    }
+    const total = (this.db.query('SELECT COUNT(*) AS count FROM adm_hook_deliveries').get() as { count: number }).count;
+    const last = (this.db.query('SELECT MAX(received_at) AS at FROM adm_hook_deliveries').get() as { at: string | null }).at;
+    const since24h = new Date(this.clock().getTime() - 86_400_000).toISOString();
+    const last24h = this.db.query('SELECT result, COUNT(*) AS count FROM adm_hook_deliveries WHERE received_at >= ? GROUP BY result ORDER BY result')
+      .all(since24h) as { result: string; count: number }[];
+
+    let rejectedCount = 0;
+    let lastRejectedAt: string | null = null;
+    const hasRejections = this.db.query("SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'adm_hook_rejections'").get() !== null;
+    if (hasRejections) {
+      try {
+        const rej = this.db.query('SELECT count, last_rejected_at FROM adm_hook_rejections WHERE id = 1').get() as { count: number; last_rejected_at: string } | null;
+        if (rej) {
+          rejectedCount = rej.count;
+          lastRejectedAt = rej.last_rejected_at;
+        }
+      } catch {
+        rejectedCount = 0;
+        lastRejectedAt = null;
+      }
+    }
+
+    return {
+      hasTable: true,
+      active,
+      endpoint: '/github',
+      totalDeliveries: total,
+      lastDeliveryAt: last,
+      last24h,
+      rejectedCount,
+      lastRejectedAt,
+    };
   }
 }
