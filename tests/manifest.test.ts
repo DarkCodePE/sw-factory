@@ -204,3 +204,10 @@ test('T77a: atomicEvidence conserva un .json válido aunque lleve claves con nom
   atomicEvidence(p, JSON.stringify({ tokens: 5, usage: { token: 7 }, password: 'x', nota: 'ok', auth: 'Bearer abcdef123456' }));
   expect(JSON.parse(readFileSync(p, 'utf8'))).toEqual({ tokens: 5, usage: { token: 7 }, password: '[REDACTED]', nota: 'ok', auth: 'Bearer [REDACTED]' });
 });
+
+test('T77-H6: un .json roto se sanea como texto y no conserva el secreto', () => {
+  const p = join(dir, 'roto.json');
+  atomicEvidence(p, '{"a": 1, "token": "zq9Xv7hunterK3", ');
+  const out = readFileSync(p, 'utf8');
+  expect(out).not.toContain('zq9Xv7'); expect(out).toContain('"a": 1');
+});
