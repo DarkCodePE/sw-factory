@@ -294,3 +294,11 @@ test('T96-H11: un archivo vacío con nombre se rechaza con la cabecera Content-T
   expect(r.status).toBe(400);
   expect(notes()).toHaveLength(before);
 });
+
+test('T96-H12: actionNotice solo muestra textos fijos conocidos, no cualquier resultado', async () => {
+  const { actionNotice } = await import('../src/web-actions.ts');
+  const { NOTE_ATTACHMENT_STATE, NOTE_ATTACHMENT_REMOTE } = await import('../src/note-attachments.ts');
+  for (const text of [...Object.values(NOTE_ATTACHMENT_STATE), NOTE_ATTACHMENT_REMOTE]) expect(actionNotice(text)).toContain('role="status"'); // W21/W23
+  expect(actionNotice('Un texto cualquiera que alguien pasó como resultado')).toBe('');
+  expect(actionNotice('<script>alert(1)</script>')).toBe('');
+});

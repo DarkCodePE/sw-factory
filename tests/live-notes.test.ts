@@ -347,3 +347,27 @@ test('un turno vivo cuyo estado cae en state/live conserva pendiente el archivo'
   expect(backend.turns[0]!.prompt).not.toContain('ARCHIVO EN LIVE');
   expect(store.listChangeNotes(change.id)[0]).toEqual(pending);
 });
+
+test('T96-H12: el turno vivo calcula el inventario de Git antes de su transacción, no dentro', async () => {
+  const { change, run } = setup(true);
+  store.addChangeNote(change.id, 'CUERPO', file('ARCHIVO'));
+  const spawn = Bun.spawnSync, inTx: boolean[] = [];
+  Bun.spawnSync = ((...args: Parameters<typeof Bun.spawnSync>) => {
+    const argv = args[0] as string[]; // solo el inventario de montajes (no otros usos de Git, como el manifiesto)
+    if (argv.includes('--absolute-git-dir') || argv.includes('--git-common-dir') || (argv.includes('worktree') && argv.includes('list'))) inTx.push(store.db.inTransaction);
+    return spawn(...args);
+  }) as typeof Bun.spawnSync;
+  try { await run(fakeLive([{ reports: [DONE] }])); } finally { Bun.spawnSync = spawn; }
+  expect(inTx.length).toBeGreaterThan(0); // D06/T06: sin `prepared`, Git correría dentro de la transacción de la reserva
+  expect(inTx.filter(Boolean)).toEqual([]);
+});
+
+test('T96-H12: la reserva del turno vivo trata como montaje persistente state/live y el claude-projects del change', async () => {
+  const { change, stateDir, run } = setup(true);
+  store.addChangeNote(change.id, 'CUERPO', file('ARCHIVO'));
+  const reserve = store.reserveNotes.bind(store); let mounts: string[] | undefined;
+  store.reserveNotes = ((c: string, a: string, t: string, target: { persistentMounts?: string[] }) => { mounts = target.persistentMounts; return reserve(c, a, t, target as never); }) as typeof store.reserveNotes;
+  await run(fakeLive([{ reports: [DONE] }]));
+  expect(mounts).toContain(join(stateDir, 'live'));
+  expect(mounts).toContain(join(stateDir, 'live', change.id.slice(0, 8), 'claude-projects')); // T04b
+});

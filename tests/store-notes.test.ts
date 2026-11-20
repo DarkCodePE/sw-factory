@@ -462,3 +462,22 @@ test('T96-H10: el aviso de ancestro nombra el directorio que falla y el de fiche
     expect(() => assertPrivateNoteDatabase(join(state, 'fabrica.db'))).toThrow('chmod 600');
   } finally { rmSync(dir, { recursive: true, force: true }); }
 });
+
+test('T96-H12: el alta directa en el Store rechaza un estado 0755, sin depender de la comprobación previa de la web', () => privateNotes((writer, id) => {
+  chmodSync(dirname(writer.dbPath), 0o755); // S03: quitar la comprobación del alta la dejaba pasar
+  expect(() => writer.addChangeNote(id, 'con archivo', attachment())).toThrow('estado privado');
+  expect(writer.addChangeNote(id, 'solo texto').attachment).toBeUndefined();
+  chmodSync(dirname(writer.dbPath), 0o700);
+  expect(writer.addChangeNote(id, 'ya privado', attachment()).attachment?.name).toBe('datos.txt');
+}));
+
+test('T96-H12: si Git falla al inventariar, el alta falla cerrada y no acepta un inventario vacío', () => privateNotes((writer, id) => {
+  const spawn = Bun.spawnSync;
+  Bun.spawnSync = ((...args: Parameters<typeof Bun.spawnSync>) => {
+    const argv = args[0] as string[];
+    return argv.includes('worktree') && argv.includes('list') ? { exitCode: 1, stdout: Buffer.alloc(0), stderr: Buffer.from('boom') } as never : spawn(...args);
+  }) as typeof Bun.spawnSync;
+  try { expect(() => writer.addChangeNote(id, 'con archivo', attachment())).toThrow('No se pudo inventariar'); } // S06: devolver [] fuera aceptaba el alta
+  finally { Bun.spawnSync = spawn; }
+  expect(writer.listChangeNotes(id)).toHaveLength(0);
+}));
