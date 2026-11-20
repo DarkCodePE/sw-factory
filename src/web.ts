@@ -11,6 +11,8 @@ import { autoImprovePage } from './web-improve-auto.ts';
 import { experimentsPage } from './web-experiments.ts';
 import { NOTIFY, NOTIFY_ID, inboxCounts } from './web-notify.ts';
 import { configPage } from './web-config.ts';
+import { runnersPage } from './web-runners.ts';
+import { runnerCheckAction, type RunnerCheckOptions } from './web-runner-check.ts';
 import { PROFILE_BODY_LIMIT, profilesPage } from './web-profile.ts';
 
 import { INBOX_JS, changePrLink, changesView, copyButton, inboxView, linksBlock, parseQuery, roleLink, type Ui } from './web-changes.ts';
@@ -144,9 +146,10 @@ const KNOWN_BACK = /^\/(?:activities\/[\w-]+|changes(?:\/[\w-]+)?|workstreams|au
 
 const loopback = (port: number) => [`127.0.0.1:${port}`, `localhost:${port}`];
 
-export function startWeb(stateDir: string, port = 4310, options: { write?: boolean; clock?: () => Date } = {}) {
+export function startWeb(stateDir: string, port = 4310, options: { write?: boolean; clock?: () => Date; runnerCheck?: RunnerCheckOptions } = {}) {
   const auth = options.write ? new WebAuth() : undefined;
   const keyUsage = new ApiKeyUsage(options.clock);
+  const runnerCheck = runnerCheckAction(stateDir, options.runnerCheck);
   const openStore = () => new Store(join(stateDir, 'fabrica.db'), { readonly: true });
   const initial = openStore();
   try { initial.listWorkstreams(); } finally { initial.close(); }
@@ -161,6 +164,8 @@ export function startWeb(stateDir: string, port = 4310, options: { write?: boole
       if (isApiPath(url.pathname)) return handleApi(req, url, openStore, auth ? { stateDir } : undefined, keyUsage);
       const isMetrics = url.pathname === '/metricas';
       const isConfig = url.pathname === '/config';
+      const isRunners = url.pathname === '/config/runners';
+      const csrf = auth?.sessionCsrf(req);
       const isFlow = url.pathname === '/flujo';
       const isApiKeys = url.pathname === API_KEYS_PATH;
       const keysCsrf = isApiKeys ? auth?.sessionCsrf(req) : undefined;
@@ -170,20 +175,20 @@ export function startWeb(stateDir: string, port = 4310, options: { write?: boole
       const automationEdit = AUTOMATION_EDIT_ROUTE.exec(url.pathname);
       const automationCreate = url.pathname === '/automations/nueva';
       const isAutomationEditor = automationCreate || !!automationEdit;
-      const manual = isConfig || isProfiles || isDefinition || isAutoImprove || isApiKeys || isAutomationEditor; // sin sondeo: no pisar lo que se escribe
+      const manual = isConfig || isProfiles || isDefinition || isAutoImprove || isApiKeys || isAutomationEditor || isRunners; // sin sondeo: no pisar lo que se escribe
       const isExperiments = url.pathname === '/experimentos' || url.pathname.startsWith('/experimentos/');
       const isBenchmarks = url.pathname === '/benchmarks' || url.pathname.startsWith('/benchmarks/');
       const isWebhooks = url.pathname === '/webhooks';
       const readAsset = READ_ASSETS.get(url.pathname);
-      const readOnlyRoute = isFlow || isMetrics || isConfig || isApiKeys || isExperiments || isAutomationEditor || isWebhooks || isDefinition || readAsset !== undefined;
+      const readOnlyRoute = isFlow || isMetrics || isConfig || isApiKeys || isExperiments || isAutomationEditor || isRunners || isWebhooks || isDefinition || readAsset !== undefined;
       const shell = (store: Store, content: { title: string; body: string }, nav: URL = url, still = manual) => {
         const workstreams = store.listWorkstreams();
         const inboxStatuses = store.inbox().map(a => a.reviewStatus === 'awaiting' ? 'awaiting' : a.status);
-        return `<!doctype html><html lang="es"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><title>${escape(content.title)} · fab</title><link rel="stylesheet" href="/style.css"><script src="/theme.js"></script><script src="/sidebar.js" defer></script>${isMetrics ? '<link rel="stylesheet" href="/metrics.css">' : isAutomationEditor ? '<script src="/automation-editor.js" defer></script>' : still ? '' : '<script src="/poll.js" defer></script><script src="/inbox.js" defer></script><script src="/notify.js" defer></script>'}</head><body><a class="skip" href="#contenido">Saltar al contenido</a><aside><a class="brand" href="/">fab<span>Fábrica local</span></a><nav aria-label="Navegación principal"><a href="/"${nav.pathname === '/' ? ' aria-current="page"' : ''}>Bandeja${inboxStatuses.length ? ` <strong class="count" aria-label="${inboxStatuses.length} en la bandeja">${inboxStatuses.length}</strong>` : ''}</a><a href="/changes"${nav.pathname.startsWith('/changes') ? ' aria-current="page"' : ''}>Changes</a><a href="/signals"${nav.pathname === '/signals' ? ' aria-current="page"' : ''}>Señales</a><a href="/automations"${(nav.pathname === '/automations' || isAutomationEditor) ? ' aria-current="page"' : ''}>Automations</a><a href="/workstreams"${nav.pathname === '/workstreams' ? ' aria-current="page"' : ''}>Workstreams</a><a href="/flujo"${isFlow ? ' aria-current="page"' : ''}>Flujo</a><a href="/metricas"${isMetrics ? ' aria-current="page"' : ''}>Métricas</a><a href="/config"${isConfig || isApiKeys ? ' aria-current="page"' : ''}>Configuración</a><a href="/definicion"${isDefinition ? ' aria-current="page"' : ''}>Definición</a><a href="/perfiles"${isProfiles ? ' aria-current="page"' : ''}>Perfiles</a><a href="/experimentos"${isExperiments ? ' aria-current="page"' : ''}>Experimentos</a><a href="/webhooks"${isWebhooks ? ' aria-current="page"' : ''}>Webhooks</a><a href="/benchmarks"${isBenchmarks ? ' aria-current="page"' : ''}>Benchmarks</a><a href="/automejora"${isAutoImprove ? ' aria-current="page"' : ''}>Automejora</a></nav>${sidebarNav(workstreams, escape)}<p class="local">${auth ? (auth.sessionCsrf(req) ? 'Escritura habilitada' : 'Escritura: abre el enlace de la terminal') : 'Solo lectura'}${isMetrics ? '<br>Actualización manual' : still ? '' : '<br>Actualización cada 2 s'}</p>${themeControl}${isMetrics || still ? '' : `<button type="button" id="${NOTIFY_ID}" hidden>Avisos: no</button>`}</aside><main id="contenido" data-inbox="${escape(JSON.stringify(inboxCounts(inboxStatuses, labels)))}"><header><h1>${escape(content.title)}</h1></header>${content.body}</main></body></html>`;
+        return `<!doctype html><html lang="es"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><title>${escape(content.title)} · fab</title><link rel="stylesheet" href="/style.css"><script src="/theme.js"></script><script src="/sidebar.js" defer></script>${isMetrics ? '<link rel="stylesheet" href="/metrics.css">' : isAutomationEditor ? '<script src="/automation-editor.js" defer></script>' : still ? '' : '<script src="/poll.js" defer></script><script src="/inbox.js" defer></script><script src="/notify.js" defer></script>'}</head><body><a class="skip" href="#contenido">Saltar al contenido</a><aside><a class="brand" href="/">fab<span>Fábrica local</span></a><nav aria-label="Navegación principal"><a href="/"${nav.pathname === '/' ? ' aria-current="page"' : ''}>Bandeja${inboxStatuses.length ? ` <strong class="count" aria-label="${inboxStatuses.length} en la bandeja">${inboxStatuses.length}</strong>` : ''}</a><a href="/changes"${nav.pathname.startsWith('/changes') ? ' aria-current="page"' : ''}>Changes</a><a href="/signals"${nav.pathname === '/signals' ? ' aria-current="page"' : ''}>Señales</a><a href="/automations"${(nav.pathname === '/automations' || isAutomationEditor) ? ' aria-current="page"' : ''}>Automations</a><a href="/workstreams"${nav.pathname === '/workstreams' ? ' aria-current="page"' : ''}>Workstreams</a><a href="/flujo"${isFlow ? ' aria-current="page"' : ''}>Flujo</a><a href="/metricas"${isMetrics ? ' aria-current="page"' : ''}>Métricas</a><a href="/config"${isConfig || isApiKeys || isRunners ? ' aria-current="page"' : ''}>Configuración</a><a href="/definicion"${isDefinition ? ' aria-current="page"' : ''}>Definición</a><a href="/perfiles"${isProfiles ? ' aria-current="page"' : ''}>Perfiles</a><a href="/experimentos"${isExperiments ? ' aria-current="page"' : ''}>Experimentos</a><a href="/webhooks"${isWebhooks ? ' aria-current="page"' : ''}>Webhooks</a><a href="/benchmarks"${isBenchmarks ? ' aria-current="page"' : ''}>Benchmarks</a><a href="/automejora"${isAutoImprove ? ' aria-current="page"' : ''}>Automejora</a></nav>${sidebarNav(workstreams, escape)}<p class="local">${auth ? (auth.sessionCsrf(req) ? 'Escritura habilitada' : 'Escritura: abre el enlace de la terminal') : 'Solo lectura'}${isMetrics ? '<br>Actualización manual' : still ? '' : '<br>Actualización cada 2 s'}</p>${themeControl}${isMetrics || still ? '' : `<button type="button" id="${NOTIFY_ID}" hidden>Avisos: no</button>`}</aside><main id="contenido" data-inbox="${isRunners ? '' : escape(JSON.stringify(inboxCounts(inboxStatuses, labels)))}"><header><h1>${escape(content.title)}</h1></header>${content.body}</main></body></html>`;
       };
       if (req.method === 'POST' && auth && !readOnlyRoute) {
         let response: Response;
-        try { response = await webAction(req, stateDir, server.port!, auth, keyUsage); }
+        try { response = await webAction(req, stateDir, server.port!, auth, keyUsage, runnerCheck, () => server.timeout(req, 35)); }
         catch { return respond('No se pudo registrar la acción.', 500, 'text/plain; charset=utf-8'); }
         for (const [key, value] of Object.entries(HEADERS)) if (!response.headers.has(key)) response.headers.set(key, value);
         // El editor de automations ya devuelve su propia página HTML de error (T86): no se envuelve de nuevo.
@@ -192,6 +197,7 @@ export function startWeb(stateDir: string, port = 4310, options: { write?: boole
       }
       if (req.method !== 'GET' && req.method !== 'HEAD') return respond('Método no permitido', 405, 'text/plain; charset=utf-8');
       if (isApiKeys && !keysCsrf) return respond('Abre el enlace de acceso de fab web --write para administrar las claves API.', 401, 'text/plain; charset=utf-8');
+      if (isRunners && !csrf) return respond('Se necesita una sesión local.', 401, 'text/plain; charset=utf-8');
       let store: Store | undefined;
       try {
         if (url.pathname === '/auth' && auth) {
@@ -212,7 +218,7 @@ export function startWeb(stateDir: string, port = 4310, options: { write?: boole
         const content = isAutomationEditor ? automationEditor(store, csrf!, {
           automation: automationEdit ? store.getAutomation(automationEdit[1]!) : undefined,
           values: automationCreate ? { ws: url.searchParams.get('ws') ?? undefined } : undefined,
-        }) : keysCsrf ? apiKeysPage(store, escape, keysCsrf, keyUsage) : isMetrics ? metricsPage(store, stateDir, url, auth?.sessionCsrf(req)) : isConfig ? await configPage(store, stateDir, url, escape) : isProfiles ? profilesPage(store, stateDir, url, escape, auth?.sessionCsrf(req)) : isAutoImprove ? autoImprovePage(store, stateDir, url, escape, auth?.sessionCsrf(req)) : isExperiments ? experimentsPage(store.db, url.pathname) : isBenchmarks ? benchmarksPage(store, url, escape, auth?.sessionCsrf(req)) : isFlow ? flowPage(store, url, escape) : isWebhooks ? webhooksPage(store, url, escape) : isDefinition ? definitionPage(store, stateDir, url, escape) : page(store, stateDir, url, auth?.sessionCsrf(req));
+        }) : keysCsrf ? apiKeysPage(store, escape, keysCsrf, keyUsage) : isMetrics ? metricsPage(store, stateDir, url, auth?.sessionCsrf(req)) : isConfig ? await configPage(store, stateDir, url, escape, csrf) : isRunners ? runnersPage(store, csrf!) : isProfiles ? profilesPage(store, stateDir, url, escape, auth?.sessionCsrf(req)) : isAutoImprove ? autoImprovePage(store, stateDir, url, escape, auth?.sessionCsrf(req)) : isExperiments ? experimentsPage(store.db, url.pathname) : isBenchmarks ? benchmarksPage(store, url, escape, auth?.sessionCsrf(req)) : isFlow ? flowPage(store, url, escape) : isWebhooks ? webhooksPage(store, url, escape) : isDefinition ? definitionPage(store, stateDir, url, escape) : page(store, stateDir, url, auth?.sessionCsrf(req));
         if (!content) return respond('Página no encontrada', 404, 'text/plain; charset=utf-8');
         content.body = actionNotice(req.method === 'GET' ? auth?.takeNotice(req, url.pathname) : undefined) + content.body;
         return respond(shell(store, content));

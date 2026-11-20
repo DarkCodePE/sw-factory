@@ -370,6 +370,7 @@ function toWorkstream(r: Row): Workstream {
 }
 
 const RUNNER_NAME = /^[a-z0-9][a-z0-9-]{0,40}$/;
+export const isRunnerName = (name: string): boolean => RUNNER_NAME.test(name);
 const RUNNER_TARGET = /^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$/;
 
 function toRunner(r: Row): Runner {
@@ -818,7 +819,7 @@ export class Store {
   // ---- runners -----------------------------------------------------------
 
   createRunner(i: { name: string; kind: Runner['kind']; target?: string | null; options?: Record<string, unknown> }): Runner {
-    if (typeof i.name !== 'string' || !RUNNER_NAME.test(i.name)) throw new StoreError('invalid_input', 'name: use a-z, 0-9 y guiones (1-41 caracteres)');
+    if (typeof i.name !== 'string' || !isRunnerName(i.name)) throw new StoreError('invalid_input', 'name: use a-z, 0-9 y guiones (1-41 caracteres)');
     if (i.kind !== 'local' && i.kind !== 'ssh') throw new StoreError('invalid_input', 'kind: debe ser local o ssh');
     if (i.kind === 'ssh' && !(typeof i.target === 'string' && RUNNER_TARGET.test(i.target))) {
       throw new StoreError('invalid_input', 'target: alias de ~/.ssh/config (sin usuario@host ni espacios)');
@@ -837,6 +838,13 @@ export class Store {
 
   listRunners(): Runner[] {
     return (this.db.query('SELECT * FROM runners ORDER BY name').all() as Row[]).map(toRunner);
+  }
+
+  listRunnerSummaries(): Pick<Runner, 'name' | 'kind' | 'enabled' | 'createdAt'>[] {
+    if (!this.db.query("SELECT 1 FROM sqlite_schema WHERE type = 'table' AND name = 'runners'").get()) return [];
+    const rows = this.db.query('SELECT name, kind, enabled, created_at FROM runners ORDER BY name').all() as
+      { name: string; kind: Runner['kind']; enabled: number; created_at: string }[];
+    return rows.map(r => ({ name: r.name, kind: r.kind, enabled: r.enabled === 1, createdAt: r.created_at }));
   }
 
   getRunner(name: string): Runner {
@@ -866,15 +874,29 @@ export class Store {
     }).immediate());
   }
 
-  setWorkstreamRunner(idOrSlug: string, name: string | null): Workstream {
-    this.withRetry(() => this.db.transaction(() => {
-      const ws = this.getWorkstream(idOrSlug);
+  setWorkstreamRunner(idOrSlug: string, name: string | null, selection?: { expected: string | null; confirmSsh: boolean; seen?: { kind: Runner['kind']; createdAt: string } }): Workstream {
+    return this.withRetry(() => this.db.transaction(() => {
+      const row = selection ? this.db.query('SELECT * FROM workstreams WHERE id = ?').get(idOrSlug) as Row | null : null;
+      if (selection && !row) throw new StoreError('not_found', 'workstream no encontrado');
+      const ws = row ? toWorkstream(row) : this.getWorkstream(idOrSlug);
+      if (selection && (ws.state === 'archived' || ws.runner !== selection.expected)) {
+        throw new StoreError('conflict', 'el workstream está archivado o la selección cambió');
+      }
       const runner = name === null ? null : this.getRunner(name);
-      this.db.query('UPDATE workstreams SET runner = ? WHERE id = ?').run(name, ws.id);
-      const warn = runner?.kind === 'ssh' ? `; el código de este workstream se enviará a ${runner.target}` : '';
+      if (selection) {
+        // La fila que vio el dueño: un runner borrado y recreado (otro destino u otro tipo) no se asigna.
+        if (runner && (runner.kind !== selection.seen?.kind || runner.createdAt !== selection.seen.createdAt)) {
+          throw new StoreError('conflict', 'el runner cambió desde que se mostró');
+        }
+        if (runner && !runner.enabled) throw new StoreError('conflict', 'el runner está pausado');
+        if (runner?.kind === 'ssh' && !selection.confirmSsh) throw new StoreError('invalid_input', 'falta confirmar el envío al runner SSH');
+        if (ws.runner === name) return ws;
+      }
+      const updated = this.db.query('UPDATE workstreams SET runner = ? WHERE id = ? RETURNING *').get(name, ws.id) as Row;
+      const warn = runner?.kind === 'ssh' ? '; el código de este workstream se enviará al runner remoto' : '';
       this.event(ws.id, 'info', `runner: ${ws.runner ?? 'ninguno'} -> ${name ?? 'ninguno'}${warn}`);
+      return toWorkstream(updated);
     }).immediate());
-    return this.getWorkstream(idOrSlug);
   }
 
   // ---- signals -----------------------------------------------------------

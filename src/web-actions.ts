@@ -1,7 +1,7 @@
 // Adaptación HTTP: las transiciones, el cercado y los eventos siguen en los comandos existentes.
 import { createHash } from 'node:crypto';
 import { join } from 'node:path';
-import { Store, StoreError } from './store.ts';
+import { isRunnerName, Store, StoreError } from './store.ts';
 import { linkTriagedSignal } from './admission/apply.ts';
 import { removeWorktree } from './worktrees.ts';
 import { SIGNAL_BODY_MAX, SIGNAL_TITLE_MAX } from './web-signals.ts';
@@ -19,6 +19,7 @@ import type { WebAuth } from './web-auth.ts';
 import { PROFILE_BODY_LIMIT, ProfileInputError, profileAction } from './web-profile.ts';
 import { enqueueBackfill, enqueueManual, ensureSchema, previewBackfill } from './scorers.ts';
 import { archiveWorkstream, createWorkstream, workstreamSettings, workstreamState, wsFields } from './web-ws.ts';
+import { result as inertPage, RUNNER_CHECK_PATH, type runnerCheckAction } from './web-runner-check.ts';
 
 import { scheduleExpr } from './cron.ts';
 import { automationEditor, automationEditorPath, automationErrorDocument } from './web-automations.ts';
@@ -34,6 +35,11 @@ const messages: Record<string, string> = {
   skipped_inactive: 'Saltada: el workstream no está activo; no se creó ninguna señal.',
   not_found: 'not_found: no se encontró el registro.', invalid_input: 'invalid_input: revisa los datos de la acción.',
   error: 'No se pudo registrar la acción. Revisa el estado antes de volver a intentarlo.',
+};
+const runnerErrors: Record<string, string> = {
+  conflict: 'La selección cambió (runner pausado, cambiado o workstream archivado): recarga Workstreams y vuelve a elegir.',
+  invalid_input: 'Falta confirmar el envío al runner SSH.',
+  not_found: 'No se encontró el runner o el workstream.',
 };
 export function actionNotice(result?: string): string {
   const message = messages[result ?? ''];
@@ -81,8 +87,9 @@ export class InputError extends Error {
 
 type Raw = Record<string, string | undefined>;
 type Outcome = { destination: string; result: string; repo?: string };
-type Action = { path: RegExp; automationForm?: 'create' | 'update' | 'delete'; /** false: solo la web con sesión; la API con clave no la expone (decisión del dueño sobre H1). */ api?: false; input: (raw: Raw) => Raw; run: (store: Store, id: string, input: Raw, out: Outcome, actor: string, stateDir: string) => void };
+type Action = { path: RegExp; automationForm?: 'create' | 'update' | 'delete'; /** false: solo la web con sesión; la API con clave no la expone (decisión del dueño sobre H1). */ api?: false; httpErrors?: true; input: (raw: Raw) => Raw; run: (store: Store, id: string, input: Raw, out: Outcome, actor: string, stateDir: string) => void };
 
+type CheckAction = { path: RegExp; automationForm?: undefined; api: false; check: true };
 type WebResponseAction = { path: RegExp; automationForm?: undefined; api: false; respond: (stateDir: string, id: string, form: URLSearchParams, usage: ApiKeyUsage) => Response };
 
 const text = (raw: Raw, key: string) => raw[key] ?? '';
@@ -141,7 +148,7 @@ function automationInput(mode: NonNullable<Action['automationForm']>, raw: Raw):
 }
 
 // Registro único de acciones: los formularios de la web y, después, la API pasan por aquí.
-export const ACTIONS: Record<string, Action | WebResponseAction> = {
+export const ACTIONS: Record<string, Action | CheckAction | WebResponseAction> = {
   'api-keys/create': { api: false, path: new RegExp(`^${API_KEY_CREATE_PATH}$`), respond: createApiKeyResponse },
   'api-keys/revoke': { api: false, path: route(API_KEYS_PATH.slice(1), 'revocar'), respond: revokeApiKeyResponse },
   'activities/review': {
@@ -394,12 +401,34 @@ export const ACTIONS: Record<string, Action | WebResponseAction> = {
     input: raw => ({ confirm: raw.confirm }),
     run: (store, id, input, out) => { out.destination = '/workstreams'; archiveWorkstream(store, id, input.confirm); },
   },
+  'workstreams/runner': {
+    api: false,
+    httpErrors: true,
+    path: route('workstreams', 'runner'),
+    input: raw => {
+      const { runner, expected, confirm, confirm_ssh } = raw;
+      // «tipo alta»: lo que mostró el formulario de ese runner; `created_at` es ISO y no lleva espacios.
+      const seen = runner ? raw[`seen.${runner}`] ?? '' : '';
+      if (runner === undefined || (runner !== '' && !isRunnerName(runner)) || expected === undefined || confirm !== 'yes'
+        || (runner !== '' && !/^(ssh|local) \S+$/.test(seen))) {
+        throw new InputError(400, 'Elige un runner y confirma la selección.');
+      }
+      return { runner, expected, confirm_ssh, seen };
+    },
+    run: (store, id, { runner, expected, confirm_ssh, seen }, out) => {
+      out.destination = '/workstreams';
+      const [kind, createdAt] = seen!.split(' ');
+      store.setWorkstreamRunner(id, runner || null, { expected: expected || null, confirmSsh: confirm_ssh === 'yes',
+        seen: runner ? { kind: kind as 'ssh' | 'local', createdAt: createdAt! } : undefined });
+    },
+  },
+  'runners/check': { path: RUNNER_CHECK_PATH, api: false, check: true },
 };
 
 /** Abre el Store escritor, fija el actor y ejecuta una acción. Lanza InputError si la entrada no vale; el resto de fallos van en `result`. */
 export async function performAction(stateDir: string, name: string, id: string, rawInput: Raw, actor: string): Promise<Outcome> {
   const action = ACTIONS[name];
-  if (!action || 'respond' in action) throw new InputError(404, 'Acción no encontrada.');
+  if (!action || !('run' in action)) throw new InputError(404, 'Acción no encontrada.');
   const input = action.input(rawInput);
   const out: Outcome = { destination: '/', result: 'ok' };
   let store: Store | undefined;
@@ -471,7 +500,8 @@ function automationFailure(stateDir: string, mode: NonNullable<Action['automatio
   });
 }
 
-export async function webAction(req: Request, stateDir: string, port: number, auth: WebAuth, usage: ApiKeyUsage): Promise<Response> {
+export async function webAction(req: Request, stateDir: string, port: number, auth: WebAuth, usage: ApiKeyUsage,
+  runnerCheck: ReturnType<typeof runnerCheckAction>, extendCheckTimeout: () => void): Promise<Response> {
   const csrf = auth.sessionCsrf(req);
   if (!csrf) return new Response('Se necesita una sesión local.', { status: 401 });
   if (req.headers.get('origin') !== `http://${auth.host}:${port}`) return new Response('Origin rechazado.', { status: 403 });
@@ -498,6 +528,7 @@ export async function webAction(req: Request, stateDir: string, port: number, au
       return response;
     }
     id = name.endsWith('/create') ? '' : decodeURIComponent(raw);
+    if ('check' in action) return await runnerCheck(id, extendCheckTimeout);
     if (id && !/^[\w-]+$/.test(id)) return new Response('Identificador inválido.', { status: 400 });
     let repeated = false;
     // Las acciones anteriores conservan el primer valor. En los editores importa cada campo.
@@ -510,6 +541,10 @@ export async function webAction(req: Request, stateDir: string, port: number, au
       if (repeated) throw new InputError(400, 'El formulario contiene campos repetidos.');
     }
     ({ destination, result } = await performAction(stateDir, name, id, fields, 'web'));
+    if (action.httpErrors && result !== 'ok') {
+      const status = result === 'conflict' ? 409 : result === 'not_found' ? 404 : result === 'invalid_input' ? 400 : 500;
+      return inertPage(runnerErrors[result] ?? 'No se pudo guardar el runner', status, '', { href: '/workstreams', text: 'Volver a workstreams' });
+    }
   } catch (error) {
     if (error instanceof InputError) {
       if (action?.automationForm && (id || action.automationForm === 'create') && [400, 404, 409].includes(error.status))

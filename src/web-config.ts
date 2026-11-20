@@ -139,7 +139,7 @@ async function mcpInventory(escape: Escape): Promise<string> {
   } catch { return '<p class="notice">Configuración MCP no disponible.</p>'; }
 }
 
-export async function configPage(store: Store, stateDir: string, url: URL, escape: Escape) {
+export async function configPage(store: Store, stateDir: string, url: URL, escape: Escape, csrf?: string) {
   const workstreams = store.listWorkstreams();
   const ws = url.searchParams.get('ws');
   const selected = ws ? store.getWorkstream(ws) : workstreams[0];
@@ -166,6 +166,7 @@ export async function configPage(store: Store, stateDir: string, url: URL, escap
   const egress = selected ? latestEgress(store, stateDir, selected, escape) : 'No medido';
   const [sandbox, mcp] = await Promise.all([detectSandbox(), mcpInventory(escape)]);
   return { title: 'Configuración', body: `<div class="config">
+    ${csrf ? '<p><a href="/config/runners">Runners</a></p>' : ''}
     ${workstream}
     <section><h2>Perfiles guardados</h2>${savedProfiles(stateDir, escape)}</section>
     <section><h2>Adaptadores</h2>${adapters(stateDir, escape)}</section>
