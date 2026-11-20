@@ -343,3 +343,21 @@ test('T85-H2: el formulario envía tipo y alta vistos y un runner recreado se re
   // Con lo vigente sí se asigna.
   expect((await assign('torre', '', { confirm_ssh: 'yes' })).status).toBe(303);
 });
+
+test('T85-H3: los errores de asignación son una página inerte en claro con enlace de vuelta', async () => {
+  boot();
+  await login();
+  const ssh = await assign('torre', '');
+  expect(ssh.status).toBe(400);
+  expect(ssh.headers.get('content-type')).toContain('text/html');
+  const html = await ssh.text();
+  expect(html).toContain('Falta confirmar el envío al runner SSH.');
+  expect(html).toContain('href="/workstreams"');
+  expect(html).not.toMatch(/invalid_input|alias-canario|<script/);
+  const stale = await assign('casa', 'torre');
+  expect(stale.status).toBe(409);
+  const stalePage = await stale.text();
+  expect(stalePage).toContain('La selección cambió');
+  expect(stalePage).not.toContain('conflict:');
+  expect(stalePage).toContain('href="/workstreams"');
+});

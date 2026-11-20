@@ -14,7 +14,7 @@ import type { WebAuth } from './web-auth.ts';
 import { PROFILE_BODY_LIMIT, ProfileInputError, profileAction } from './web-profile.ts';
 import { enqueueBackfill, enqueueManual, ensureSchema, previewBackfill } from './scorers.ts';
 import { archiveWorkstream, createWorkstream, workstreamSettings, workstreamState, wsFields } from './web-ws.ts';
-import { RUNNER_CHECK_PATH, type runnerCheckAction } from './web-runner-check.ts';
+import { result as inertPage, RUNNER_CHECK_PATH, type runnerCheckAction } from './web-runner-check.ts';
 
 // Cancelar vale para todo change que no haya terminado bien o por decisión: igual que `fab reject`, también limpia failed, blocked y quarantined.
 const FINAL_STATUSES = ['completed', 'canceled', 'declined'];
@@ -27,6 +27,11 @@ const messages: Record<string, string> = {
   skipped_inactive: 'Saltada: el workstream no está activo; no se creó ninguna señal.',
   not_found: 'not_found: no se encontró el registro.', invalid_input: 'invalid_input: revisa los datos de la acción.',
   error: 'No se pudo registrar la acción. Revisa el estado antes de volver a intentarlo.',
+};
+const runnerErrors: Record<string, string> = {
+  conflict: 'La selección cambió (runner pausado, cambiado o workstream archivado): recarga Workstreams y vuelve a elegir.',
+  invalid_input: 'Falta confirmar el envío al runner SSH.',
+  not_found: 'No se encontró el runner o el workstream.',
 };
 export function actionNotice(result?: string): string {
   const message = messages[result ?? ''];
@@ -361,7 +366,7 @@ export async function webAction(req: Request, stateDir: string, port: number, au
     ({ destination, result } = await performAction(stateDir, name, id, fields, 'web'));
     if (action.httpErrors && result !== 'ok') {
       const status = result === 'conflict' ? 409 : result === 'not_found' ? 404 : result === 'invalid_input' ? 400 : 500;
-      return new Response(messages[result], { status });
+      return inertPage(runnerErrors[result] ?? 'No se pudo guardar el runner', status, '', { href: '/workstreams', text: 'Volver a workstreams' });
     }
   } catch (error) {
     if (error instanceof InputError) return new Response(error.message, { status: error.status, headers: error.status === 413 ? { Connection: 'close' } : {} });

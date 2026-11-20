@@ -11,12 +11,12 @@ export const RUNNER_CHECK_PATH = /^\/config\/runners\/([^/]+)\/comprobar$/;
 
 const escape = (value: string) => value.replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[c]!);
 
-function result(title: string, status: number, details = ''): Response {
+export function result(title: string, status: number, details = '', back = { href: '/config/runners', text: 'Volver a runners' }): Response {
   return new Response(`<!doctype html><html lang="es"><head><meta charset="utf-8">
     <meta name="viewport" content="width=device-width, initial-scale=1"><title>Comprobación de runner · fab</title>
     <link rel="stylesheet" href="/style.css"></head><body><aside>
     <a class="brand" href="/">fab<span>Fábrica local</span></a>
-    <nav aria-label="Configuración"><a href="/config/runners">Volver a runners</a></nav></aside>
+    <nav aria-label="Configuración"><a href="${back.href}">${back.text}</a></nav></aside>
     <main class="config"><h1>${title}</h1>${details}</main></body></html>`, {
     status,
     headers: { 'Content-Type': 'text/html; charset=utf-8', 'Cache-Control': 'no-store' },
