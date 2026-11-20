@@ -78,7 +78,12 @@ CREATE UNIQUE INDEX IF NOT EXISTS adm_questions_open ON adm_questions(activity_i
 -- Avisos firmados de GitHub (T69b): solo metadatos, nunca el cuerpo. Las 500 más recientes.
 CREATE TABLE IF NOT EXISTS adm_hook_deliveries (
   delivery_id TEXT PRIMARY KEY, event TEXT NOT NULL, received_at TEXT NOT NULL, bytes INTEGER NOT NULL,
-  result TEXT NOT NULL CHECK (result IN ('woke','coalesced','ignored_event','ignored_repo','rejected')));`;
+  result TEXT NOT NULL CHECK (result IN ('woke','coalesced','ignored_event','ignored_repo','rejected')));
+-- Rechazos de avisos sin firma o con firma inválida (T87-H1 Opción B): solo recuento y fecha del último.
+CREATE TABLE IF NOT EXISTS adm_hook_rejections (
+  id INTEGER PRIMARY KEY CHECK (id = 1),
+  count INTEGER NOT NULL,
+  last_rejected_at TEXT NOT NULL);`;
 
 export class AdmissionDb {
   readonly db: Database;
@@ -97,6 +102,22 @@ export class AdmissionDb {
   iso(): string { return this.store.now(); }
   /** Transacción IMMEDIATE con reintento, como el resto de escrituras de la base (Store.withRetry). */
   tx<T>(fn: () => T): T { return this.store.withRetry(fn); }
+
+  /** Registra un rechazo de webhook por falta de firma o firma inválida (T87-H1 Opción B). */
+  recordRejectedHook(nowIso?: string): void {
+    const at = nowIso ?? this.iso();
+    this.tx(() => {
+      this.db.query(`INSERT INTO adm_hook_rejections (id, count, last_rejected_at)
+        VALUES (1, 1, ?)
+        ON CONFLICT(id) DO UPDATE SET count = count + 1, last_rejected_at = excluded.last_rejected_at`).run(at);
+    });
+  }
+
+  /** Consulta el recuento acumulado de rechazos de webhook y la fecha del último. */
+  getRejectedHooks(): { count: number; lastRejectedAt: string | null } {
+    const row = this.db.query('SELECT count, last_rejected_at FROM adm_hook_rejections WHERE id = 1').get() as { count: number; last_rejected_at: string } | null;
+    return row ? { count: row.count, lastRejectedAt: row.last_rejected_at } : { count: 0, lastRejectedAt: null };
+  }
 }
 
 

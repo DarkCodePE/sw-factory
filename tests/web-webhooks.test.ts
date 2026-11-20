@@ -3,6 +3,7 @@ import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { AdmissionDb } from '../src/admission/db.ts';
+import { startHook } from '../src/admission/hook.ts';
 import { Store } from '../src/store.ts';
 import { startWeb } from '../src/web.ts';
 
@@ -68,20 +69,33 @@ test('el HTML no contiene el secreto ni el cuerpo en ninguna circunstancia', asy
 test('una entrega sin firma aparece como rechazada sin cuerpo', async () => {
   store = new Store(join(dir, 'fabrica.db'));
   const adm = new AdmissionDb(store);
-  const now = new Date().toISOString();
 
-  // Registro de entrega rechazada (sin firma / firma inválida)
-  adm.db.query('INSERT INTO adm_hook_deliveries (delivery_id, event, received_at, bytes, result) VALUES (?, ?, ?, ?, ?)')
-    .run('00000000-0000-0000-0000-000000000001', 'issues', now, 256, 'rejected');
+  // Iniciar receptor real y enviar petición sin cabecera de firma
+  const hook = startHook({
+    port: 0,
+    secret: SECRET_CANARY,
+    repo: 'owner/repo',
+    adm,
+    wake: () => {},
+    now: () => Date.now(),
+  });
+
+  const res = await fetch(`http://127.0.0.1:${hook.port}/github`, {
+    method: 'POST',
+    body: JSON.stringify({ action: 'opened', issue: { number: 42 } }),
+  });
+  expect(res.status).toBe(401);
+  hook.stop();
 
   server = startWeb(dir, 0);
   const html = await getHtml('/webhooks');
 
-  expect(html).toContain('00000000-0000-0000-0000-000000000001');
-  expect(html).toContain('Rechazada');
-  expect(html).toContain('status failed');
-  expect(html).toContain('Sin cuerpo');
-  expect(html).not.toContain('payload');
+  // La web debe reflejar el rechazo por falta de firma
+  expect(html).toContain('Entregas rechazadas (sin firma)');
+  expect(html).toContain('1');
+  // Invariante de seguridad: ningún cuerpo de petición se guarda ni se publica
+  expect(html).not.toContain('opened');
+  expect(html).not.toContain('number: 42');
 });
 
 test('lista entregas con su resultado (woke, coalesced, ignored_event, ignored_repo, rejected) y tamaño', async () => {

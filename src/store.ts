@@ -180,6 +180,8 @@ export interface WebhookReceptorStatus {
   totalDeliveries: number;
   lastDeliveryAt: string | null;
   last24h: { result: string; count: number }[];
+  rejectedCount: number;
+  lastRejectedAt: string | null;
 }
 
 export interface ChangeNote {
@@ -2063,6 +2065,8 @@ export class Store {
         totalDeliveries: 0,
         lastDeliveryAt: null,
         last24h: [],
+        rejectedCount: 0,
+        lastRejectedAt: null,
       };
     }
     let active = false;
@@ -2077,6 +2081,17 @@ export class Store {
     const last24h = this.db.query('SELECT result, COUNT(*) AS count FROM adm_hook_deliveries WHERE received_at >= ? GROUP BY result ORDER BY result')
       .all(since24h) as { result: string; count: number }[];
 
+    let rejectedCount = 0;
+    let lastRejectedAt: string | null = null;
+    const hasRejections = this.db.query("SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'adm_hook_rejections'").get() !== null;
+    if (hasRejections) {
+      const rej = this.db.query('SELECT count, last_rejected_at FROM adm_hook_rejections WHERE id = 1').get() as { count: number; last_rejected_at: string } | null;
+      if (rej) {
+        rejectedCount = rej.count;
+        lastRejectedAt = rej.last_rejected_at;
+      }
+    }
+
     return {
       hasTable: true,
       active,
@@ -2085,6 +2100,8 @@ export class Store {
       totalDeliveries: total,
       lastDeliveryAt: last,
       last24h,
+      rejectedCount,
+      lastRejectedAt,
     };
   }
 }

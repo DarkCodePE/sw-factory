@@ -33,7 +33,10 @@ export function startHook(o: HookOptions): { port: number; hostname: string; sto
     if (Number(req.headers.get('content-length') ?? 0) > MAX_BODY) return empty(413);
     const body = new Uint8Array(await req.arrayBuffer());
     if (body.length > MAX_BODY) return empty(413);
-    if (!verifySignature(o.secret, body, req.headers.get('x-hub-signature-256'))) return empty(401);
+    if (!verifySignature(o.secret, body, req.headers.get('x-hub-signature-256'))) {
+      o.adm.recordRejectedHook(new Date(o.now()).toISOString());
+      return empty(401);
+    }
     const id = req.headers.get('x-github-delivery') ?? '', event = req.headers.get('x-github-event') ?? '';
     if (!UUID.test(id) || !EVENT.test(event)) return empty(400);
     const result = o.adm.tx(() => {
