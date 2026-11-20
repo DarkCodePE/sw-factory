@@ -180,3 +180,18 @@ test('H1/B11: el informe da la puntuación media por juez', async () => {
   // Con puntuaciones 1 y 0, la media es la tasa de aprobado.
   for (const j of judgesOf) expect(j.mean_score).toBeCloseTo(j.passed / j.scored);
 });
+
+test('H2: un benchmark huérfano en scoring se retoma con resume y no repite lo ya puntuado', async () => {
+  create('h5', judges({ j: def() }));
+  await runBenchmark(db, dir, 'h5', { ...options, repeats: 1, launch: async (_a, p) => reply('ok')(p) });
+  db.query("UPDATE benchmarks SET status = 'scoring' WHERE id = ?").run('h5');
+  db.query('DELETE FROM benchmark_scores WHERE benchmark_id = ? AND run_rowid > (SELECT min(rowid) + 1 FROM experiment_runs WHERE experiment_id = ?)').run('h5', 'h5');
+  const kept = scores('h5').length;
+  expect(kept).toBeLessThan(6);
+  await expect(runBenchmark(db, dir, 'h5', { ...options, repeats: 1 })).rejects.toThrow(/invalid|no se puede/);
+  let n = 0;
+  await runBenchmark(db, dir, 'h5', { ...options, repeats: 1, resume: true, launch: async (_a, p) => { n++; return reply('ok')(p); } });
+  expect(n).toBe(6 - kept);
+  expect(scores('h5')).toHaveLength(6);
+  expect(status('h5')).toBe('complete');
+}, 60_000);
