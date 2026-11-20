@@ -127,3 +127,46 @@ test('no edita flags de aprobación ni muestra secretos', async () => {
   await post('/perfiles/asignar', { digest: d, previous: DEFAULT_DIGEST, confirm: 'yes' });
   expect(await html('/perfiles')).not.toContain(secret);
 });
+
+// ---- ronda web: T58 H1-H3 ----
+test('T58-H1: asignar deja el evento con actor web y no cambia FAB_ACTOR', async () => {
+  await login();
+  const previous = process.env.FAB_ACTOR;
+  const d = digestOf(await post('/perfiles/guardar', edited()));
+  await post('/perfiles/asignar', { digest: d, previous: DEFAULT_DIGEST, confirm: 'yes' });
+  const e = store.listEvents('prueba', 10).find(x => x.message.includes('perfil asignado'));
+  expect(e?.actor).toBe('web');
+  expect(process.env.FAB_ACTOR).toBe(previous);
+});
+
+test('T58-H2: con el perfil asignado roto la página ofrece restaurar los valores por defecto', async () => {
+  await login();
+  const d = digestOf(await post('/perfiles/guardar', edited()));
+  await post('/perfiles/asignar', { digest: d, previous: DEFAULT_DIGEST, confirm: 'yes' });
+  rmSync(join(dir, 'profiles', `${d}.json`)); // perfil asignado que ya no existe
+  const page = await html('/perfiles');
+  expect(page).toContain('no está disponible');
+  expect(page).toContain('Restaurar valores por defecto');
+  expect(page).toContain(`name="previous" value="${d}"`);
+  expect((await post('/perfiles/asignar', { digest: DEFAULT_DIGEST, previous: d, confirm: 'yes' })).status).toBe(303);
+  expect(store.getWorkstream('prueba').profile).toBeNull();
+  expect(await html('/perfiles')).not.toContain('no está disponible');
+});
+
+test('T58-H3: guardar parte del perfil asignado (conserva su modelo), avisa del texto enmascarado y solo acepta digests', async () => {
+  await login();
+  const base0 = JSON.parse(JSON.stringify(defaultProfile())); base0.harness = 'claude'; base0.model = 'claude-sonnet-5-5';
+  const { digest } = saveProfile(dir, base0);
+  store.assignProfile('prueba', digest, DEFAULT_DIGEST);
+  const r = await post('/perfiles/guardar', edited());
+  const nuevo = JSON.parse(readFileSync(join(dir, 'profiles', `${digestOf(r)}.json`), 'utf8'));
+  expect(nuevo.model).toBe('claude-sonnet-5-5'); expect(nuevo.harness).toBe('claude');
+  // texto con aspecto de secreto: la página avisa de que se ocultó
+  const secret = 'ghp_' + 'A1b2C3d4E5'.repeat(4);
+  const conSecreto = JSON.parse(JSON.stringify(base0)); conSecreto.worker.investigate += `\n${secret}`;
+  const s = saveProfile(dir, conSecreto).digest;
+  store.assignProfile('prueba', s, digest);
+  expect(await html('/perfiles')).toContain('Se ocultó texto con aspecto de secreto');
+  // ?digest= que no es un digest no se carga
+  expect(await html('/perfiles?digest=../../etc/passwd')).not.toContain('Perfil guardado');
+});

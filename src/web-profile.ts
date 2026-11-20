@@ -23,9 +23,14 @@ export function profilesPage(store: Store, stateDir: string, url: URL, escape: E
   const selected = ws ? store.getWorkstream(ws) : workstreams[0];
   if (!selected) return { title: 'Perfiles', body: '<p class="empty">No hay workstreams.</p>' };
   const hidden = `<input type="hidden" name="csrf" value="${csrf}"><input type="hidden" name="ws" value="${escape(selected.slug)}">`;
+  const confirmForm = (digest: string, previous: string, label: string, text: string) => `<form action="/perfiles/asignar" method="post" class="web-action">${hidden}<input type="hidden" name="digest" value="${digest}"><input type="hidden" name="previous" value="${previous}"><p>${text}</p><label><input type="checkbox" name="confirm" value="yes" required> Confirmo el cambio de perfil de <b>${escape(selected.slug)}</b></label><button>${label}</button></form>`;
   let current: { digest: string; profile: Profile };
   try { current = resolveProfile(stateDir, selected.profile); }
-  catch { return { title: 'Perfiles', body: '<p class="notice">El perfil asignado no está disponible o no supera la verificación de integridad.</p>' }; }
+  catch {
+    // T58-H2: con el perfil roto la única salida desde la web es volver al de por defecto, con el digest asignado como «anterior».
+    const restore = csrf && selected.profile && isDigest(selected.profile) ? `<section><h2>Valores por defecto</h2>${confirmForm(DEFAULT_DIGEST, selected.profile, 'Restaurar valores por defecto', 'Vuelve al perfil por defecto de fab.')}</section>` : '';
+    return { title: 'Perfiles', body: `<p class="notice">El perfil asignado no está disponible o no supera la verificación de integridad.</p>${restore}` };
+  }
   let masked = false;
   const areas = FIELDS.map(([name, label]) => {
     const text = get(current.profile, name);
@@ -33,7 +38,6 @@ export function profilesPage(store: Store, stateDir: string, url: URL, escape: E
     return `<label for="f-${name}">${label}</label><textarea id="f-${name}" name="${name}" rows="8">${escape(text)}</textarea>`;
   }).join('');
   const picker = `<form class="filters" action="/perfiles" method="get"><label>Workstream<select name="ws">${workstreams.map(w => `<option value="${escape(w.slug)}"${w.id === selected.id ? ' selected' : ''}>${escape(w.slug)}</option>`).join('')}</select></label><button>Ver</button></form>`;
-  const confirmForm = (digest: string, previous: string, label: string, text: string) => `<form action="/perfiles/asignar" method="post" class="web-action">${hidden}<input type="hidden" name="digest" value="${digest}"><input type="hidden" name="previous" value="${previous}"><p>${text}</p><label><input type="checkbox" name="confirm" value="yes" required> Confirmo el cambio de perfil de <b>${escape(selected.slug)}</b></label><button>${label}</button></form>`;
   let saved = '';
   const d = url.searchParams.get('digest') ?? '';
   if (isDigest(d)) {
