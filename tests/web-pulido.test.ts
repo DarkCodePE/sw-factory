@@ -4,7 +4,7 @@ import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { Store } from '../src/store.ts';
-import { applyQuery, INBOX_JS, linksBlock, parseQuery, roleField, safeUrl } from '../src/web-changes.ts';
+import { applyQuery, INBOX_JS, linksBlock, parseQuery, roleField, roleLink, safeUrl } from '../src/web-changes.ts';
 import { THEME_JS } from '../src/web-theme.ts';
 import { SIDEBAR_JS, sidebarNav } from '../src/web-sidebar.ts';
 import { DARK, WEB_STYLE } from '../src/web-style.ts';
@@ -284,4 +284,14 @@ test('T94-H2: el sondeo actualiza el contador del menú aunque <main> no cambie'
   server = startWeb(dir, 0);
   const r = runPoll(await get('/poll.js'), 'Bandeja <strong>4</strong>', 'Bandeja <strong>5</strong>');
   await r.tick(); expect(r.live.innerHTML).toBe('Bandeja <strong>5</strong>');
+});
+
+test('T94-H1: un validador hostil no inyecta marcado por el href del rol', async () => {
+  const html = roleLink(ui, { kind: 'implementation', validator: 'q"><img src=x id=INY>' as never }, 'uno', 'Rol');
+  expect(html).not.toContain('<img');
+  const c = store.createChange(ws, 'H', 'd'); const a = store.listActivities({ changeId: c.id })[0]!;
+  store.db.query("UPDATE activities SET validator=? WHERE id=?").run('q"><img src=x id=INY>', a.id);
+  server = startWeb(dir, 0);
+  expect(await get(`/changes/${c.id}`)).not.toContain('<img src=x id=INY>');
+  expect(await get(`/activities/${a.id}`)).not.toContain('<img src=x id=INY>');
 });

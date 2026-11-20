@@ -73,7 +73,7 @@ export function roleField(a: Pick<Activity, 'kind' | 'validator'>): string | nul
 }
 export function roleLink(ui: Ui, a: Pick<Activity, 'kind' | 'validator'>, slug: string, text: string): string {
   const field = roleField(a);
-  return field ? `<a href="/perfiles?ws=${enc(slug)}#f-${field}">${ui.escape(text)}</a>` : '';
+  return field ? `<a href="/perfiles?ws=${enc(slug)}#f-${ui.escape(field)}">${ui.escape(text)}</a>` : '';
 }
 
 // Solo https a hosts conocidos (GitHub, Jira Cloud y el JIRA_HOSTNAME configurado); lo demás es texto.
