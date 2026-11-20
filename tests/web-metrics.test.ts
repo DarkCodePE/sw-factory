@@ -210,3 +210,26 @@ test('N2: change completed y canceled sin activity siguen siendo terminales', ()
   expect(store.db.query("SELECT activity_id FROM events WHERE message='change completed'").get()).toEqual({ activity_id: null });
   expect(calculateMetrics(store, dir).cycles[3]?.samples).toBe(1);
 });
+
+test('T81: completado, cancelado y fallido por rutas reales dan tres muestras en el hito terminal', () => {
+  store.db.query("UPDATE workstreams SET state='active'").run();
+  const ids: string[] = [];
+  const done = store.createChange('uno', 'completo', ''); ids.push(done.id);
+  store.db.query("UPDATE activities SET status='completed',kind='implementation' WHERE change_id=?").run(done.id);
+  store.db.query("UPDATE changes SET status='implemented' WHERE id=?").run(done.id);
+  const [v] = store.requestValidation(done.id, ['code_review']); // el cierre convive con una activity de validador
+  store.db.query("UPDATE activities SET status='completed' WHERE id=?").run(v!.id);
+  store.closeChange(done.id, 'completed');
+  const canceled = store.createChange('uno', 'cancelado', ''); ids.push(canceled.id); store.closeChange(canceled.id, 'canceled');
+  const failed = store.createChange('uno', 'fallido', ''); ids.push(failed.id);
+  store.db.query("UPDATE activities SET status='completed' WHERE change_id IN (?,?)").run(done.id, canceled.id);
+  store.db.query("UPDATE activities SET kind='implementation',status='pending',review_status=NULL WHERE change_id=?").run(failed.id);
+  store.db.query("UPDATE changes SET status='pending' WHERE id=?").run(failed.id);
+  for (let i = 0; i < 4; i++) { const a = store.claimActivity('uno', 'w'); if (!a) break; store.failActivity(a.id, 'w', 'fallo'); }
+  expect(store.getChange(failed.id).status).toBe('failed');
+  const m = calculateMetrics(store, dir);
+  expect(m.cycles[3]?.samples).toBe(3);
+  const created = new Map(ids.map(id => [id, Date.parse(store.getChange(id).createdAt)]));
+  const diffs = store.metricsEvents(ids, new Date().toISOString()).map(e => Date.parse(e.terminalAt!) - created.get(e.changeId)!).sort((a, b) => a - b);
+  expect(m.cycles[3]?.median).toBe(diffs[1]!);
+});
