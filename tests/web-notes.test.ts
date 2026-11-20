@@ -91,3 +91,18 @@ test('una nota no toca activities', async () => {
   await post({ body: 'x' });
   expect(JSON.stringify(store.listActivities({ changeId: change }))).toBe(before);
 });
+
+test('T56c-H2: un change implemented con una nota pendiente avisa de que puede no entregarse', async () => {
+  store.addChangeNote(change, 'pendiente');
+  expect(await html()).not.toContain('espera merge');
+  store.db.query("UPDATE changes SET status='implemented' WHERE id=?").run(change);
+  expect(await html()).toContain('espera merge: puede que no haya más turnos');
+});
+test('T56c-H3: sin turno previsto lo dice, y el actor de la lista se escapa', async () => {
+  store.db.query("UPDATE activities SET status='completed' WHERE change_id=?").run(change);
+  expect(await html()).toContain('Ahora no hay ningún turno previsto.');
+  store.addChangeNote(change, 'x');
+  store.db.query('UPDATE change_notes SET actor = ? WHERE change_id = ?').run('<b>ana</b>', change);
+  const page = await html();
+  expect(page).toContain('&lt;b&gt;ana&lt;/b&gt;'); expect(page).not.toContain('<b>ana</b>');
+});

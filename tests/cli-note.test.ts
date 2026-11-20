@@ -23,7 +23,19 @@ test('change terminal: código distinto de 0, invalid_transition y ninguna fila'
   expect(r.exitCode).not.toBe(0); expect(r.stderr.toString()).toContain('invalid_transition');
   expect(notes()).toHaveLength(0);
 });
+test('T56c-H1: sin texto lista las notas con su estado (pendiente o entregada)', () => {
+  expect(fab('note', id).stdout.toString()).toContain('sin notas');
+  const s = new Store(join(dir, 'fabrica.db'));
+  s.addChangeNote(id, 'primera'); s.addChangeNote(id, 'segunda');
+  const act = s.listActivities({ changeId: id })[0]!; s.reserveNotes(id, act.id, 'att-1'); s.confirmNotes('att-1');
+  s.addChangeNote(id, 'tercera'); s.close();
+  const r = fab('note', id.slice(0, 8));
+  const out = r.stdout.toString();
+  expect(r.exitCode).toBe(0);
+  expect(out).toMatch(/\S+ {2}entregada .*primera/); expect(out).toMatch(/pendiente {2}tercera/);
+  expect(notes()).toHaveLength(3); // listar no crea nada
+});
 test('nota vacía: invalid_input', () => {
-  const r = fab('note', id);
+  const r = fab('note', id, '');
   expect(r.exitCode).not.toBe(0); expect(r.stderr.toString()).toContain('invalid_input');
 });

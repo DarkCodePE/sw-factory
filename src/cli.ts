@@ -406,6 +406,12 @@ async function main(argv: string[]): Promise<number> {
       }
       case 'note': {
         const c = findByPrefix(allChanges(store), sub ?? '', 'change');
+        if (!rest.length) { // sin texto: lista las notas con su estado de entrega
+          const notes = store.listChangeNotes(c.id);
+          if (!notes.length) console.log(`change ${short(c.id)}: sin notas`);
+          for (const n of notes) console.log(`${short(n.id)}  ${n.actor}  ${n.deliveredAt ? `entregada ${n.deliveredAt}` : 'pendiente'}  ${n.body.replace(/\s+/g, ' ').slice(0, 80)}`);
+          return 0;
+        }
         const n = store.addChangeNote(c.id, rest.join(' '));
         console.log(`change ${short(c.id)}: nota ${short(n.id)} registrada; se entrega en el siguiente turno`);
         return 0;
