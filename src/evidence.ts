@@ -95,8 +95,8 @@ const RULES: (readonly [RegExp, string | ((m: string, key: string, v: string) =>
   [/\bnpm_[A-Za-z0-9]{20,}\b/g, '[REDACTED]'],
   mask(new RegExp(String.raw`\b((?:set-)?cookie["']\s*:\s*)${VALUE}`, 'gi')),
   [/\b((?:Set-)?Cookie[ \t]*:[ \t]*)(?=[^\r\n]*=|\S{16})[^\r\n]+/gi, '$1[REDACTED]'],
-  // Authorization: un esquema desconocido también oculta su valor (hasta fin de línea); una palabra suelta como `required` no es credencial.
-  mask(new RegExp(String.raw`\b((?:proxy-)?authorization["']?[ \t]*[:=](?![ \t]*[A-Za-z]{1,15}[ \t]*(?:[\r\n]|$))[ \t]*)${VALUE.replace('|[^\\s"\',}]+', '|[^\\r\\n]+')}`, 'gi')),
+  // Authorization: un esquema desconocido también oculta su valor (esquema opcional y un token); una palabra suelta como `required` no es credencial.
+  mask(new RegExp(String.raw`\b((?:proxy-)?authorization["']?[ \t]*[:=](?![ \t]*[A-Za-z]{1,15}[ \t]*(?:[\r\n]|$))[ \t]*)${VALUE.replace('|[^\\s"\',}]+', '|(?:[A-Za-z][\\w-]*[ \\t]+)?[^\\s"\',}]+')}`, 'gi')),
   mask(new RegExp(String.raw`((?<![\w-])--[\w-]{0,64}?(?:token|secret|password|passwd|api-?key)[\w-]{0,64}(?:[ \t]+|=))(?![-<>|&]|\d+\b)${VALUE}`, 'gi')),
   mask(new RegExp(String.raw`(\bcurl\b[^\n&|;]{0,500}?[ \t](?:-[a-zA-Z]{0,8}u|--user)(?:[ \t]+|=))${VALUE}`, 'g')),
   // `pass` y `pwd` solo como asignación o clave JSON; `pwd:` no cuenta si el valor es una ruta o `$(…)`; `pass: 12` o `PASS: tests/x` no son secretos.

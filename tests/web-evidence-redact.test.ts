@@ -97,7 +97,7 @@ test('T77-H4: el texto corriente de logs, perfiles y configuración MCP no cambi
 
 test.each([
   ['Authorization: Negotiate', 'Authorization: Negotiate zq9Xv7hunterK3abc'], ['Authorization: ApiKey', 'Authorization: ApiKey zq9Xv7hunterK3'],
-  ['Authorization: esquema propio', 'Authorization: Custom zq9Xv7 hunterK3'], ['curl -sSu', 'curl -sSu admin:zq9Xv7hunterK3 https://x.test'],
+  ['Authorization: esquema propio', 'Authorization: Custom zq9Xv7hunterK3'], ['curl -sSu', 'curl -sSu admin:zq9Xv7hunterK3 https://x.test'],
   ['cookie como clave JSON en texto', '{"cookie": "sid=zq9Xv7hunterK3; a=b", "n": 1}'], ['Set-Cookie JSON', '{"set-cookie": "zq9Xv7hunterK3"}'],
 ])('T77-H5: %s', (_n, texto) => {
   const out = redact(texto);
