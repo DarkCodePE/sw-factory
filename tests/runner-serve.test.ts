@@ -62,6 +62,7 @@ async function sendJob(s: S, over: Record<string, unknown> = {}, jobId = 'act1-1
   } as Message));
   s.send(prompt); s.send(data);
 }
+const procFile = (pid: number, f: string) => readFileSync(`/proc/${pid}/${f}`);
 const bwrapOf = () => Bun.spawnSync(['pgrep', '-P', String(process.pid), '-x', 'bwrap']).stdout.toString().trim().split('\n').filter(Boolean).map(Number);
 const gone = (pid: number) => { try { process.kill(pid, 0); return false; } catch { return true; } };
 
@@ -354,4 +355,28 @@ test('T98-H3: cancelar y terminar el agente cancela el SIGKILL diferido; un plaz
     expect(late.signals).toEqual([]); // M21: sin la guarda `finished` se enviaría SIGTERM
     expect(late.timers).toEqual([]);
   } finally { late.restore(); if (savedSleep !== undefined) process.env.FABRICA_FAKE_SLEEP = savedSleep; }
+});
+
+// T98-H4(a): la aserción de la base, recuperada: todas las variables del proceso confinado están en una lista fija, no solo faltan tres canarios.
+test('T98-H4: el argv lanzado es el del adaptador local y el entorno solo trae base y lista fija', async () => {
+  const canary = { CANARIO_RUNNER: 'x1', GH_TOKEN: 'x2', SSH_AUTH_SOCK: '/tmp/x3', FABRICA_FAKE_SLEEP: '30' };
+  Object.assign(process.env, canary);
+  const s = session();
+  try {
+    hello(s); await until(() => s.has('hello'), 'hello');
+    await sendJob(s, {}, 'act1-1', 'pide algo');
+    await until(() => bwrapOf().length > 0, 'bwrap en marcha');
+    const [pid] = bwrapOf();
+    const cmd = procFile(pid!, 'cmdline').toString().split('\0');
+    const expected = getAgent('fake').command('pide algo', { readOnly: false, confine: true, promptStdin: false });
+    expect(cmd.slice(cmd.indexOf('--') + 1, cmd.indexOf('--') + 1 + expected.length)).toEqual(expected);
+    const env = procFile(pid!, 'environ').toString().split('\0').filter(Boolean).map(l => l.split('=')[0]!);
+    expect(env).not.toContain('CANARIO_RUNNER');
+    expect(env).not.toContain('GH_TOKEN');
+    expect(env).not.toContain('SSH_AUTH_SOCK');
+    for (const k of env) expect(['PATH', 'HOME', 'TMPDIR', 'LANG', 'FABRICA_FAKE_SLEEP', 'FABRICA_FAKE_STATUS', 'FABRICA_FAKE_TOUCH'].includes(k) || k.startsWith('GIT_CONFIG_'), `variable inesperada ${k}`).toBe(true);
+  } finally {
+    for (const k of Object.keys(canary)) delete process.env[k];
+    s.end(); await s.done;
+  }
 });
