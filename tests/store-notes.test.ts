@@ -129,6 +129,31 @@ test('una escritura de evento fallida revierte el alta o la confirmación de la 
   expect(store.listEvents(workstreamId, -1)).toEqual(events);
 });
 
+test('H2: borrar un change borra sus notas, no las de otro', () => {
+  const other = store.createChange(workstreamId, 'otro', 'd').id;
+  store.addChangeNote(changeId, 'mía');
+  store.addChangeNote(other, 'ajena');
+  store.db.query('DELETE FROM changes WHERE id = ?').run(changeId);
+  expect(store.listChangeNotes(changeId)).toEqual([]);
+  expect(store.listChangeNotes(other)).toHaveLength(1);
+});
+
+test('H2: si reserveNotes falla a mitad, la reserva se revierte entera', () => {
+  const activityId = store.listActivities({ changeId })[0]!.id;
+  store.addChangeNote(changeId, 'nota');
+  const query = store.db.query.bind(store.db);
+  store.db.query = sql => {
+    if (sql.includes('SELECT * FROM change_notes')) throw new Error('fallo tras la reserva');
+    return query(sql);
+  };
+  try {
+    expect(() => store.reserveNotes(changeId, activityId, 'intento')).toThrow('fallo tras la reserva');
+  } finally {
+    store.db.query = query;
+  }
+  expect(store.listChangeNotes(changeId)).toEqual([expect.objectContaining({ activityId: null, attemptId: null })]);
+});
+
 test('una base anterior admite la lectura sin migrar y gana la tabla al abrirla en escritura', () => {
   const dir = mkdtempSync(join(tmpdir(), 'fab-store-notes-'));
   const path = join(dir, 'fabrica.db');
