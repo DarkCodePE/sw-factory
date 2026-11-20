@@ -3,14 +3,15 @@
 import { createHash } from 'node:crypto';
 import { existsSync, mkdirSync, readFileSync, readdirSync, renameSync, rmSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
-import { AGENT_NAMES, MODEL_AGENTS } from './agents.ts';
+import { AGENT_NAMES, MCP_AGENTS, MODEL_AGENTS } from './agents.ts';
 import { CONFINABLE_AGENTS } from './sandbox/confine.ts';
 import { COMMIT_LINE, DEFAULT_WORKER_TEMPLATES, type WorkerTemplates } from './prompts.ts';
 import { DEFAULT_VALIDATOR_TEMPLATES, type ValidatorTemplates } from './validators/prompts.ts';
 
 export const ROLES = ['investigate', 'implement', 'code_review', 'security_audit', 'qa'] as const;
 export type Role = (typeof ROLES)[number];
-export interface RoleConfig { harness?: string; model?: string }
+/** `env` y `mcp` son solo nombres (D-K); el workstream pone el tope (T72). */
+export interface RoleConfig { harness?: string; model?: string; env?: string[]; mcp?: string[] }
 
 export interface Profile {
   schemaVersion: 1 | 2;
@@ -39,6 +40,23 @@ const TOP_KEYS_V2 = [...TOP_KEYS, 'roles', 'scorers'];
 const SCORER_NAME_RE = /^[a-z0-9][a-z0-9-]{0,40}$/;
 const CLASS_LABEL_RE = /^[a-z0-9_-]{1,24}$/;
 const MAX_SCORERS = 8;
+const ENV_NAME_RE = /^[A-Z_][A-Z0-9_]{0,63}$/;
+const MCP_NAME_RE = /^[a-z0-9][a-z0-9-]{0,40}$/;
+// Controlan el cargador, git o la propia fab: ningún perfil puede pedirlas.
+const ENV_FORBIDDEN = /^(PATH|HOME|TMPDIR|NODE_OPTIONS)$|^(LD_|BUN_|GIT_CONFIG|FAB_|FABRICA_)/;
+const MCP_RESERVED = 'fab';
+
+/** Lista de nombres sin repetir; cada rechazo nombra el campo. */
+function names(raw: unknown, where: string, max: number, re: RegExp, extra: (n: string) => string | null): void {
+  if (!Array.isArray(raw)) throw new Error(`perfil inválido: ${where} debe ser una lista`);
+  if (raw.length > max) throw new Error(`perfil inválido: ${where} admite hasta ${max} nombres`);
+  for (const n of raw) {
+    if (typeof n !== 'string' || !re.test(n)) throw new Error(`perfil inválido: ${where}: cada nombre debe cumplir ${re}`);
+    const why = extra(n);
+    if (why) throw new Error(`perfil inválido: ${where}: ${n} ${why}`);
+  }
+  if (new Set(raw).size !== raw.length) throw new Error(`perfil inválido: ${where} no admite nombres repetidos`);
+}
 const unit = (n: unknown): n is number => typeof n === 'number' && n >= 0 && n <= 1;
 // El primer carácter no puede ser `-`: el modelo viaja como elemento de argv y no debe leerse como flag.
 const MODEL_RE = /^[A-Za-z0-9][A-Za-z0-9._:/@-]{0,127}$/;
@@ -126,9 +144,15 @@ export function validateProfile(raw: unknown): Profile {
         if (!(ROLES as readonly string[]).includes(role)) throw new Error(`perfil inválido: clave desconocida roles.${role}`);
         if (!cfg || typeof cfg !== 'object' || Array.isArray(cfg)) throw new Error(`perfil inválido: roles.${role} debe ser un objeto`);
         const c = cfg as RoleConfig;
-        for (const k of Object.keys(c)) if (k !== 'harness' && k !== 'model') throw new Error(`perfil inválido: clave desconocida roles.${role}.${k}`);
+        for (const k of Object.keys(c)) if (!['harness', 'model', 'env', 'mcp'].includes(k)) throw new Error(`perfil inválido: clave desconocida roles.${role}.${k}`);
         if (c.harness !== undefined && (typeof c.harness !== 'string' || !AGENT_NAMES.includes(c.harness))) throw new Error(`perfil inválido: roles.${role}.harness debe ser uno de ${AGENT_NAMES.join(', ')}`);
         modelOk(c.model, c.harness ?? o.harness, `roles.${role}.model`);
+        if (c.env !== undefined) names(c.env, `roles.${role}.env`, 16, ENV_NAME_RE, n => ENV_FORBIDDEN.test(n) ? 'es un nombre prohibido (controla el cargador, git o la fab)' : null);
+        if (c.mcp !== undefined) {
+          names(c.mcp, `roles.${role}.mcp`, 8, MCP_NAME_RE, n => n === MCP_RESERVED ? 'está reservado (servidor de report)' : null);
+          const adapter = c.harness ?? (o.harness as string);
+          if (c.mcp.length && !MCP_AGENTS.includes(adapter)) throw new Error(`perfil inválido: roles.${role}.mcp: el adaptador ${adapter} no admite MCP por rol`);
+        }
       }
     }
   }
