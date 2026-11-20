@@ -163,7 +163,8 @@ export interface Change {
 
 export type ChangeSource = 'cli' | 'channel' | 'jira' | 'automation';
 /** `agents` y `roles` salen de las activities; vacíos = «No medido». `roles` es el validador o, si no hay, el tipo. */
-export interface ChangeSummary extends Change { source: ChangeSource | null; creator: string | null; activityCount: number; agents: string[]; roles: string[] }
+export interface ChangeAttribution extends Change { source: ChangeSource | null; creator: string | null }
+export interface ChangeSummary extends ChangeAttribution { activityCount: number; agents: string[]; roles: string[] }
 export interface ChangeLinks { source?: { system: string; key: string; url: string }; pr?: { repo: string; number: number; url: string } }
 
 export interface ChangeNote {
@@ -2038,7 +2039,7 @@ export class Store {
   }
 
   /** Cohorte acotada para métricas; solo SELECT, sin cargar cuerpos de eventos. */
-  metricsCohort(workstream: string | undefined, since: string | null, until: string, limit: number): { changes: ChangeSummary[]; total: number } {
+  metricsCohort(workstream: string | undefined, since: string | null, until: string, limit: number): { changes: ChangeAttribution[]; total: number } {
     const wsId = workstream ? this.getWorkstream(workstream).id : null;
     const where = '(? IS NULL OR workstream_id = ?) AND (? IS NULL OR julianday(created_at) >= julianday(?)) AND julianday(created_at) <= julianday(?)';
     const params = [wsId, wsId, since, since, until];
@@ -2046,7 +2047,7 @@ export class Store {
     const rows = this.db.query(`SELECT * FROM changes WHERE ${where} ORDER BY julianday(created_at) DESC, id LIMIT ?`)
       .all(...params, limit) as Row[];
     const { source, creator } = this.resolveChangeAttribution(rows.map(r => r.id as string));
-    const changes: ChangeSummary[] = rows.map(r => ({ ...toChange(r), source: source.get(r.id as string) ?? null, creator: creator.get(r.id as string) ?? null }));
+    const changes: ChangeAttribution[] = rows.map(r => ({ ...toChange(r), source: source.get(r.id as string) ?? null, creator: creator.get(r.id as string) ?? null }));
     return { changes, total };
   }
 
