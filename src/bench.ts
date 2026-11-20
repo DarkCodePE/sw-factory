@@ -6,7 +6,8 @@ import { AGENT_NAMES } from './agents.ts';
 import { ensureSchema as ensureImproveSchema, parseSuite, rng, runArm, SPLITS, suiteDigest, type ArmResult, type RunOptions, type Suite, type SuiteTask } from './improve.ts';
 import { canonicalJson, resolveProfile } from './profile.ts';
 import { assertConfinement } from './sandbox/confine.ts';
-import { StoreError } from './store.ts';
+import { judge, type Launch } from './scorers.ts';
+import { Store, StoreError } from './store.ts';
 
 export interface Variant { name: string; profile: string; agent: string }
 
@@ -67,8 +68,8 @@ export function createBenchmark(db: Database, stateDir: string, i: { id: string;
 
 function getBenchmark(db: Database, id: string) {
   if (!db.query("SELECT 1 FROM sqlite_schema WHERE type = 'table' AND name = 'benchmarks'").get()) throw notFound(id);
-  const row = db.query<{ suite: string; variants: string; status: string }, [string]>(
-    'SELECT suite, variants, status FROM benchmarks WHERE id = ?',
+  const row = db.query<{ suite: string; variants: string; status: string; judge_profile: string | null }, [string]>(
+    'SELECT suite, variants, status, judge_profile FROM benchmarks WHERE id = ?',
   ).get(id);
   if (!row) throw notFound(id);
   return row;
@@ -101,10 +102,45 @@ function planJobs(tasks: SuiteTask[], variants: Variant[], repeats: number, seed
   return jobs;
 }
 
-// resume: retoma un benchmark que quedó en `running` porque su proceso murió. No puede distinguirlo de uno vivo: lo decide quien llama.
-export async function runBenchmark(db: Database, stateDir: string, id: string, o: Omit<RunOptions, 'agent'> & { resume?: boolean }): Promise<{ seed: number; runs: number }> {
+type Meter = { agent?: string; model?: string; cost?: number; ms?: number };
+
+/** Fase de puntuación: los jueces de `judge_profile` (ámbito implement o change, sin muestreo) sobre la implementación de cada brazo. El resultado es un aviso: el Store del brazo se abre en solo lectura. */
+async function scoreRuns(db: Database, stateDir: string, id: string, judgeProfile: string, o: { launch?: Launch; log?: (m: string) => void }, live: () => boolean): Promise<void> {
+  const defs = Object.entries(resolveProfile(stateDir, judgeProfile).profile.scorers ?? {}).filter(([, d]) => d.scope === 'implement' || d.scope === 'change');
+  const runs = db.query<{ rowid: number; batch: string; task_id: string; repeat: number; arm: string; change_id: string }, [string]>(
+    'SELECT rowid, batch, task_id, repeat, arm, change_id FROM experiment_runs WHERE experiment_id = ? AND change_id IS NOT NULL ORDER BY rowid').all(id);
+  const scored = new Set(db.query<{ run_rowid: number; scorer: string }, [string]>('SELECT run_rowid, scorer FROM benchmark_scores WHERE benchmark_id = ?').all(id).map(r => `${r.run_rowid}\0${r.scorer}`));
+  const save = db.query('INSERT OR IGNORE INTO benchmark_scores (benchmark_id, run_rowid, scorer, label, score, passed, cost_usd, error) VALUES (?,?,?,?,?,?,?,?)');
+  for (const run of runs) {
+    if (!live()) return;
+    const armState = join(stateDir, 'improve', id, `${run.batch}-${run.task_id}_r${run.repeat}_${run.arm}`, 'state');
+    let arm: Store | null = null, subject: string | undefined, failure: string | null = null;
+    try {
+      arm = new Store(join(armState, 'fabrica.db'), { readonly: true });
+      subject = arm.listActivities({ changeId: run.change_id }).filter(a => a.kind === 'implementation' && a.status === 'completed').at(-1)?.id;
+      if (!subject) failure = 'el brazo no tiene implementación completada';
+    } catch (error) { failure = `Store del brazo: ${messageOf(error)}`; }
+    try {
+      for (const [scorer, def] of defs) {
+        if (!live()) return;
+        if (scored.has(`${run.rowid}\0${scorer}`)) continue; // ya puntuado antes de la caída
+        const meter: Meter = {};
+        const out = failure || !arm ? null : await judge(arm, armState, { id: randomUUID(), scorer, profile_digest: judgeProfile, scope: def.scope,
+          subject_activity_id: subject!, change_id: run.change_id, workstream_id: '', attempts: 1 }, { launch: o.launch }, meter, stateDir);
+        const done = out?.status === 'done' ? out : null;
+        // Un fallo deja score nulo, nunca 0 (I3).
+        save.run(id, run.rowid, scorer, done?.label ?? null, done?.score ?? null, done ? Number(done.passed) : null, meter.cost ?? null,
+          done ? null : failure ?? (out as { error: string }).error);
+        o.log?.(`[bench ${id}] juez ${scorer} ${run.task_id} r${run.repeat} ${run.arm} → ${done?.label ?? 'sin puntuar'}`);
+      }
+    } finally { arm?.close(); }
+  }
+}
+
+// resume: retoma un benchmark que quedó en `running` o `scoring` porque su proceso murió. No puede distinguirlo de uno vivo: lo decide quien llama.
+export async function runBenchmark(db: Database, stateDir: string, id: string, o: Omit<RunOptions, 'agent'> & { launch?: Launch; resume?: boolean }): Promise<{ seed: number; runs: number }> {
   const benchmark = getBenchmark(db, id);
-  const resuming = !!o.resume && benchmark.status === 'running';
+  const resuming = !!o.resume && (benchmark.status === 'running' || benchmark.status === 'scoring');
   if (benchmark.status !== 'pending' && !resuming) throw invalidState(id, benchmark.status, 'ejecutar');
   if (!SPLITS.includes(o.split)) throw bad(`split debe ser ${SPLITS.join('|')}`);
   if (!Number.isSafeInteger(o.repeats) || o.repeats < 1) throw bad('--repeats debe ser un entero ≥ 1');
@@ -123,13 +159,15 @@ export async function runBenchmark(db: Database, stateDir: string, id: string, o
   const variants = JSON.parse(benchmark.variants) as Variant[];
   const jobs = planJobs(tasks, variants, o.repeats, seed);
   if (done.n > jobs.length) throw bad(`--repeats da ${jobs.length} trabajos y el benchmark ya tiene ${done.n} filas`);
+  // En `scoring` la ejecución ya terminó: solo se retoma la puntuación.
+  if (benchmark.status === 'scoring' && done.n !== jobs.length) throw bad(`--repeats da ${jobs.length} trabajos y el benchmark ya tiene ${done.n} filas`);
   if (!resuming) {
     const claimed = db.query("UPDATE benchmarks SET status = 'running' WHERE id = ? AND status = 'pending'").run(id);
     if (claimed.changes !== 1) throw invalidState(id, getBenchmark(db, id).status, 'ejecutar');
   }
 
   const finish = db.query<never, [string, string, string | null, string]>(`UPDATE benchmarks SET status = ?, finished_at = ?, error = ?
-    WHERE id = ? AND status = 'running'`);
+    WHERE id = ? AND status IN ('running','scoring')`);
   const status = db.query<{ status: string }, [string]>('SELECT status FROM benchmarks WHERE id = ?');
   const running = () => status.get(id)?.status === 'running';
   let runs = done.n;
@@ -185,6 +223,9 @@ export async function runBenchmark(db: Database, stateDir: string, id: string, o
     const failure = workers.find(worker => worker.status === 'rejected');
     if (failure) throw failure.reason;
     if (infrastructureError !== null && running()) throw new Error(infrastructureError);
+    if (benchmark.judge_profile && (benchmark.status === 'scoring' || running() && db.query("UPDATE benchmarks SET status = 'scoring' WHERE id = ? AND status = 'running'").run(id).changes)) {
+      await scoreRuns(db, stateDir, id, benchmark.judge_profile, o, () => status.get(id)?.status === 'scoring');
+    }
     finish.run('complete', new Date().toISOString(), null, id);
     return { seed, runs };
   } catch (error) {
