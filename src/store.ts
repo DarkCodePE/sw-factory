@@ -300,6 +300,11 @@ export class StoreError extends Error {
   }
 }
 
+/** T86-H3: el nombre ocupado es entrada inválida (la web devuelve el formulario relleno), no una revisión obsoleta. Sigue siendo `conflict` para la CLI. */
+export class AutomationNameTakenError extends StoreError {
+  constructor(message: string) { super('conflict', message); }
+}
+
 export class WorkstreamBusyError extends StoreError {
   constructor() {
     super('conflict', 'El workstream tiene trabajo vivo. Reintenta cuando termine el turno o se resuelva la espera o reanudación.');
@@ -1060,7 +1065,7 @@ export class Store {
         'SELECT name FROM automations WHERE workstream_id = ?',
       ).all(ws.id);
       if (existing.some(a => a.name === name)) {
-        throw new StoreError('conflict', `ya existe la automation ${name} en ${ws.slug}`);
+        throw new AutomationNameTakenError(`ya existe la automation ${name} en ${ws.slug}`);
       }
       if (existing.length >= 20) {
         throw new StoreError('limit_reached', `el workstream ${ws.slug} tiene 20 automations`);
@@ -1109,7 +1114,7 @@ export class Store {
       if (!changed.length) return before;
       if (before.name !== input.name && this.db.query('SELECT 1 FROM automations WHERE workstream_id = ? AND name = ?')
         .get(before.workstreamId, input.name)) {
-        throw new StoreError('conflict', 'Ya existe una automation con ese nombre en el workstream.');
+        throw new AutomationNameTakenError('Ya existe una automation con ese nombre en el workstream.');
       }
       const row = this.db.query<Row, [string, string, string, string, string | null, string]>(
         'UPDATE automations SET name = ?, cron = ?, title = ?, body = ?, last_due_at = ? WHERE id = ? RETURNING *',

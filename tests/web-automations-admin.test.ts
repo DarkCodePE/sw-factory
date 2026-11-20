@@ -218,3 +218,55 @@ test('un cuerpo por bloques que excede el límite se rechaza aunque el texto dec
   expect(response.status).toBe(413);
   expect(store.listAutomations()).toEqual([]);
 });
+
+test('T86-H3: un nombre ocupado, en alta o edición, vuelve con 400 y el formulario relleno; el 409 queda para la revisión obsoleta', async () => {
+  const a = seed();
+  store.createAutomation({ workstream: ws, ...createFields(), name: 'ocupada' });
+  await login();
+  const create = await post(createPath, { ...createFields(), name: 'ocupada', title: 'Lo que escribí', body: 'Mi cuerpo largo' });
+  expect(create.status).toBe(400);
+  const createPage = await create.text();
+  expect(createPage).toMatch(/ya existe/i); expect(createPage).toContain('Lo que escribí'); expect(createPage).toContain('Mi cuerpo largo'); // no se pierde lo escrito
+  const update = await post(mutationPath(a.id, 'update'), { ...editFields(a.id), name: 'ocupada', title: 'Mi título editado' });
+  expect(update.status).toBe(400);
+  const updatePage = await update.text();
+  expect(updatePage).toContain('Ya existe'); expect(updatePage).toContain('Mi título editado');
+  expect(store.getAutomation(a.id)).toEqual(a);
+});
+
+test('T86-H4: el límite de 256 bytes del cron rige sobre una expresión válida; un preset no admite cron', async () => {
+  await login();
+  const long = `30${' '.repeat(300)}7 * * *`; // el parser lo acepta (los espacios sobran) y ocupa más de 256 bytes
+  expect(Buffer.byteLength(long)).toBeGreaterThan(256);
+  expect(store.createAutomation({ workstream: ws, ...createFields(), name: 'testigo', cron: long }).cron).toBe(long); // válido para el Store: solo el límite de la web lo rechaza
+  expect((await post(createPath, { ...createFields(), name: 'larga', cron: long })).status).toBe(400); // M21: sin el límite sería 303
+  expect(store.listAutomations().map(x => x.name)).not.toContain('larga');
+  expect((await post(createPath, { ...createFields(), name: 'preset', schedule: 'day', at: '07:30', cron: '30 7 * * *' })).status).toBe(400); // M26
+  expect(store.listAutomations().map(x => x.name)).not.toContain('preset');
+});
+
+test('T86-H4: editar solo el horario conserva los saltos de línea originales del título y del cuerpo', async () => {
+  const a = seed();
+  store.db.query('UPDATE automations SET title = ?, body = ? WHERE id = ?').run('Uno\r\nDos', '\nuno\r\ndos\r\n', a.id);
+  await login();
+  const before = store.getAutomation(a.id);
+  const res = await post(mutationPath(a.id, 'update'), { ...editFields(a.id), cron: '45 8 * * *', title: 'Uno\r\nDos', body: '\r\nuno\r\ndos\r\n' }); // lo que envía el navegador
+  expect(res.status).toBe(303);
+  const after = store.getAutomation(a.id);
+  expect(after.cron).toBe('45 8 * * *');
+  expect([after.title, after.body]).toEqual([before.title, before.body]); // M27: sin restaurar, quedarían con LF
+});
+
+test('T86-H4: el error de cron se sanea (controles) y se recorta a 320; la página de error no ofrece borrar', async () => {
+  const a = seed();
+  await login();
+  const res = await post(mutationPath(a.id, 'update'), { ...editFields(a.id), cron: `\u009b${'A'.repeat(230)} 7 * * *` });
+  expect(res.status).toBe(400);
+  const page = await res.text();
+  const alert = /class="notice" role="alert">([^<]*)</.exec(page)![1]!;
+  expect(alert).toContain('cron: el campo minuto');
+  expect(alert).not.toContain('\u009b'); // M28: el control no llega al aviso (el campo del formulario devuelve lo escrito)
+  expect(alert.length).toBeLessThanOrEqual(320);
+  expect(page).not.toContain('/delete'); // M38
+  expect(page).not.toContain('Borrar automation');
+});

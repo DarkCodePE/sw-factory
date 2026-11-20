@@ -1,7 +1,7 @@
 // Adaptación HTTP: las transiciones, el cercado y los eventos siguen en los comandos existentes.
 import { createHash } from 'node:crypto';
 import { join } from 'node:path';
-import { isRunnerName, Store, StoreError, WorkstreamBusyError } from './store.ts';
+import { AutomationNameTakenError, isRunnerName, Store, StoreError, WorkstreamBusyError } from './store.ts';
 import { AGENT_NAMES } from './agents.ts';
 import { AUTO_INSTRUCTIONS_MAX, isProfileDigest } from './profile.ts';
 import { ANCESTOR_PATH_PREFIX, assertPrivateNoteDatabase, NOTE_ATTACHMENT_REMOTE, NOTE_ATTACHMENT_STATE, validateNoteAttachment, type NoteAttachment } from './note-attachments.ts';
@@ -481,6 +481,7 @@ export async function performAction(stateDir: string, name: string, id: string, 
     if (action.automationForm) {
       if (error instanceof StoreError) {
         if (error.code === 'not_found') throw new InputError(404, 'Automation no encontrada.');
+        if (error instanceof AutomationNameTakenError) throw new InputError(400, error.message); // vuelve con los campos, como un cron inválido (T86-H3)
         if (error.code === 'conflict' || error.code === 'limit_reached') throw new InputError(409, error.message);
         if (error.code === 'invalid_input') {
           const message = redact(error.message).replace(/[\p{Cc}\p{Cf}]/gu, ' ').slice(0, 320);

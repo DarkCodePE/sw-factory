@@ -487,3 +487,13 @@ test('T86-H2: sin controles C0/C1 ni bidi, y lo serializado también respeta el 
   const message = String(store.listEvents(workstreamId, 1)[0]!.message);
   expect(message.length).toBeLessThan(500);
 });
+
+test('T86-H4: el evento omite un valor anterior de más de 8 KiB (fila que el Store actual no escribiría) y una clave privada', () => {
+  const a = store.createAutomation({ ...template, name: 'enorme' });
+  store.db.query('UPDATE automations SET body = ? WHERE id = ?').run('x'.repeat(8193), a.id); // M15
+  const { workstream: _, ...fields } = template;
+  store.updateAutomation(a.id, automationRevision(store.getAutomation(a.id)), { ...fields, name: 'enorme', body: 'nuevo' });
+  const message = String(store.listEvents(workstreamId, 1)[0]!.message);
+  expect(JSON.parse(message.slice(message.indexOf('{'))).previous.body).toBe('[OMITIDO: más de 8 KiB]');
+  expect(auditedBody('antes\n-----BEGIN PRIVATE KEY-----\nMIIEvQIBADANBgkq\n-----END PRIVATE KEY-----\ndespués')).toBe('antes\n[REDACTED]'); // M15b
+});
