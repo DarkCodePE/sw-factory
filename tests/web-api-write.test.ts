@@ -4,6 +4,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { Store } from '../src/store.ts';
 import { ACTIONS } from '../src/web-actions.ts';
+import { handleApi } from '../src/web-api.ts';
 import { startWeb } from '../src/web.ts';
 
 let dir: string, store: Store, server: ReturnType<typeof startWeb>, decide: string, read: string, change: string, activity: string;
@@ -70,6 +71,18 @@ test('415, 413 y JSON inválido', async () => {
   expect((await post(`/changes/${change}/note`, null, { raw: '{no' })).status).toBe(400);
   expect((await post(`/changes/${change}/note`, [1])).status).toBe(400);
   expect((await post(`/changes/${change}/note`, { body: 5 })).status).toBe(400);
+  expect(notes().n).toBe(0);
+});
+
+test('T71e-H1: el tope de 16 KiB lo aplica la API aunque el servidor acepte 1 MiB', async () => {
+  // handleApi directo: sin el límite del servidor, solo cuentan las dos comprobaciones de la API.
+  const call = (init: RequestInit) => handleApi(new Request(`http://127.0.0.1/api/v1/changes/${change}/note`, { method: 'POST', headers: { Authorization: `Bearer ${decide}`, 'Content-Type': 'application/json', ...(init.headers as object) }, body: init.body }), new URL(`http://127.0.0.1/api/v1/changes/${change}/note`), () => new Store(join(dir, 'fabrica.db'), { readonly: true }), { stateDir: dir });
+  const sin = await call({ body: JSON.stringify({ body: 'x', relleno: 'a'.repeat(17 * 1024) }) });
+  expect(sin.status).toBe(413);
+  const cabecera = await call({ headers: { 'content-length': String(17 * 1024) }, body: JSON.stringify({ body: 'x' }) });
+  expect(cabecera.status).toBe(413);
+  expect((await post(`/changes/${change}/note`, { body: 'x', relleno: 'a'.repeat(17 * 1024) })).status).toBe(413);
+  expect((await post(`/changes/${change}/note`, { body: 'x', relleno: 'a'.repeat(600 * 1024) })).status).toBe(413);
   expect(notes().n).toBe(0);
 });
 

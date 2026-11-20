@@ -155,3 +155,10 @@ test('asistente: escapa los valores reflejados y sin sesión no ofrece el formul
   const anon = await (await req('/workstreams/nuevo?paso=1')).text();
   expect(anon).not.toContain('name="csrf"');
 });
+
+test('T58-H4: las rutas de workstream cortan en 16 KiB aunque el servidor acepte 1 MiB', async () => {
+  const antes = events().length;
+  for (const path of ['/workstreams/prueba/settings', '/workstreams/prueba/state', '/workstreams/prueba/archive', '/workstreams/nuevo'])
+    expect((await post(path, { relleno: 'a'.repeat(17 * 1024) })).status).toBe(413);
+  expect(events().length).toBe(antes);
+});
