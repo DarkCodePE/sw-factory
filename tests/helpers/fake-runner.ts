@@ -31,8 +31,8 @@ const jl = await line();
 if (jl === null) process.exit(0);
 const job = decodeLine(jl, ['job'], 'home') as Extract<ReturnType<typeof decodeLine>, { type: 'job' }>;
 if (scenario === 'auto') scenario = job.expectChanges ? 'ok' : 'no-change';
-if (scenario === 'busy') { await send({ v: 1, type: 'error', code: 'busy', message: 'ocupado' }); process.exit(0); }
-if (scenario.startsWith('refuse:')) { await send({ v: 1, type: 'error', code: scenario.slice(7), message: 'x' }); process.exit(0); }
+if (scenario === 'busy') { await send({ v: 1, type: 'error', code: 'busy', message: 'TEXTO-LIBRE-DEL-RUNNER <script>' }); process.exit(0); }
+if (scenario.startsWith('refuse:')) { await send({ v: 1, type: 'error', code: scenario.slice(7), message: 'TEXTO-LIBRE-DEL-RUNNER <script>' }); process.exit(0); }
 await bytes(job.promptBytes);
 const bundlePath = join(dir, 'in.bundle');
 writeFileSync(bundlePath, await bytes(job.bundleBytes));
@@ -45,6 +45,7 @@ if (scenario === 'lost-log') process.exit(0);
 if (scenario === 'evil-log') { for (let i = 0; i < 20; i++) await send({ v: 1, type: 'log', data: Buffer.alloc(700_000, 65).toString('base64') }); await send(base); process.exit(0); }
 if (scenario === 'evil-extra') { await send({ ...base, env: { X: '1' } }); process.exit(0); }
 if (scenario === 'evil-usage') { await send({ ...base, usage: { costUsd: -1, inputTokens: 1, outputTokens: 1 } }); process.exit(0); }
+if (scenario === 'huge-usage') { await send({ ...base, usage: { costUsd: 1e308, inputTokens: 1, outputTokens: 1 } }); process.exit(0); }
 if (scenario === 'evil-line') { await out('x'.repeat(2 * 1024 * 1024) + '\n'); process.exit(0); }
 if (scenario === 'evil-jobid') { await send({ ...base, jobId: 'otro' }); process.exit(0); }
 if (scenario === 'evil-output') { await send({ ...base, output: 'y'.repeat(900_000) }); process.exit(0); }

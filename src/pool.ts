@@ -438,6 +438,7 @@ export async function processActivity(
           const done = await runRemoteAgent({ name: remote.name, target: remote.target! }, {
             activityId: a.id, attempt, adapter, model, readOnly, expectChanges: !a.validator && a.kind === 'implementation',
             prompt: prompt + notes, repo: ws.repo, worktree: path, head, base: baseSha, timeoutMs: turnTimeoutMs(opts) ?? 20 * 60_000,
+            ...(typeof remote.options.maxBundleMb === 'number' ? { maxBundleMb: remote.options.maxBundleMb } : {}),
             repoKey: createHash('sha256').update(ws.id).digest('hex'), signal: abortController.signal,
             onSpawn: pgid => store.setActivityAgentPgid(a.id, pgid),
           }, opts.runnerTransport, opts.runnerDeps);

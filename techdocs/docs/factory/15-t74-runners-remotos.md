@@ -115,8 +115,8 @@ fab ws runner <workstream> torre
 
 Cualquier fallo deja el worktree de casa como estaba (se importa todo o nada). Nunca se pasa a local en silencio.
 
-!!! tip "Un resultado que el runner no puede sellar parece una pérdida"
-    Si el agente deja algo que el sellado rechaza (un `.git` anidado con commits, un `.gitmodules` symlink, un fichero de 80 MiB incompresible, un `.gitattributes` con `working-tree-encoding=UTF-16` sin BOM), el runner contesta `error internal` y casa lo ve como `RUNNER_LOST`: reintenta tres veces el mismo resultado. Si ves tres `RUNNER_LOST` seguidos con la red sana, busca esto en el log del encargo antes de culpar al enlace.
+!!! tip "Un resultado que el runner no puede sellar bloquea la activity"
+    Si el agente deja algo que el sellado rechaza (un `.git` anidado con commits, un `.gitmodules` symlink, un fichero de 80 MiB incompresible, un `.gitattributes` con `working-tree-encoding=UTF-16` sin BOM), el runner contesta `error result_rejected` y casa bloquea la activity con `RUNNER_RESULT_REJECTED`: es determinista, así que no se reintenta. Un runner anterior a este cambio sigue contestando `error internal`, que casa trata como `RUNNER_LOST` y reintenta; actualiza los dos lados a la vez.
 
 ## Qué se probó y qué no
 

@@ -28,6 +28,8 @@ export interface ServeDeps {
   /** SIGHUP/SIGTERM del proceso: equivale a que casa cierre la sesión. */
   signal?: AbortSignal;
   confine?: (adapter: string) => void;
+  /** Solo tests: sustituye al sellado para provocar un rechazo determinista. */
+  seal?: typeof sealResult;
 }
 type Write = (b: string | Buffer) => Promise<void>;
 type Out = (m: Message) => void;
@@ -218,7 +220,7 @@ export async function serveSession(rootArg: string, stdin: ReadableStream<Uint8A
     // 6. Sellado: git sobre la caché y un índice propio, nunca sobre el `.git` del clon.
     let sealed = null;
     if (job.expectChanges) {
-      try { sealed = await sealResult(cache, repo, join(jobs, job.jobId, 'index'), job.head); } catch { return fail('internal', 'no se pudo sellar el resultado'); }
+      try { sealed = await (deps.seal ?? sealResult)(cache, repo, join(jobs, job.jobId, 'index'), job.head); } catch { return fail('result_rejected', 'no se pudo sellar el resultado'); }
     }
     if (sealed) tidy.push(() => rmSync(join(sealed!.bundle.path, '..'), { recursive: true, force: true }));
     send({
