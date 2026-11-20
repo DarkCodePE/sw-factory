@@ -1,5 +1,6 @@
 // T74f: cableado de los runners en el pool. El transporte se inyecta hacia el runner falso (tests/helpers/fake-runner.ts).
 import { afterEach, beforeEach, expect, test } from 'bun:test';
+import { randomBytes } from 'node:crypto';
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
@@ -125,6 +126,7 @@ const failures: Array<[string, 'blocked' | 'pending', string]> = [  // [escenari
   ['die', 'blocked', 'RUNNER_UNREACHABLE'],
   ['v2', 'blocked', 'RUNNER_REFUSED'],
   ['refuse:not_confinable', 'blocked', 'RUNNER_REFUSED'],
+  ['refuse:result_rejected', 'blocked', 'RUNNER_RESULT_REJECTED'], // H1: el sellado del runner rechazó el árbol; determinista, no se reintenta
   ['evil-extra', 'blocked', 'RUNNER_RESULT_REJECTED'],
   ['bundle-bad-hash', 'blocked', 'RUNNER_RESULT_REJECTED'],
   ['lost-accepted', 'pending', 'RUNNER_LOST'],
@@ -222,4 +224,59 @@ test('el prompt que viaja al runner no lleva rutas de casa (el agente trabaja en
   const sent = readFileSync(join(fakeDir, 'transcript'), 'latin1');
   expect(sent).toContain('Working directory:'); // el prompt sí viaja
   expect(sent).not.toContain(dir);               // pero sin ninguna ruta de la máquina de casa (T74 §3.3)
+});
+
+// A10 en el camino de error: ningún fallo del runner hace correr el agente en local. El adaptador `fake` deja un testigo en el cwd si corre aquí.
+for (const [scenario, code] of [['lost-accepted', 'RUNNER_LOST'], ['refuse:not_confinable', 'RUNNER_REFUSED'], ['evil-extra', 'RUNNER_RESULT_REJECTED'], ['refuse:result_rejected', 'RUNNER_RESULT_REJECTED']] as const) {
+  test(`A10: tras ${code} (${scenario}) el agente no corre en casa`, async () => {
+    const ws = workstream();
+    store.setWorkstreamRunner(ws.id, 'torre');
+    const c = store.createChange(ws.id, 'x', 'd');
+    const saved = process.env.FABRICA_FAKE_TOUCH;
+    process.env.FABRICA_FAKE_TOUCH = 'testigo-local';
+    try {
+      store.claimActivity(ws.id, 'w1');
+      const act = store.listActivities({ changeId: c.id, status: 'in_progress' })[0]!;
+      await processActivity(store, act, 'w1', { ...opts(ws.id), runnerTransport: fake(scenario) });
+      expect(store.getActivity(act.id).error ?? '').toContain(code);
+    } finally { if (saved === undefined) delete process.env.FABRICA_FAKE_TOUCH; else process.env.FABRICA_FAKE_TOUCH = saved; }
+    const wt = join(dir, 'worktrees', c.id.slice(0, 8));
+    expect(Bun.spawnSync(['sh', '-c', 'ls testigo-local-* 2>/dev/null'], { cwd: wt }).stdout.toString()).toBe('');
+    expect(Bun.spawnSync(['sh', '-c', 'ls testigo-local-* 2>/dev/null'], { cwd: repo }).stdout.toString()).toBe('');
+  });
+}
+
+test('control de A10: sin runner el mismo adaptador sí deja el testigo (el test de arriba mide algo)', async () => {
+  const ws = workstream();
+  const c = store.createChange(ws.id, 'x', 'd');
+  process.env.FABRICA_FAKE_TOUCH = 'testigo-local';
+  try { await runPool(store, opts(ws.id)); } finally { delete process.env.FABRICA_FAKE_TOUCH; }
+  const wt = join(dir, 'worktrees', c.id.slice(0, 8));
+  expect(Bun.spawnSync(['sh', '-c', 'ls testigo-local-*'], { cwd: wt }).stdout.toString()).toContain('testigo-local-');
+});
+
+test('O3: un rol con servidores MCP con runner ssh se bloquea con MCP_NOT_REMOTE sin abrir sesión', async () => {
+  const profile: Profile = { ...defaultProfile(), schemaVersion: 2, harness: 'claude', roles: { investigate: { mcp: ['algo'] } } };
+  const ws = workstream({ agent: 'claude', profile: saveProfile(dir, profile).digest });
+  store.setWorkstreamRunner(ws.id, 'torre');
+  const c = store.createChange(ws.id, 'x', 'd');
+  await runPool(store, opts(ws.id, { runnerTransport: noSession() }));
+  const [a] = store.listActivities({ changeId: c.id });
+  expect(a).toMatchObject({ status: 'blocked' });
+  expect(a!.error).toContain('MCP_NOT_REMOTE');
+});
+
+test('H5: el maxBundleMb del runner llega al encargo: un bundle mayor no sale de casa', async () => {
+  writeFileSync(join(repo, 'grande.bin'), randomBytes(1.5 * 1024 * 1024));
+  git(repo, '-c', 'user.email=t@t', '-c', 'user.name=t', 'add', '.');
+  git(repo, '-c', 'user.email=t@t', '-c', 'user.name=t', 'commit', '-qm', 'grande');
+  store.createRunner({ name: 'chico', kind: 'ssh', target: 'chico', options: { maxBundleMb: 1 } });
+  const ws = workstream();
+  store.setWorkstreamRunner(ws.id, 'chico');
+  const c = store.createChange(ws.id, 'x', 'd');
+  await runPool(store, opts(ws.id, { runnerTransport: fake('auto') }));
+  const [a] = store.listActivities({ changeId: c.id });
+  expect(a).toMatchObject({ status: 'blocked' });
+  expect(a!.error).toContain('RUNNER_REFUSED');
+  expect(readFileSync(join(fakeDir, 'transcript'), 'latin1')).not.toContain('"type":"job"'); // el job no salió
 });
