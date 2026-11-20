@@ -10,6 +10,7 @@ import { redact } from './manifest.ts';
 import { AdmissionDb, hasAdmission } from './admission/db.ts';
 import { answerQuestion } from './admission/answers.ts';
 import { resetSessionCap } from './admission/sessions.ts';
+import { noteForm } from './web-note-form.ts';
 import type { WebAuth } from './web-auth.ts';
 import { PROFILE_BODY_LIMIT, ProfileInputError, profileAction } from './web-profile.ts';
 import { enqueueBackfill, enqueueManual, ensureSchema, previewBackfill } from './scorers.ts';
@@ -52,7 +53,7 @@ export function actionForms(store: Store, url: URL, csrf?: string): string {
     if (waiting || ['failed', 'blocked', 'quarantined', 'implemented'].includes(c.status)) body += form(`/changes/${id}/retry`, `<input type="hidden" name="revision" value="${retryRevision(store, id)}"><button>Reintentar change</button><p class="muted">Reencola la última activity fallida; si espera una respuesta, abandona esa espera.</p>`);
     if (!store.isTerminalChange(c.status)) {
       const planned = activities.some(a => ['pending', 'in_progress', 'waiting_reply'].includes(a.status));
-      body += form(`/changes/${id}/note`, `<fieldset><legend>Nota para el agente</legend><label for="note-body">Nota (máximo 8 KiB)</label><textarea id="note-body" name="body" rows="4" maxlength="8192" required></textarea><button>Guardar nota</button><p class="muted">No lanza ni interrumpe nada. Se entrega al empezar el siguiente turno de trabajo, una sola vez.${planned ? '' : ' Ahora no hay ningún turno previsto.'} Enviar dos veces crea dos notas.</p></fieldset>`);
+      body += noteForm(id, hidden, planned, store.noteRunnerIsRemote(c.workstreamId));
     }
     if (!FINAL_STATUSES.includes(c.status)) body += form(`/changes/${id}/cancel`, `<fieldset><legend>Cancelar change</legend><label><input type="checkbox" name="confirm" value="yes" required> Confirmo: cancela el change y borra su worktree (igual que fab reject)</label><button>Cancelar change</button></fieldset>`);
     return `<section aria-label="Decisiones">${body}</section>`;

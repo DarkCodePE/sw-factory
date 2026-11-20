@@ -65,5 +65,7 @@ export function notesSection(notes: ChangeNote[], changeStatus: string, ui: Ui):
   const e = ui.escape, head = '<h2>Notas</h2>';
   if (!notes.length) return `${head}<p class="empty">Sin notas</p>`;
   const stuck = changeStatus === 'implemented' && notes.some(n => !n.deliveredAt) ? '<p class="notice">Este change espera merge: puede que no haya más turnos de trabajo y la nota no llegue a entregarse.</p>' : '';
-  return `${head}${stuck}<ul class="notes">${notes.map(n => `<li><p>${e(n.body)}</p><small>${e(n.actor)} · <time>${e(n.createdAt)}</time> · ${n.deliveredAt ? `Entregada <time>${e(n.deliveredAt)}</time>` : 'Pendiente de entrega'}</small></li>`).join('')}</ul>`;
+  const attachmentPending = notes.some(n => n.attachment && !n.deliveredAt)
+    ? '<p class="muted">Las notas con archivo esperan un turno local confinado con entrada apta.</p>' : '';
+  return `${head}${stuck}${attachmentPending}<ul class="notes">${notes.map(n => `<li><p>${e(n.body)}</p>${n.attachment ? `<small>Adjunto: ${e(n.attachment.name)} · ${e(n.attachment.size)} bytes</small>` : ''}<small>${e(n.actor)} · <time>${e(n.createdAt)}</time> · ${n.deliveredAt ? `Entregada <time>${e(n.deliveredAt)}</time>` : 'Pendiente de entrega'}</small></li>`).join('')}</ul>`;
 }

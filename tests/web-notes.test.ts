@@ -106,3 +106,34 @@ test('T56c-H3: sin turno previsto lo dice, y el actor de la lista se escapa', as
   const page = await html();
   expect(page).toContain('&lt;b&gt;ana&lt;/b&gt;'); expect(page).not.toContain('<b>ana</b>');
 });
+
+test('el selector y el aviso de transferencia preceden a guardar, y un runner SSH oculta el selector', async () => {
+  const page = await html();
+  expect(page).toContain('enctype="multipart/form-data"');
+  expect(page).toContain('type="file" name="attachment" accept=".txt,.md,.log,.json,.csv"');
+  expect(page).toContain('64 KiB');
+  expect(page.indexOf('proveedor del modelo')).toBeLessThan(page.indexOf('Guardar nota'));
+  expect(page).toContain('proveedor del modelo');
+  const ws = store.getChange(change).workstreamId;
+  store.createRunner({ name: 'remoto', kind: 'ssh', target: 'runner-ssh' });
+  store.setWorkstreamRunner(ws, 'remoto');
+  expect(await html()).toContain('El runner asignado es remoto');
+  expect(await html()).not.toContain('name="attachment"');
+});
+
+test('la vista escapa el nombre que guarda SQLite y muestra tamaño y estado, sin mostrar contenido', async () => {
+  const n = store.addChangeNote(change, 'nota con archivo');
+  store.db.query('UPDATE change_notes SET attachment_name = ?, attachment_bytes = ? WHERE id = ?')
+    .run('<b>datos</b>.txt', new TextEncoder().encode('CANARIO ARCHIVO PRIVADO'), n.id);
+  const page = await html();
+  expect(page).toContain('&lt;b&gt;datos&lt;/b&gt;.txt');
+  expect(page).toContain('23 bytes');
+  expect(page).toContain('Pendiente de entrega');
+  expect(page).toContain('turno local confinado');
+  expect(page).not.toContain('<b>datos</b>');
+  expect(page).not.toContain('CANARIO ARCHIVO PRIVADO');
+  store.db.query('UPDATE change_notes SET delivered_at = ? WHERE id = ?').run(store.now(), n.id);
+  const delivered = await html();
+  expect(delivered).toMatch(/Entregada <time>/);
+  expect(delivered).not.toContain('CANARIO ARCHIVO PRIVADO');
+});
