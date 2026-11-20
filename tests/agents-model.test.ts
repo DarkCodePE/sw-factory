@@ -58,6 +58,8 @@ test('T57 H5a: runAgent pasa el modelo a confineAgent y ANTHROPIC_MODEL no entra
   Bun.spawnSync(['git', 'init', '-q', dir]);
   // bwrap falso: vuelca su argv y sale.
   writeFileSync(join(dir, 'bin/bwrap'), `#!/bin/sh\nprintf '%s\\n' "$@" > "${dir}/argv"\n`, { mode: 0o755 });
+  // claude falso: la CI no tiene el binario y confineAgent exige que exista; nunca se ejecuta (bwrap es falso).
+  writeFileSync(join(dir, 'bin/claude'), '#!/bin/sh\nexit 0\n', { mode: 0o755 });
   const prev = { PATH: process.env.PATH, M: process.env.ANTHROPIC_MODEL };
   process.env.PATH = `${dir}/bin:${prev.PATH}`; process.env.ANTHROPIC_MODEL = 'canario-t57';
   try {
