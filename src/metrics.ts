@@ -126,12 +126,12 @@ export function calculateMetrics(store: Store, stateDir: string, options: { ws?:
       days.push(cur.toISOString().slice(0, 10));
       cur = new Date(cur.getTime() + 86400000);
     }
-  } else if (range === '7' || range === '30') {
-    const numDays = Number(range);
-    const endDay = until.slice(0, 10);
-    const endMs = Date.parse(`${endDay}T00:00:00.000Z`);
-    for (let i = numDays - 1; i >= 0; i--) {
-      days.push(new Date(endMs - i * 86400000).toISOString().slice(0, 10));
+  } else if ((range === '7' || range === '30') && since) {
+    let cur = new Date(`${since.slice(0, 10)}T00:00:00.000Z`);
+    const end = new Date(`${until.slice(0, 10)}T00:00:00.000Z`);
+    while (cur <= end) {
+      days.push(cur.toISOString().slice(0, 10));
+      cur = new Date(cur.getTime() + 86400000);
     }
   } else if (cohort.changes.length) {
     const dates = cohort.changes.map(c => c.createdAt.slice(0, 10)).sort();

@@ -353,6 +353,19 @@ test('T82-H2: range=custom sin fechas y jueces con custom devuelven 400', async 
   }
 });
 
+test('T82-H4: change creado en el límite de since entra en la serie diaria para range=7', () => {
+  const changeTime = new Date(now - 7 * 86400000 + 3600000).toISOString(); // 6 días 23h atrás
+  const c = store.createChange('uno', 'Change límite since', '');
+  store.db.query("UPDATE changes SET created_at=? WHERE id=?").run(changeTime, c.id);
+
+  const m = calculateMetrics(store, dir, { range: '7', now });
+  expect(m.count).toBe(1);
+  const changeDay = changeTime.slice(0, 10);
+  expect(m.daily.days).toContain(changeDay);
+  const dayIndex = m.daily.days.indexOf(changeDay);
+  expect(m.daily.changes[dayIndex]).toBe(1);
+});
+
 test('T83-H1: repetir recordPrOpened no duplica el evento ni altera el conteo en metricsDailyPrs', () => {
   const c = store.createChange('uno', 'Change con PR repetido', '');
   store.recordPrOpened(c.id, 'https://github.com/org/repo/pull/1');
