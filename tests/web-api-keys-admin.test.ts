@@ -1,6 +1,6 @@
 import { afterEach, beforeEach, expect, spyOn, test } from 'bun:test';
 import { createHash } from 'node:crypto';
-import { mkdtempSync, readdirSync, readFileSync, rmSync } from 'node:fs';
+import { mkdtempSync, readdirSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { Store } from '../src/store.ts';
@@ -11,6 +11,9 @@ import { ApiKeyUsage, revokeApiKeyResponse } from '../src/web-api-keys.ts';
 const list = '/config/claves-api';
 const create = `${list}/crear`;
 const revoke = (id: string) => `${list}/${id}/revocar`;
+// T90-H4: nunca se lee la base en crudo desde el proceso que la tiene abierta: cerrar ese descriptor suelta los locks POSIX de SQLite.
+const rawFile = (path: string) => Buffer.from(Bun.spawnSync(['cat', path]).stdout);
+
 let dir: string, store: Store, server: ReturnType<typeof startWeb>, cookie: string, csrf: string;
 const origin = () => `http://${server.host ?? '127.0.0.1'}:${server.port}`;
 const req = (path: string, init?: RequestInit) => fetch(origin() + path, { redirect: 'manual', ...init });
@@ -154,7 +157,7 @@ test('el alta entrega el secreto una vez y autentica hasta revocar por id', asyn
       expect(text.includes(secret!) || text.includes(hash)).toBe(false);
     }
     for (const file of readdirSync(dir).filter(name => name.startsWith('fabrica.db'))) {
-      expect(readFileSync(join(dir, file)).includes(secret!)).toBe(false);
+      expect(rawFile(join(dir, file)).includes(secret!)).toBe(false);
     }
 
     expect((await post(revoke(id!))).status).toBe(400);
@@ -208,10 +211,10 @@ test('último uso solo registra 2xx, funciona en lectura y se pierde al reinicia
   const clock = () => { calls++; return new Date(now); };
   boot(false, clock);
   const paths = [store.dbPath, store.dbPath + '-wal'];
-  const before = paths.map(path => readFileSync(path));
+  const before = paths.map(path => rawFile(path));
   expect((await api(reader.key)).status).toBe(200);
   expect(calls).toBe(1);
-  for (const [i, path] of paths.entries()) expect(readFileSync(path).equals(before[i]!)).toBe(true);
+  for (const [i, path] of paths.entries()) expect(rawFile(path).equals(before[i]!)).toBe(true);
 
   boot(true, clock);
   await login();
@@ -289,4 +292,22 @@ test('una mutación en curso puede terminar tras revocar sin recuperar el últim
   expect((await response).status).toBe(200);
   expect(usage.lastUse(id)).toBeUndefined();
   expect((await handleApi(new Request(readUrl, { headers: auth }), readUrl, openReader, { stateDir: dir }, usage)).status).toBe(401);
+});
+
+test('T90-H1/H2/H3: el nombre se escapa en la fila y en la confirmación, una clave revocada no ofrece formulario y la página no sondea', async () => {
+  const live = store.createApiKey('activa', 'read');
+  const gone = store.createApiKey('revocada', 'read');
+  store.db.query('UPDATE api_keys SET name = ? WHERE id = ?').run('<b>activa</b>', live.id); // el Store solo admite [a-z0-9-]: se planta una fila antigua
+  store.revokeApiKey(gone.id);
+  boot(true);
+  await login();
+  const res = await get();
+  const page = await res.text();
+  expect(page).toContain('&lt;b&gt;activa&lt;/b&gt;'); // M26
+  expect(page).toContain('Confirmo revocar &lt;b&gt;activa&lt;/b&gt;');
+  expect(page).not.toContain('<b>activa</b>');
+  expect(row(page, 'revocada')).toContain('Revocada');
+  expect(row(page, 'revocada')).not.toContain('action='); // M22
+  expect(row(page, '&lt;b&gt;activa&lt;/b&gt;')).toContain('action=');
+  expect(page).not.toContain('/poll.js'); // M25: un sondeo cada 2 s pisaría el nombre que se está escribiendo
 });
