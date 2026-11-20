@@ -78,7 +78,7 @@ CREATE UNIQUE INDEX IF NOT EXISTS adm_questions_open ON adm_questions(activity_i
 -- Avisos firmados de GitHub (T69b): solo metadatos, nunca el cuerpo. Las 500 más recientes.
 CREATE TABLE IF NOT EXISTS adm_hook_deliveries (
   delivery_id TEXT PRIMARY KEY, event TEXT NOT NULL, received_at TEXT NOT NULL, bytes INTEGER NOT NULL,
-  result TEXT NOT NULL CHECK (result IN ('woke','coalesced','ignored_event','ignored_repo')));`;
+  result TEXT NOT NULL CHECK (result IN ('woke','coalesced','ignored_event','ignored_repo','rejected')));`;
 
 export class AdmissionDb {
   readonly db: Database;
