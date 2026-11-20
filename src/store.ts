@@ -176,7 +176,6 @@ export interface WebhookReceptorStatus {
   hasTable: boolean;
   active: boolean;
   endpoint: string;
-  secretConfigured: boolean;
   totalDeliveries: number;
   lastDeliveryAt: string | null;
   last24h: { result: string; count: number }[];
@@ -2061,7 +2060,6 @@ export class Store {
         hasTable: false,
         active: false,
         endpoint: '/github',
-        secretConfigured: !!(process.env.FAB_GITHUB_WEBHOOK_SECRET && process.env.FAB_GITHUB_WEBHOOK_SECRET.length >= 16),
         totalDeliveries: 0,
         lastDeliveryAt: null,
         last24h: [],
@@ -2096,7 +2094,6 @@ export class Store {
       hasTable: true,
       active,
       endpoint: '/github',
-      secretConfigured: !!(process.env.FAB_GITHUB_WEBHOOK_SECRET && process.env.FAB_GITHUB_WEBHOOK_SECRET.length >= 16),
       totalDeliveries: total,
       lastDeliveryAt: last,
       last24h,

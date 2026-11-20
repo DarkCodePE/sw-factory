@@ -243,3 +243,16 @@ test('la web no anuncia su propio puerto como url de destino del webhook', async
   expect(html).not.toContain(`http://127.0.0.1:${server.port}/github`);
   expect(html).toContain('--hook-port');
 });
+
+test('secreto de entorno menor a 16 caracteres se reporta como no configurado', async () => {
+  store = new Store(join(dir, 'fabrica.db'));
+  new AdmissionDb(store);
+
+  // Secreto demasiado corto (15 caracteres)
+  process.env.FAB_GITHUB_WEBHOOK_SECRET = '123456789012345';
+  server = startWeb(dir, 0);
+
+  const html = await getHtml('/webhooks');
+  expect(html).toContain('Secreto en entorno (proceso web)');
+  expect(html).toContain('No configurado');
+});

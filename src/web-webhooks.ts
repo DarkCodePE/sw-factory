@@ -40,6 +40,7 @@ export function webhooksPage(store: Store, url: URL, escape: Escape): { title: s
   }
 
   const status = store.webhookReceptorStatus();
+  const secretConfigured = !!(process.env.FAB_GITHUB_WEBHOOK_SECRET && process.env.FAB_GITHUB_WEBHOOK_SECRET.length >= 16);
   const deliveries = store.listWebhookDeliveries(200);
   const q = url.searchParams.get('q')?.trim() ?? '';
   const filtered = q
@@ -92,7 +93,7 @@ export function webhooksPage(store: Store, url: URL, escape: Escape): { title: s
         ['Estado del receptor', 'No medido (escucha en --hook-port)'],
         ['Ruta receptora local', '<code>POST /github</code> (solo loopback 127.0.0.1)'],
         ['Autenticación', 'Firma HMAC-SHA256 (<code>X-Hub-Signature-256</code>)'],
-        ['Secreto en entorno', status.secretConfigured ? 'Configurado (FAB_GITHUB_WEBHOOK_SECRET)' : 'No configurado'],
+        ['Secreto en entorno (proceso web)', secretConfigured ? 'Configurado (FAB_GITHUB_WEBHOOK_SECRET)' : 'No configurado'],
         ['Eventos admitidos', '<code>issues</code>, <code>issue_comment</code>'],
         ['Entregas últimas 24 h', summary24h],
         ['Entregas rechazadas (sin firma)', status.rejectedCount ? `${status.rejectedCount}${status.lastRejectedAt ? ` (última: <time>${escape(status.lastRejectedAt)}</time>)` : ''}` : '0'],
