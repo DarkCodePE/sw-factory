@@ -114,16 +114,23 @@ function page(store: Store, stateDir: string, url: URL, csrf?: string): { title:
 /** Un error de acción se muestra en la plantilla normal, con menú y enlace de vuelta a la página de origen (T78). */
 async function actionErrorPage(response: Response, req: Request, url: URL, openStore: () => Store, shell: (s: Store, c: { title: string; body: string }, nav: URL, still: boolean) => string): Promise<Response> {
   const message = await response.text();
-  // Origen: el Referer si es de este mismo host; si no, la ruta de la acción sin su último tramo (`/activities/x/review` → `/activities/x`).
+  const plain = () => new Response(message, { status: response.status, headers: response.headers });
+  // Origen: el Referer si es de este mismo host y una ruta local (ni `//host` ni `\\`); si no, la ruta de la acción sin su último tramo
+  // cuando es una página conocida, y `/` en otro caso (`/questions/x/answer` → `/questions/x` no existe).
   let back = url.pathname.replace(/\/[^/]*$/, '') || '/';
-  try { const r = new URL(req.headers.get('referer') ?? ''); if (r.host === url.host && r.pathname.startsWith('/')) back = r.pathname + r.search; } catch { /* sin Referer */ }
-  const store = openStore();
+  if (!KNOWN_BACK.test(back)) back = '/';
+  try { const r = new URL(req.headers.get('referer') ?? ''); if (r.host === url.host && /^\/(?![/\\])/.test(r.pathname) && !r.pathname.includes('\\')) back = r.pathname + r.search; } catch { /* sin Referer */ }
+  let store: Store | undefined;
   try {
+    store = openStore();
     const html = shell(store, { title: 'No se pudo completar la acción', body: `<p role="alert">${escape(message)}</p><p><a href="${escape(back)}">Volver a la página de origen</a></p>` }, new URL(back, url), true);
     const headers = new Headers(response.headers); headers.set('Content-Type', 'text/html; charset=utf-8'); headers.delete('Content-Length');
     return new Response(html, { status: response.status, headers });
-  } finally { store.close(); }
+  } catch { return plain(); } // la base no abre (escritor activo): el error en texto, con su estado y cabeceras
+  finally { store?.close(); }
 }
+
+const KNOWN_BACK = /^\/(?:activities\/[\w-]+|changes(?:\/[\w-]+)?|workstreams|automations|signals|perfiles|config|experimentos|flujo|metricas)?$/;
 
 const loopback = (port: number) => [`127.0.0.1:${port}`, `localhost:${port}`];
 

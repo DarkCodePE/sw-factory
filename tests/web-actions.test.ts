@@ -399,3 +399,25 @@ test('T78: el texto del error se escapa y no se ofrece el sondeo que recargaría
   expect(page).not.toContain('<script>alert'); expect(page).toContain('%22%3E%3Cscript%3E');
   expect(page).not.toContain('poll.js');
 });
+
+test('T78-H1: si la base no abre al pintar el error, sale el error en texto con su estado y cabeceras, no un 500', async () => {
+  await login();
+  const { renameSync } = await import('node:fs');
+  store.close(); renameSync(join(dir, 'fabrica.db'), join(dir, 'fabrica.db.off'));
+  try {
+    const r = await post(review(), { decision: 'comment', comment: '' });
+    expect(r.status).toBe(400); expect(r.headers.get('content-security-policy')).toContain("default-src 'none'");
+    const t = await r.text(); expect(t).toContain('Elige una decisión'); expect(t).not.toContain('__bunfallback');
+  } finally { renameSync(join(dir, 'fabrica.db.off'), join(dir, 'fabrica.db')); store = new Store(join(dir, 'fabrica.db')); }
+});
+test('T78-H2/H3: el enlace de vuelta ignora Referers ajenos o protocol-relative y no apunta a páginas inexistentes', async () => {
+  await login();
+  const base = `http://${server.host}:${server.port}`;
+  for (const referer of [`${base}//evil.test/x`, `${base}/\\evil.test/x`, 'http://evil.test/activities/x']) {
+    const page = await (await post(review(), { decision: 'comment', comment: '' }, { referer })).text();
+    expect(page).not.toContain('evil.test'); expect(page).toContain(`href="/activities/${activity}"`);
+  }
+  // Sin Referer, una ruta de acción sin página padre vuelve a la raíz.
+  seedQuestion();
+  expect(await (await post('/questions/q1/answer', { answer: '  ' })).text()).toContain('<a href="/">Volver a la página de origen</a>');
+});
