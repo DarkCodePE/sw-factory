@@ -115,10 +115,10 @@ test('--seed fija la semilla impresa y el orden; --confine queda guardado en las
 test('report imprime el error en una línea y sin caracteres de control', async () => {
   await create();
   store.db.query("UPDATE benchmarks SET status = 'failed', error = ? WHERE id = 'b1'").run('uno\x1b[31mrojo\nfalso: dos\r\x07');
+  out = [];
   expect(await run('report', 'b1')).toBe(0);
   const text = out.join('\n');
   expect(text).toContain('error: uno [31mrojo falso: dos');
-  out = [];
   expect(text).not.toMatch(/[\x00-\x08\x0b-\x1f\x7f]/);
   expect(text.split('\n')).toHaveLength(2); // cabecera + «sin corridas todavía»
 });
