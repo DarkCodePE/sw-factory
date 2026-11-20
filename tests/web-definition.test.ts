@@ -203,6 +203,14 @@ test('el truncado de ficheros grandes respeta la frontera de caracter utf8 sin p
   expect(html).not.toContain('\uFFFD');
 });
 
+test('la pagina de definicion no contiene estilos en linea style= que violen la csp', async () => {
+  seedWorkstream();
+  server = startWeb(stateDir, 0);
+
+  const html = await getHtml('/definicion?ws=demo');
+  expect(html).not.toMatch(/style=["'][^"']*["']/);
+});
+
 test('la página no escribe en disco', async () => {
   seedWorkstream();
   server = startWeb(stateDir, 0);

@@ -107,10 +107,10 @@ export function definitionPage(store: Store, stateDir: string | undefined, url: 
       ? `<p class="notice">Fichero grande truncado para visualización (mostrando ${Math.round(FILE_VIEW_LIMIT / 1024)} KiB de ${Math.round(byteLength / 1024)} KiB). El fichero íntegro se conserva en <code>fab definition export</code>.</p>`
       : '';
 
-    return `<article id="file-${enc(path)}" class="definition-file" style="margin-bottom: 24px; border-bottom: 1px solid var(--line); padding-bottom: 20px;">
-      <h3 style="font-size: 16px; margin: 16px 0 8px;">
+    return `<article id="file-${enc(path)}" class="definition-file">
+      <h3>
         <code>${escape(path)}</code>
-        <small style="display: inline; margin-left: 8px;">(${byteLength} bytes)</small>
+        <small>(${byteLength} bytes)</small>
       </h3>
       ${warning}
       <pre tabindex="0"><code>${escape(displayedText)}</code></pre>
@@ -122,7 +122,7 @@ export function definitionPage(store: Store, stateDir: string | undefined, url: 
 
     <section>
       <h2>Árbol de definición · ${escape(selected.slug)}</h2>
-      <div class="summary" style="margin-bottom: 16px;">
+      <div class="summary definition-summary">
         <span>Ficheros en el árbol: <strong>${files.size}</strong></span>
         <span>Workstream: <strong>${escape(selected.slug)}</strong></span>
         <span>Solo lectura</span>
@@ -132,8 +132,8 @@ export function definitionPage(store: Store, stateDir: string | undefined, url: 
         No contiene rutas absolutas ni valores de entorno. Para editar o añadir ficheros, crea un Pull Request (catálogo §7.10).
       </p>
 
-      <nav aria-label="Índice de ficheros de la definición" style="margin: 16px 0 24px;">
-        <h3 style="font-size: 14px; color: var(--muted); margin-bottom: 8px;">Ficheros</h3>
+      <nav class="definition-nav" aria-label="Índice de ficheros de la definición">
+        <h3>Ficheros</h3>
         <div class="quick">${quickLinks}</div>
       </nav>
 
