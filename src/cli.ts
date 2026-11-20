@@ -84,6 +84,9 @@ const HELP = `fab — agente de código y fábrica de software local
   fab improve create --experiment-id <id> --baseline <digest> --candidate <digest> --suite <archivo>
   fab improve run <id> --split development|validation|qualification --repeats N [--agent <name>] [--seed N]
   fab improve report <id> | delete <id>   experimentos pareados (fase 1: sin cualificación ni rollout)
+  fab improve auto-config <ws> --suite <f> --split <s> --repeats N [--window N] [--min N] [--threshold X] [--enable|--disable]
+  fab improve auto <ws> [--once] [--agent <name>] | propose <ws> --role <rol> | candidates [<ws>] [--json] | dismiss <id>
+                automejora: crea CANDIDATOS (perfil nuevo + experimento); solo el dueño los aplica asignando el perfil
   fab bench create --id <id> --suite <f> --variant <nombre>=<digest>@<agente> … [--judge-profile <digest>]
   fab bench run <id> --split <s> --repeats N [--seed N] [--confine] [--concurrency N] | cancel <id> | report <id> [--json]
   fab bench add-task <change> --id <id> --split <s> --out <fichero> [--suite <existente>] [--verify <comando>]
