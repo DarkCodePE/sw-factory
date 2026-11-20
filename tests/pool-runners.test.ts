@@ -202,7 +202,10 @@ test('R10: la activity de gates corre en casa y no abre ninguna sesión', async 
   const ws = workstream({ verify: ['true'] });
   store.setWorkstreamRunner(ws.id, 'torre');
   const c = store.createChange(ws.id, 'x', 'd');
-  await runPool(store, opts(ws.id, { runnerTransport: fake('auto') }));
+  let sessions = 0;
+  const counting: Transport = r => { sessions++; return fake('auto')(r); };
+  await runPool(store, opts(ws.id, { runnerTransport: counting }));
+  expect(sessions).toBe(2); // investigación e implementación; gates no abre sesión
   const gates = store.listActivities({ changeId: c.id }).find(a => a.kind === 'gates');
   expect(gates?.status).toBe('completed');
   expect(store.getActivity(gates!.id).runner).toBeNull();
