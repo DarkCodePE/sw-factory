@@ -318,7 +318,7 @@ export async function processActivity(
     let run: AgentRun;
     if (live) {
       ({ run, outcome } = await runLiveActivity(store, adm!, a, {
-        backend: live, cwd: path, profileDigest, model, prompt, timeoutMs: turnTimeoutMs(opts), signal: abortController.signal, confine,
+        backend: live, cwd: path, stateDir: opts.stateDir, profileDigest, model, prompt, timeoutMs: turnTimeoutMs(opts), signal: abortController.signal, confine,
         claudeProjects: join(resolve(opts.stateDir), 'live', change.id.slice(0, 8), 'claude-projects'),
         mcpConfigDir: join(resolve(opts.stateDir), 'live', change.id.slice(0, 8), 'mcp'),
         capturePath: confine ? activityLog(opts.stateDir, change.id, a.id) : undefined,
