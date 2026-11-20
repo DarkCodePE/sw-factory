@@ -66,3 +66,10 @@ test('T77a: redact es lineal con entradas largas', () => {
   redact('curl ' + 'curl -x '.repeat(20000)); redact('"' + 'a\\'.repeat(100000)); redact('password: ' + '"'.repeat(100000));
   expect(performance.now() - t0).toBeLessThan(5000);
 });
+
+test('T77-H1: rachas largas de guiones y de palabras con guion no son cuadráticas (tiempo acotado)', () => {
+  for (const t of ['-'.repeat(256 * 1024), '--a'.repeat(80000), 'a-'.repeat(128 * 1024), '--token'.repeat(30000), 'x_token-'.repeat(30000)]) {
+    const t0 = performance.now(); redact(t);
+    expect(performance.now() - t0).toBeLessThan(1500);
+  }
+});

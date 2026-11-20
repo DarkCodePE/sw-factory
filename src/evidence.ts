@@ -89,15 +89,15 @@ const RULES: (readonly [RegExp, string | ((m: string, key: string, v: string) =>
   [/\b(?:gh[pousr]_[A-Za-z0-9]{16,}|github_pat_[A-Za-z0-9_]{16,})\b/g, '[REDACTED]'],
   [/\bxox[baprs]-[A-Za-z0-9-]{10,}\b/g, '[REDACTED]'],
   [/\beyJ[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+\b/g, '[REDACTED]'],
-  [/\b([a-z][a-z0-9+.-]*:\/\/)[^\s/@]+:[^\s/@]+@/gi, '$1[REDACTED]@'],
+  [/\b([a-z][a-z0-9+.-]{0,31}:\/\/)[^\s/@]+:[^\s/@]+@/gi, '$1[REDACTED]@'],
   [/\bglpat-[A-Za-z0-9_-]{16,}/g, '[REDACTED]'],
   [/\bnpm_[A-Za-z0-9]{20,}\b/g, '[REDACTED]'],
   [/\b((?:Set-)?Cookie[ \t]*:[ \t]*)[^\r\n]+/gi, '$1[REDACTED]'],
   mask(new RegExp(String.raw`\b((?:proxy-)?authorization["']?[ \t]*[:=][ \t]*)${VALUE.replace('|[^', '|(?:(?:basic|digest|token|bearer)[ \\t]+)?[^')}`, 'gi')),
-  mask(new RegExp(String.raw`(--[\w-]*(?:token|secret|password|passwd|api-?key)[\w-]*(?:[ \t]+|=))(?!-)${VALUE}`, 'gi')),
+  mask(new RegExp(String.raw`((?<![\w-])--[\w-]{0,64}?(?:token|secret|password|passwd|api-?key)[\w-]{0,64}(?:[ \t]+|=))(?!-)${VALUE}`, 'gi')),
   mask(new RegExp(String.raw`(\bcurl\b[^\n]{0,500}?[ \t](?:-u|--user)(?:[ \t]+|=))${VALUE}`, 'g')),
   mask(new RegExp(String.raw`\b(pass["']?[ \t]*[:=][ \t]*)${VALUE}`, 'gi')),
-  mask(new RegExp(String.raw`\b([\w-]*(?:${SECRET_WORDS})[\w-]*["']?\s*[:=]\s*)${VALUE}`, 'gi')),
+  mask(new RegExp(String.raw`\b([\w-]{0,64}?(?:${SECRET_WORDS})[\w-]{0,64}["']?\s*[:=]\s*)${VALUE}`, 'gi')),
 ];
 
 export function redact(text: string): string {
