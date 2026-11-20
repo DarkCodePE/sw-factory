@@ -90,7 +90,9 @@ export async function automationMain(argv: string[], store: Store, opts: Automat
         const list = store.listAutomations(arg);
         const slug = new Map(store.listWorkstreams().map(w => [w.id, w.slug]));
         const now = store.clock();
-        const rows = list.map(a => ({ ...a, workstream: slug.get(a.workstreamId) ?? a.workstreamId, nextDue: nextDue(a.cron, now)?.toISOString() ?? null }));
+        // Un horario inválido (fila vieja o editada a mano) no tumba el listado.
+        const next = (cron: string) => { try { return nextDue(cron, now)?.toISOString() ?? null; } catch { return 'horario inválido'; } };
+        const rows = list.map(a => ({ ...a, workstream: slug.get(a.workstreamId) ?? a.workstreamId, nextDue: next(a.cron) }));
         if (v.json) console.log(JSON.stringify(rows, null, 2));
         else for (const a of rows) {
           console.log(`${a.id.slice(0, 8)} ${a.workstream} ${a.name} [${a.cron}] ${a.enabled ? 'activa' : 'pausada'} último=${a.lastResult ?? '-'} próxima=${a.nextDue ?? '-'} (UTC)`);
@@ -127,8 +129,9 @@ export async function automationMain(argv: string[], store: Store, opts: Automat
             // Un fallo transitorio (SQLITE_BUSY) no tumba el bucle: se reintenta en la vuelta siguiente.
             try { tick(store); } catch (err) { console.error(`automation: ${(err as Error).message}`); }
             await new Promise<void>(res => {
-              const t = setTimeout(res, opts.intervalMs ?? 60_000);
-              signal.addEventListener('abort', () => { clearTimeout(t); res(); }, { once: true });
+              const onAbort = () => { clearTimeout(t); res(); };
+              const t = setTimeout(() => { signal.removeEventListener('abort', onAbort); res(); }, opts.intervalMs ?? 60_000);
+              signal.addEventListener('abort', onAbort, { once: true });
             });
           }
         } finally { process.off('SIGINT', stop); process.off('SIGTERM', stop); }

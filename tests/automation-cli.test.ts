@@ -3,6 +3,7 @@ import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { automationMain, scheduleExpr } from '../src/automation-cli.ts';
+import type { Database } from 'bun:sqlite';
 import { Store } from '../src/store.ts';
 
 const roots: string[] = [];
@@ -128,5 +129,49 @@ test('la próxima fecha es estrictamente posterior a ahora', async () => {
   const { root, store } = fixture(new Date('2026-11-19T07:30:00Z'));
   await run(store, ['add', 'ws', '--name', 'a', '--title', 'T', '--every', 'day', '--at', '07:30', '--body-file', join(root, 'body.md')]);
   expect((await run(store, ['list'])).out).toContain('próxima=2026-11-20T07:30:00.000Z');
+  store.close();
+});
+
+test('rm con un prefijo que casa con dos automations falla y no borra ninguna', async () => {
+  const { root, store } = fixture();
+  for (const n of ['a', 'b']) await run(store, ['add', 'ws', '--name', n, '--title', 'T', '--every', 'day', '--at', '07:30', '--body-file', join(root, 'body.md')]);
+  const db = (store as unknown as { db: Database }).db;
+  db.query('UPDATE automations SET id = ? WHERE name = ?').run('abc-1', 'a');
+  db.query('UPDATE automations SET id = ? WHERE name = ?').run('abc-2', 'b');
+  const r = await run(store, ['rm', 'abc']);
+  expect(r.code).toBe(1);
+  expect(r.err).toContain('2 coincidencias');
+  expect(store.listAutomations()).toHaveLength(2);
+  store.close();
+});
+
+test('list con un horario inválido lo marca en esa fila y lista las demás', async () => {
+  const { root, store } = fixture();
+  for (const n of ['a', 'b']) await run(store, ['add', 'ws', '--name', n, '--title', 'T', '--every', 'day', '--at', '07:30', '--body-file', join(root, 'body.md')]);
+  (store as unknown as { db: Database }).db.query('UPDATE automations SET cron = ? WHERE name = ?').run('*/5 7 * * *', 'a');
+  const r = await run(store, ['list']);
+  expect(r.code).toBe(0);
+  expect(r.out).toContain('próxima=horario inválido');
+  expect(r.out).toContain('próxima=2026-11-20T');
+  store.close();
+});
+
+test('run no acumula listeners de abort al vencer el temporizador', async () => {
+  const { store } = fixture();
+  const ac = new AbortController();
+  // La señal que usa el bucle es la combinada (AbortSignal.any): se espía EventTarget.
+  const add = spyOn(EventTarget.prototype, 'addEventListener');
+  const rem = spyOn(EventTarget.prototype, 'removeEventListener');
+  let calls = 0;
+  const orig = store.fireDueAutomations.bind(store);
+  store.fireDueAutomations = () => { if (++calls === 5) ac.abort(); return orig(); };
+  let added = 0, removed = 0;
+  try {
+    await run(store, ['run'], { intervalMs: 0, signal: ac.signal });
+    added = add.mock.calls.filter(c => c[0] === 'abort').length;
+    removed = rem.mock.calls.filter(c => c[0] === 'abort').length;
+  } finally { add.mockRestore(); rem.mockRestore(); }
+  expect(added).toBeGreaterThanOrEqual(5);
+  expect(added - removed).toBeLessThanOrEqual(1);
   store.close();
 });
