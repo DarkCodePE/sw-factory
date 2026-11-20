@@ -2,6 +2,7 @@ import { expect, test } from 'bun:test';
 import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
+import { profileMain } from '../src/profile-cli.ts';
 import { defaultProfile, DEFAULT_DIGEST, loadProfile, profileDigest, resolveRole, roleOf, saveProfile, validateProfile } from '../src/profile.ts';
 
 const v2 = (extra: Record<string, unknown> = {}) => ({ ...defaultProfile(), schemaVersion: 2, harness: 'claude', ...extra }) as any;
@@ -24,6 +25,8 @@ test('rechazos nombran el campo', () => {
   bad(v2({ roles: { qa: { harness: 'nope' } } }), /roles\.qa\.harness/);
   bad(v2({ roles: 'x' }), /roles/);
   bad(v2({ roles: { qa: 'x' } }), /roles\.qa/);
+  for (const roles of [[], null]) bad(v2({ roles }), /roles debe ser un objeto/);
+  for (const qa of [[], null]) bad(v2({ roles: { qa } }), /roles\.qa debe ser un objeto/);
   bad({ ...defaultProfile(), roles: {} }, /clave desconocida roles/); // v1
   bad(v2({ schemaVersion: 3 }), /schemaVersion/);
   for (const m of ['-x', '--foo', 'a b', 'a;b', '', 'a'.repeat(129)]) {
@@ -75,5 +78,17 @@ test('save/load v2 roundtrip y digest distinto por rol (I6, A3)', () => {
     expect(loadProfile(dir, digest)).toEqual(a);
     expect(profileDigest(loadProfile(dir, digest))).toBe(digest);
     expect(profileDigest(b)).not.toBe(digest);
+  } finally { rmSync(dir, { recursive: true, force: true }); }
+});
+
+test('T57 H3/H5e: fab profile inspect muestra lo que resuelve el pool para cada rol', () => {
+  const dir = mkdtempSync(join(tmpdir(), 'fab-inspect-'));
+  try {
+    const { digest } = saveProfile(dir, v2({ model: 'm0', roles: { qa: {}, implement: { harness: 'codex', model: 'm9' } } }));
+    const lines: string[] = [], log = console.log;
+    console.log = (s: string) => { lines.push(String(s)); };
+    try { expect(profileMain(['inspect', digest], dir)).toBe(0); } finally { console.log = log; }
+    expect(lines).toContain('qa  (workstream)  m0');
+    expect(lines).toContain('implement  codex  m9');
   } finally { rmSync(dir, { recursive: true, force: true }); }
 });
