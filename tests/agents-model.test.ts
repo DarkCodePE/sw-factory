@@ -1,4 +1,7 @@
 import { afterEach, expect, test } from 'bun:test';
+import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 import { getAgent, MODEL_AGENTS, runAgent } from '../src/agents.ts';
 
 const argv = (name: string, model?: string, opts: Record<string, unknown> = {}) =>
@@ -47,4 +50,22 @@ test('runAgent propaga el modelo y fake lo refleja', async () => {
   expect(withModel.output).toContain('model=m');
   const without = await runAgent(getAgent('fake'), 'hola', process.cwd(), 10_000);
   expect(without.output).not.toContain('model=');
+});
+
+test('T57 H5a: runAgent pasa el modelo a confineAgent y ANTHROPIC_MODEL no entra al sandbox', async () => {
+  const dir = mkdtempSync(join(tmpdir(), 'fab-runagent-'));
+  mkdirSync(join(dir, 'bin'));
+  Bun.spawnSync(['git', 'init', '-q', dir]);
+  // bwrap falso: vuelca su argv y sale.
+  writeFileSync(join(dir, 'bin/bwrap'), `#!/bin/sh\nprintf '%s\\n' "$@" > "${dir}/argv"\n`, { mode: 0o755 });
+  const prev = { PATH: process.env.PATH, M: process.env.ANTHROPIC_MODEL };
+  process.env.PATH = `${dir}/bin:${prev.PATH}`; process.env.ANTHROPIC_MODEL = 'canario-t57';
+  try {
+    await runAgent(getAgent('claude'), 'hola', dir, 10_000, { confine: true, model: 'm1' });
+    expect(readFileSync(join(dir, 'argv'), 'utf8')).not.toContain('canario-t57');
+  } finally {
+    process.env.PATH = prev.PATH;
+    if (prev.M === undefined) delete process.env.ANTHROPIC_MODEL; else process.env.ANTHROPIC_MODEL = prev.M;
+    rmSync(dir, { recursive: true, force: true });
+  }
 });
