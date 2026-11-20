@@ -168,3 +168,39 @@ test('P3-H2: la regla de clave oculta el valor con cualquier prefijo y sufijo la
   expect(redact('db.password: "x y"')).toBe('db.password: "[REDACTED]"');
   expect(redact('bypass_token = abc12345')).toBe('bypass_token = [REDACTED]');
 });
+
+// Entradas patológicas derivadas de cada regla: sus literales (el prefijo, sin las clases de carácter), con cada separador, repetidos o seguidos de una racha
+// de separadores o de caracteres de clase, con y sin cierre.
+const SEPARADORES = ['-', ' ', '=', ':'];
+const CIERRES = ['', '"\n@=:-----END PRIVATE KEY-----'];
+function entradasDe(fuente: string): Array<[string, (n: number) => string]> {
+  const literales: string[] = [...new Set(fuente.replace(/\[[^\]]*\]/g, ' ').replace(/\\([^a-zA-Z0-9])/g, '$1').replace(/\\[a-zA-Z]/g, ' ').match(/[A-Za-z0-9_:/-][A-Za-z0-9_:/\- ]{1,}/g) ?? [])].map(l => l.trim()).filter(l => l.length > 1).slice(0, 5);
+  // El primer literal (normalmente el prefijo de la regla) pegado a cada uno de los demás: `--` + `token` → `--token`.
+  literales.push(...literales.slice(1).map(l => literales[0] + l), 'a');
+  const rep = (x: string, n: number) => x.repeat(Math.ceil(n / x.length)).slice(0, n);
+  const out: Array<[string, (n: number) => string]> = [];
+  for (const w of literales) for (const s of SEPARADORES) {
+    const formas: Array<[string, (n: number) => string]> = [
+      [`rep(${w}${s})`, n => rep(w + s, n)], [`rep(${s}${w})`, n => rep(s + w, n)], [`rep(${w}${s}a)`, n => rep(w + s + 'a', n)],
+      ...['', 'a'].flatMap(pre => [' ', s, 'a' + s, 'a'].map((t): [string, (n: number) => string] => [`${pre}${w}${s} + rep(${t})`, n => pre + w + s + rep(t, n)])),
+    ];
+    for (const [nombre, gen] of formas) for (const c of CIERRES) out.push([`${JSON.stringify(nombre)}${c ? ' + cierre' : ''}`, n => gen(n) + c]);
+  }
+  return out;
+}
+
+test('P3-H3: cada regla de RULES, con entradas derivadas de ella misma, crece con la entrada y no con su cuadrado', () => {
+  const lentas: string[] = [];
+  RULES.forEach((regla, i) => {
+    expect(regla.source, `la regla ${i} declara su regex`).toBeTruthy();
+    for (const [nombre, gen] of entradasDe(regla.source!)) {
+      const grande = gen(65536);
+      // Primero una sola medida a 4N: lo que cuesta poco no puede ser un problema. Solo se compara lo que tarda.
+      const t0 = performance.now(); regla(grande); if (performance.now() - t0 < 8) continue;
+      const pequena = gen(16384);
+      const t1 = mejor(() => regla(pequena)), t4 = mejor(() => regla(grande));
+      if (t4 / Math.max(t1, 1) > 9) lentas.push(`regla ${i} · ${nombre}: ${t1.toFixed(0)} ms → ${t4.toFixed(0)} ms`);
+    }
+  });
+  expect(lentas).toEqual([]);
+}, 180_000);

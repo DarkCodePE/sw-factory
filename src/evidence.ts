@@ -82,7 +82,8 @@ export function redactField(key: string, value: string): string {
   return SECRET_KEY.test(key) ? '[REDACTED]' : redact(value);
 }
 
-type Rule = (text: string) => string;
+/** Una regla es una función de texto a texto; `source` (la regex que usa) deja que el test de linealidad derive sus entradas patológicas. */
+type Rule = ((text: string) => string) & { source?: string };
 
 /** Bloques de clave privada con cierre. Recorre con indexOf: si ya no queda ningún `-----END`, los BEGIN restantes no se vuelven a escanear (una regex lo haría una vez por BEGIN). */
 function redactPrivateKeys(text: string): string {
@@ -96,7 +97,8 @@ function redactPrivateKeys(text: string): string {
   }
   return out + text.slice(pos);
 }
-const sub = (re: RegExp, to: string | ((m: string, key: string, v: string) => string)): Rule => t => t.replace(re, to as string);
+redactPrivateKeys.source = '-----BEGIN PRIVATE KEY----- -----END PRIVATE KEY-----';
+const sub = (re: RegExp, to: string | ((m: string, key: string, v: string) => string)): Rule => Object.assign((t: string) => t.replace(re, to as string), { source: re.source });
 const masked = (re: RegExp): Rule => { const [r, f] = mask(re); return sub(r, f); };
 
 /** Reglas de redacción, en orden. Exportadas para el test de linealidad: cada regla debe costar O(n) con entradas patológicas. */
