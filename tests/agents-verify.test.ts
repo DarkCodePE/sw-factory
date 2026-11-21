@@ -138,6 +138,7 @@ test('factoryHome respeta FABRICA_HOME', () => {
 test('loadAgentVersions lee versiones registradas de agents.json', () => {
   expect(loadAgentVersions(scope.home)).toEqual({});
   mkdirSync(scope.home, { recursive: true });
+  mkdirSync(scope.home, { recursive: true });
   writeFileSync(join(scope.home, 'agents.json'), JSON.stringify({
     agentBinaries: { claude: 'a'.repeat(64) },
     agentVersions: {
@@ -236,5 +237,32 @@ exit 0
   expect(output).not.toContain('ghp_secreto_operador_canario');
   expect(output).not.toContain('sk-ant-secreto-operador');
 });
+
+test('T106-H12: binaryVersion neutraliza controles Unicode/bidi y loadAgentVersions ignora claves desconocidas', () => {
+  stubBin('claude', `#!/bin/sh
+if [ "$1" = "--version" ]; then
+  echo "v1.0\u202Erev\u200B"
+  exit 0
+fi
+exit 0
+`);
+  const v = binaryVersion(join(scope.binDir, 'claude'));
+  expect(v).toBe('v1.0rev');
+  expect(v).not.toContain('\u202E');
+  expect(v).not.toContain('\u200B');
+
+  mkdirSync(scope.home, { recursive: true });
+  writeFileSync(join(scope.home, 'agents.json'), JSON.stringify({
+    agentBinaries: { claude: 'a'.repeat(64) },
+    agentVersions: {
+      claude: '2.5.0',
+      clave_desconocida_xyz: 'invalido',
+    },
+  }));
+  const versions = loadAgentVersions(scope.home);
+  expect(versions.clave_desconocida_xyz).toBeUndefined();
+  expect(Object.keys(versions)).toEqual(['claude']);
+});
+
 
 

@@ -698,6 +698,31 @@ exit 0
   expect(agyRow).toContain('<td>No medido</td>');
 });
 
+test('T106-H12: neutraliza controles Unicode/bidi (\\p{Cf}) y loadAgentVersions filtra claves desconocidas', async () => {
+  const claudeBin = join(dir, 'claude');
+  writeFileSync(claudeBin, '#!/bin/sh\nexit 0\n');
+  chmodSync(claudeBin, 0o755);
+
+  writeFileSync(join(dir, 'agents.json'), JSON.stringify({
+    agentBinaries: { claude: sha256Of(claudeBin) },
+    agentVersions: {
+      claude: 'v1.0\u202Erev\u202Cotro\u200B', // U+202E (RTO), U+202C (PDF), U+200B (ZWSP)
+      clave_invalida_no_pinneada: 'hack',
+    },
+  }));
+
+  new Store(join(dir, 'fabrica.db')).close();
+  start();
+
+  const html = await page('/config');
+  expect(html).not.toContain('\u202E');
+  expect(html).not.toContain('\u202C');
+  expect(html).not.toContain('\u200B');
+  expect(html).not.toContain('clave_invalida_no_pinneada');
+  expect(html).toContain('v1.0revotro');
+});
+
+
 
 
 

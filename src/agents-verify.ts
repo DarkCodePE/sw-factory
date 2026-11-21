@@ -87,7 +87,7 @@ export function binaryVersion(path: string): string | null {
       const out = (proc.stdout.toString() || proc.stderr.toString()).trim();
       const firstLine = out.split('\n')[0]?.trim();
       if (firstLine) {
-        const cleaned = firstLine.replace(/[\x00-\x1f\x7f]/g, '').trim();
+        const cleaned = firstLine.replace(/[\x00-\x1f\x7f\p{Cf}]/gu, '').trim();
         return cleaned ? cleaned.slice(0, 40) : null;
       }
     }

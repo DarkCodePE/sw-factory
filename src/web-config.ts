@@ -143,7 +143,7 @@ function adapters(stateDir: string, escape: Escape): string {
       const raw = typeof rec === 'string' ? rec : rec?.version;
       const recSha = typeof rec === 'object' && rec !== null ? rec.sha256 : undefined;
       if (raw && (!recSha || recSha === status.pin)) {
-        const cleaned = raw.replace(/[\x00-\x1f\x7f]/g, '').trim();
+        const cleaned = raw.replace(/[\x00-\x1f\x7f\p{Cf}]/gu, '').trim();
         version = cleaned ? cleaned.slice(0, 40) : 'No medido';
       } else {
         version = 'No medido';
