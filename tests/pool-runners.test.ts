@@ -1,11 +1,11 @@
 // T74f: cableado de los runners en el pool. El transporte se inyecta hacia el runner falso (tests/helpers/fake-runner.ts).
 import { afterEach, beforeEach, expect, test } from 'bun:test';
 import { randomBytes } from 'node:crypto';
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
 import { processActivity, runPool, type PoolOptions } from '../src/pool.ts';
-import { defaultProfile, ROLES, saveProfile, validateProfile, type Profile } from '../src/profile.ts';
+import { defaultProfile, roleRunner, ROLES, saveProfile, validateProfile, type Profile } from '../src/profile.ts';
 import type { Transport } from '../src/runners/client.ts';
 import { Store } from '../src/store.ts';
 import { runDirectory } from '../src/manifest.ts';
@@ -354,4 +354,26 @@ test('T102-H2/P7: --live permite SSH del workstream si todos los roles efectivos
   expect(store.listActivities({ changeId: change.id }).map(a => [a.status, a.runner])).toEqual([
     ['completed', 'casa'], ['completed', 'casa'],
   ]);
+});
+
+test('T101-H3/P9: un perfil ilegible se diagnostica al reclamar antes de comprobar el pin del fallback', async () => {
+  mkdirSync(join(dir, 'bin')); mkdirSync(join(dir, 'home'));
+  const binary = join(dir, 'bin', 'claude');
+  writeFileSync(binary, '#!/bin/sh\nexit 77\n');
+  chmodSync(binary, 0o755);
+  writeFileSync(join(dir, 'home', 'agents.json'), JSON.stringify({ agentBinaries: { claude: 'a'.repeat(64) } }));
+  const saved = { PATH: process.env.PATH, FABRICA_HOME: process.env.FABRICA_HOME };
+  process.env.PATH = `${join(dir, 'bin')}:${saved.PATH}`;
+  process.env.FABRICA_HOME = join(dir, 'home');
+  try {
+    const ws = workstream({ agent: 'claude' });
+    const change = store.createChange(ws.id, 'x', 'd');
+    store.db.query('UPDATE workstreams SET profile = ? WHERE id = ?').run('c'.repeat(64), ws.id);
+    await runPool(store, opts(ws.id, { runnerTransport: noSession() }));
+    expect(store.listActivities({ changeId: change.id })[0]?.error).toContain('perfil desconocido');
+  } finally { for (const [key, value] of Object.entries(saved)) if (value === undefined) delete process.env[key]; else process.env[key] = value; }
+});
+
+test('T101-H3/F2: el resolver ignora runners en un perfil histórico incluso en memoria', () => {
+  expect(roleRunner({ ...defaultProfile(), roles: { qa: { runner: 'casa' } } }, 'qa')).toBeUndefined();
 });

@@ -345,3 +345,21 @@ test('T102: la CLI puede asignar el mismo perfil por digest y avisa del runner S
   expect(cli.stdout.toString()).toContain('sale de tu máquina hacia torre');
   expect(store.getWorkstream(wsId).profile).toBe(digest);
 });
+
+test('T101-H3/S12: asignar un perfil con runner fuera del inventario falla cerrado', async () => {
+  const digest = saveProfile(dir, { ...defaultProfile(), schemaVersion: 2, roles: { qa: { runner: 'ausente' } } }).digest;
+  await login();
+  expect((await post('/perfiles/asignar', { digest, previous: DEFAULT_DIGEST, confirm: 'yes' })).status).toBe(400);
+  expect(store.getWorkstream(wsId).profile).toBeNull();
+});
+
+test('T101-H3/V2: la celda efectiva usa el runner del rol, aunque el workstream use otro', async () => {
+  store.createRunner({ name: 'casa', kind: 'local' });
+  store.createRunner({ name: 'torre', kind: 'ssh', target: 'alias' });
+  store.setWorkstreamRunner(wsId, 'casa');
+  const digest = saveProfile(dir, { ...defaultProfile(), schemaVersion: 2, roles: { qa: { runner: 'torre' } } }).digest;
+  store.assignProfile(wsId, digest, DEFAULT_DIGEST);
+  const page = await html('/perfiles');
+  expect(page).toMatch(/<th scope="row">QA<\/th>[^\n]*<td><code>torre<\/code><\/td><td>torre \(SSH\) · Rol del perfil<\/td><\/tr>/);
+  expect(page).toMatch(/<th scope="row">Investigación<\/th>[^\n]*<td>casa \(Local\) · Workstream<\/td><\/tr>/);
+});

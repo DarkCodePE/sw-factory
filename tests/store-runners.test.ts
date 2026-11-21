@@ -3,6 +3,7 @@ import { Database } from 'bun:sqlite';
 import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
+import { DEFAULT_DIGEST, defaultProfile, saveProfile } from '../src/profile.ts';
 import { runnerRevision, Store, StoreError } from '../src/store.ts';
 
 let dir: string;
@@ -194,4 +195,72 @@ test('T85-H2/T101: la selección compara la revisión del runner, incluido su de
   expect(code(pick(runnerRevision(original)))).toStartWith('conflict');
   expect(store.getWorkstream(w.id).runner).toBeNull();
   expect(pick(runnerRevision(updated))().runner).toBe('casa');
+});
+
+test('T101-H3/S2: reservar con el lease de otro worker da conflicto', () => {
+  const w = store.createWorkstream({ slug: 'lease', goal: 'g', repo: dir, requireChangeApproval: false });
+  store.setWorkstreamState(w.id, 'active');
+  store.createChange(w.id, 'x', 'd');
+  const a = store.claimActivity(w.id, 'titular')!;
+  store.createRunner({ name: 'casa', kind: 'local' });
+  expect(code(() => store.reserveActivityRunner(a.id, 'otro', 'casa'))).toStartWith('conflict:');
+  expect(store.getActivity(a.id).runner).toBeNull();
+});
+
+test('T101-H3/S3: reservar un runner pausado no registra procedencia de lanzamiento', () => {
+  const w = store.createWorkstream({ slug: 'pausa', goal: 'g', repo: dir, requireChangeApproval: false });
+  store.setWorkstreamState(w.id, 'active');
+  store.createChange(w.id, 'x', 'd');
+  const a = store.claimActivity(w.id, 'titular')!;
+  store.createRunner({ name: 'casa', kind: 'local' });
+  store.setRunnerEnabled('casa', false);
+  expect(store.reserveActivityRunner(a.id, 'titular', 'casa').enabled).toBe(false);
+  expect(store.getActivity(a.id).runner).toBeNull();
+});
+
+test('T101-H3/S15: un alta no reutiliza el nombre de un runner referenciado por un perfil vigente', () => {
+  const w = ws();
+  store.createRunner({ name: 'casa', kind: 'local' });
+  const digest = saveProfile(dir, { ...defaultProfile(), schemaVersion: 2, roles: { qa: { runner: 'casa' } } }).digest;
+  store.assignProfile(w.id, digest, DEFAULT_DIGEST);
+  store.db.query("DELETE FROM runners WHERE name = 'casa'").run();
+  expect(code(() => store.createRunner({ name: 'casa', kind: 'ssh', target: 'alias' }))).toStartWith('conflict:');
+  expect(store.findRunner('casa')).toBeNull();
+});
+
+test('T101-H3/S19: modificar una opción invalida la revisión de la selección', () => {
+  const w = ws();
+  const original = store.createRunner({ name: 'casa', kind: 'local' });
+  store.updateRunner('casa', { options: { confine: true } });
+  expect(code(() => store.setWorkstreamRunner(w.id, 'casa', {
+    expected: null, confirmSsh: false, seen: runnerRevision(original),
+  }))).toMatch(/^conflict: .*cambió/);
+  expect(store.getWorkstream(w.id).runner).toBeNull();
+});
+
+test('T101-H3/S20: pausar invalida la revisión antes de comprobar disponibilidad', () => {
+  const w = ws();
+  const original = store.createRunner({ name: 'casa', kind: 'local' });
+  store.setRunnerEnabled('casa', false);
+  expect(code(() => store.setWorkstreamRunner(w.id, 'casa', {
+    expected: null, confirmSsh: false, seen: runnerRevision(original),
+  }))).toMatch(/^conflict: .*cambió/);
+  expect(store.getWorkstream(w.id).runner).toBeNull();
+});
+
+test('T101-H3/C1: la CLI identifica el tipo fijo al intentar editarlo', () => {
+  store.createRunner({ name: 'torre', kind: 'ssh', target: 'alias' });
+  const update = Bun.spawnSync([process.execPath, 'src/cli.ts', 'runner', 'update', 'torre', '--local'], {
+    cwd: join(import.meta.dir, '..'), env: { ...process.env, FABRICA_HOME: dir },
+  });
+  expect(update.exitCode).toBe(1);
+  expect(update.stderr.toString()).toContain('el tipo del runner es fijo');
+  expect(store.getRunner('torre')).toMatchObject({ kind: 'ssh', target: 'alias' });
+});
+
+test('T101-H3/S6: el Store rechaza eliminar con una revisión vieja', () => {
+  const runner = store.createRunner({ name: 'casa', kind: 'local' });
+  store.updateRunner('casa', { options: { confine: true } });
+  expect(code(() => store.deleteRunner('casa', runnerRevision(runner)))).toMatch(/^conflict: .*cambió/);
+  expect(store.getRunner('casa').options).toEqual({ confine: true });
 });

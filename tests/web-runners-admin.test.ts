@@ -487,3 +487,59 @@ test('T101-H1: un runner asignado conserva confinamiento y límite, y los ajuste
   expect((await post(editRunnerPath('casa'), { revision: local })).status).toBe(303);
   expect(store.getRunner('casa').options).toEqual({});
 });
+
+test('T101-H3/W4: una revisión obsoleta no autoriza la baja', async () => {
+  boot();
+  await login();
+  const revision = await revisionFrom('torre2');
+  store.updateRunner('torre2', { target: 'alias-distinto' });
+  expect((await post(deleteRunnerPath('torre2'), { revision, confirm: 'yes' })).status).toBe(409);
+  expect(store.getRunner('torre2').target).toBe('alias-distinto');
+});
+
+test('T101-H3/S8: una edición no cambia la configuración de un turno vivo ya desasignado', async () => {
+  boot();
+  await login();
+  store.setWorkstreamRunner(workstream, 'casa');
+  store.setWorkstreamState(workstream, 'active');
+  store.createChange(workstream, 'change', 'descripción');
+  const a = store.claimActivity(workstream, 'worker')!;
+  store.reserveActivityRunner(a.id, 'worker', 'casa');
+  store.setWorkstreamRunner(workstream, null);
+  const revision = await revisionFrom('casa');
+  expect((await post(editRunnerPath('casa'), { revision, confine: 'yes' })).status).toBe(409);
+  expect(store.getRunner('casa').options).toEqual({});
+});
+
+test('T101-H3/S10: edición SSH valida alias y límite sin guardar campos de credencial', async () => {
+  boot();
+  await login();
+  const original = store.getRunner('torre2');
+  const revision = await revisionFrom('torre2');
+  const invalid: Record<string, string>[] = [
+    { target: 'usuario:clave@host' }, { target: 'alias', maxBundleMb: '1.5' },
+    { target: 'alias', confine: 'yes' }, { target: 'alias', password: 'valor-sintético' },
+  ];
+  for (const fields of invalid) {
+    expect((await post(editRunnerPath('torre2'), { revision, ...fields })).status).toBe(400);
+    expect(store.getRunner('torre2')).toEqual(original);
+  }
+});
+
+test('T101-H3/W2: edición y baja necesitan una revisión válida', async () => {
+  boot();
+  await login();
+  for (const revision of ['', 'incorrecta']) {
+    expect((await post(editRunnerPath('casa'), { revision, confine: 'yes' })).status).toBe(400);
+    expect((await post(deleteRunnerPath('casa'), { revision, confirm: 'yes' })).status).toBe(400);
+  }
+  expect(store.getRunner('casa').options).toEqual({});
+});
+
+test('T101-H3/W3: la web distingue nombre inválido de nombre válido ausente', async () => {
+  boot();
+  await login();
+  const revision = await revisionFrom('casa');
+  expect((await post(editRunnerPath('Casa'), { revision })).status).toBe(400);
+  expect((await post(editRunnerPath('ausente'), { revision })).status).toBe(404);
+});
