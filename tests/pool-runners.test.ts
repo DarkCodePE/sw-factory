@@ -1,5 +1,5 @@
 // T74f: cableado de los runners en el pool. El transporte se inyecta hacia el runner falso (tests/helpers/fake-runner.ts).
-import { afterEach, beforeEach, expect, test } from 'bun:test';
+import { afterEach, beforeEach, expect, spyOn, test } from 'bun:test';
 import { randomBytes } from 'node:crypto';
 import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
@@ -376,4 +376,28 @@ test('T101-H3/P9: un perfil ilegible se diagnostica al reclamar antes de comprob
 
 test('T101-H3/F2: el resolver ignora runners en un perfil histórico incluso en memoria', () => {
   expect(roleRunner({ ...defaultProfile(), roles: { qa: { runner: 'casa' } } }, 'qa')).toBeUndefined();
+});
+
+test('T102-H5: una pausa después de la reserva y durante la preparación evita abrir SSH', async () => {
+  const ws = workstream();
+  store.setWorkstreamRunner(ws.id, 'torre');
+  const change = store.createChange(ws.id, 'x', 'd');
+  const a = store.claimActivity(ws.id, 'worker')!;
+  const other = new Store(store.dbPath);
+  const provenance = store.setActivityProvenance.bind(store);
+  const pause = spyOn(store, 'setActivityProvenance').mockImplementation((id, digest, sha, run) => {
+    provenance(id, digest, sha, run);
+    if (run?.runner === 'torre') other.setRunnerEnabled('torre', false);
+  });
+  let sessions = 0;
+  try {
+    await processActivity(store, a, 'worker', opts(ws.id, { runnerTransport: r => {
+      sessions++;
+      return fake('auto')(r);
+    } }));
+    expect(store.getRunner('torre').enabled).toBe(false);
+    expect(sessions).toBe(0);
+    expect(store.getActivity(a.id)).toMatchObject({ status: 'blocked', error: 'RUNNER_DISABLED: torre' });
+    expect(store.listEvents(ws.id, undefined, change.id).some(e => String(e.message).includes('encargo enviado'))).toBe(false);
+  } finally { pause.mockRestore(); other.close(); }
 });

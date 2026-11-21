@@ -452,6 +452,12 @@ export async function processActivity(
         const head = gitEvidence(path, 'rev-parse', 'HEAD');
         if (!head) throw new Error('no se pudo leer HEAD del worktree');
         const attempt = a.retryCount + 1, jobId = `${a.id}-${attempt}`;
+        // La reserva protege la configuración. Una pausa todavía puede llegar mientras se prepara el turno.
+        const current = store.findRunner(remote.name);
+        if (!current?.enabled) {
+          store.blockActivity(a.id, workerId, `${current ? 'RUNNER_DISABLED' : 'RUNNER_NOT_FOUND'}: ${remote.name}`);
+          return;
+        }
         store.event(ws.id, 'info', `encargo enviado al runner ${remote.name} (${jobId})`, change.id, a.id);
         try {
           const done = await runRemoteAgent({ name: remote.name, target: remote.target! }, {
