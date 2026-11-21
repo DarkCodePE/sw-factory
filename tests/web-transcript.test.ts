@@ -26,6 +26,7 @@ const stream = [
 let dir: string, store: Store, server: ReturnType<typeof startWeb>, change: string, activity: string, ws: string, run: string;
 const get = (path: string) => fetch(`http://127.0.0.1:${server.port}${path}`);
 const activityPage = (query = '') => get(`/activities/${activity}${query}`);
+const onlyTranscript = (html: string) => html.match(/<section class="transcript">[\s\S]*?<\/section>/)?.[0] ?? '';
 const turnPage = (id = change) => `/changes/${id}/turns/turno/transcript`;
 
 beforeEach(() => {
@@ -47,17 +48,17 @@ afterEach(() => { server.stop(true); store.close(); rmSync(dir, { recursive: tru
 
 test('T99: pasos de Claude plegables y filtros independientes sin JavaScript', async () => {
   writeFileSync(join(run, `${activity}.log`), stream);
-  const base = await (await activityPage()).text();
+  const base = onlyTranscript(await (await activityPage()).text());
   expect(base).toContain('<h2>Transcript</h2>');
   expect(base).toContain('name="pensamiento"');
   expect(base).toContain('name="herramientas"');
   expect(base).toMatch(/<details[^>]*><summary>Mensaje del agente<\/summary>/);
   expect(base).toContain('&lt;script&gt;alert(1)&lt;/script&gt;');
   for (const text of ['Pensamiento único', 'Resultado único', 'Llamada a herramienta']) expect(base).not.toContain(text);
-  const thoughts = await (await activityPage('?pensamiento=1')).text();
+  const thoughts = onlyTranscript(await (await activityPage('?pensamiento=1')).text());
   expect(thoughts).toContain('Pensamiento único');
   expect(thoughts).not.toContain('Resultado único');
-  const tools = await (await activityPage('?herramientas=1')).text();
+  const tools = onlyTranscript(await (await activityPage('?herramientas=1')).text());
   expect(tools).toContain('Llamada a herramienta');
   expect(tools).toContain('Resultado único');
   expect(tools).not.toContain('Pensamiento único');
@@ -66,7 +67,8 @@ test('T99: pasos de Claude plegables y filtros independientes sin JavaScript', a
   expect(all).toContain('Resultado único');
   expect(all).toContain('&lt;archivo&gt;');
   expect(all).toContain('[REDACTED]');
-  for (const unsafe of ['<script>alert', token, toolValue, 'metadato-no-es-un-paso', 'Resumen duplicado'])
+  for (const summary of ['metadato-no-es-un-paso', 'Resumen duplicado']) expect(onlyTranscript(all)).not.toContain(summary);
+  for (const unsafe of ['<script>alert', token, toolValue])
     expect(all).not.toContain(unsafe);
 });
 
@@ -156,3 +158,17 @@ test.each(['línea final cortada', 'aviso entre frames', 'mensaje con forma inv�
     expect(raw).toContain('Diagnóstico después del fallo');
   },
 );
+
+test('T99-H3: el log plegado conserva stderr y el transcript incluye los turnos posteriores', async () => {
+  const turn = (label: string) => [
+    { type: 'system', subtype: 'init' },
+    { type: 'assistant', message: { content: [{ type: 'text', text: label }] } },
+    { type: 'result', result: label },
+  ].map(row => JSON.stringify(row)).join('\n');
+  writeFileSync(join(run, `${activity}.log`), turn('Turno uno') + '\n[stderr]\nMotivo en stderr\n' + turn('Turno dos'));
+  const page = await (await activityPage()).text();
+  expect(onlyTranscript(page)).toContain('Turno uno');
+  expect(onlyTranscript(page)).toContain('Turno dos');
+  expect(onlyTranscript(page)).not.toContain('Transcript incompleto');
+  expect(page).toMatch(/<h2>Log<\/h2><details><summary>Ver log de texto<\/summary>[\s\S]*Motivo en stderr/);
+});

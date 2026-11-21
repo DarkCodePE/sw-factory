@@ -92,23 +92,25 @@ function redactLogValue(value: unknown, depth = 0): unknown {
 }
 
 function readClaudeEvidence(text: string, truncated: boolean): EvidenceText {
-  const marker = '\n[stderr]\n';
-  const at = text.indexOf(marker);
-  const end = at >= 0 ? at : truncated ? Math.max(0, text.lastIndexOf('\n')) : text.length;
+  const lines = text.split('\n');
   const frames: ClaudeFrame[] = [];
   const rendered: string[] = [];
   let plain: string[] = [];
   let incomplete = truncated;
+  let stderr = false;
   const flushPlain = () => {
     if (!plain.length) return;
     rendered.push(redactEvidenceText(plain.join('\n')));
     plain = [];
   };
-  for (const line of text.slice(0, end).split('\n')) {
-    if (line.trim()) {
+  for (const [index, line] of lines.entries()) {
+    if (line.trimEnd() === '[stderr]') {
+      stderr = true;
+    } else if (line.trim() && !(truncated && index === lines.length - 1)) {
       try {
         const value = JSON.parse(line) as ClaudeFrame | null;
-        if (value && typeof value.type === 'string') {
+        if (value && typeof value.type === 'string' && (!stderr || (value.type === 'system' && value.subtype === 'init'))) {
+          stderr = false;
           const frame = redactLogValue(value) as ClaudeFrame;
           flushPlain();
           frames.push(frame);
@@ -116,12 +118,12 @@ function readClaudeEvidence(text: string, truncated: boolean): EvidenceText {
           continue;
         }
       } catch { /* Conserva la línea de diagnóstico aunque no se pueda interpretar. */ }
-      incomplete = true;
+      if (!stderr) incomplete = true;
     }
     plain.push(line);
   }
   flushPlain();
-  return { text: rendered.join('\n') + redactEvidenceText(text.slice(end)), truncated, claudeFrames: frames, claudeIncomplete: incomplete };
+  return { text: rendered.join('\n'), truncated, claudeFrames: frames, claudeIncomplete: incomplete };
 }
 
 // Valor: entre comillas con escapes, comilla sin cierre (corte de evidencia o valor enorme: hasta fin de línea), o hasta el siguiente separador.

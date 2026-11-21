@@ -53,8 +53,8 @@ export function transcriptSection(log: EvidenceText | null, url: URL, ui: Ui, un
   const heading = '<h2>Transcript</h2>';
   const partial = log?.claudeIncomplete || incomplete;
   const warning = partial ? '<p class="notice">Transcript incompleto.</p>' : '';
-  const fallback = partial || !steps.length ? logSection(log, ui, unavailable) : '';
-  if (!steps.length) return `<section>${heading}${notMeasured}${warning}</section>${fallback}`;
+  const rawLog = logSection(log, ui, unavailable, !!steps.length && !partial);
+  if (!steps.length) return `<section>${heading}${notMeasured}${warning}</section>${rawLog}`;
   const thinking = url.searchParams.get('pensamiento') === '1';
   const tools = url.searchParams.get('herramientas') === '1';
   const ws = url.searchParams.get('ws');
@@ -67,7 +67,7 @@ export function transcriptSection(log: EvidenceText | null, url: URL, ui: Ui, un
       <button type="submit">Aplicar filtros</button>
     </form>
     ${visible.length ? `<ol>${visible.map(step => `<li><details><summary>${ui.escape(step.title)}</summary>${step.text ? `<pre tabindex="0">${ui.escape(step.text)}</pre>` : notMeasured}</details></li>`).join('')}</ol>`
-      : '<p class="muted">Activa un filtro para ver los pasos guardados.</p>'}</section>${fallback}`;
+      : '<p class="muted">Activa un filtro para ver los pasos guardados.</p>'}</section>${rawLog}`;
 }
 
 export function activityLogSection(stateDir: string, changeId: string, activityId: string, url: URL, ui: Ui): string {
@@ -78,8 +78,8 @@ export function activityLogSection(stateDir: string, changeId: string, activityI
   return transcriptSection(log, url, ui, unavailable);
 }
 
-function logSection(log: EvidenceText | null, ui: Ui, unavailable: string): string {
+function logSection(log: EvidenceText | null, ui: Ui, unavailable: string, collapsed: boolean): string {
   const body = log ? `${log.truncated ? '<p class="notice">Archivo truncado: se muestran los primeros 256 KiB.</p>' : ''}<pre tabindex="0">${ui.escape(log.text)}</pre>`
     : `<p class="empty">${unavailable}</p>`;
-  return `<section><h2>Log</h2>${body}</section>`;
+  return `<section><h2>Log</h2>${collapsed ? `<details><summary>Ver log de texto</summary>${body}</details>` : body}</section>`;
 }
