@@ -232,3 +232,33 @@ test('T99-H8: el valor a profundidad excesiva queda redactado', async () => {
   expect(raw).toContain('[REDACTED]');
   expect(raw).not.toContain('contenido profundo');
 });
+
+test.each(['recorte a 256 KiB', 'línea inválida', 'JSON sin tipo', 'JSON en stderr'])(
+  'T99-H9: %s redacta el contenido decodificado antes de mostrarlo', async (scenario) => {
+    const secrets = ['ghp_' + 'aB12'.repeat(9), 'sk-ant-' + 'z9'.repeat(18),
+      'canario-json', 'canario-env', 'canario-yaml'];
+    const content = ['Texto visible <img src=x>', secrets[0], secrets[1],
+      '{"password": "' + secrets[2] + '"}', 'DB_PASSWORD="' + secrets[3] + '"',
+      'client_secret: "' + secrets[4] + '"', 'Final visible'].join('\n');
+    const frame = JSON.stringify({ type: 'user', message: { content: [{ type: 'tool_result', content }] } })
+      .replace('ghp_', '\\u0067hp_');
+    const init = '{"type":"system","subtype":"init"}\n';
+    const log = scenario === 'recorte a 256 KiB' ? init + frame.slice(0, -5) + (' relleno').repeat(EVIDENCE_LIMIT / 2)
+      : scenario === 'línea inválida' ? init + frame.slice(0, -5) + '\n'
+      : scenario === 'JSON sin tipo' ? init + frame.replace('"type":"user",', '') + '\n'
+      : init + '[stderr]\n' + frame + '\n';
+    writeFileSync(join(run, activity + '.log'), log);
+    writeFileSync(join(run, activity + '.t-turno.log'), log);
+    for (const response of [await activityPage(), await get(turnPage()), await get('/changes/' + change + '/turns/turno/log')]) {
+      expect(response.status).toBe(200);
+      const body = await response.text();
+      expect(secrets.filter(secret => body.includes(secret) || body.includes(secret.replace('ghp_', '\\u0067hp_')))).toEqual([]);
+      expect(body).toContain('Final visible');
+      expect(body).toContain('[REDACTED]');
+      if (response.headers.get('content-type')?.includes('text/html')) {
+        expect(body).toContain('Texto visible &lt;img src=x&gt;');
+        expect(body).not.toContain('<img src=x>');
+      }
+    }
+  },
+);

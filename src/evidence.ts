@@ -91,36 +91,51 @@ function redactLogValue(value: unknown, depth = 0): unknown {
   ]));
 }
 
+// Un fragmento puede acabar dentro de una cadena. Decodifica solo los escapes completos.
+function decodeLogFragment(line: string): string {
+  return line.replace(/\\(?:["\\/bfnrt]|u[0-9a-fA-F]{4})/g, escape => JSON.parse('"' + escape + '"') as string);
+}
+
 function readClaudeEvidence(text: string, truncated: boolean): EvidenceText {
   const lines = text.split('\n');
   const frames: ClaudeFrame[] = [];
   const rendered: string[] = [];
-  let plain: string[] = [];
+  let plain: { text: string; decoded?: string }[] = [];
   let incomplete = truncated;
   let stderr = false;
   const flushPlain = () => {
     if (!plain.length) return;
-    rendered.push(redactEvidenceText(plain.join('\n')));
+    const decoded = plain.map(line => line.decoded ?? line.text).join('\n');
+    const redacted = redactEvidenceText(decoded);
+    rendered.push(redacted === decoded ? redactEvidenceText(plain.map(line => line.text).join('\n')) : redacted);
     plain = [];
   };
   for (const [index, line] of lines.entries()) {
+    let fallback: (typeof plain)[number] = { text: line };
     if (line.trimEnd() === '[stderr]') {
       stderr = true;
-    } else if (line.trim() && !(truncated && index === lines.length - 1)) {
-      try {
-        const value = JSON.parse(line) as ClaudeFrame | null;
-        if (value && typeof value.type === 'string' && (!stderr || (value.type === 'system' && value.subtype === 'init'))) {
-          stderr = false;
-          const frame = redactLogValue(value) as ClaudeFrame;
-          flushPlain();
-          frames.push(frame);
-          rendered.push(JSON.stringify(frame));
-          continue;
+    } else if (line.trim()) {
+      if (truncated && index === lines.length - 1) {
+        fallback.decoded = decodeLogFragment(line);
+      } else {
+        try {
+          const value = JSON.parse(line) as ClaudeFrame | null;
+          const redacted = redactLogValue(value);
+          if (value && typeof value.type === 'string' && (!stderr || (value.type === 'system' && value.subtype === 'init'))) {
+            stderr = false;
+            flushPlain();
+            frames.push(redacted as ClaudeFrame);
+            rendered.push(JSON.stringify(redacted));
+            continue;
+          }
+          fallback = { text: JSON.stringify(redacted) };
+        } catch {
+          fallback.decoded = decodeLogFragment(line);
         }
-      } catch { /* Conserva la línea de diagnóstico aunque no se pueda interpretar. */ }
+      }
       if (!stderr) incomplete = true;
     }
-    plain.push(line);
+    plain.push(fallback);
   }
   flushPlain();
   return { text: rendered.join('\n'), truncated, claudeFrames: frames, claudeIncomplete: incomplete };
