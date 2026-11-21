@@ -3,6 +3,7 @@ import { randomUUID } from 'node:crypto';
 import { mkdirSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { Store } from '../../src/store.ts';
+import { ensureStateDir } from '../../src/state-dir.ts';
 import { AdmissionDb } from '../../src/admission/db.ts';
 import { ensureSchema, suiteDigest, type Suite } from '../../src/improve.ts';
 import { defaultProfile, saveProfile, type Profile } from '../../src/profile.ts';
@@ -39,7 +40,7 @@ const iso = (hours: number) => new Date(Date.now() - hours * 3_600_000).toISOStr
 
 export function sembrar(root: string): Semilla {
   const stateDir = join(root, 'state');
-  mkdirSync(stateDir, { recursive: true });
+  ensureStateDir(stateDir); // 0700 como en producción: con 0755 el adjunto se rechaza (T96)
   const repos = Object.fromEntries(['plataforma', 'canal', 'pool', 'archivo', 'nuevo'].map(n => [n, crearRepo(join(root, 'repos', n))]));
   const s = new Store(join(stateDir, 'fabrica.db'));
   new AdmissionDb(s); // crea las tablas adm_* (preguntas, turnos)

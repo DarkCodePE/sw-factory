@@ -379,8 +379,7 @@ async function recorrido(login: string) {
     visita('/config/runners', 'Runners', 'runners');
     visita('/perfiles?ws=plataforma', 'Resolución sin override de CLI', 'roles-perfil');
     abrir(`/changes/${id('nota')}`); const selector = ab('get', 'count', 'input[type=file]') === '1';
-    // El estado del e2e vive bajo el repo (.e2e): con él dentro de un montaje escribible el adjunto se rechaza por diseño (T96) y la página lo dice.
-    assert(selector || paginaTexto().includes('Mientras tanto puedes guardar una nota de texto'), 'el formulario de nota ofrece el selector de adjunto o explica por qué no'); foto('adjunto-formulario');
+    eq(selector, true, 'el formulario de nota ofrece el selector de adjunto (estado 0700)'); foto('adjunto-formulario');
   });
 
   await flujo('pool fake: el change triado avanza y la web lo refleja', async () => {
