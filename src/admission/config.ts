@@ -5,9 +5,14 @@ import { lstatSync, readFileSync, renameSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { validateRepo } from '../connectors/github.ts';
 import { ensureStateDir } from '../state-dir.ts';
+import type { Store } from '../store.ts';
 
 export const RESIDENT_CONFIG = 'resident.json';
 export const INTERVAL_MAX = 86_400;
+/** Recibe el mensaje de auditoría; los eventos son por workstream, así que quien llama decide dónde van. */
+export type Audit = (message: string) => void;
+/** El gate de admisión es global: el cambio se anota en todos los workstreams. */
+export const auditAll = (store: Pick<Store, 'listWorkstreams' | 'event'>): Audit => message => { for (const w of store.listWorkstreams()) store.event(w.id, 'info', message); };
 export type ResidentConfig = { repo?: string; label?: string; intervalSec?: number; mode?: 'off' | 'observe'; updatedAt?: string; updatedBy?: string };
 const KEYS = ['repo', 'label', 'intervalSec', 'mode', 'updatedAt', 'updatedBy'];
 const LABEL = /^[A-Za-z0-9][A-Za-z0-9 ._:/-]{0,49}$/;
@@ -48,12 +53,17 @@ export function loadResidentConfig(stateDir: string): ResidentConfig {
 }
 
 /** Fusiona los campos dados con lo guardado y escribe de forma atómica (0600). Sin bloqueo: un único dueño y el último guardado gana. */
-export function saveResidentConfig(stateDir: string, changes: ResidentConfig, actor: string, now = new Date()): ResidentConfig {
-  const next: ResidentConfig = { ...loadResidentConfig(stateDir), ...checkResidentConfig(changes), updatedAt: now.toISOString(), updatedBy: actor };
+export function saveResidentConfig(stateDir: string, changes: ResidentConfig, actor: string, audit?: Audit, now = new Date()): ResidentConfig {
+  const prev = loadResidentConfig(stateDir);
+  const next: ResidentConfig = { ...prev, ...checkResidentConfig(changes), updatedAt: now.toISOString(), updatedBy: actor };
   ensureStateDir(stateDir);
   const path = join(stateDir, RESIDENT_CONFIG), tmp = `${path}.${process.pid}.tmp`;
   try { if (lstatSync(path).isSymbolicLink()) throw new Error('resident.json es un enlace simbólico'); } catch (e) { if ((e as NodeJS.ErrnoException).code !== 'ENOENT') throw e; }
   writeFileSync(tmp, JSON.stringify(next, null, 2) + '\n', { mode: 0o600, flag: 'w' });
   renameSync(tmp, path);
+  // T107-H5: la etiqueta y el repo son la entrada del gate de admisión; cada cambio queda con su actor (el del proceso, vía FAB_ACTOR).
+  const diff = (['repo', 'label', 'intervalSec', 'mode'] as const).filter(k => prev[k] !== next[k])
+    .map(k => `${k} ${prev[k] === undefined ? 'sin fijar' : JSON.stringify(prev[k])} -> ${JSON.stringify(next[k])}`);
+  if (diff.length) audit?.(`resident.json: ${diff.join(', ')}`);
   return next;
 }

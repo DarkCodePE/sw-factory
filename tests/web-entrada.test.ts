@@ -65,6 +65,26 @@ test('guarda la configuración del residente en resident.json (0600) y la págin
   expect(loadResidentConfig(dir)).toMatchObject({ repo: 'DarkCodePE/plataforma-starteria', label: 'otra', intervalSec: 120 });
 });
 
+test('T107-H5: cambiar repo, etiqueta, intervalo o modo deja un evento con el actor y los valores anterior y nuevo', async () => {
+  store.createWorkstream({ slug: 'otro', goal: 'g', repo: join(dir, 'repo2') });
+  await post('/config/entrada', { repo: 'a/b', label: 'fab', interval: '60', mode: 'observe' });
+  await post('/config/entrada', { repo: 'a/b', label: 'otra', interval: '', mode: '' });
+  for (const slug of ['prueba', 'otro']) {
+    const e = store.listEvents(slug, 50).map(x => `${x.actor}|${x.message}`);
+    expect(e).toContain('web|resident.json: repo sin fijar -> "a/b", label sin fijar -> "fab", intervalSec sin fijar -> 60, mode sin fijar -> "observe"');
+    expect(e).toContain('web|resident.json: label "fab" -> "otra"');
+  }
+  const before = store.listEvents('prueba', 50).length;
+  await post('/config/entrada', { repo: 'a/b', label: '', interval: '', mode: '' }); // sin cambios: sin evento
+  expect(store.listEvents('prueba', 50).length).toBe(before);
+});
+
+test('fab resident config también deja el evento', async () => {
+  const log = console.log; console.log = () => {};
+  try { expect(await residentMain(['config', '--repo', 'a/b'], store)).toBe(0); } finally { console.log = log; }
+  expect(store.listEvents('prueba', 50).map(x => x.message)).toContain('resident.json: repo sin fijar -> "a/b"');
+});
+
 test('una configuración inválida se rechaza y no escribe nada', async () => {
   for (const bad of [{ repo: 'no es un repo' }, { repo: '../x/y' }, { label: 'x'.repeat(51) }, { label: 'a<b' }, { interval: '0' }, { interval: '86401' }, { interval: '1.5' }, { interval: 'abc' }, { mode: 'auto' }, { mode: 'AUTO' }]) {
     const r = await post('/config/entrada', { repo: '', label: '', interval: '', mode: '', ...bad });

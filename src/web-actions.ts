@@ -25,7 +25,7 @@ import { enqueueBackfill, enqueueManual, ensureSchema, previewBackfill } from '.
 import { archiveWorkstream, createWorkstream, workstreamSettings, workstreamState, wsFields } from './web-ws.ts';
 import { accessInput, setAccess } from './web-access.ts';
 import { JIRA_IMPORT_PATH, JIRA_MESSAGES, residentChanges, residentInput, type jiraImportAction } from './web-entrada.ts';
-import { saveResidentConfig } from './admission/config.ts';
+import { auditAll, saveResidentConfig } from './admission/config.ts';
 import { result as inertPage, RUNNER_CHECK_PATH, type runnerCheckAction } from './web-runner-check.ts';
 
 import { scheduleExpr } from './cron.ts';
@@ -479,9 +479,9 @@ export const ACTIONS: Record<string, Action | CheckAction | WebResponseAction | 
     api: false,
     path: /^\/config\/(entrada)$/,
     input: raw => asInput(() => residentInput(raw)),
-    run: (_store, _id, input, out, actor, stateDir) => {
+    run: (store, _id, input, out, actor, stateDir) => {
       out.destination = '/config';
-      asInput(() => { try { saveResidentConfig(stateDir, residentChanges(input), actor); } catch (e) { throw new StoreError('invalid_input', (e as Error).message); } });
+      asInput(() => { try { saveResidentConfig(stateDir, residentChanges(input), actor, auditAll(store)); } catch (e) { throw new StoreError('invalid_input', (e as Error).message); } });
     },
   },
   'jira/import': { api: false, path: JIRA_IMPORT_PATH, jira: true },

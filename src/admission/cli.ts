@@ -10,7 +10,7 @@ import { DEFAULT_POLICY } from './gate.ts';
 import { AdmissionDb } from './db.ts';
 import { buildReport, formatReport } from './report.ts';
 import { Resident } from './resident.ts';
-import { loadResidentConfig, saveResidentConfig } from './config.ts';
+import { auditAll, loadResidentConfig, saveResidentConfig } from './config.ts';
 
 export async function residentMain(argv: string[], store: Store, deps: { run?: CommandRunner } = {}): Promise<number> {
   try {
@@ -29,7 +29,7 @@ export async function residentMain(argv: string[], store: Store, deps: { run?: C
       if (!store.stateDir) throw new Error('fab resident config necesita una base en disco');
       const set = values.repo !== undefined || values.label !== undefined || values.interval !== undefined || values.mode !== undefined;
       const cfg = set ? saveResidentConfig(store.stateDir, { repo: values.repo, label: values.label, mode: values.mode as 'off' | 'observe' | undefined,
-        intervalSec: values.interval === undefined ? undefined : /^\d+$/.test(values.interval) ? Number(values.interval) : NaN }, process.env.FAB_ACTOR ?? 'cli') : loadResidentConfig(store.stateDir);
+        intervalSec: values.interval === undefined ? undefined : /^\d+$/.test(values.interval) ? Number(values.interval) : NaN }, process.env.FAB_ACTOR ?? 'cli', auditAll(store)) : loadResidentConfig(store.stateDir);
       console.log(JSON.stringify(cfg, null, 2));
       return 0;
     }
