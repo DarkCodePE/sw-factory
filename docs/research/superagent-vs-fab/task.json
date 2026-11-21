@@ -1,5 +1,5 @@
 {
-  "updated": "2026-11-19",
+  "updated": "2026-11-21",
   "context": "Integración superagent → fab. Fase 0: PR #55 (feat/fase0-endurecer). Fase 1: PR #56 (feat/fase1-observe). Ambos apilados sobre PR #49 (feat/t2-corpus). Desde T46: web de fab y réplica de las capacidades de Warp Factories (docs/research/warp-platform/faltantes-fable.md), con fases en el campo phase.",
   "decisions": [
     {
@@ -73,6 +73,12 @@
       "topic": "Decisiones tomadas en los arreglos de la tanda 4 (registro)",
       "decision": "Runners: código de protocolo result_rejected cuando el sellado rechaza el árbol del agente; casa no reintenta (actualizar diseno/T74.md §4.2). Secretos: native y agy conservan siempre FABRICA_LLM_API_KEY, FABRICA_LLM_BASE_URL, FABRICA_LLM_MODEL y FABRICA_HOME en modo declarado. API (D11 ampliada): una clave decide no puede crear ni activar workstreams (ACTIONS api:false); sí ajustar y archivar. T72d H1: aplicada la opción 3 (test estructural de llamadores de confineAgent: agents.ts y runners/serve.ts); la opción 1 queda como T98. Web: cancelar desde la web cubre failed, blocked y quarantined como fab reject.",
       "date": "2026-11-20"
+    },
+    {
+      "id": "D13",
+      "topic": "Decisiones de la ronda T77–T98",
+      "date": "2026-11-21",
+      "decision": "T90 último uso: opción A (en memoria, por arranque). T84: canal A (toda config nueva debe ser confinable) y trabajo vivo A (rechazo bajo el lock). T96: destinos A (solo turno local confinado) y caída A (confirmación por intento). T91-H1: opción A (avisar qué fuente manda). INT-O1: opción B (verbos de CLI fab ws agent, fab automation update, fab note --file). Fable solo valida; implementan Codex, Sonnet y AGY."
     }
   ],
   "tasks": [
@@ -578,9 +584,9 @@
     {
       "id": "T38",
       "title": "Limpieza: worktrees de ramas fusionadas y archivos 06/07 sin seguimiento en el repo principal",
-      "status": "in_progress",
+      "status": "done",
       "depends_on": [],
-      "note": "2026-11-11: borrados 20 worktrees fusionados y limpios y cerradas las pestañas de Herdr de agentes terminados. Quedan: worktrees con cambios (t2, t2b, tui, ollama) para revisar a mano; fase0, fase1, docsint y r3 ya fusionados; los 06/07 sin seguimiento en el repo principal."
+      "note": "2026-11-11: borrados 20 worktrees fusionados y limpios y cerradas las pestañas de Herdr de agentes terminados. Quedan: worktrees con cambios (t2, t2b, tui, ollama) para revisar a mano; fase0, fase1, docsint y r3 ya fusionados; los 06/07 sin seguimiento en el repo principal. 2026-11-21: borrados 77 worktrees limpios de ramas fusionadas; ramas conservadas."
     },
     {
       "id": "T39",
@@ -1215,8 +1221,8 @@
     },
     {
       "phase": "web",
-      "status": "pending",
-      "pr": null,
+      "status": "done",
+      "pr": "#90",
       "id": "T77",
       "title": "Ampliar redact con más formatos de secreto (H4 de F0/F1)",
       "depends_on": [],
@@ -1234,7 +1240,7 @@
       "acceptance": "Test: POST sin comentario devuelve 400 con el menú y un enlace a la activity; ningún error de acción devuelve una página sin `<nav>`; el texto del error se escapa; la acción no se ejecuta.",
       "estimate": "1 d",
       "risk": "bajo",
-      "status": "pending",
+      "status": "done",
       "depends_on": [
         "T47"
       ],
@@ -1242,7 +1248,7 @@
         "Ciclo: puertas humanas",
         "Detalle de run: responder"
       ],
-      "pr": null
+      "pr": "#90"
     },
     {
       "id": "T79",
@@ -1254,12 +1260,12 @@
       "acceptance": "Test de ayuda: la salida de `fab --help` contiene `--write`; ninguna línea dice «solo lectura» para `fab web`.",
       "estimate": "0,5 d",
       "risk": "bajo",
-      "status": "pending",
+      "status": "done",
       "depends_on": [],
       "covers": [
         "Todas las acciones de la web"
       ],
-      "pr": null
+      "pr": "#90"
     },
     {
       "id": "T80",
@@ -1271,7 +1277,7 @@
       "acceptance": "El test de coherencia falla si la web nombra un comando ausente de `fab --help`; `fab automation add --help` responde con su ayuda y no abre el chat.",
       "estimate": "1-2 d",
       "risk": "medio",
-      "status": "pending",
+      "status": "done",
       "depends_on": [
         "T68",
         "T71",
@@ -1285,7 +1291,8 @@
         "Runners",
         "Benchmarks"
       ],
-      "pr": null
+      "pr": "#90",
+      "note": "Comando mal escrito → «comando desconocido» en vez de chat: decisión del dueño pendiente."
     },
     {
       "id": "T81",
@@ -1297,14 +1304,14 @@
       "acceptance": "Un change completado, uno cancelado y uno fallido dan 3 muestras en el hito terminal; la mediana coincide con la diferencia entre la creación y el evento; el resto de métricas no cambia.",
       "estimate": "1 d",
       "risk": "bajo",
-      "status": "pending",
+      "status": "done",
       "depends_on": [
         "T48"
       ],
       "covers": [
         "Dashboard: mediana de ciclo"
       ],
-      "pr": null
+      "pr": "#90"
     },
     {
       "id": "T82",
@@ -1316,7 +1323,7 @@
       "acceptance": "Los números del gráfico coinciden con la tabla; un día sin datos se dibuja como hueco, no como cero; rango inválido se rechaza; coste desconocido sigue «No medido»; la CSP no cambia.",
       "estimate": "3-4 d",
       "risk": "bajo",
-      "status": "pending",
+      "status": "done",
       "depends_on": [
         "T48"
       ],
@@ -1325,7 +1332,7 @@
         "Dashboard: selector de rango",
         "Dashboard: gasto por fuente y usuario"
       ],
-      "pr": null
+      "pr": "#90"
     },
     {
       "id": "T83",
@@ -1337,7 +1344,7 @@
       "acceptance": "Con eventos sintéticos, cada tramo da la diferencia exacta; un change sin PR no se oculta, aparece «No medido»; la URL del PR se escapa y solo admite https; no hay llamadas de red al servir.",
       "estimate": "3-5 d",
       "risk": "medio",
-      "status": "pending",
+      "status": "done",
       "depends_on": [
         "T48",
         "T49"
@@ -1346,7 +1353,7 @@
         "Dashboard: ciclo con PR",
         "Dashboard: PRs abiertos y fusionados"
       ],
-      "pr": null
+      "pr": "#90"
     },
     {
       "id": "T84",
@@ -1358,7 +1365,7 @@
       "acceptance": "Guardar no altera ningún perfil existente; dos guardados iguales dan el mismo digest; el evento guarda el adaptador anterior; modelo con caracteres no permitidos se rechaza; una activity en curso conserva su perfil.",
       "estimate": "4-6 d",
       "risk": "alto",
-      "status": "pending",
+      "status": "done",
       "depends_on": [
         "T57",
         "T58"
@@ -1368,7 +1375,8 @@
         "Editor de worker: herencia",
         "Worker defaults: adaptador y modelo"
       ],
-      "pr": null
+      "pr": "#90",
+      "note": "H2 (perfil sobre change blocked con sesión open) y H6 (alta con adaptador no confinable, preexistente): decisión del dueño. INT-O1 opción B: fab ws agent."
     },
     {
       "id": "T85",
@@ -1380,7 +1388,7 @@
       "acceptance": "La página no muestra credenciales ni rutas del runner; «Comprobar» no lanza trabajo; asignar deja evento con el anterior; sin runners la página no da error 500.",
       "estimate": "3-4 d",
       "risk": "alto",
-      "status": "pending",
+      "status": "done",
       "depends_on": [
         "T74",
         "T52"
@@ -1389,7 +1397,7 @@
         "Runners: lista",
         "Editor de worker: runner"
       ],
-      "pr": null
+      "pr": "#90"
     },
     {
       "id": "T86",
@@ -1401,7 +1409,7 @@
       "acceptance": "Cron inválido se rechaza con su mensaje; la plantilla se escapa; el evento guarda quién y el valor anterior; crear no lanza turnos; los tests no esperan al reloj.",
       "estimate": "3-4 d",
       "risk": "alto",
-      "status": "pending",
+      "status": "done",
       "depends_on": [
         "T68",
         "T47"
@@ -1409,7 +1417,7 @@
       "covers": [
         "Automations: crear y editar"
       ],
-      "pr": null
+      "pr": "#90"
     },
     {
       "id": "T87",
@@ -1421,7 +1429,7 @@
       "acceptance": "Una entrega sin firma aparece como rechazada sin cuerpo; el HTML no contiene el secreto ni el cuerpo; sin tablas la página dice «Sin receptor».",
       "estimate": "2-3 d",
       "risk": "medio",
-      "status": "pending",
+      "status": "done",
       "depends_on": [
         "T69"
       ],
@@ -1429,7 +1437,7 @@
         "Webhooks: lista",
         "Webhooks: vista de entregas"
       ],
-      "pr": null
+      "pr": "#90"
     },
     {
       "id": "T88",
@@ -1441,7 +1449,7 @@
       "acceptance": "Los números coinciden con `fab bench report`; cancelar no lanza más filas; la tarea generada pasa `parseSuite`; una suite usada no cambia de digest.",
       "estimate": "4-5 d",
       "risk": "medio",
-      "status": "pending",
+      "status": "done",
       "depends_on": [
         "T66",
         "T62"
@@ -1451,7 +1459,7 @@
         "Benchmarks: estados",
         "Detalle de run: Add to benchmark"
       ],
-      "pr": null
+      "pr": "#90"
     },
     {
       "id": "T89",
@@ -1463,14 +1471,14 @@
       "acceptance": "El árbol no contiene rutas absolutas ni valores de entorno; un fichero grande se trunca con aviso; la página no escribe en disco; coincide con `fab definition export`.",
       "estimate": "2-3 d",
       "risk": "bajo",
-      "status": "pending",
+      "status": "done",
       "depends_on": [
         "T59"
       ],
       "covers": [
         "Factory definition: árbol"
       ],
-      "pr": null
+      "pr": "#90"
     },
     {
       "id": "T90",
@@ -1482,7 +1490,7 @@
       "acceptance": "La base y los logs no contienen la clave en claro; una clave revocada da 401; la página no la repite al recargar; el ámbito `read` no muta.",
       "estimate": "2-3 d",
       "risk": "alto",
-      "status": "pending",
+      "status": "done",
       "depends_on": [
         "T71",
         "T47"
@@ -1490,7 +1498,7 @@
       "covers": [
         "Factory API keys: generar claves"
       ],
-      "pr": null
+      "pr": "#90"
     },
     {
       "id": "T91",
@@ -1502,7 +1510,7 @@
       "acceptance": "Guardar crea perfil nuevo; un umbral fuera de rango se rechaza; las instrucciones se delimitan como texto del dueño; el perfil vigente no cambia sin la acción de T58.",
       "estimate": "2-3 d",
       "risk": "medio",
-      "status": "pending",
+      "status": "done",
       "depends_on": [
         "T67",
         "T58"
@@ -1511,7 +1519,7 @@
         "Self-improvement: instrucciones adicionales",
         "Self-improvement: umbral"
       ],
-      "pr": null
+      "pr": "#90"
     },
     {
       "id": "T92",
@@ -1523,14 +1531,14 @@
       "acceptance": "Sin localStorage la página sigue el sistema; elegir oscuro fija el atributo y sobrevive a la recarga; los contrastes pasan en ambos temas.",
       "estimate": "1 d",
       "risk": "bajo",
-      "status": "pending",
+      "status": "done",
       "depends_on": [
         "T46"
       ],
       "covers": [
         "Settings: Interface"
       ],
-      "pr": null
+      "pr": "#90"
     },
     {
       "id": "T93",
@@ -1542,14 +1550,14 @@
       "acceptance": "Con 30 workstreams la búsqueda filtra sin recargar; fijar no cambia el dominio; sin localStorage la lista sale como hoy.",
       "estimate": "1 d",
       "risk": "bajo",
-      "status": "pending",
+      "status": "done",
       "depends_on": [
         "T46"
       ],
       "covers": [
         "Settings: varias factories"
       ],
-      "pr": null
+      "pr": "#90"
     },
     {
       "id": "T94",
@@ -1561,7 +1569,7 @@
       "acceptance": "Los seleccionados pasan a «Visto» y se deshacen; el contador coincide con la bandeja; copiar no necesita script en línea; sin localStorage nada se rompe.",
       "estimate": "1-2 d",
       "risk": "bajo",
-      "status": "pending",
+      "status": "done",
       "depends_on": [
         "T49"
       ],
@@ -1571,7 +1579,7 @@
         "Detalle de run: copiar id",
         "Detalle de run: View worker"
       ],
-      "pr": null
+      "pr": "#90"
     },
     {
       "id": "T95",
@@ -1583,14 +1591,14 @@
       "acceptance": "Una URL `javascript:` o de otro host no se vuelve enlace; un change sin PR no muestra el bloque; el texto se escapa.",
       "estimate": "1-2 d",
       "risk": "bajo",
-      "status": "pending",
+      "status": "done",
       "depends_on": [
         "T49"
       ],
       "covers": [
         "Detalle de run: enlace al PR y al issue"
       ],
-      "pr": null
+      "pr": "#90"
     },
     {
       "id": "T96",
@@ -1602,14 +1610,14 @@
       "acceptance": "Un adjunto con instrucciones no altera el formato de salida (canario); un symlink o un nombre con `..` se rechaza; el adjunto se entrega una sola vez; prueba con `claude` real y confinado.",
       "estimate": "3-4 d",
       "risk": "alto",
-      "status": "pending",
+      "status": "done",
       "depends_on": [
         "T56"
       ],
       "covers": [
         "Detalle de run: adjuntos"
       ],
-      "pr": null
+      "pr": "#90"
     },
     {
       "id": "T97",
@@ -1621,7 +1629,7 @@
       "acceptance": "Cada filtro da el conjunto exacto con datos sintéticos; un change sin dato aparece como «No medido»; la consulta sigue en un Store de solo lectura; 1000 changes en menos de 300 ms.",
       "estimate": "2 d",
       "risk": "bajo",
-      "status": "pending",
+      "status": "done",
       "depends_on": [
         "T49",
         "T68"
@@ -1633,7 +1641,7 @@
         "Runs: Background runs",
         "Runs: jerarquía"
       ],
-      "pr": null
+      "pr": "#90"
     },
     {
       "id": "T98",
@@ -1645,9 +1653,187 @@
       "acceptance": "Ningún llamador puede lanzar el agente confinado sin el entorno filtrado; los ataques de T40 y T41 se repiten en verde; el test estructural de T72d sigue pasando.",
       "estimate": "2-3 d",
       "risk": "alto",
+      "status": "done",
+      "depends_on": [
+        "T72"
+      ],
+      "pr": "#90"
+    },
+    {
+      "id": "T99",
+      "title": "Transcript estructurado en la web: mensajes, pasos plegables, «pensamiento» y llamadas a herramientas",
+      "phase": "F6",
+      "why": "Warp muestra el transcript por mensajes con pasos plegables y conmutadores Show thinking / Show tool calls; fab muestra el log en texto plano.",
+      "where": "src/evidence.ts, src/web-turns.ts, src/live/*, runs/<id>/",
+      "proposal": "Parsear el stream-json ya guardado en la evidencia a una lista de pasos tipados (mensaje, pensamiento, llamada, resultado) en el Store o en un lector puro; vista con <details> plegables y dos conmutadores sin JS obligatorio. Todo texto escapado y redactado.",
+      "acceptance": "Un transcript real de claude se muestra por pasos; los conmutadores ocultan pensamiento y llamadas; texto hostil sale escapado; un stream roto no rompe la página («No medido»).",
+      "estimate": "3-4 d",
+      "risk": "medio",
+      "status": "pending",
+      "depends_on": [
+        "T54"
+      ],
+      "covers": [
+        "Detalle de run: transcript",
+        "Detalle de run: Show thinking / tool calls"
+      ],
+      "pr": null
+    },
+    {
+      "id": "T100",
+      "title": "Timeline por minutos con una columna por agente",
+      "phase": "F6",
+      "why": "Warp muestra el timeline del run por minutos con una columna por agente.",
+      "where": "src/web-turns.ts, src/store.ts (eventos y turnos)",
+      "proposal": "Agrupar eventos y turnos por minuto y por activity/agente en una tabla accesible; SVG opcional con tabla equivalente.",
+      "acceptance": "Dos agentes en paralelo salen en columnas distintas y en su minuto; sin datos de tiempo, «No medido».",
+      "estimate": "2 d",
+      "risk": "bajo",
+      "status": "pending",
+      "depends_on": [
+        "T54"
+      ],
+      "covers": [
+        "Detalle de run: timeline por agente"
+      ],
+      "pr": null
+    },
+    {
+      "id": "T101",
+      "title": "Runners en la web: alta, edición y baja",
+      "phase": "F6",
+      "why": "La web lista, comprueba y asigna runners (T85), pero el alta, la edición y la baja solo existen en la CLI (fab runner add/rm).",
+      "where": "src/web-runners.ts, src/web-actions.ts, src/store.ts",
+      "proposal": "Formularios por el registro ACTIONS (api:false) con la misma validación que fab runner add; la baja con confirmación y rechazo si el runner está asignado o tiene trabajo vivo. Nunca se guarda una credencial (D10).",
+      "acceptance": "Alta inválida da 400 sin fila; baja de un runner asignado se rechaza; matriz sesión/CSRF/host único; la API no expone estas acciones.",
+      "estimate": "2-3 d",
+      "risk": "medio",
+      "status": "pending",
+      "depends_on": [
+        "T85"
+      ],
+      "covers": [
+        "Settings: Runners: alta, edición, baja"
+      ],
+      "pr": null
+    },
+    {
+      "id": "T102",
+      "title": "Runner por rol (worker), no solo por workstream",
+      "phase": "F6",
+      "why": "Warp asigna host y runner por worker; fab solo por workstream.",
+      "where": "src/profile.ts, src/pool.ts, src/runners/*, src/web-profile.ts",
+      "proposal": "Campo runner opcional por rol en el perfil v2 que hereda del workstream; el pool lo resuelve al reclamar; la web lo muestra con su procedencia (como T84).",
+      "acceptance": "Un rol con runner propio se lanza en ese runner y los demás en el del workstream; un runner pausado o borrado bloquea solo ese rol con motivo; herencia visible.",
+      "estimate": "3-4 d",
+      "risk": "alto",
+      "status": "pending",
+      "depends_on": [
+        "T74",
+        "T84",
+        "T85"
+      ],
+      "covers": [
+        "Editor de worker: host y runner por worker"
+      ],
+      "pr": null
+    },
+    {
+      "id": "T103",
+      "title": "Secretos y MCPs por rol y por defecto en la web, solo por nombre",
+      "phase": "F6",
+      "why": "fab ws env y fab ws mcp existen solo en la CLI; Warp los edita en el worker y en los defaults.",
+      "where": "src/web-config.ts, src/web-profile.ts, src/web-actions.ts, src/store.ts",
+      "proposal": "Vista y edición de los nombres de variables y de las referencias MCP por workstream y por rol; nunca valores (D-K). Mismas validaciones que la CLI.",
+      "acceptance": "Un valor pegado se rechaza; solo nombres válidos; la página nunca muestra un valor del entorno; la API no expone la edición.",
+      "estimate": "2-3 d",
+      "risk": "medio",
       "status": "pending",
       "depends_on": [
         "T72"
+      ],
+      "covers": [
+        "Editor de worker: MCPs y secretos",
+        "Settings: secretos y MCP por defecto",
+        "Secrets: lista"
+      ],
+      "pr": null
+    },
+    {
+      "id": "T104",
+      "title": "Registro de MCPs en la web (solo lectura)",
+      "phase": "F6",
+      "why": "fab mcp list existe solo en la CLI.",
+      "where": "src/web-config.ts, src/mcp-registry",
+      "proposal": "Lista de servidores registrados por referencia, con dónde se usan; sin secretos ni comandos completos si llevan valores.",
+      "acceptance": "La página lista lo mismo que fab mcp list, escapado y redactado; sin --write no hay formularios.",
+      "estimate": "1 d",
+      "risk": "bajo",
+      "status": "pending",
+      "depends_on": [
+        "T72"
+      ],
+      "covers": [
+        "MCPs and apps: registro"
+      ],
+      "pr": null
+    },
+    {
+      "id": "T105",
+      "title": "Importar una definición o un perfil desde la web",
+      "phase": "F6",
+      "why": "fab definition import y fab profile import solo existen en la CLI; Warp importa workers desde la UI.",
+      "where": "src/web-definition.ts, src/web-profile.ts, src/web-actions.ts",
+      "proposal": "Subida acotada (multipart como T96) de un perfil JSON o de un árbol de definición empaquetado; vista previa del diff y confirmación; mismas validaciones que la CLI; nunca ejecuta nada del paquete.",
+      "acceptance": "Paquete con symlink, ruta absoluta o .. se rechaza; perfil inválido 400 sin escribir; la importación queda auditada con actor web; la API no la expone.",
+      "estimate": "3 d",
+      "risk": "alto",
+      "status": "pending",
+      "depends_on": [
+        "T58",
+        "T59"
+      ],
+      "covers": [
+        "Workers: importar worker",
+        "Factory definition: importar"
+      ],
+      "pr": null
+    },
+    {
+      "id": "T106",
+      "title": "Pines de los binarios de agentes en la web (solo lectura)",
+      "phase": "F6",
+      "why": "fab agents verify --pin solo existe en la CLI; Warp muestra los harnesses y su versión.",
+      "where": "src/web-config.ts, src/agents.ts",
+      "proposal": "Vista de cada adaptador con su binario, versión, pin guardado y si coincide; fijar el pin sigue en la CLI.",
+      "acceptance": "Un binario que no coincide con su pin sale marcado; la página no ejecuta binarios en cada carga (caché o lectura del registro).",
+      "estimate": "1 d",
+      "risk": "bajo",
+      "status": "pending",
+      "depends_on": [
+        "T46"
+      ],
+      "covers": [
+        "Agent harnesses: pines"
+      ],
+      "pr": null
+    },
+    {
+      "id": "T107",
+      "title": "Entrada por etiqueta de GitHub y por Jira configurable desde la web",
+      "phase": "F6",
+      "why": "fab resident y fab jira import solo existen en la CLI.",
+      "where": "src/web-config.ts, src/resident.ts, src/connectors/*",
+      "proposal": "Ver y editar la configuración del residente (etiqueta, repos, intervalo) y lanzar una importación de Jira acotada, con las mismas guardas que la CLI; sin credenciales en la web.",
+      "acceptance": "La config inválida se rechaza; la importación respeta el tope y deja auditoría; sin --write solo lectura.",
+      "estimate": "2-3 d",
+      "risk": "medio",
+      "status": "pending",
+      "depends_on": [
+        "T43"
+      ],
+      "covers": [
+        "Onboarding: entrada por etiqueta y Jira"
       ],
       "pr": null
     }
