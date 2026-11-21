@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, expect, test } from 'bun:test';
-import { mkdirSync, mkdtempSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
+import { mkdirSync, mkdtempSync, readFileSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { AdmissionDb } from '../src/admission/db.ts';
@@ -7,6 +7,7 @@ import { EVIDENCE_LIMIT } from '../src/evidence.ts';
 import { Store } from '../src/store.ts';
 import { startWeb } from '../src/web.ts';
 
+const realStream = () => Buffer.from(Bun.gunzipSync(readFileSync(join(import.meta.dir, 'fixtures/transcript/claude-haiku.ndjson.gz')))).toString();
 const toolValue = 'credencial-de-prueba';
 const token = 'ghp_' + 'x'.repeat(36);
 const stream = [
@@ -90,7 +91,6 @@ test('T99: stream roto o truncado, evidencia ausente y symlink mantienen la pág
   const log = join(run, `${activity}.log`);
   for (const bad of [
     stream.replace('\n\n[stderr]', '\n{"type":\n\n[stderr]'),
-    stream + 'x'.repeat(EVIDENCE_LIMIT),
     '{"type":"assistant","message":{"content":12}}',
   ]) {
     writeFileSync(log, bad);
@@ -113,4 +113,20 @@ test('T99: el log histórico de texto sigue legible', async () => {
   const body = await (await activityPage()).text();
   expect(body).toMatch(/<h2>Transcript<\/h2><p[^>]*>No medido<\/p>/);
   expect(body).toContain('Log histórico &amp; seguro');
+});
+
+test('T99-H1: un stream real de más de 256 KiB conserva pasos completos y log', async () => {
+  const real = realStream();
+  expect(Buffer.byteLength(real)).toBeGreaterThan(EVIDENCE_LIMIT);
+  writeFileSync(join(run, `${activity}.log`), real);
+  writeFileSync(join(run, `${activity}.t-turno.log`), real);
+  const page = await (await activityPage('?herramientas=1')).text();
+  expect(page).toContain('<summary>Llamada a herramienta · Read</summary>');
+  expect(page).toContain('Transcript incompleto');
+  expect(page).toContain('<h2>Log</h2>');
+  expect(page).toContain('Archivo truncado');
+  const raw = await (await get(`/changes/${change}/turns/turno/log`)).text();
+  expect(raw).toContain('CONTENIDO SINTÉTICO DE PRUEBA');
+  expect(raw).toContain('[log recortado a 256 KiB]');
+  expect(raw).not.toContain('LECTURA_SINTETICA_COMPLETA');
 });

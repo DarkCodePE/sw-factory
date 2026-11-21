@@ -51,12 +51,13 @@ function transcriptSteps(frames: ClaudeFrame[]): Step[] {
 export function transcriptSection(log: EvidenceText | null, url: URL, ui: Ui): string {
   const steps = transcriptSteps(log?.claudeFrames ?? []);
   const heading = '<h2>Transcript</h2>';
-  if (!steps.length) return `<section>${heading}${notMeasured}</section>`;
+  const warning = log?.truncated && log.claudeFrames ? '<p class="notice">Transcript incompleto.</p>' : '';
+  if (!steps.length) return `<section>${heading}${notMeasured}${warning}</section>`;
   const thinking = url.searchParams.get('pensamiento') === '1';
   const tools = url.searchParams.get('herramientas') === '1';
   const ws = url.searchParams.get('ws');
   const visible = steps.filter(step => step.kind === 'message' || (step.kind === 'thinking' ? thinking : tools));
-  return `<section class="transcript">${heading}
+  return `<section class="transcript">${heading}${warning}
     <form method="get" class="transcript-filters" aria-label="Filtros del transcript">
       ${ws ? `<input type="hidden" name="ws" value="${ui.escape(ws)}">` : ''}
       <label><input type="checkbox" name="pensamiento" value="1"${thinking ? ' checked' : ''}> Mostrar pensamiento</label>
@@ -73,7 +74,7 @@ export function activityLogSection(stateDir: string, changeId: string, activityI
   try { log = readEvidence(stateDir, evidencePath(changeId, `${activityId}.log`)); }
   catch { unavailable = 'Evidencia no disponible: ruta insegura o fichero ilegible.'; }
   const transcript = transcriptSection(log, url, ui);
-  if (log?.claudeFrames) return transcript;
+  if (log?.claudeFrames && !log.truncated) return transcript;
   const legacy = log ? `${log.truncated ? '<p class="notice">Archivo truncado: se muestran los primeros 256 KiB.</p>' : ''}<pre tabindex="0">${ui.escape(log.text)}</pre>`
     : `<p class="empty">${unavailable}</p>`;
   return `${transcript}<section><h2>Log</h2>${legacy}</section>`;

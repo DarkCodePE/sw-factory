@@ -36,15 +36,15 @@ export function readEvidence(stateDir: string, path: string): EvidenceText | nul
     }
     const truncated = count > EVIDENCE_LIMIT;
     let text = buffer.subarray(0, Math.min(count, EVIDENCE_LIMIT)).toString('utf8');
-    if (path.endsWith('.log') && /^\s*\{\s*"type"\s*:\s*"(?:system|assistant|user|stream_event|rate_limit_event)"/.test(text)) {
-      return readClaudeEvidence(text, truncated);
-    }
     // No presentar un token cortado: podría no encajar ya en su patrón de redacción.
     if (truncated) {
       const floor = Math.max(0, text.length - 4096);
       let i = text.length;
       while (i > floor && text[i - 1]!.trim() !== '') i--;
       text = text.slice(0, i);
+    }
+    if (path.endsWith('.log') && /^\s*\{\s*"type"\s*:\s*"(?:system|assistant|user|stream_event|rate_limit_event)"/.test(text)) {
+      return readClaudeEvidence(text, truncated);
     }
     // JSON histórico puede contener PEM con saltos escapados; redactar los valores decodificados.
     if (!truncated && path.endsWith('.json')) {
@@ -53,13 +53,15 @@ export function readEvidence(stateDir: string, path: string): EvidenceText | nul
         return { text: textJson, truncated: false };
       } catch { /* Mostrar JSON roto como texto. */ }
     }
-    text = text.replace(new RegExp(`("[\\w-]*(?:${SECRET_WORDS})[\\w-]*"\\s*:\\s*)"(?:[^"\\\\]|\\\\.)*"`, 'gi'), '$1"[REDACTED]"');
-    text = redactForWeb(text);
-    return { text, truncated };
+    return { text: redactEvidenceText(text), truncated };
   } catch (error) {
     if ((error as NodeJS.ErrnoException).code === 'ENOENT') return null;
     throw error;
   } finally { if (fd !== undefined) closeSync(fd); }
+}
+
+function redactEvidenceText(text: string): string {
+return redactForWeb(text.replace(new RegExp(`("[\\w-]*(?:${SECRET_WORDS})[\\w-]*"\\s*:\\s*)"(?:[^"\\\\]|\\\\.)*"`, 'gi'), '$1"[REDACTED]"'));
 }
 
 // Regla de presentación; no amplía redact ni cambia la lectura histórica de improve.
@@ -91,10 +93,10 @@ function redactLogValue(value: unknown, depth = 0): unknown {
 
 function readClaudeEvidence(text: string, truncated: boolean): EvidenceText {
   const unavailable = { text: 'No medido', truncated, claudeFrames: [] };
-  if (truncated) return unavailable;
   const marker = '\n[stderr]\n';
   const at = text.indexOf(marker);
-  const stdout = at < 0 ? text : text.slice(0, at);
+  const end = at >= 0 ? at : truncated ? Math.max(0, text.lastIndexOf('\n')) : text.length;
+  const stdout = text.slice(0, end);
   const frames: ClaudeFrame[] = [];
   try {
     for (const line of stdout.split('\n')) {
@@ -104,8 +106,8 @@ function readClaudeEvidence(text: string, truncated: boolean): EvidenceText {
       frames.push(redactLogValue(value) as ClaudeFrame);
     }
   } catch { return unavailable; }
-  const stderr = at < 0 ? '' : redactForWeb(text.slice(at + marker.length));
-  return { text: frames.map(frame => JSON.stringify(frame)).join('\n') + (at < 0 ? '' : marker + stderr), truncated, claudeFrames: frames };
+  const remainder = redactEvidenceText(text.slice(end));
+  return { text: frames.map(frame => JSON.stringify(frame)).join('\n') + remainder, truncated, claudeFrames: frames };
 }
 
 // Valor: entre comillas con escapes, comilla sin cierre (corte de evidencia o valor enorme: hasta fin de línea), o hasta el siguiente separador.
