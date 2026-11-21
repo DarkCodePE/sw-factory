@@ -183,6 +183,12 @@ test('T91-H3: unas instrucciones válidas de 8000 bytes en caracteres de dos byt
   expect((await post({ instructions: 'ñ'.repeat(4097) })).status).toBe(400); // pasa el cuerpo y cae en el tope de 8192 bytes de la validación
 });
 
+test('INT-H6: por encima del tope del cuerpo (3×8 KiB + 4 KiB) la web responde 413', async () => {
+  await login();
+  const r = await post({ instructions: 'ñ'.repeat(5000) }); // URL-encoded, 30 000 bytes > 28 672
+  expect(r.status).toBe(413);
+});
+
 test('T91-H4: asignar un perfil con otra política de automejora lo advierte; con la misma, no', async () => {
   await login();
   const saved = (await save()).digest;
