@@ -300,3 +300,30 @@ test.each([{ verify: ['bun test'] }, { verifySetup: ['bun install'] }, { protect
     expect(() => parseDefinition(files)).not.toThrow(); // la CLI sigue pudiendo
     expect(snapshot()).toBe(before);
   });
+
+// ---- T105-H2: la confirmación queda ligada a lo que la vista previa mostró (sello del servidor sobre paquete, repo y slug) ---
+const hiddenOf = (html: string) => Object.fromEntries([...html.matchAll(/<input type="hidden" name="(\w+)" value="([^"]*)">/g)].map(m => [m[1]!, m[2]!]));
+const post2 = (path: string, fields: Record<string, string>) => req(path, { method: 'POST', headers: { cookie, origin: base(), 'content-type': 'application/x-www-form-urlencoded' }, body: new URLSearchParams(fields) });
+test('H2: otro paquete, otro repo u otro slug con el sello de otra vista previa dan 400; sin vista previa también', async () => {
+  const before = snapshot();
+  const otherRepo = join(dir, 'otro-repo'); mkdirSync(join(otherRepo, '.git'), { recursive: true });
+  const a = goodTar(), b = goodTar(f => { f.set('workstream.json', JSON.stringify({ slug: 'importado', goal: 'OTRA META' })); });
+  const h = hiddenOf(await (await upload('/definicion/importar', { repo, slug: '' }, a)).text());
+  const b64 = (x: Uint8Array) => Buffer.from(x).toString('base64');
+  expect((await post2('/definicion/importar', { ...h, confirm: 'yes', payload: b64(b) })).status).toBe(400); // mismo perfil, otro workstream.json
+  expect((await post2('/definicion/importar', { ...h, confirm: 'yes', repo: otherRepo })).status).toBe(400);
+  expect((await post2('/definicion/importar', { ...h, confirm: 'yes', slug: 'otro-slug' })).status).toBe(400);
+  expect((await post2('/definicion/importar', { csrf, repo, slug: '', payload: b64(a), digest: profileDigest(defaultProfile()), confirm: 'yes' })).status).toBe(400); // sin vista previa
+  const p = hiddenOf(await (await upload('/perfiles/importar', { ws: 'prueba' }, profileJson())).text());
+  expect((await post2('/perfiles/importar', { ...p, confirm: 'yes', payload: b64(profileJson({ model: undefined, harness: 'native', repo: 'x' })) })).status).toBe(400);
+  expect(snapshot()).toBe(before);
+  expect((await post2('/definicion/importar', { ...h, confirm: 'yes' })).status).toBe(303); // el sello propio sí vale
+});
+test('H2: un repo con comillas no rompe el atributo oculto y se importa', async () => {
+  const odd = join(dir, 'a"b<c'); mkdirSync(join(odd, '.git'), { recursive: true });
+  const preview = await upload('/definicion/importar', { repo: odd, slug: '' }, goodTar());
+  const html = await preview.clone().text();
+  expect(html).toContain('a&quot;b&lt;c');
+  expect((await confirmFrom(preview, '/definicion/importar', { repo: odd })).status).toBe(303);
+  expect(store.getWorkstream('importado').repo).toBe(odd);
+});

@@ -2,6 +2,7 @@
 // 1) subida multipart → vista previa (Store de solo lectura, nada se escribe); 2) confirmación que reenvía el paquete en
 // base64 y lo VUELVE a validar entero. El paquete es dato: se lee en memoria (definition-tar.ts), nunca se extrae ni se ejecuta.
 // D-F: la web no da más poder que la CLI; un árbol que baje las aprobaciones o vacíe las rutas protegidas se rechaza aquí.
+import { createHash, createHmac, randomBytes, timingSafeEqual } from 'node:crypto';
 import { join } from 'node:path';
 import { applyDefinition, parseDefinition, type ParsedDefinition } from './definition.ts';
 import { readTar, TAR_MAX_BYTES } from './definition-tar.ts';
@@ -22,6 +23,13 @@ export type ImportKind = 'profile' | 'definition';
 /** Campos de texto de cada formulario; `package` es el fichero, `payload` el paquete ya visto en la vista previa. */
 export const IMPORT_FIELDS: Record<ImportKind, string[]> = { profile: ['csrf', 'ws'], definition: ['csrf', 'repo', 'slug'] };
 const CONFIRM_FIELDS: Record<ImportKind, string[]> = { profile: ['csrf', 'ws', 'payload', 'digest', 'confirm'], definition: ['csrf', 'repo', 'slug', 'payload', 'digest', 'confirm'] };
+
+// Sello de la vista previa (T105-H2): HMAC con un secreto por arranque sobre el paquete, el tipo y el destino. Sin estado:
+// la confirmación solo vale para exactamente lo que este servidor previsualizó (hasta que se reinicie la web).
+const SECRET = randomBytes(32);
+const seal = (kind: ImportKind, bytes: Uint8Array, ...target: string[]) =>
+  createHmac('sha256', SECRET).update(JSON.stringify([kind, createHash('sha256').update(bytes).digest('hex'), ...target])).digest('hex');
+const sealOk = (given: string | undefined, expected: string) => !!given && given.length === expected.length && timingSafeEqual(Buffer.from(given), Buffer.from(expected));
 
 const bad = (m: string) => new StoreError('invalid_input', m);
 const SLUG = /^[a-z0-9][a-z0-9-]{0,62}$/;
@@ -103,7 +111,7 @@ export function importPreview(kind: ImportKind, stateDir: string, form: URLSearc
       const current = resolveProfile(stateDir, ws.profile).profile;
       return doc('Importar perfil', `<p>Workstream <code>${escape(ws.slug)}</code> · digest <code>${digest}</code> · ${exists ? 'Ya existe en el almacén' : 'Nuevo'}</p>
         ${diff(current, profile, escape)}<p>Guardar crea el perfil en el almacén; no se asigna al workstream (eso es un paso aparte en Perfiles).</p>
-        ${confirmForm('/perfiles/importar', csrf, { ws: ws.slug, payload, digest }, 'Confirmo guardar este perfil')}`, `/perfiles?ws=${enc(ws.slug)}`);
+        ${confirmForm('/perfiles/importar', csrf, { ws: ws.slug, payload, digest: seal('profile', file, ws.slug) }, 'Confirmo guardar este perfil')}`, `/perfiles?ws=${enc(ws.slug)}`);
     }
     const parsed = parseDefinitionBytes(file);
     const repo = form.get('repo') ?? '', slugField = (form.get('slug') ?? '').trim();
@@ -119,7 +127,7 @@ export function importPreview(kind: ImportKind, stateDir: string, form: URLSearc
       <h2>Ficheros (${parsed.files.size})</h2><ul>${names}</ul>
       ${parsed.skills.length ? `<p class="muted">Skills del paquete (no se escriben en el repo): ${parsed.skills.map(s => escape(s)).join(', ')}.</p>` : ''}
       <p>Nada del paquete se ejecuta. Activar el workstream es un paso explícito aparte.</p>
-      ${taken ? '' : confirmForm('/definicion/importar', csrf, { repo, slug: slugField, payload, digest: parsed.digest }, 'Confirmo crear el workstream en borrador')}`, '/definicion');
+      ${taken ? '' : confirmForm('/definicion/importar', csrf, { repo, slug: slugField, payload, digest: seal('definition', file, repo, slugField) }, 'Confirmo crear el workstream en borrador')}`, '/definicion');
   } finally { store.close(); }
 }
 
@@ -138,15 +146,15 @@ export function importConfirm(kind: ImportKind, store: Store, stateDir: string, 
   if (kind === 'profile') {
     const ws = store.getWorkstream(input.ws!);
     const { profile, digest } = parseProfileBytes(bytes);
-    if (digest !== input.digest) throw bad('El paquete no coincide con la vista previa. Vuelve a subirlo.');
+    if (!sealOk(input.digest, seal('profile', bytes, ws.slug))) throw bad('El paquete no coincide con la vista previa. Vuelve a subirlo.');
     const { created } = saveProfile(stateDir, profile);
     store.event(ws.id, 'info', `perfil importado desde la web: ${digest}${created ? '' : ' (ya existía)'}`);
     return `/perfiles?ws=${enc(ws.slug)}&digest=${digest}&nuevo=${created ? 1 : 0}`;
   }
   const parsed = parseDefinitionBytes(bytes);
-  if (parsed.digest !== input.digest) throw bad('El paquete no coincide con la vista previa. Vuelve a subirlo.');
   const slug = (input.slug ?? '').trim();
   const repo = input.repo ?? '';
+  if (!sealOk(input.digest, seal('definition', bytes, repo, input.slug ?? ''))) throw bad('El paquete no coincide con la vista previa. Vuelve a subirlo.');
   checkDefinitionTarget(repo, slug || undefined);
   const r = applyDefinition(store, stateDir, parsed, repo, slug || undefined);
   store.event(store.getWorkstream(r.slug).id, 'info', `definición importada desde la web: perfil ${r.digest.slice(0, 12)}, ${parsed.files.size} ficheros`);
