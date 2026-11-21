@@ -339,7 +339,7 @@ test('H3: la vista previa de una definición muestra los cambios del perfil y el
   expect(html).not.toContain('<b>x</b>'); expect(html).not.toContain('<i>y</i>');
 });
 test('H3: un cambio pasado el carácter 2000 de una plantilla se ve en la vista previa del perfil', async () => {
-  const p = defaultProfile(); p.worker.rules = 'palabra '.repeat(400) + '\nFINAL-ESCONDIDO';
+  const p = defaultProfile(); p.worker.rules = 'palabra '.repeat(400) + '\nFINAL-ESCONDIDO\n' + defaultProfile().worker.rules;
   const html = await (await upload('/perfiles/importar', { ws: 'prueba' }, new TextEncoder().encode(JSON.stringify(p)))).text();
   expect(html).toContain('FINAL-ESCONDIDO');
 });
