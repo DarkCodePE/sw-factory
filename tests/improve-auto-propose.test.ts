@@ -3,7 +3,7 @@ import { existsSync, mkdtempSync, readFileSync, rmSync, statSync } from 'node:fs
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import type { AgentRun } from '../src/agents.ts';
-import { createCandidate, listCandidates, parseTemplate, proposeTemplate, type ProposeOptions } from '../src/improve-auto.ts';
+import { createCandidate, dismissCandidate, listCandidates, parseTemplate, proposeTemplate, type ProposeOptions } from '../src/improve-auto.ts';
 import { defaultProfile, listProfiles, loadProfile, saveProfile, type Profile } from '../src/profile.ts';
 import { COMMIT_LINE } from '../src/prompts.ts';
 import { ensureSchema as ensureScores } from '../src/scorers.ts';
@@ -164,4 +164,20 @@ test('A7: los eventos no llevan el texto propuesto ni las explicaciones', async 
   const all = JSON.stringify(store.db.query('SELECT message FROM events').all());
   expect(all).not.toContain('SECRETO-EXPLICACION');
   expect(all).not.toContain('TEXTO-PROPUESTO');
+});
+
+test('T91-H5: el bloque del dueño lleva un nonce propio, distinto en cada prompt y del resto de nonces', async () => {
+  const policy = saveProfile(dir, { ...baseProfile, autoImprove: { threshold: 0.5, window: 2, minScores: 2, scorers: ['tests'], instructions: 'Prioriza pruebas.' } }).digest;
+  store.assignProfile(wsId, policy, base);
+  const owner = () => /<<<OWNER_INSTRUCTIONS (\S+)\n[\s\S]*?\nOWNER_INSTRUCTIONS \1>>>/.exec(calls.at(-1)!.prompt)![1]!;
+  const first = candidate('implement');
+  await proposeTemplate(store, dir, first, launcher((p) => ok(wrap(p, baseProfile.worker.implement + '\nx'))));
+  const a = owner();
+  dismissCandidate(store, first);
+  const second = candidate('implement');
+  await proposeTemplate(store, dir, second, launcher((p) => ok(wrap(p, baseProfile.worker.implement + '\ny'))));
+  const b = owner();
+  expect(a).not.toBe(b);
+  expect(a).not.toBe(nonceOf(calls.at(-1)!.prompt));
+  expect(a.length).toBeGreaterThanOrEqual(32); // UUID completo: no se puede adivinar desde el texto del dueño
 });

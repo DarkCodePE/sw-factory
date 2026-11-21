@@ -116,37 +116,63 @@ async function runAgentJob(
   deps: ServeDeps, aborted: () => boolean, onProc: (kill: () => void) => void,
 ) {
   const start = Date.now();
-  const argv = agent.command(prompt, { readOnly: job.readOnly, confine: true, promptStdin: agent.promptStdin === true, ...(job.model ? { model: job.model } : {}) });
-  // Modo declarado y lista vacía: solo la base y las variables fijas del adaptador, tomadas del entorno de este runner.
-  const confined = confineAgent(agent.name, argv, repo, agent.env?.(), undefined, undefined, job.model ?? undefined, { wsAllow: [], roleEnv: [], mcpRequired: [] });
+  let phase = 'preparación';
+  let confined: ReturnType<typeof confineAgent> | undefined;
   try {
-    const proc = Bun.spawn(confined.argv, { cwd: repo, env: confined.env, stdin: agent.promptStdin ? new TextEncoder().encode(prompt) : 'ignore', stdout: 'pipe', stderr: 'pipe', detached: true });
+    const argv = agent.command(prompt, { readOnly: job.readOnly, confine: true, promptStdin: agent.promptStdin === true, ...(job.model ? { model: job.model } : {}) });
+    // Modo declarado y lista vacía: solo la base y las variables fijas del adaptador, tomadas del entorno de este runner.
+    confined = confineAgent(agent.name, argv, repo, agent.env?.(), undefined, undefined, job.model ?? undefined, { wsAllow: [], roleEnv: [], mcpRequired: [] });
+    phase = 'lanzamiento';
+    const proc = confined.spawn(agent.promptStdin ? new TextEncoder().encode(prompt) : 'ignore');
     const killGroup = (sig: 'SIGTERM' | 'SIGKILL') => { try { process.kill(-proc.pid, sig); } catch { try { proc.kill(sig); } catch {} } };
     let stopped = false;
-    const stop = () => { if (stopped) return; stopped = true; killGroup('SIGTERM'); setTimeout(() => killGroup('SIGKILL'), KILL_MS).unref?.(); };
-    onProc(stop);
-    if (aborted()) stop();
-    const arm = deps.timer ?? ((fire, ms) => { const h = setTimeout(fire, ms); return () => clearTimeout(h); });
-    const cancel = arm(stop, job.timeoutMs);
-    const budget = logBudget();
-    let stdout = '', stderr = '';
-    const pump = async (s: ReadableStream<Uint8Array>, keep: (t: string) => void) => {
-      for await (const c of s as unknown as AsyncIterable<Uint8Array>) {
-        const buf = Buffer.from(c);
-        keep(buf.toString('utf8'));
-        for (let i = 0; i < buf.length; i += CHUNK) { const kept = budget.take(buf.subarray(i, i + CHUNK)); if (kept.length) send({ v: 1, type: 'log', data: kept.toString('base64') }); }
-      }
+    let finished = false;
+    let killTimer: ReturnType<typeof setTimeout> | undefined;
+    let cancel: (() => void) | undefined;
+    const stop = () => {
+      if (stopped || finished) return;
+      stopped = true;
+      killGroup('SIGTERM');
+      killTimer = setTimeout(() => killGroup('SIGKILL'), KILL_MS);
+      killTimer.unref?.();
     };
-    const [, , code] = await Promise.all([
-      pump(proc.stdout, t => { if (stdout.length < STDOUT_CAP) stdout += t; }),
-      pump(proc.stderr, t => { if (stderr.length < STDOUT_CAP) stderr += t; }),
-      proc.exited,
-    ]);
-    cancel();
+    let stdout = '', stderr = '', code: number;
+    phase = 'control de ejecución';
+    try {
+      onProc(stop);
+      if (aborted()) stop();
+      const arm = deps.timer ?? ((fire, ms) => { const h = setTimeout(fire, ms); return () => clearTimeout(h); });
+      cancel = arm(stop, job.timeoutMs);
+      phase = 'lectura de salida';
+      const budget = logBudget();
+      const pump = async (s: ReadableStream<Uint8Array>, keep: (t: string) => void) => {
+        for await (const c of s as unknown as AsyncIterable<Uint8Array>) {
+          const buf = Buffer.from(c);
+          keep(buf.toString('utf8'));
+          for (let i = 0; i < buf.length; i += CHUNK) { const kept = budget.take(buf.subarray(i, i + CHUNK)); if (kept.length) send({ v: 1, type: 'log', data: kept.toString('base64') }); }
+        }
+      };
+      [, , code] = await Promise.all([
+        pump(proc.stdout, t => { if (stdout.length < STDOUT_CAP) stdout += t; }),
+        pump(proc.stderr, t => { if (stderr.length < STDOUT_CAP) stderr += t; }),
+        proc.exited,
+      ]);
+    } catch (e) {
+      killGroup('SIGKILL');
+      await proc.exited.catch(() => {});
+      throw e;
+    } finally {
+      finished = true;
+      clearTimeout(killTimer);
+      cancel?.();
+    }
+    phase = 'interpretación del resultado';
     const parsed = agent.parse?.(stdout) ?? null;
     const output = boundedAgentOutput((parsed ? parsed.text : stdout).trim() || stderr.trim());
     return { exitCode: Math.max(-255, Math.min(255, code ?? 1)), durationMs: Date.now() - start, usage: finiteUsage(parsed?.usage), output };
-  } finally { confined.cleanup(); }
+  } catch {
+    return { error: `falló la fase de ${phase} del agente` } as const;
+  } finally { confined?.cleanup(); }
 }
 
 export async function serveSession(rootArg: string, stdin: ReadableStream<Uint8Array>, write: Write, deps: ServeDeps = {}): Promise<number> {
@@ -204,6 +230,7 @@ export async function serveSession(rootArg: string, stdin: ReadableStream<Uint8A
     let closed = false;
     const onClose = () => { closed = true; stopAgent(); };
     deps.signal?.addEventListener('abort', onClose, { once: true });
+    tidy.push(() => deps.signal?.removeEventListener('abort', onClose));
     if (deps.signal?.aborted) closed = true;
     // Tras el job casa no envía nada más: cualquier byte o el EOF significan que la sesión se cerró.
     reader.line(LIMITS.lineBytes).then(onClose, onClose);
@@ -213,9 +240,9 @@ export async function serveSession(rootArg: string, stdin: ReadableStream<Uint8A
     tidy.push(() => git(cache, `--git-dir=${cache}`, 'update-ref', '-d', `refs/fab/in/${job.jobId}`));
     send({ v: 1, type: 'accepted', jobId: job.jobId });
 
-    const run = await runAgentJob(agent, job, prompt, repo, send, deps, () => closed, k => { stopAgent = k; }).catch(() => null);
+    const run = await runAgentJob(agent, job, prompt, repo, send, deps, () => closed, k => { stopAgent = k; });
     if (closed) return 0;
-    if (!run) return fail('internal', 'el agente no pudo lanzarse');
+    if (run.error !== undefined) return fail('internal', run.error);
 
     // 6. Sellado: git sobre la caché y un índice propio, nunca sobre el `.git` del clon.
     let sealed = null;

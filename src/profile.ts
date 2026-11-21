@@ -1,7 +1,7 @@
 // Perfil de instrucciones inmutable, identificado por digest sha256 del JSON canónico.
 // Idea: ext/esf/internal/harnessprofile/profile.go@d901657 (MIT); reimplementado, sin copiar código.
-import { createHash } from 'node:crypto';
-import { existsSync, mkdirSync, readFileSync, readdirSync, renameSync, rmSync, writeFileSync } from 'node:fs';
+import { createHash, randomUUID } from 'node:crypto';
+import { existsSync, linkSync, mkdirSync, readFileSync, readdirSync, rmSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { AGENT_NAMES, MCP_AGENTS, MODEL_AGENTS } from './agents.ts';
 import { isForbiddenEnvName } from './mcp-registry.ts';
@@ -26,6 +26,24 @@ export interface Profile {
   roles?: Partial<Record<Role, RoleConfig>>;
   /** Solo v2: jueces que clasifican ejecuciones terminadas. Son un aviso, nunca una puerta (T64). */
   scorers?: Record<string, ScorerDef>;
+  /** Política del digest vigente. También admite perfiles v1 sin activar el comportamiento de roles de v2. */
+  autoImprove?: AutoImprovePolicy;
+}
+
+export interface AutoThreshold { window: number; minScores: number; threshold: number }
+export interface AutoImprovePolicy extends AutoThreshold { scorers: string[]; instructions: string }
+
+export const DEFAULT_AUTO_THRESHOLD: Readonly<AutoThreshold> = { window: 20, minScores: 10, threshold: 0.4 };
+export const AUTO_INSTRUCTIONS_MAX = 8192;
+
+export function validateAutoThreshold(
+  { window, minScores, threshold }: AutoThreshold,
+  fields = { window: 'window', minScores: 'minScores', threshold: 'threshold' },
+): void {
+  if (!Number.isSafeInteger(window) || window < 1) throw new Error(`${fields.window} debe ser un entero ≥ 1`);
+  if (!Number.isSafeInteger(minScores) || minScores < 1) throw new Error(`${fields.minScores} debe ser un entero ≥ 1`);
+  if (minScores > window) throw new Error(`${fields.minScores} no puede superar ${fields.window}: el umbral no dispararía nunca`);
+  if (typeof threshold !== 'number' || !(threshold > 0 && threshold <= 1)) throw new Error(`${fields.threshold} debe estar en (0, 1]`);
 }
 
 export const SCORER_SCOPES = [...ROLES, 'change'] as const;
@@ -36,7 +54,7 @@ export interface ScorerDef { scope: ScorerScope; rubric: string; classes: Scorer
 const MAX_TEMPLATE = 32 * 1024;
 const WORKER_KEYS = ['rules', 'investigate', 'implement'];
 const VALIDATOR_KEYS = ['rules', 'code_review', 'security_audit', 'qa'];
-const TOP_KEYS = ['schemaVersion', 'harness', 'model', 'repo', 'worker', 'validators'];
+const TOP_KEYS = ['schemaVersion', 'harness', 'model', 'repo', 'worker', 'validators', 'autoImprove'];
 const TOP_KEYS_V2 = [...TOP_KEYS, 'roles', 'scorers'];
 const SCORER_NAME_RE = /^[a-z0-9][a-z0-9-]{0,40}$/;
 const CLASS_LABEL_RE = /^[a-z0-9_-]{1,24}$/;
@@ -121,6 +139,22 @@ function validateScorers(raw: unknown, profileHarness: string, modelOk: (m: unkn
   }
 }
 
+function validateAutoImprove(raw: unknown, scorers: Profile['scorers']): void {
+  if (!raw || typeof raw !== 'object' || Array.isArray(raw)) throw new Error('autoImprove debe ser un objeto');
+  const policy = raw as AutoImprovePolicy;
+  for (const key of Object.keys(policy)) {
+    if (!['window', 'minScores', 'threshold', 'scorers', 'instructions'].includes(key)) throw new Error('autoImprove contiene una clave desconocida');
+  }
+  validateAutoThreshold(policy);
+  if (!Array.isArray(policy.scorers) || new Set(policy.scorers).size !== policy.scorers.length ||
+      policy.scorers.some(name => typeof name !== 'string' || !Object.hasOwn(scorers ?? {}, name) || scorers?.[name]?.scope === 'change')) {
+    throw new Error('scorers debe incluir únicamente jueces de rol del mismo perfil, sin repetir');
+  }
+  if (typeof policy.instructions !== 'string' || policy.instructions.includes('\0') || Buffer.byteLength(policy.instructions) > AUTO_INSTRUCTIONS_MAX) {
+    throw new Error(`instructions debe ser texto sin NUL de hasta ${AUTO_INSTRUCTIONS_MAX} bytes`);
+  }
+}
+
 /** Valida esquema y plantillas. Lanza con un mensaje que nombra el campo. */
 export function validateProfile(raw: unknown): Profile {
   if (!raw || typeof raw !== 'object' || Array.isArray(raw)) throw new Error('perfil inválido: debe ser un objeto JSON');
@@ -156,6 +190,7 @@ export function validateProfile(raw: unknown): Profile {
     }
   }
   if (v2 && o.scorers !== undefined) validateScorers(o.scorers, o.harness as string, modelOk);
+  if (o.autoImprove !== undefined) validateAutoImprove(o.autoImprove, o.scorers as Profile['scorers']);
   templates(o.worker, WORKER_KEYS, 'worker');
   templates(o.validators, VALIDATOR_KEYS, 'validators');
   const w = o.worker as Record<string, string>, v = o.validators as Record<string, string>;
@@ -176,18 +211,31 @@ export function roleOf(a: { kind: string; validator: string | null }): Role | nu
  * Adaptador y modelo de una activity: override de la CLI > rol del perfil v2 > workstream.
  * Un modelo solo vale para el adaptador con el que se declaró. Con v1 es siempre lo de antes.
  */
-export function resolveRole(profile: Profile, role: Role | null, wsAgent: string, override?: string): { adapter: string; model: string | null; source: 'override' | 'role' | 'workstream' } {
-  if (profile.schemaVersion !== 2) return { adapter: override ?? wsAgent, model: null, source: override ? 'override' : 'workstream' };
-  const cfg = role ? profile.roles?.[role] : undefined;
+export function resolveRole(profile: Profile, role: Role | null, wsAgent: string, override?: string): {
+  adapter: string;
+  model: string | null;
+  source: 'override' | 'role' | 'workstream';
+  modelSource: 'role' | 'profile' | 'adapter';
+  modelDefaultReason: 'legacy' | 'incompatible' | 'undeclared' | null;
+} {
+  const v2 = profile.schemaVersion === 2;
+  const cfg = v2 && role ? profile.roles?.[role] : undefined;
   const adapter = override ?? cfg?.harness ?? wsAgent;
-  const model = cfg?.model !== undefined && adapter === (cfg.harness ?? profile.harness) ? cfg.model
-    : profile.model !== undefined && adapter === profile.harness ? profile.model : null;
-  return { adapter, model, source: override ? 'override' : cfg?.harness ? 'role' : 'workstream' };
+  const source = override ? 'override' : cfg?.harness ? 'role' : 'workstream';
+  if (cfg?.model !== undefined && adapter === (cfg.harness ?? profile.harness)) {
+    return { adapter, source, model: cfg.model, modelSource: 'role', modelDefaultReason: null };
+  }
+  if (v2 && profile.model !== undefined && adapter === profile.harness) {
+    return { adapter, source, model: profile.model, modelSource: 'profile', modelDefaultReason: null };
+  }
+  const modelDefaultReason = !v2 && profile.model !== undefined ? 'legacy'
+    : v2 && (cfg?.model !== undefined || profile.model !== undefined) ? 'incompatible' : 'undeclared';
+  return { adapter, source, model: null, modelSource: 'adapter', modelDefaultReason };
 }
 
 const profilesDir = (stateDir: string) => join(stateDir, 'profiles');
 const fileFor = (stateDir: string, digest: string) => join(profilesDir(stateDir), `${digest}.json`);
-const isDigest = (s: string) => /^[0-9a-f]{64}$/.test(s);
+export const isProfileDigest = (s: string) => /^[0-9a-f]{64}$/.test(s);
 
 /** Guarda el perfil direccionado por contenido. Reimportar el mismo es idempotente. */
 export function saveProfile(stateDir: string, raw: unknown): { digest: string; created: boolean } {
@@ -196,17 +244,24 @@ export function saveProfile(stateDir: string, raw: unknown): { digest: string; c
   const path = fileFor(stateDir, digest);
   if (existsSync(path)) { loadProfile(stateDir, digest); return { digest, created: false }; } // verifica integridad
   mkdirSync(profilesDir(stateDir), { recursive: true });
-  const tmp = `${path}.${process.pid}.tmp`;
+  const tmp = `${path}.${randomUUID()}.tmp`;
   try {
     writeFileSync(tmp, canonicalJson(profile) + '\n', { flag: 'wx', mode: 0o444 });
-    renameSync(tmp, path);
+    try {
+      // Publicar bytes completos sin reemplazar el fichero que haya publicado otro escritor.
+      linkSync(tmp, path);
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code !== 'EEXIST') throw error;
+      loadProfile(stateDir, digest);
+      return { digest, created: false };
+    }
   } finally { rmSync(tmp, { force: true }); }
   return { digest, created: true };
 }
 
 /** Carga y re-verifica: el contenido en disco debe producir el digest con el que se pidió. */
 export function loadProfile(stateDir: string, digest: string): Profile {
-  if (!isDigest(digest)) throw new Error(`digest de perfil inválido: ${digest}`);
+  if (!isProfileDigest(digest)) throw new Error(`digest de perfil inválido: ${digest}`);
   const path = fileFor(stateDir, digest);
   if (!existsSync(path)) throw new Error(`perfil desconocido: ${digest} (impórtalo con fab profile import)`);
   const profile = validateProfile(JSON.parse(readFileSync(path, 'utf8')));
@@ -215,7 +270,7 @@ export function loadProfile(stateDir: string, digest: string): Profile {
 }
 
 export function listProfiles(stateDir: string): string[] {
-  return existsSync(profilesDir(stateDir)) ? readdirSync(profilesDir(stateDir)).filter(f => f.endsWith('.json') && isDigest(f.slice(0, -5))).map(f => f.slice(0, -5)).sort() : [];
+  return existsSync(profilesDir(stateDir)) ? readdirSync(profilesDir(stateDir)).filter(f => f.endsWith('.json') && isProfileDigest(f.slice(0, -5))).map(f => f.slice(0, -5)).sort() : [];
 }
 
 export const DEFAULT_DIGEST = profileDigest(defaultProfile());

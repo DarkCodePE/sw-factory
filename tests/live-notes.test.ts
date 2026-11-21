@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, expect, test } from 'bun:test';
-import { mkdtempSync, rmSync } from 'node:fs';
+import { mkdirSync, mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { answerQuestion } from '../src/admission/answers.ts';
@@ -27,7 +27,7 @@ beforeEach(() => {
 });
 afterEach(() => { store.close(); rmSync(dir, { recursive: true, force: true }); });
 
-function setup() {
+function setup(confine = false) {
   const ws = store.createWorkstream({ slug: 'live-notes', goal: 'goal', repo, agent: 'fake',
     requireApproval: false, requireChangeApproval: false });
   store.setWorkstreamState(ws.id, 'active');
@@ -37,7 +37,7 @@ function setup() {
   const run = async (backend: ReturnType<typeof fakeLive>, crash?: (point: CrashPoint) => void) => {
     const activity = store.claimActivity(ws.id, 'worker')!;
     await processActivity(store, activity, 'worker', {
-      workstream: ws.id, stateDir, live: true, liveBackends: { fake: backend }, log: () => {}, crash,
+      workstream: ws.id, stateDir, live: true, confine, liveBackends: { fake: backend }, log: () => {}, crash,
     });
     return store.getActivity(activity.id);
   };
@@ -47,7 +47,7 @@ function setup() {
   const runAbortable = async (backend: ReturnType<typeof fakeLive>, abortController: AbortController) => {
     const activity = store.claimActivity(ws.id, 'worker')!;
     await processActivity(store, activity, 'worker', {
-      workstream: ws.id, stateDir, live: true, liveBackends: { fake: backend }, log: () => {},
+      workstream: ws.id, stateDir, live: true, confine, liveBackends: { fake: backend }, log: () => {},
     }, abortController);
     return store.getActivity(activity.id);
   };
@@ -213,4 +213,161 @@ test('si falla la reserva no queda sesión marcada ni se gasta una generación (
   expect(backend.turns).toHaveLength(0);
   expect(adm.db.query('SELECT COUNT(*) AS n FROM adm_sessions WHERE launched_at IS NOT NULL').get()).toEqual({ n: 0 });
   expect(adm.db.query('SELECT COUNT(*) AS n FROM adm_turns').get()).toEqual({ n: 0 });
+});
+
+const file = (text: string) => ({ name: 'datos.txt', bytes: new TextEncoder().encode(text) });
+
+test('reconstrucción: solo bytes de la reserva, cuerpos entregados y ninguna nota posterior al snapshot', async () => {
+  const { change, run, reply } = setup(true);
+  const historical = store.addChangeNote(change.id, 'Cuerpo histórico', file('PRIMER-ARCHIVO'));
+  const backend = fakeLive([{ reports: [ASK] }, { reports: [DONE] }]);
+  const waiting = await run(backend);
+  expect(backend.turns[0]!.prompt).toContain('PRIMER-ARCHIVO');
+  expect(store.listChangeNotes(change.id)[0]).toMatchObject({ id: historical.id, deliveredAt: expect.any(String) });
+  const pending = store.addChangeNote(change.id, 'Cuerpo pendiente', file('SEGUNDO-ARCHIVO'));
+  reply(waiting.questionId!);
+  backend.known.clear();
+  let added = false;
+  expect((await run(backend, point => {
+    if (point === 'session-written' && backend.turns.length === 2 && !added) {
+      added = true;
+      store.addChangeNote(change.id, 'LLEGÓ DESPUÉS DE RESERVAR', file('ARCHIVO-TARDÍO'));
+    }
+  })).status).toBe('completed');
+  const rebuilt = backend.turns[2]!.prompt;
+  expect(rebuilt).toContain(historical.body);
+  expect(rebuilt).not.toContain('PRIMER-ARCHIVO');
+  expect(rebuilt.split('SEGUNDO-ARCHIVO')).toHaveLength(2);
+  expect(rebuilt.split(pending.body)).toHaveLength(2);
+  expect(rebuilt).not.toContain('LLEGÓ DESPUÉS DE RESERVAR');
+  expect(rebuilt).not.toContain('ARCHIVO-TARDÍO');
+  expect(store.listChangeNotes(change.id).map(n => n.deliveredAt !== null)).toEqual([true, true, false]);
+});
+
+test('un prompt grande aplaza el adjunto y deduplica el motivo hasta que cambia la condición', async () => {
+  const { change, ws, run, reply } = setup(true);
+  const txt = 'ü'.repeat(32768);
+  store.db.query('UPDATE workstreams SET goal = ? WHERE id = ?').run('é'.repeat(65536), ws.id);
+  const pending = store.addChangeNote(change.id, 'ARCHIVO PENDIENTE', file(txt));
+  const plain = store.addChangeNote(change.id, 'TEXTO QUE SÍ VIAJA');
+  const backend = fakeLive([{ reports: [ASK] }, { reports: [DONE] }]);
+  const waiting = await run(backend);
+  expect(backend.turns[0]!.prompt).toContain(plain.body);
+  expect(backend.turns[0]!.prompt).not.toContain(pending.body);
+  expect(store.listChangeNotes(change.id)[0]).toEqual(pending);
+  const deferred = () => store.listEvents(ws.id).filter(e => e.severity === 'warning' && String(e.message).includes('Adjuntos pendientes'));
+  expect(deferred()).toHaveLength(1);
+  reply(waiting.questionId!);
+  expect((await run(backend)).status).toBe('completed');
+  expect(backend.turns[1]!.prompt).toContain(txt);
+  expect(store.listChangeNotes(change.id).every(n => n.deliveredAt !== null)).toBe(true);
+  expect(deferred()).toHaveLength(1);
+});
+
+test('un turn vivo abortado con archivo queda pendiente sin confirmación durable', async () => {
+  const { change, runAbortable } = setup(true);
+  const n = store.addChangeNote(change.id, 'Nota abortada', file('ARCHIVO ABORTADO'));
+  const controller = new AbortController();
+  const backend = fakeLive([{ reports: [DONE], before: () => controller.abort() }]);
+  await runAbortable(backend, controller);
+  expect(backend.turns[0]!.prompt).toContain('ARCHIVO ABORTADO');
+  expect(store.listChangeNotes(change.id)[0]).toMatchObject({ id: n.id, attemptId: backend.turns[0]!.attemptId, deliveredAt: null });
+});
+
+test('reconstruir sin confinamiento tampoco incluye el cuerpo pendiente de un adjunto inelegible', async () => {
+  const { change, run, reply } = setup();
+  const backend = fakeLive([{ reports: [ASK] }, { reports: [DONE] }]);
+  const waiting = await run(backend);
+  const pending = store.addChangeNote(change.id, 'CUERPO INELEGIBLE', file('ARCHIVO INELEGIBLE'));
+  const legacy = store.addChangeNote(change.id, 'TEXTO SIN ARCHIVO');
+  reply(waiting.questionId!);
+  backend.known.clear();
+  expect((await run(backend)).status).toBe('completed');
+  const rebuilt = backend.turns[2]!.prompt;
+  expect(rebuilt.split(legacy.body)).toHaveLength(2);
+  expect(rebuilt).not.toContain(pending.body);
+  expect(rebuilt).not.toContain('ARCHIVO INELEGIBLE');
+  expect(store.listChangeNotes(change.id)[0]).toEqual(pending);
+  const warnings = store.listEvents(store.getChange(change.id).workstreamId).filter(e => String(e.message).startsWith('Adjuntos pendientes:'));
+  expect(warnings).toHaveLength(1); // El intento de reanudación y el reconstruido vieron la misma condición.
+});
+
+test('una caída antes de lanzar no consume el archivo reservado y el siguiente intento lo confirma', async () => {
+  const { change, ws, run, recover } = setup(true);
+  const n = store.addChangeNote(change.id, 'Nota de caída', file('ARCHIVO HUÉRFANO'));
+  const backend = fakeLive([{ reports: [DONE] }]);
+  await expect(run(backend, point => { if (point === 'session-launched') throw new CrashInjected(point); })).rejects.toThrow(CrashInjected);
+  const orphan = store.listChangeNotes(change.id)[0];
+  expect(orphan).toMatchObject({ id: n.id, attemptId: expect.any(String), deliveredAt: null });
+  expect(backend.turns).toHaveLength(0);
+  recover();
+  expect((await run(backend)).status).toBe('completed');
+  const used = backend.turns.at(-1)!;
+  expect(used.prompt).toContain('ARCHIVO HUÉRFANO');
+  expect(used.attemptId).not.toBe(orphan!.attemptId);
+  expect(store.listChangeNotes(change.id)[0]).toMatchObject({ attemptId: used.attemptId, deliveredAt: expect.any(String) });
+  expect(store.listEvents(ws.id).filter(e => String(e.message).includes('entregada (turno'))).toHaveLength(1);
+});
+
+// T96-H6: cada condición que deja pendiente el archivo en un turno vivo.
+test('un turno vivo con salida distinta de cero no confirma el archivo aunque reporte done', async () => {
+  const { change, run } = setup(true);
+  store.addChangeNote(change.id, 'cuerpo', file('ARCHIVO SALIDA'));
+  const backend = fakeLive([{ reports: [DONE], exitCode: 1 }]);
+  await run(backend);
+  expect(backend.turns[0]!.prompt).toContain('ARCHIVO SALIDA');
+  expect(store.listChangeNotes(change.id)[0]!.deliveredAt).toBeNull();
+});
+
+test.each([
+  ['entrada por argv', { promptStdin: false }, true],
+  ['adaptador no confinable', { confinable: false }, true],
+  ['sin confinamiento', {}, false],
+] as const)('un turno vivo con %s conserva pendiente el archivo y entrega el texto', async (_name, over, confine) => {
+  const { change, run } = setup(confine);
+  const pending = store.addChangeNote(change.id, 'CUERPO CON ARCHIVO', file('ARCHIVO NO APTO'));
+  const plain = store.addChangeNote(change.id, 'TEXTO QUE VIAJA');
+  const backend = fakeLive([{ reports: [DONE] }], over);
+  await run(backend);
+  expect(backend.turns[0]!.prompt).toContain(plain.body);
+  expect(backend.turns[0]!.prompt).not.toContain('ARCHIVO NO APTO');
+  expect(backend.turns[0]!.prompt).not.toContain(pending.body);
+  expect(store.listChangeNotes(change.id)[0]).toEqual(pending);
+});
+
+test('un turno vivo cuyo estado cae en state/live conserva pendiente el archivo', async () => {
+  const nested = join(dir, 'state', 'live', 's');
+  mkdirSync(nested, { recursive: true, mode: 0o700 });
+  store.close();
+  store = new Store(join(nested, 'fab.db'), { clock: () => new Date('2026-01-01T00:00:00Z') });
+  const { change, run } = setup(true);
+  const pending = store.addChangeNote(change.id, 'CUERPO', file('ARCHIVO EN LIVE'));
+  const backend = fakeLive([{ reports: [DONE] }]);
+  await run(backend);
+  expect(backend.turns[0]!.prompt).not.toContain('ARCHIVO EN LIVE');
+  expect(store.listChangeNotes(change.id)[0]).toEqual(pending);
+});
+
+test('T96-H12: el turno vivo calcula el inventario de Git antes de su transacción, no dentro', async () => {
+  const { change, run } = setup(true);
+  store.addChangeNote(change.id, 'CUERPO', file('ARCHIVO'));
+  const spawn = Bun.spawnSync, inTx: boolean[] = [];
+  Bun.spawnSync = ((...args: Parameters<typeof Bun.spawnSync>) => {
+    const argv = args[0] as string[]; // solo el inventario de montajes (no otros usos de Git, como el manifiesto)
+    if (argv.includes('--absolute-git-dir') || argv.includes('--git-common-dir') || (argv.includes('worktree') && argv.includes('list'))) inTx.push(store.db.inTransaction);
+    return spawn(...args);
+  }) as typeof Bun.spawnSync;
+  try { await run(fakeLive([{ reports: [DONE] }])); } finally { Bun.spawnSync = spawn; }
+  expect(inTx.length).toBeGreaterThan(0); // D06/T06: sin `prepared`, Git correría dentro de la transacción de la reserva
+  expect(inTx.filter(Boolean)).toEqual([]);
+});
+
+test('T96-H12: la reserva del turno vivo trata como montaje persistente state/live y el claude-projects del change', async () => {
+  const { change, stateDir, run } = setup(true);
+  store.addChangeNote(change.id, 'CUERPO', file('ARCHIVO'));
+  const reserve = store.reserveNotes.bind(store); let mounts: string[] | undefined;
+  store.reserveNotes = ((c: string, a: string, t: string, target: { persistentMounts?: string[] }) => { mounts = target.persistentMounts; return reserve(c, a, t, target as never); }) as typeof store.reserveNotes;
+  await run(fakeLive([{ reports: [DONE] }]));
+  expect(mounts).toContain(join(stateDir, 'live'));
+  expect(mounts).toContain(join(stateDir, 'live', change.id.slice(0, 8), 'claude-projects')); // T04b
 });

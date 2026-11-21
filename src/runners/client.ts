@@ -13,7 +13,7 @@ import { LIMITS, ProtocolError, decodeLine, encode, logBudget, type Message, typ
 export type RunnerErrorCode = 'RUNNER_UNREACHABLE' | 'RUNNER_REFUSED' | 'RUNNER_BUSY' | 'RUNNER_LOST' | 'RUNNER_RESULT_REJECTED';
 /** Error tipado que el pool (T74f) mapea a bloquear, reencolar o fallar. El detalle lo escribe casa, nunca el runner. */
 export class RunnerError extends Error {
-  constructor(readonly code: RunnerErrorCode, detail: string) {
+  constructor(readonly code: RunnerErrorCode, detail: string, readonly reason?: 'timeout' | 'invalid_hello') {
     super(`${code}: ${detail.replace(/[^\x20-\x7e]/g, '?').slice(0, 200)}`);
     this.name = 'RunnerError';
   }
@@ -140,11 +140,14 @@ function runnerError(m: Extract<Message, { type: 'error' }>): RunnerError {
 /** Lee el siguiente mensaje. Antes del primer hello, un EOF es «no conectó»; después, «se perdió». */
 async function next(s: Session, expect: MessageType[], phase: 'hello' | 'job', opts: { expectChanges?: boolean } = {}): Promise<Message> {
   let line: string | null;
-  try { line = await s.reader.line(LIMITS.lineBytes); } catch (e) { throw rejected(e); }
+  try { line = await s.reader.line(LIMITS.lineBytes); } catch (e) {
+    if (phase === 'hello' && e instanceof ProtocolError) throw new RunnerError('RUNNER_RESULT_REJECTED', e.message, 'invalid_hello');
+    throw rejected(e);
+  }
   if (line === null) throw new RunnerError(phase === 'hello' ? 'RUNNER_UNREACHABLE' : 'RUNNER_LOST', phase === 'hello' ? 'sin respuesta del runner' : 'la sesión terminó sin resultado');
   let m: Message;
   try { m = decodeLine(line, [...expect, 'error'], 'runner', opts); } catch (e) {
-    if (phase === 'hello' && e instanceof ProtocolError) throw new RunnerError('RUNNER_REFUSED', `hello inválido: ${e.message}`);
+    if (phase === 'hello' && e instanceof ProtocolError) throw new RunnerError('RUNNER_REFUSED', `hello inválido: ${e.message}`, 'invalid_hello');
     throw rejected(e);
   }
   if (m.type === 'error') throw runnerError(m);
@@ -235,7 +238,8 @@ export async function checkRunner(runner: RemoteRunner, transport: Transport = s
     const h = await handshake(s, createHash('sha256').update('fab-runner-check').digest('hex'));
     return { protocol: 1, fabSha: h.fabSha, sandbox: h.sandbox, agents: h.agents };
   } catch (e) {
-    if (s.cause === 'timeout' || s.cause === 'abort') throw new RunnerError('RUNNER_UNREACHABLE', s.cause === 'timeout' ? 'tiempo agotado' : 'cancelado');
+    if (s.cause === 'timeout') throw new RunnerError('RUNNER_UNREACHABLE', 'tiempo agotado', 'timeout');
+    if (s.cause === 'abort') throw new RunnerError('RUNNER_UNREACHABLE', 'cancelado');
     throw e;
   } finally { await s.close(); }
 }

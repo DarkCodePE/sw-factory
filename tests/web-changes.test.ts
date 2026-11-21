@@ -190,7 +190,7 @@ test('H1: el sondeo no pierde el foco: fabPrepare marca el main recibido igual q
     return { li, b, querySelectorAll: () => [li] }; };
   const store_ = new Map<string, string>([['fab.inbox.seen', '["a1"]']]);
   const win: Record<string, unknown> = {};
-  const doc = { ...mkRoot(), addEventListener() {}, body: {} };
+  const doc = { ...mkRoot(), addEventListener() {}, body: {}, querySelector: () => null };
   new Function('window', 'document', 'localStorage', 'MutationObserver', INBOX_JS)(win, doc, { getItem: (k: string) => store_.get(k) ?? null, setItem() {} }, class { observe() {} });
   const live = mkRoot(); const received = mkRoot();
   (win.fabPrepare as (r: unknown) => void)(live); (win.fabPrepare as (r: unknown) => void)(received);

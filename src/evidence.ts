@@ -45,11 +45,11 @@ export function readEvidence(stateDir: string, path: string): EvidenceText | nul
     // JSON histórico puede contener PEM con saltos escapados; redactar los valores decodificados.
     if (!truncated && path.endsWith('.json')) {
       try {
-        const textJson = JSON.stringify(JSON.parse(text), (key, v) => typeof v === 'string' ? (/api[_-]?key|token|secret|password|credential/i.test(key) ? '[REDACTED]' : redactForWeb(v)) : v, 2);
+        const textJson = JSON.stringify(JSON.parse(text), (key, v) => typeof v === 'string' ? (SECRET_KEY.test(key) ? '[REDACTED]' : redactForWeb(v)) : v, 2);
         return { text: textJson, truncated: false };
       } catch { /* Mostrar JSON roto como texto. */ }
     }
-    text = text.replace(/("[\w-]*(?:api[_-]?key|token|secret|password|credential)[\w-]*"\s*:\s*)"(?:[^"\\]|\\.)*"/gi, '$1"[REDACTED]"');
+    text = text.replace(new RegExp(`("[\\w-]*(?:${SECRET_WORDS})[\\w-]*"\\s*:\\s*)"(?:[^"\\\\]|\\\\.)*"`, 'gi'), '$1"[REDACTED]"');
     text = redactForWeb(text);
     return { text, truncated };
   } catch (error) {
@@ -60,7 +60,7 @@ export function readEvidence(stateDir: string, path: string): EvidenceText | nul
 
 // Regla de presentación; no amplía redact ni cambia la lectura histórica de improve.
 function redactForWeb(text: string): string {
-  return redact(text).replace(/-----BEGIN (?:[A-Z]+ )?PRIVATE KEY-----[\s\S]*$/g, '[REDACTED]');
+  return redact(text).replace(/-----BEGIN (?:[A-Z]+ )?PRIVATE KEY(?: BLOCK)?-----[\s\S]*$/g, '[REDACTED]');
 }
 
 export function evidencePath(changeId: string, file: string): string {
@@ -68,18 +68,70 @@ export function evidencePath(changeId: string, file: string): string {
   return `runs/${changeId}/${file}`;
 }
 
-export function redact(text: string): string {
-  return text
-    .replace(/-----BEGIN (?:[A-Z]+ )?PRIVATE KEY-----[\s\S]*?-----END (?:[A-Z]+ )?PRIVATE KEY-----/g, '[REDACTED]')
-    .replace(/\bBearer\s+[A-Za-z0-9._~+/=-]+/gi, 'Bearer [REDACTED]')
-    .replace(/\b(?:sk-[A-Za-z0-9_-]{16,}|AIza[\w-]{35})\b/g, '[REDACTED]')
-    .replace(/\b(?:AKIA|ASIA)[A-Z0-9]{16}\b/g, '[REDACTED]')
-    .replace(/\b(?:gh[pousr]_[A-Za-z0-9]{16,}|github_pat_[A-Za-z0-9_]{16,})\b/g, '[REDACTED]')
-    .replace(/\bxox[baprs]-[A-Za-z0-9-]{10,}\b/g, '[REDACTED]')
-    .replace(/\beyJ[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+\b/g, '[REDACTED]')
-    .replace(/\b([a-z][a-z0-9+.-]*:\/\/)[^\s/@]+:[^\s/@]+@/gi, '$1[REDACTED]@')
-    .replace(/\b([\w-]*(?:api[_-]?key|token|secret|password|credential)[\w-]*\s*[:=]\s*)["']?[^\s"',}]+["']?/gi, '$1[REDACTED]');
+// Palabras que delatan un valor secreto en una clave; `pass` y las cabeceras van aparte y exactas, para no atrapar «bypass» o «Cookie banner».
+const SECRET_WORDS = 'api[_-]?key|token(?!izer)|secret|password|passwd|credential|private[_-]?key';
+const SECRET_KEY = new RegExp(`${SECRET_WORDS}|^(?:pass|pwd|authorization|proxy-authorization|cookie|set-cookie)$|[_-]pwd$`, 'i');
+// Valor: entre comillas con escapes, comilla sin cierre (corte de evidencia o valor enorme: hasta fin de línea), o hasta el siguiente separador.
+const VALUE = String.raw`("(?:[^"\\\n]|\\.){0,4096}"|'(?:[^'\\\n]|\\.){0,4096}'|["'][^\r\n]*|[^\s"',}]+)`;
+const quoted = (v: string) => /^["']/.test(v) ? `${v[0]}[REDACTED]${v[0]}` : '[REDACTED]';
+// Con la clave entre comillas (JSON), solo se sustituye un valor de texto: los números y literales (`"input_tokens": 12`) se conservan.
+const mask = (re: RegExp) => [re, (m: string, key: string, v: string) => /["']\s*[:=]\s*$/.test(key) && !/^["']/.test(v) ? m : key + quoted(v)] as const;
+
+/** Saneador de un campo JSON: el nombre decide el valor completo; el resto pasa por `redact`. Lo comparten el manifiesto y el lector de evidencia. */
+export function redactField(key: string, value: string): string {
+  return SECRET_KEY.test(key) ? '[REDACTED]' : redact(value);
 }
+
+/** Una regla es una función de texto a texto; `source` (la regex que usa) deja que el test de linealidad derive sus entradas patológicas. */
+type Rule = ((text: string) => string) & { source?: string };
+
+/** Bloques de clave privada con cierre. Recorre con indexOf: si ya no queda ningún `-----END`, los BEGIN restantes no se vuelven a escanear (una regex lo haría una vez por BEGIN). */
+function redactPrivateKeys(text: string): string {
+  const begin = /-----BEGIN (?:[A-Z]+ )?PRIVATE KEY(?: BLOCK)?-----/g, end = /-----END (?:[A-Z]+ )?PRIVATE KEY(?: BLOCK)?-----/g;
+  let out = '', pos = 0, m: RegExpExecArray | null;
+  while ((m = begin.exec(text))) {
+    end.lastIndex = m.index + m[0].length;
+    const e = end.exec(text);
+    if (!e) break;
+    out += text.slice(pos, m.index) + '[REDACTED]'; pos = e.index + e[0].length; begin.lastIndex = pos;
+  }
+  return out + text.slice(pos);
+}
+redactPrivateKeys.source = '-----BEGIN PRIVATE KEY----- -----END PRIVATE KEY-----';
+const sub = (re: RegExp, to: string | ((m: string, key: string, v: string) => string)): Rule => Object.assign((t: string) => t.replace(re, to as string), { source: re.source });
+const masked = (re: RegExp): Rule => { const [r, f] = mask(re); return sub(r, f); };
+
+/** Reglas de redacción, en orden. Exportadas para el test de linealidad: cada regla debe costar O(n) con entradas patológicas. */
+export const RULES: Rule[] = [
+  redactPrivateKeys,
+  sub(/\bBearer\s+[A-Za-z0-9._~+/=-]+/gi, 'Bearer [REDACTED]'),
+  sub(/\b(?:sk-[A-Za-z0-9_-]{16,}|AIza[\w-]{35})\b/g, '[REDACTED]'),
+  sub(/\b(?:AKIA|ASIA)[A-Z0-9]{16}\b/g, '[REDACTED]'),
+  sub(/\b(?:gh[pousr]_[A-Za-z0-9]{16,}|github_pat_[A-Za-z0-9_]{16,})\b/g, '[REDACTED]'),
+  sub(/\bxox[baprs]-[A-Za-z0-9-]{10,}\b/g, '[REDACTED]'),
+  // La cabecera acotada: con `-` en la clase y un `\b` delante, cada `eyJ` de `-eyJ-eyJ…` reinicia un recorrido hasta el final de la racha.
+  sub(/\beyJ[A-Za-z0-9_-]{1,2048}\.[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+\b/g, '[REDACTED]'),
+  sub(/\b([a-z][a-z0-9+.-]{0,31}:\/\/)[^\s/@:]+:[^\s/@]+@/gi, '$1[REDACTED]@'),
+  sub(/\bglpat-[A-Za-z0-9_-]{16,}/g, '[REDACTED]'),
+  sub(/\bnpm_[A-Za-z0-9]{20,}\b/g, '[REDACTED]'),
+  masked(new RegExp(String.raw`\b((?:set-)?cookie["']\s*:\s*)${VALUE}`, 'gi')),
+  // El valor se decide en la función, no con un lookahead: un lookahead que recorre la línea en cada retroceso es cuadrático.
+  sub(/\b((?:Set-)?Cookie[ \t]*:[ \t]*)([^\r\n]+)/gi, (m, key, v) => /=|\S{16}/.test(v) ? `${key}[REDACTED]` : m),
+  // Authorization: un esquema desconocido también oculta su valor (esquema opcional y un token); una palabra suelta como `required` no es credencial.
+  masked(new RegExp(String.raw`\b((?:proxy-)?authorization["']?[ \t]*[:=](?![ \t]*[A-Za-z]{1,15}[ \t]*(?:[\r\n]|$))[ \t]*)${VALUE.replace('|[^\\s"\',}]+', '|(?:[A-Za-z][\\w-]*[ \\t]+)?[^\\s"\',}]+')}`, 'gi')),
+  masked(new RegExp(String.raw`((?<![\w-])--[\w-]*?(?:token|secret|password|passwd|api-?key)[\w-]{0,256}(?:[ \t]+|=))(?![-<>|&]|\d+\b)${VALUE}`, 'gi')),
+  masked(new RegExp(String.raw`(\bcurl\b(?:(?! (?:&&|\|\||;|\|) )[^\n]){0,500}?[ \t](?:-[a-zA-Z]{0,8}u|--user)(?:[ \t]+|=))(?!https?:\/\/)${VALUE}`, 'g')),
+  // `pass` solo como asignación o clave JSON; `pwd` también con `:`, salvo que el valor sea una ruta o `$(…)`. `pass: 12` o `PASS: tests/x` no son secretos.
+  masked(new RegExp(String.raw`\b(pass["']?[ \t]*=[ \t]*|pass["']\s*:\s*)${VALUE}`, 'gi')),
+  masked(new RegExp(String.raw`(?<![A-Za-z0-9])(pwd["']?[ \t]*[:=][ \t]*|pwd["']\s*:\s*)(?![/~.$])${VALUE}`, 'gi')),
+  // Sin prefijo capturado: el nombre de la clave que precede a la palabra queda en el texto, y no hay un recorrido por inicio.
+  masked(new RegExp(String.raw`((?:${SECRET_WORDS})[\w-]{0,256}["']?\s*[:=]\s*)${VALUE}`, 'gi')),
+];
+
+export function redact(text: string): string {
+  return RULES.reduce((t, rule) => rule(t), text);
+}
+
 
 
 export function activityMetadata(stateDir: string, a: Activity): Record<string, unknown> | null {

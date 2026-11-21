@@ -49,45 +49,74 @@ test('§5.1 canal: sin roleEnv ni mcpRequired (S3), sin denied', () => {
   expect(r).toMatchObject({ delivered: [], denied: [], missing: [] });
 });
 
-test('B2: el argv de confineAgent no lleva ningún valor; el entorno sí', () => {
-  if (!canConfine) return;
+test.skipIf(!canConfine)('T98: el lanzador retiene el argv, cwd y entorno iniciales y solo acepta stdin', async () => {
   const root = mkdtempSync('/tmp/fab-env-');
-  const saved = { ...process.env };
+  const names = ['DB_URL', 'CANARIO_T98'];
+  const saved = Object.fromEntries(names.map(n => [n, process.env[n]]));
   try {
-    Bun.spawnSync(['git', 'init', '-q', root]);
-    process.env.ANTHROPIC_API_KEY = 'canario-api'; process.env.DB_URL = 'canario-db';
-    const c = confineAgent('claude', ['sh', '-c', 'true'], root, {}, undefined, undefined, undefined, { wsAllow: ['DB_URL'], roleEnv: ['DB_URL'] });
+    expect(Bun.spawnSync(['git', 'init', '-q', root]).exitCode).toBe(0);
+    process.env.DB_URL = 'marcador-inicial';
+    process.env.CANARIO_T98 = 'marcador-excluido';
+    const extra = { FABRICA_FAKE_STATUS: 'original' };
+    const argv = ['sh', '-ec', 'test "$PWD" = "$1"; test "$#" = 1; test -z "${CANARIO_T98+x}"; test "$DB_URL" = marcador-inicial; test "$FABRICA_FAKE_STATUS" = original; read -r input; test "$input" = entrada; printf confirmado; printf diagnostico >&2', 'prueba', root];
+    const c = confineAgent('fake', argv, root, extra, undefined, undefined, undefined, { wsAllow: ['DB_URL'], roleEnv: ['DB_URL'] });
     try {
-      expect(c.argv.join('\0')).not.toContain('canario');
-      expect(c.argv).not.toContain('--setenv');
-      expect(c.env.ANTHROPIC_API_KEY).toBe('canario-api');
-      expect(c.env.DB_URL).toBe('canario-db');
+      expect(Object.keys(c).sort()).toEqual(['cleanup', 'inspection', 'spawn']);
+      expect(Object.isFrozen(c.inspection)).toBe(true);
+      expect(Object.isFrozen(c.inspection.envNames)).toBe(true);
+      expect(c.inspection.envNames).toContain('DB_URL');
+      expect(c.inspection.envNames).not.toContain('CANARIO_T98');
+      expect(c.inspection.newSession).toBe(true);
+
+      process.env.DB_URL = 'marcador-tardio';
+      argv[2] = 'exit 77';
+      extra.FABRICA_FAKE_STATUS = 'tardio';
+      const spawn = c.spawn as (input: unknown, opts?: unknown) => ReturnType<typeof c.spawn>;
+      const options = { env: { CANARIO_T98: 'inyectado' }, cwd: '/', stdout: 'ignore', stderr: 'ignore', detached: false };
+      expect(() => spawn(options)).toThrow(/entrada/);
+      const child = spawn(new TextEncoder().encode('entrada\n'), options);
+      const [code, stdout, stderr] = await Promise.all([child.exited, new Response(child.stdout).text(), new Response(child.stderr).text()]);
+      expect(code).toBe(0);
+      expect(stdout).toBe('confirmado');
+      expect(stderr).toBe('diagnostico');
     } finally { c.cleanup(); }
-  } finally { process.env.ANTHROPIC_API_KEY = saved.ANTHROPIC_API_KEY; if (saved.ANTHROPIC_API_KEY === undefined) delete process.env.ANTHROPIC_API_KEY; if (saved.DB_URL === undefined) delete process.env.DB_URL; else process.env.DB_URL = saved.DB_URL; rmSync(root, { recursive: true, force: true }); }
+  } finally {
+    for (const n of names) { if (saved[n] === undefined) delete process.env[n]; else process.env[n] = saved[n]; }
+    rmSync(root, { recursive: true, force: true });
+  }
 });
 
-test('bwrap real: /proc/<pid>/cmdline sin valores y el hijo ve lo permitido y no lo demás', async () => {
-  if (!canConfine) return;
+test.skipIf(!canConfine)('bwrap real: cmdline sin valores y el hijo ve lo permitido y no lo demás', async () => {
   const root = mkdtempSync('/tmp/fab-env-real-');
   const names = ['ANTHROPIC_API_KEY', 'DB_URL', 'CANARIO'];
   const saved = Object.fromEntries(names.map(n => [n, process.env[n]]));
   try {
-    Bun.spawnSync(['git', 'init', '-q', root]);
+    expect(Bun.spawnSync(['git', 'init', '-q', root]).exitCode).toBe(0);
     process.env.ANTHROPIC_API_KEY = 'canario-api'; process.env.DB_URL = 'canario-db'; process.env.CANARIO = 'canario-no';
-    const out = join(root, 'out');
-    const script = `printf '%s|%s|%s' "$DB_URL" "\${CANARIO-unset}" "$ANTHROPIC_API_KEY" > ${out}; while [ ! -e ${root}/go ]; do sleep 0.05; done`;
-    const adapter = { name: 'claude', command: () => ['sh', '-c', script], env: () => ({}) };
-    let cmdlines = '';
-    const run = runAgent(adapter, '', root, 10_000, { confine: true, envDecl: { wsAllow: ['DB_URL'], roleEnv: ['DB_URL'] }, onSpawn: pid => { cmdlines = readFileSync(`/proc/${pid}/cmdline`, 'utf8'); } });
-    for (let i = 0; i < 100 && !Bun.file(out).size; i++) await Bun.sleep(50);
-    // cmdline de bwrap y de sus hijos
-    const kids = Bun.spawnSync(['sh', '-c', 'for p in /proc/[0-9]*; do tr "\\0" " " < $p/cmdline 2>/dev/null; echo; done']).stdout.toString();
-    writeFileSync(join(root, 'go'), '');
-    await run;
-    expect(readFileSync(out, 'utf8')).toBe('canario-db|unset|canario-api');
-    expect(cmdlines).not.toContain('canario');
-    expect(kids.split('\n').filter(l => l.includes(root))).not.toEqual([]);
-    expect(kids.split('\n').filter(l => l.includes(root)).join('\n')).not.toContain('canario');
+    const script = `import os
+cmdline = open('/proc/self/cmdline', 'rb').read().split(b'\\0')
+assert 'CANARIO' not in os.environ
+for name in ['DB_URL', 'ANTHROPIC_API_KEY']:
+    assert os.environ[name].startswith('canario' + '-')
+    assert not any(os.environ[name].encode() in arg for arg in cmdline)
+print('STATUS: done')
+`;
+    const adapter = { name: 'claude', command: () => ['python3', '-c', script] };
+    let cmdline: string | undefined;
+    let ownGroup = false;
+    const run = await runAgent(adapter, '', root, 10_000, {
+      confine: true,
+      envDecl: { wsAllow: ['DB_URL'], roleEnv: ['DB_URL'] },
+      onSpawn: pid => {
+        cmdline = readFileSync(`/proc/${pid}/cmdline`, 'utf8');
+        ownGroup = process.kill(-pid, 0);
+      },
+    });
+    expect(run.exitCode).toBe(0);
+    expect(run.ok).toBe(true);
+    expect(ownGroup).toBe(true);
+    expect(cmdline).toContain('--chdir');
+    expect(cmdline).not.toMatch(/canario-(api|db|no)|--setenv/);
   } finally { for (const n of names) { if (saved[n] === undefined) delete process.env[n]; else process.env[n] = saved[n]; } rmSync(root, { recursive: true, force: true }); }
 });
 
@@ -100,20 +129,20 @@ test('perfil sin env: el entorno confinado tiene las mismas claves que antes del
     Bun.spawnSync(['git', 'init', '-q', root]);
     for (const n of names) process.env[n] = 'v';
     const fixed = ['GIT_CONFIG_COUNT', 'GIT_CONFIG_KEY_0', 'GIT_CONFIG_KEY_1', 'GIT_CONFIG_VALUE_0', 'GIT_CONFIG_VALUE_1', 'HOME', 'LANG', 'PATH', 'TMPDIR'];
-    const keys = (a: string) => { const c = confineAgent(a, ['sh', '-c', 'true'], root); try { return Object.keys(c.env).sort(); } finally { c.cleanup(); } };
+    const keys = (a: string) => { const c = confineAgent(a, ['sh', '-c', 'true'], root); try { return c.inspection.envNames; } finally { c.cleanup(); } };
     expect(keys('claude')).toEqual([...fixed, 'ANTHROPIC_API_KEY', 'ANTHROPIC_AUTH_TOKEN', 'ANTHROPIC_BASE_URL', 'ANTHROPIC_MODEL'].sort());
     expect(keys('codex')).toEqual([...fixed, 'OPENAI_API_KEY'].sort());
     expect(keys('fake')).toEqual([...fixed].sort());
   } finally { for (const n of names) { if (saved[n] === undefined) delete process.env[n]; else process.env[n] = saved[n]; } rmSync(root, { recursive: true, force: true }); }
 });
 
-test('una variable declarada no pisa la base del sandbox (HOME, PATH)', () => {
+test('una variable declarada no pisa la base del sandbox (HOME, PATH)', async () => {
   if (!canConfine) return;
   const root = mkdtempSync('/tmp/fab-env-base-');
   try {
     Bun.spawnSync(['git', 'init', '-q', root]);
-    const c = confineAgent('fake', ['sh', '-c', 'true'], root, { HOME: '/host', PATH: '/host/bin' }, undefined, undefined, undefined, { wsAllow: ['HOME', 'PATH'], roleEnv: ['HOME', 'PATH'] });
-    try { expect(c.env.HOME).toBe('/home/agent'); expect(c.env.PATH).toContain('/opt/fab-runtime'); } finally { c.cleanup(); }
+    const c = confineAgent('fake', ['sh', '-ec', 'test "$HOME" = /home/agent; case "$PATH" in /opt/fab-runtime:*) exit 0;; *) exit 1;; esac'], root, { HOME: '/host', PATH: '/host/bin' }, undefined, undefined, undefined, { wsAllow: ['HOME', 'PATH'], roleEnv: ['HOME', 'PATH'] });
+    try { expect(await c.spawn('ignore').exited).toBe(0); } finally { c.cleanup(); }
   } finally { rmSync(root, { recursive: true, force: true }); }
 });
 
@@ -131,4 +160,28 @@ test('T72e-H1: la lista cubre las FABRICA_* que lee src/agent/ (salvo las que no
   // Opcionales (búsqueda, red, tiempos): hoy no se pasan; si hace falta alguna, se añade a NATIVE_VARS.
   const opcionales = new Set(['FABRICA_SEARCH_URL', 'FABRICA_SEARCH_API_KEY', 'FABRICA_SEARCH_PROVIDER', 'FABRICA_FETCH_ALLOW_PRIVATE', 'FABRICA_STREAM_IDLE_MS', 'FABRICA_EGRESS_PROBE_FILE']);
   expect([...leen].filter(n => !opcionales.has(n) && !NATIVE_VARS.includes(n))).toEqual([]);
+});
+
+// T98-H4(c): la aserción de la base, recuperada: ningún proceso de la máquina que mencione el repo lleva un valor en su cmdline, no solo bwrap y el agente.
+test.skipIf(!canConfine)('bwrap real: ningún proceso en marcha lleva valores del entorno en su cmdline', async () => {
+  const root = mkdtempSync('/tmp/fab-env-all-');
+  const names = ['ANTHROPIC_API_KEY', 'DB_URL', 'CANARIO'];
+  const saved = Object.fromEntries(names.map(n => [n, process.env[n]]));
+  try {
+    expect(Bun.spawnSync(['git', 'init', '-q', root]).exitCode).toBe(0);
+    process.env.ANTHROPIC_API_KEY = 'canario-api'; process.env.DB_URL = 'canario-db'; process.env.CANARIO = 'canario-no';
+    const out = join(root, 'out');
+    const script = `printf '%s|%s|%s' "$DB_URL" "\${CANARIO-unset}" "$ANTHROPIC_API_KEY" > ${out}; while [ ! -e ${root}/go ]; do sleep 0.05; done`;
+    const adapter = { name: 'claude', command: () => ['sh', '-c', script], env: () => ({}) };
+    const run = runAgent(adapter, '', root, 10_000, { confine: true, envDecl: { wsAllow: ['DB_URL'], roleEnv: ['DB_URL'] } });
+    for (let i = 0; i < 100 && !Bun.file(out).size; i++) await Bun.sleep(50);
+    // cmdline de todos los procesos (bwrap, sus hijos y el resto de la máquina)
+    const all = Bun.spawnSync(['sh', '-c', 'for p in /proc/[0-9]*; do tr "\\0" " " < $p/cmdline 2>/dev/null; echo; done']).stdout.toString();
+    writeFileSync(join(root, 'go'), '');
+    await run;
+    expect(readFileSync(out, 'utf8')).toBe('canario-db|unset|canario-api');
+    const mentioning = all.split('\n').filter(l => l.includes(root));
+    expect(mentioning).not.toEqual([]); // la comprobación no es vacía: el agente y bwrap estaban en marcha
+    expect(mentioning.join('\n')).not.toContain('canario');
+  } finally { for (const n of names) { if (saved[n] === undefined) delete process.env[n]; else process.env[n] = saved[n]; } rmSync(root, { recursive: true, force: true }); }
 });

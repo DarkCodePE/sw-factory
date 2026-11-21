@@ -8,6 +8,7 @@ import { agentBinStatus, PINNED_AGENTS, type AgentBinVerdict } from './agents-ve
 import { verifierArgv } from './agent/mission-evidence.ts';
 import { listProfiles } from './profile.ts';
 import { redact } from './manifest.ts';
+import { workstreamRunner } from './web-runners.ts';
 
 const esc = (v: unknown) => redact(String(v ?? '')).replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[c]!);
 // Valor de un campo editable: se escapa pero no se redacta, o guardar sin tocar el campo lo sobrescribiría con [REDACTED] (T60-H1).
@@ -94,10 +95,11 @@ function cardForms(w: Workstream, csrf: string, inProgress: number): string {
 
 export function workstreamsBody(store: Store, ui: { badge(s: string): string }, csrf?: string): string {
   const list = store.listWorkstreams();
+  const runners = store.listRunnerSummaries();
   const items = list.map(w => {
     const running = csrf ? store.changeIndex(w.slug).filter(c => c.status === 'in_progress').length : 0;
     const finish = csrf && w.state === 'draft' ? `<h3>Antes de activar</h3>${checklist({ agent: w.agent, verify: w.verify?.length ? 'definido' : '' })}` : '';
-    return `<li><h2><a href="/changes?ws=${enc(w.slug)}">${esc(w.slug)}</a> ${ui.badge(w.state)}</h2><p>${esc(w.goal)}</p><p class="muted">Agente: ${esc(w.agent)} · ${esc(w.repo)} · Workers: ${w.workerConcurrency} · Tope: ${w.taskLimit}</p>${finish}${csrf ? cardForms(w, csrf, running) : ''}</li>`;
+    return `<li><h2><a href="/changes?ws=${enc(w.slug)}">${esc(w.slug)}</a> ${ui.badge(w.state)}</h2><p>${esc(w.goal)}</p><p class="muted">Agente: ${esc(w.agent)} · ${esc(w.repo)} · Workers: ${w.workerConcurrency} · Tope: ${w.taskLimit}</p>${workstreamRunner(w, runners, csrf)}${finish}${csrf ? cardForms(w, csrf, running) : ''}</li>`;
   });
   return `<p class="intro">Frentes de trabajo y su objetivo.</p>${csrf ? '<p><a href="/workstreams/nuevo">Nuevo workstream</a></p>' : ''}<ul class="workstreams">${items.join('')}</ul>${!list.length ? '<p class="empty">No hay workstreams. Crea uno desde fab ws create.</p>' : ''}`;
 }

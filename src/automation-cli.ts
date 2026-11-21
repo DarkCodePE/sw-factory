@@ -1,43 +1,29 @@
 // fab automation add|list|enable|disable|rm|run-now|tick|run (T68c). Solo crea señales: nunca triaje ni trabajo (I2).
 import { readFileSync, statSync } from 'node:fs';
 import { parseArgs } from 'node:util';
-import { lastDue, parseCron } from './cron.ts';
-import { StoreError, type Automation, type Store } from './store.ts';
+import { lastDue, parseCron, scheduleExpr } from './cron.ts';
+import { automationRevision, StoreError, type Automation, type Store } from './store.ts';
 
 const USAGE = `fab automation add <ws> --name <n> (--cron "<e>" | --every hour|day|week [--at HH:MM] [--weekday N]) --title <t> --body-file <f>
+fab automation update <id> [--name <n>] [--cron "<e>" | --every …] [--title <t>] [--body-file <f>]
 fab automation list [<ws>] [--json] | enable <id> | disable <id> | rm <id> | run-now <id> | tick | run`;
 const MAX_BODY = 8192;
 const HOUR = 3_600_000;
+
+export { scheduleExpr } from './cron.ts';
 
 export type AutomationOpts = { intervalMs?: number; signal?: AbortSignal };
 
 const fail = (m: string) => new StoreError('invalid_input', m);
 
-/** Atajos de §2.4 → expresión cron (UTC). */
-export function scheduleExpr(v: { cron?: string; every?: string; at?: string; weekday?: string }): string {
-  if (v.cron !== undefined) {
-    if (v.every || v.at || v.weekday) throw fail('--cron no se combina con --every, --at ni --weekday');
-    return v.cron;
-  }
-  const num = (s: string, what: string, max: number) => {
-    if (!/^\d{1,2}$/.test(s) || Number(s) > max) throw fail(`${what} inválido: «${s}»`);
-    return Number(s);
-  };
-  if (v.every === 'hour') {
-    const m = /^:(\d{1,2})$/.exec(v.at ?? '');
-    if (!m || v.weekday !== undefined) throw fail('--every hour pide --at :MM y no admite --weekday');
-    return `${num(m[1]!, 'minuto', 59)} * * * *`;
-  }
-  if (v.every !== 'day' && v.every !== 'week') throw fail('indica --cron o --every hour|day|week');
-  const m = /^(\d{1,2}):(\d{2})$/.exec(v.at ?? '');
-  if (!m) throw fail(`--every ${v.every} pide --at HH:MM`);
-  const hm = `${num(m[2]!, 'minuto', 59)} ${num(m[1]!, 'hora', 23)}`;
-  if (v.every === 'day') {
-    if (v.weekday !== undefined) throw fail('--weekday solo va con --every week');
-    return `${hm} * * *`;
-  }
-  if (v.weekday === undefined) throw fail('--every week pide --weekday 0-6 (domingo 0)');
-  return `${hm} * * ${num(v.weekday, 'día de la semana', 6)}`;
+function readBody(file: string): string {
+  let size: number;
+  try { size = statSync(file).size; } catch { throw fail(`no se puede leer ${file}`); }
+  if (size > MAX_BODY) throw fail(`el fichero del cuerpo ocupa ${size} bytes; el máximo es ${MAX_BODY}`);
+  return readFileSync(file, 'utf8');
+}
+function scheduleOrFail(v: Parameters<typeof scheduleExpr>[0]): string {
+  try { return scheduleExpr(v); } catch (error) { throw fail((error as Error).message); }
 }
 
 /** Próximo instante programado tras `now`, o null si no hay en 366 días. */
@@ -70,20 +56,26 @@ export async function automationMain(argv: string[], store: Store, opts: Automat
       args: argv, allowPositionals: true,
       options: {
         name: { type: 'string' }, cron: { type: 'string' }, every: { type: 'string' }, at: { type: 'string' },
-        weekday: { type: 'string' }, title: { type: 'string' }, 'body-file': { type: 'string' }, json: { type: 'boolean' },
+        weekday: { type: 'string' }, title: { type: 'string' }, 'body-file': { type: 'string' }, json: { type: 'boolean' }, help: { type: 'boolean', short: 'h' },
       },
     });
+    if (v.help) { console.log(USAGE); return 0; }
     switch (sub) {
       case 'add': {
         if (!arg || !v.name || !v.title) throw fail(USAGE);
         if (!v['body-file']) throw fail('falta --body-file: el cuerpo se lee de un fichero');
-        let size: number;
-        try { size = statSync(v['body-file']).size; } catch { throw fail(`no se puede leer ${v['body-file']}`); }
-        if (size > MAX_BODY) throw fail(`el fichero del cuerpo ocupa ${size} bytes; el máximo es ${MAX_BODY}`);
-        const a = store.createAutomation({
-          workstream: arg, name: v.name, cron: scheduleExpr(v), title: v.title, body: readFileSync(v['body-file'], 'utf8'),
-        });
+        const body = readBody(v['body-file']);
+        const a = store.createAutomation({ workstream: arg, name: v.name, cron: scheduleOrFail(v), title: v.title, body });
         console.log(`${a.id.slice(0, 8)} ${a.name} (${a.cron})`);
+        return 0;
+      }
+      case 'update': {
+        const a = resolve(store, arg);
+        const schedule = v.cron || v.every ? scheduleOrFail(v) : a.cron;
+        let body = a.body;
+        if (v['body-file']) body = readBody(v['body-file']);
+        const u = store.updateAutomation(a.id, automationRevision(a), { name: v.name ?? a.name, cron: schedule, title: v.title ?? a.title, body });
+        console.log(`${u.id.slice(0, 8)} ${u.name} (${u.cron})`);
         return 0;
       }
       case 'list': {

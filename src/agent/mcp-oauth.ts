@@ -3,6 +3,7 @@ import { mkdir, readFile, writeFile } from 'node:fs/promises';
 import { homedir } from 'node:os';
 import { dirname, resolve } from 'node:path';
 import type { McpConfig } from './mcp.ts';
+import { ensureStateDir } from '../state-dir.ts';
 
 export type McpServerState = 'connected' | 'connecting' | 'needs authentication' | 'failed';
 
@@ -95,7 +96,7 @@ export async function readTokenStore(): Promise<Record<string, StoredToken>> {
 
 export async function writeTokenStore(store: Record<string, StoredToken>): Promise<void> {
   const file = getMcpAuthPath();
-  await mkdir(dirname(file), { recursive: true });
+  ensureStateDir(dirname(file)); // el almacén de tokens vive en el estado de fab
   await writeFile(file, JSON.stringify(store, null, 2), { mode: 0o600 });
 }
 

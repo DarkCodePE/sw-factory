@@ -59,6 +59,8 @@ export interface LiveBackend {
   name: string;
   /** Whether `confine: true` is supported. */
   confinable: boolean;
+  /** El backend recibe el prompt sin pasarlo por argv ni por un runner. */
+  promptStdin?: boolean;
   run(turn: LiveTurn): Promise<LiveTurnResult>;
   /** Mid-turn correction. Not part of phase 2; declared so a later backend can add it. */
   steer?(sessionId: string, message: string, requestId: string): Promise<void>;

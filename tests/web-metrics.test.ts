@@ -6,6 +6,7 @@ import { Store } from '../src/store.ts';
 import { calculateMetrics, distribution } from '../src/metrics.ts';
 import { startWeb } from '../src/web.ts';
 import { metricsPage } from '../src/web-metrics.ts';
+import { changePrLink } from '../src/web-changes.ts';
 let dir: string, store: Store;
 const now = Date.parse('2026-11-19T12:00:00Z');
 beforeEach(() => { dir = mkdtempSync(join(tmpdir(), 'webf3-')); store = new Store(join(dir, 'fabrica.db')); store.createWorkstream({ slug: 'uno', goal: 'g', repo: '/synthetic', taskLimit: 2000 }); });
@@ -210,3 +211,498 @@ test('N2: change completed y canceled sin activity siguen siendo terminales', ()
   expect(store.db.query("SELECT activity_id FROM events WHERE message='change completed'").get()).toEqual({ activity_id: null });
   expect(calculateMetrics(store, dir).cycles[3]?.samples).toBe(1);
 });
+
+test('T81: completado, cancelado y fallido por rutas reales dan tres muestras en el hito terminal', () => {
+  store.db.query("UPDATE workstreams SET state='active'").run();
+  const ids: string[] = [];
+  const done = store.createChange('uno', 'completo', ''); ids.push(done.id);
+  store.db.query("UPDATE activities SET status='completed',kind='implementation' WHERE change_id=?").run(done.id);
+  store.db.query("UPDATE changes SET status='implemented' WHERE id=?").run(done.id);
+  const [v] = store.requestValidation(done.id, ['code_review']); // el cierre convive con una activity de validador
+  store.db.query("UPDATE activities SET status='completed' WHERE id=?").run(v!.id);
+  store.closeChange(done.id, 'completed');
+  const canceled = store.createChange('uno', 'cancelado', ''); ids.push(canceled.id); store.closeChange(canceled.id, 'canceled');
+  const failed = store.createChange('uno', 'fallido', ''); ids.push(failed.id);
+  store.db.query("UPDATE activities SET status='completed' WHERE change_id IN (?,?)").run(done.id, canceled.id);
+  store.db.query("UPDATE activities SET kind='implementation',status='pending',review_status=NULL WHERE change_id=?").run(failed.id);
+  store.db.query("UPDATE changes SET status='pending' WHERE id=?").run(failed.id);
+  for (let i = 0; i < 4; i++) { const a = store.claimActivity('uno', 'w'); if (!a) break; store.failActivity(a.id, 'w', 'fallo'); }
+  expect(store.getChange(failed.id).status).toBe('failed');
+  const m = calculateMetrics(store, dir);
+  expect(m.cycles[3]?.samples).toBe(3);
+  const created = new Map(ids.map(id => [id, Date.parse(store.getChange(id).createdAt)]));
+  const diffs = store.metricsEvents(ids, new Date().toISOString()).map(e => Date.parse(e.terminalAt!) - created.get(e.changeId)!).sort((a, b) => a - b);
+  expect(m.cycles[3]?.median).toBe(diffs[1]!);
+});
+
+test('T82: rango libre con from y to; rangos inválidos se rechazan', () => {
+  seed(1, 1, 'uno', '2026-11-10T12:00:00Z');
+  seed(1, 2, 'uno', '2026-11-15T12:00:00Z');
+  seed(1, 4, 'uno', '2026-11-17T12:00:00Z');
+  seed(1, 8, 'uno', '2026-11-20T12:00:00Z');
+
+  const m = calculateMetrics(store, dir, { from: '2026-11-14', to: '2026-11-18', now });
+  expect(m.count).toBe(2);
+  expect(m.cost.total).toBe(6);
+
+  expect(() => calculateMetrics(store, dir, { from: 'bad' })).toThrow(URIError);
+  expect(() => calculateMetrics(store, dir, { to: '2026-99-99' })).toThrow(URIError);
+  expect(() => calculateMetrics(store, dir, { to: '2026-02-31' })).toThrow(URIError);
+  expect(() => calculateMetrics(store, dir, { from: '2026-11-20', to: '2026-11-10' })).toThrow(URIError);
+  expect(() => calculateMetrics(store, dir, { range: 'invalido' as any })).toThrow(URIError);
+});
+
+test('T82: coste por fuente y por actor del primer evento', () => {
+  const c1 = seed(1, 10, 'uno', '2026-11-18T00:00:00Z');
+  const c2 = seed(1, 20, 'uno', '2026-11-18T01:00:00Z');
+  const c3 = seed(1, null, 'uno', '2026-11-18T02:00:00Z');
+
+  store.db.query("INSERT INTO signals (id, workstream_id, title, body, status, change_id, created_at) VALUES ('s1', ?, 't', 'b', 'triaged', ?, '2026-11-18T00:00:00Z')")
+    .run(c1.workstreamId, c1.id);
+  store.db.exec("CREATE TABLE IF NOT EXISTS change_links (change_id TEXT PRIMARY KEY, source_system TEXT, source_key TEXT, source_url TEXT, pr_json TEXT)");
+  store.db.query("INSERT INTO change_links (change_id, source_system, source_key, source_url) VALUES (?, 'jira', 'PROJ-1', 'https://jira/PROJ-1')")
+    .run(c2.id);
+
+  store.db.query("UPDATE events SET actor='alice' WHERE change_id=? AND id IN (SELECT MIN(id) FROM events WHERE change_id=?)").run(c1.id, c1.id);
+  store.db.query("UPDATE events SET actor='bob' WHERE change_id=? AND id IN (SELECT MIN(id) FROM events WHERE change_id=?)").run(c2.id, c2.id);
+
+  const m = calculateMetrics(store, dir, { range: '7', now });
+  expect(m.cost.sources.find(s => s.name === 'CLI')).toEqual({ name: 'CLI', measured: 10, unknown: 0, total: 10 });
+  expect(m.cost.sources.find(s => s.name === 'Jira')).toEqual({ name: 'Jira', measured: 20, unknown: 0, total: 20 });
+  expect(m.cost.sources.find(s => s.name === 'No medido')).toEqual({ name: 'No medido', measured: null, unknown: 1, total: null });
+
+  expect(m.cost.actors.find(a => a.name === 'alice')).toEqual({ name: 'alice', measured: 10, unknown: 0, total: 10 });
+  expect(m.cost.actors.find(a => a.name === 'bob')).toEqual({ name: 'bob', measured: 20, unknown: 0, total: 20 });
+  expect(m.cost.actors.find(a => a.name === 'No medido')).toEqual({ name: 'No medido', measured: null, unknown: 1, total: null });
+});
+
+test('T82: gráficos SVG de series temporales, números coinciden con la tabla y días sin datos son huecos', () => {
+  seed(1, 5, 'uno', '2026-11-17T10:00:00Z');
+  seed(1, null, 'uno', '2026-11-18T10:00:00Z');
+
+  const { body: html } = metricsPage(store, dir, new URL('http://127.0.0.1:4310/metricas?from=2026-11-17&to=2026-11-19'));
+  expect(html).toContain('Series temporales');
+  expect(html).toContain('Changes creados por día');
+  expect(html).toContain('Coste por día');
+  expect(html).toContain('Intervenciones humanas por día');
+  expect(html).toContain('Coste por fuente del change');
+  expect(html).toContain('Coste por actor del primer evento');
+
+  // En el día sin datos (2026-11-19 para changes), la tabla tiene "Sin datos" y el SVG tiene hueco, nunca cero
+  expect(html).toContain('<tr><th scope="row">2026-11-19</th><td>Sin datos</td></tr>');
+  expect(html).not.toContain('<tr><th scope="row">2026-11-19</th><td>0</td></tr>');
+  expect(html).toContain('>hueco<');
+  const m = calculateMetrics(store, dir, { from: '2026-11-17', to: '2026-11-19' });
+  expect(m.daily.changes).toEqual([1, 1, null]);
+  expect(m.daily.costs).toEqual([5, null, null]);
+  expect(m.daily.interventions).toEqual([3, 3, null]);
+
+  // Tablas: valores por fila y día
+  expect(html).toContain('<tr><th scope="row">2026-11-17</th><td>1</td></tr>');
+  expect(html).toContain('<tr><th scope="row">2026-11-18</th><td>1</td></tr>');
+  expect(html).toContain('<tr><th scope="row">2026-11-17</th><td>5.00 USD</td></tr>');
+  expect(html).toContain('<tr><th scope="row">2026-11-18</th><td>No medido</td></tr>');
+  expect(html).toContain('<tr><th scope="row">2026-11-17</th><td>3</td></tr>');
+  expect(html).toContain('<tr><th scope="row">2026-11-18</th><td>3</td></tr>');
+
+  // SVG: valores exactos y huecos por gráfico
+  // Changes SVG
+  expect(html).toContain('<text x="58" y="20" text-anchor="middle" font-size="11" fill="currentColor">1</text>');
+  expect(html).toContain('<text x="114" y="20" text-anchor="middle" font-size="11" fill="currentColor">1</text>');
+  // Coste SVG
+  expect(html).toContain('<text x="58" y="20" text-anchor="middle" font-size="11" fill="currentColor">5.00</text>');
+  // Intervenciones SVG
+  expect(html).toContain('<text x="58" y="20" text-anchor="middle" font-size="11" fill="currentColor">3</text>');
+  expect(html).toContain('<text x="114" y="20" text-anchor="middle" font-size="11" fill="currentColor">3</text>');
+  // Hueco presente en día 19 (y día 18 en coste)
+  expect(html).toContain('<text x="170" y="103" text-anchor="middle" font-size="11" fill="var(--muted, #888)">hueco</text>');
+  expect(html).toContain('<text x="114" y="103" text-anchor="middle" font-size="11" fill="var(--muted, #888)">hueco</text>');
+
+  // Aserciones específicas por gráfico (M33, M34)
+  const changesSvg = html.match(/<svg[^>]*aria-label="Changes creados por día[^>]*>[\s\S]*?<\/svg>/)?.[0] ?? '';
+  expect(changesSvg).toContain('<text x="170" y="103" text-anchor="middle" font-size="11" fill="var(--muted, #888)">hueco</text>');
+  expect(changesSvg).not.toContain('>0<');
+
+  const costeSvg = html.match(/<svg[^>]*aria-label="Coste por día[^>]*>[\s\S]*?<\/svg>/)?.[0] ?? '';
+  expect(costeSvg).toContain('<text x="114" y="103" text-anchor="middle" font-size="11" fill="var(--muted, #888)">hueco</text>');
+  expect(costeSvg).toContain('<text x="170" y="103" text-anchor="middle" font-size="11" fill="var(--muted, #888)">hueco</text>');
+  expect(costeSvg).not.toContain('>0<');
+  expect(costeSvg).not.toContain('>0.00<');
+
+  const intervencionesSvg = html.match(/<svg[^>]*aria-label="Intervenciones humanas por día[^>]*>[\s\S]*?<\/svg>/)?.[0] ?? '';
+  expect(intervencionesSvg).toContain('<text x="170" y="103" text-anchor="middle" font-size="11" fill="var(--muted, #888)">hueco</text>');
+  expect(intervencionesSvg).not.toContain('>0<');
+
+  const prSvg = html.match(/<svg[^>]*aria-label="PRs abiertos y fusionados por día[^>]*>[\s\S]*?<\/svg>/)?.[0] ?? '';
+  expect(prSvg).toContain('<text x="170" y="103" text-anchor="middle" font-size="11" fill="var(--muted, #888)">hueco</text>');
+  expect(prSvg).not.toContain('>0<');
+
+  // Aserción específica por tabla de coste (N15)
+  const costeTable = html.match(/<div class="table-wrap"><table><caption>Coste por día<\/caption>[\s\S]*?<\/table><\/div>/)?.[0] ?? '';
+  expect(costeTable).toContain('<tr><th scope="row">2026-11-18</th><td>No medido</td></tr>');
+  expect(costeTable).toContain('<tr><th scope="row">2026-11-19</th><td>Sin datos</td></tr>');
+  expect(costeTable).not.toContain('<tr><th scope="row">2026-11-19</th><td>No medido</td></tr>');
+
+  expect(html).toContain('2026-11-17');
+  expect(html).toContain('2026-11-18');
+  expect(html).toContain('2026-11-19');
+});
+
+test('T82 HTTP: rango libre vía HTTP y rechazo de rangos inválidos', async () => {
+  seed(1, 2); store.close();
+  const server = startWeb(dir, 0), base = `http://127.0.0.1:${server.port}/metricas`;
+  try {
+    const ok = await fetch(`${base}?from=2026-11-17&to=2026-11-19`);
+    expect(ok.status).toBe(200);
+    const html = await ok.text();
+    expect(html).toContain('Series temporales');
+    expect(ok.headers.get('content-security-policy')).toContain("default-src 'none'");
+
+    // Rangos inválidos devuelven 400
+    expect((await fetch(`${base}?from=invalido`)).status).toBe(400);
+    expect((await fetch(`${base}?to=2026-13-40`)).status).toBe(400);
+    expect((await fetch(`${base}?from=2026-11-20&to=2026-11-10`)).status).toBe(400);
+    expect((await fetch(`${base}?range=otra_cosa`)).status).toBe(400);
+  } finally {
+    server.stop(true);
+    store = new Store(join(dir, 'fabrica.db'));
+  }
+});
+
+test('T82-H1: el rango libre rechaza más de 366 días con 400', async () => {
+  expect(() => calculateMetrics(store, dir, { from: '2024-01-01', to: '2025-01-03' })).toThrow(URIError);
+  expect(() => calculateMetrics(store, dir, { from: '1000-01-01', to: '9999-12-31' })).toThrow(URIError);
+  const server = startWeb(dir, 0);
+  try {
+    const base = `http://127.0.0.1:${server.port}/metricas`;
+    const res = await fetch(`${base}?from=2024-01-01&to=2025-01-03`);
+    expect(res.status).toBe(400);
+    const resOom = await fetch(`${base}?from=1000-01-01&to=9999-12-31`);
+    expect(resOom.status).toBe(400);
+  } finally {
+    server.stop(true);
+    store = new Store(join(dir, 'fabrica.db'));
+  }
+});
+
+test('T82-H2: calculateMetrics rechaza range=custom sin fechas y jueces rechaza custom', async () => {
+  expect(() => calculateMetrics(store, dir, { range: 'custom' })).toThrow(URIError);
+  const server = startWeb(dir, 0);
+  try {
+    const base = `http://127.0.0.1:${server.port}/metricas`;
+    const resJuecesCustom = await fetch(`${base}?tab=jueces&range=custom`);
+    expect(resJuecesCustom.status).toBe(400);
+  } finally {
+    server.stop(true);
+    store = new Store(join(dir, 'fabrica.db'));
+  }
+});
+
+test('T82-H4: change creado en el límite de since entra en la serie diaria para range=7', () => {
+  const changeTime = new Date(now - 7 * 86400000 + 3600000).toISOString(); // 6 días 23h atrás
+  const c = store.createChange('uno', 'Change límite since', '');
+  store.db.query("UPDATE changes SET created_at=? WHERE id=?").run(changeTime, c.id);
+
+  const m = calculateMetrics(store, dir, { range: '7', now });
+  expect(m.count).toBe(1);
+  const changeDay = changeTime.slice(0, 10);
+  expect(m.daily.days).toContain(changeDay);
+  const dayIndex = m.daily.days.indexOf(changeDay);
+  expect(m.daily.changes[dayIndex]).toBe(1);
+});
+
+test('T82-H5: elegir rango preset con fechas en la URL vacía fechas y respeta el preset; día sin changes muestra Sin datos en coste', () => {
+  seed(1, null, 'uno', '2026-11-18T10:00:00Z');
+  const { body: html } = metricsPage(store, dir, new URL('http://127.0.0.1:4310/metricas?range=30&from=2026-11-17&to=2026-11-18'));
+  expect(html).toContain('<option value="30" selected>Últimos 30 días</option>');
+  expect(html).toContain('<input name="from" type="date" value="">');
+  expect(html).toContain('<input name="to" type="date" value="">');
+
+  const { body: htmlCustom } = metricsPage(store, dir, new URL('http://127.0.0.1:4310/metricas?from=2026-11-17&to=2026-11-19'));
+  expect(htmlCustom).toContain('<tr><th scope="row">2026-11-18</th><td>No medido</td></tr>');
+  expect(htmlCustom).toContain('<tr><th scope="row">2026-11-19</th><td>Sin datos</td></tr>');
+});
+
+test('T82-H6: change a las 23:00 del día to entra en la cohorte y Todo el historial avisa del tope de 90 días', () => {
+  const c = store.createChange('uno', 'Change 23h', '');
+  store.db.query("UPDATE changes SET created_at=? WHERE id=?").run('2026-11-18T23:00:00Z', c.id);
+
+  const m = calculateMetrics(store, dir, { from: '2026-11-17', to: '2026-11-18', now });
+  expect(m.count).toBe(1);
+  const dayIndex = m.daily.days.indexOf('2026-11-18');
+  expect(dayIndex).toBeGreaterThanOrEqual(0);
+  expect(m.daily.changes[dayIndex]).toBe(1);
+
+  const { body: htmlAll } = metricsPage(store, dir, new URL('http://127.0.0.1:4310/metricas?range=all'));
+  expect(htmlAll).toContain('Las series temporales diarias de «Todo el historial» muestran como máximo los últimos 90 días');
+});
+
+test('T83-H3: guardas de ciclo PR/merge y selección del primer evento (MIN) sin alias no estándar', () => {
+  const c1 = store.createChange('uno', 'Change fechas invertidas', '');
+  store.db.query("UPDATE changes SET created_at=? WHERE id=?").run('2026-11-18T10:00:00Z', c1.id);
+  store.event(c1.workstreamId, 'info', 'pr_opened: https://github.com/org/repo/pull/1', c1.id);
+  store.db.query("UPDATE events SET created_at=? WHERE change_id=? AND message LIKE 'pr_opened%'").run('2026-11-18T09:00:00Z', c1.id);
+  store.event(c1.workstreamId, 'info', 'merge_completed', c1.id);
+  store.db.query("UPDATE events SET created_at=? WHERE change_id=? AND message='merge_completed'").run('2026-11-18T08:00:00Z', c1.id);
+
+  const c2 = store.createChange('uno', 'Change múltiples eventos', '');
+  store.db.query("UPDATE changes SET created_at=? WHERE id=?").run('2026-11-18T00:00:00Z', c2.id);
+  store.db.query("INSERT INTO events (workstream_id, change_id, severity, message, created_at) VALUES (?, ?, 'info', 'pr_opened: https://github.com/org/repo/pull/2', '2026-11-18T02:00:00Z')").run(c2.workstreamId, c2.id);
+  store.db.query("INSERT INTO events (workstream_id, change_id, severity, message, created_at) VALUES (?, ?, 'info', 'pr_opened: https://github.com/org/repo/pull/2', '2026-11-18T06:00:00Z')").run(c2.workstreamId, c2.id);
+  store.db.query("INSERT INTO events (workstream_id, change_id, severity, message, created_at) VALUES (?, ?, 'info', 'merge_completed', '2026-11-18T04:00:00Z')").run(c2.workstreamId, c2.id);
+  store.db.query("INSERT INTO events (workstream_id, change_id, severity, message, created_at) VALUES (?, ?, 'info', 'merge_completed', '2026-11-18T08:00:00Z')").run(c2.workstreamId, c2.id);
+
+  const m = calculateMetrics(store, dir, { range: '7', now });
+  const kickoff = m.prCycles.find(c => c.name === 'Kickoff → PR')!;
+  const merge = m.prCycles.find(c => c.name === 'PR → merge')!;
+
+  expect(kickoff.samples).toBe(1);
+  expect(kickoff.median).toBe(2 * 3600000);
+  expect(merge.samples).toBe(1);
+  expect(merge.median).toBe(2 * 3600000);
+
+  const c3 = store.createChange('uno', 'Change con alias raro', '');
+  store.db.query("INSERT INTO events (workstream_id, change_id, severity, message, created_at) VALUES (?, ?, 'info', 'pr opened: https://github.com/org/repo/pull/3', '2026-11-18T01:00:00Z')").run(c3.workstreamId, c3.id);
+  store.db.query("INSERT INTO events (workstream_id, change_id, severity, message, created_at) VALUES (?, ?, 'info', 'merged', '2026-11-18T02:00:00Z')").run(c3.workstreamId, c3.id);
+  const evs = store.metricsEvents([c3.id], new Date().toISOString());
+  expect(evs[0]?.prOpenedAt).toBeNull();
+  expect(evs[0]?.mergedAt).toBeNull();
+  expect(store.getChangePrUrl(c3.id)).toBeNull();
+});
+
+test('T83-H4: recordPrOpened exige URL https válida con host y rechaza https:// vacío', () => {
+  const c = store.createChange('uno', 'Change url host', '');
+  expect(() => store.recordPrOpened(c.id, 'https://')).toThrow();
+  expect(() => store.recordPrOpened(c.id, 'https://?query')).toThrow();
+  expect(() => store.recordPrOpened(c.id, 'https://#hash')).toThrow();
+  expect(() => store.recordPrOpened(c.id, 'not-a-url')).toThrow();
+  expect(() => store.recordPrOpened(c.id, 'http://github.com/org/repo/pull/1')).toThrow();
+  expect(() => store.recordPrOpened(c.id, 'https://github.com/org/repo/pull/1')).not.toThrow();
+});
+
+test('T82-H7: resolveChangeAttribution reutiliza la resolución de fuente y creador acotada a la cohorte', () => {
+  const c1 = seed(1, 10, 'uno', '2026-11-18T00:00:00Z');
+  store.db.query("INSERT INTO signals (id, workstream_id, title, body, status, change_id, created_at) VALUES ('s10', ?, 't', 'b', 'triaged', ?, '2026-11-18T00:00:00Z')")
+    .run(c1.workstreamId, c1.id);
+  store.db.query("UPDATE events SET actor='carol' WHERE change_id=? AND id IN (SELECT MIN(id) FROM events WHERE change_id=?)").run(c1.id, c1.id);
+
+  const empty = (store as any).resolveChangeAttribution([]);
+  expect(empty.source.size).toBe(0);
+  expect(empty.creator.size).toBe(0);
+
+  const attr = (store as any).resolveChangeAttribution([c1.id]);
+  expect(attr.source.get(c1.id)).toBe('cli');
+  expect(attr.creator.get(c1.id)).toBe('carol');
+});
+
+test('T82-H8: changeIndex llama a resolveChangeAttribution sin argumentos para evitar límite de parámetros SQL', () => {
+  const c = store.createChange('uno', 'Change de index', '');
+  store.db.query("INSERT INTO signals (id, workstream_id, title, body, status, change_id, created_at) VALUES ('s20', ?, 't', 'b', 'triaged', ?, '2026-11-18T00:00:00Z')")
+    .run(c.workstreamId, c.id);
+  store.db.query("UPDATE events SET actor='dave' WHERE change_id=? AND id IN (SELECT MIN(id) FROM events WHERE change_id=?)").run(c.id, c.id);
+
+  let calledWith: string[] | undefined = ['sentinel'];
+  const orig = store.resolveChangeAttribution.bind(store);
+  store.resolveChangeAttribution = (ids?: string[]) => {
+    calledWith = ids;
+    return orig(ids);
+  };
+  const list = store.changeIndex('uno');
+  expect(calledWith).toBeUndefined();
+  expect(list.find(x => x.id === c.id)?.source).toBe('cli');
+  expect(list.find(x => x.id === c.id)?.creator).toBe('dave');
+});
+
+test('T83-H6: dos URLs distintas de PR registran sendos eventos y getChangePrUrl devuelve el último', () => {
+  const c = store.createChange('uno', 'Change dos PRs', '');
+  store.recordPrOpened(c.id, 'https://github.com/org/repo/pull/1');
+  store.recordPrOpened(c.id, 'https://github.com/org/repo/pull/2');
+
+  const evs = store.listEvents(c.workstreamId, 10, c.id).filter(e => typeof e.message === 'string' && e.message.startsWith('pr_opened:'));
+  expect(evs).toHaveLength(2);
+  expect(store.getChangePrUrl(c.id)).toBe('https://github.com/org/repo/pull/2');
+});
+
+test('T83-H7: recordPrOpened guarda URL canónica normalizada y rechaza barras invertidas o triple barra', () => {
+  const c = store.createChange('uno', 'Change canonical url', '');
+  store.recordPrOpened(c.id, 'HTTPS://GitHub.com/org/repo/pull/1');
+  expect(store.getChangePrUrl(c.id)).toBe('https://github.com/org/repo/pull/1');
+
+  const c2 = store.createChange('uno', 'Change bad urls', '');
+  expect(() => store.recordPrOpened(c2.id, 'https:///x')).toThrow();
+  expect(() => store.recordPrOpened(c2.id, 'https:\\\\h\\\\x')).toThrow();
+});
+
+test('T82-H9: borde exacto de 366 días pasa y 367 días da 400; solo from no lanza 400', () => {
+  // 2024 es bisiesto (366 días exactos): 2024-01-01 a 2024-12-31 son 366 días
+  expect(() => calculateMetrics(store, dir, { from: '2024-01-01', to: '2024-12-31', now })).not.toThrow();
+
+  // 367 días exactos: 2024-01-01 a 2025-01-01
+  expect(() => calculateMetrics(store, dir, { from: '2024-01-01', to: '2025-01-01', now })).toThrow(URIError);
+
+  // Solo from (sin to) de hace más de 366 días no se rechaza (la serie se acota a 90 días)
+  expect(() => calculateMetrics(store, dir, { from: '2024-01-01', now })).not.toThrow();
+});
+
+test('T82-H10: range=custom sin fechas en la web se trata como rango por defecto en vez de 400', async () => {
+  const server = startWeb(dir, 0);
+  try {
+    const base = `http://127.0.0.1:${server.port}/metricas`;
+    const res = await fetch(`${base}?ws=&range=custom&from=&to=`);
+    expect(res.status).toBe(200);
+    const html = await res.text();
+    expect(html).toContain('form action="/metricas"');
+    expect(html).toContain('Últimos 7 días');
+  } finally {
+    server.stop(true);
+    store = new Store(join(dir, 'fabrica.db'));
+  }
+});
+
+test('T83-H1: repetir recordPrOpened no duplica el evento ni altera el conteo en metricsDailyPrs', () => {
+  const c = store.createChange('uno', 'Change con PR repetido', '');
+  store.recordPrOpened(c.id, 'https://github.com/org/repo/pull/1');
+  store.recordPrOpened(c.id, 'https://github.com/org/repo/pull/1');
+  const evs = store.listEvents(c.workstreamId, 10, c.id).filter(e => typeof e.message === 'string' && e.message.startsWith('pr_opened:'));
+  expect(evs).toHaveLength(1);
+
+  const daily = store.metricsDailyPrs([c.id], new Date().toISOString());
+  const today = new Date().toISOString().slice(0, 10);
+  expect(daily.opened.get(today)).toBe(1);
+});
+
+test('T83: ciclo con PR (kickoff→PR, PR→primera revisión humana, PR→merge); tramos exactos con eventos sintéticos', () => {
+  const c1 = store.createChange('uno', 'Change con PR', '');
+  store.db.query("UPDATE changes SET created_at=?, status='completed' WHERE id=?").run('2026-11-18T00:00:00Z', c1.id);
+  store.event(c1.workstreamId, 'info', 'pr_opened: https://github.com/org/repo/pull/42', c1.id);
+  store.db.query("UPDATE events SET created_at=? WHERE change_id=? AND message LIKE 'pr_opened%'").run('2026-11-18T02:00:00Z', c1.id);
+  store.event(c1.workstreamId, 'info', 'merge_completed', c1.id);
+  store.db.query("UPDATE events SET created_at=? WHERE change_id=? AND message='merge_completed'").run('2026-11-18T05:00:00Z', c1.id);
+
+  const c2 = store.createChange('uno', 'Change sin PR', '');
+  store.db.query("UPDATE changes SET created_at=? WHERE id=?").run('2026-11-18T00:00:00Z', c2.id);
+
+  const m = calculateMetrics(store, dir, { range: '7', now });
+  const kickoffPr = m.prCycles.find(c => c.name === 'Kickoff → PR')!;
+  expect(kickoffPr.median).toBe(2 * 3600000);
+  expect(kickoffPr.samples).toBe(1);
+
+  const prReview = m.prCycles.find(c => c.name === 'PR → primera revisión humana')!;
+  expect(prReview.median).toBeNull();
+  expect(prReview.samples).toBe(0);
+
+  const prMerge = m.prCycles.find(c => c.name === 'PR → merge')!;
+  expect(prMerge.median).toBe(3 * 3600000);
+  expect(prMerge.samples).toBe(1);
+
+  expect(m.count).toBe(2);
+  expect(m.count - kickoffPr.samples).toBe(1);
+  expect(m.count - prMerge.samples).toBe(1);
+});
+
+test('T83: serie de PRs abiertos y fusionados en el tiempo', () => {
+  const c = store.createChange('uno', 'Change serie PRs', '');
+  store.db.query("UPDATE changes SET created_at=? WHERE id=?").run('2026-11-17T00:00:00Z', c.id);
+
+  store.event(c.workstreamId, 'info', 'pr_opened: https://github.com/org/repo/pull/10', c.id);
+  store.db.query("UPDATE events SET created_at=? WHERE change_id=? AND message LIKE 'pr_opened%'").run('2026-11-17T12:00:00Z', c.id);
+  store.event(c.workstreamId, 'info', 'merge_completed', c.id);
+  store.db.query("UPDATE events SET created_at=? WHERE change_id=? AND message='merge_completed'").run('2026-11-18T12:00:00Z', c.id);
+
+  const m = calculateMetrics(store, dir, { from: '2026-11-17', to: '2026-11-19' });
+  expect(m.daily.prs).toEqual([
+    { opened: 1, merged: null },
+    { opened: null, merged: 1 },
+    { opened: null, merged: null },
+  ]);
+
+  const { body: html } = metricsPage(store, dir, new URL('http://127.0.0.1:4310/metricas?from=2026-11-17&to=2026-11-19'));
+  expect(html).toContain('PRs abiertos y fusionados por día');
+  expect(html).toContain('Tramos del ciclo con PR');
+  expect(html).toContain('Kickoff → PR');
+  expect(html).toContain('PR → merge');
+  expect(html).toContain('PR → primera revisión humana');
+
+  // Afirma celdas de tabla día a día (abiertos, fusionados y sin datos)
+  expect(html).toContain('<tr><th scope="row">2026-11-17</th><td>1</td><td>Sin datos</td></tr>');
+  expect(html).toContain('<tr><th scope="row">2026-11-18</th><td>Sin datos</td><td>1</td></tr>');
+  expect(html).toContain('<tr><th scope="row">2026-11-19</th><td>Sin datos</td><td>Sin datos</td></tr>');
+  expect(html).not.toContain('<tr><th scope="row">2026-11-19</th><td>0</td>');
+
+  // Afirma SVG: barras, valores y hueco
+  expect(html).toContain('<text x="46" y="20" text-anchor="middle" font-size="10" fill="currentColor">1</text>');
+  expect(html).toContain('<text x="126" y="20" text-anchor="middle" font-size="10" fill="currentColor">1</text>');
+  expect(html).toContain('<text x="170" y="103" text-anchor="middle" font-size="11" fill="var(--muted, #888)">hueco</text>');
+});
+
+test('T83: detalle del change muestra enlace al PR, escapa URL, solo admite https, y sin PR es No medido', async () => {
+  const c1 = store.createChange('uno', 'Change con PR https', '');
+  store.recordPrOpened(c1.id, 'https://github.com/org/repo/pull/99?param=1&other=<script>');
+
+  const c2 = store.createChange('uno', 'Change sin PR', '');
+
+  const c3 = store.createChange('uno', 'Change con PR http no seguro', '');
+  store.db.exec("CREATE TABLE IF NOT EXISTS change_links (change_id TEXT PRIMARY KEY, source_system TEXT, source_key TEXT, source_url TEXT, pr_json TEXT)");
+  store.db.query("INSERT INTO change_links (change_id, pr_json) VALUES (?, ?)").run(c3.id, JSON.stringify({ url: 'http://insecure.test/pr/1' }));
+
+  store.close();
+  const server = startWeb(dir, 0);
+  try {
+    const r1 = await fetch(`http://127.0.0.1:${server.port}/changes/${c1.id}`);
+    expect(r1.status).toBe(200);
+    const html1 = await r1.text();
+    expect(html1).toContain('https://github.com/org/repo/pull/99?param=1&amp;other=%3Cscript%3E');
+    expect(html1).not.toContain('<script>');
+    expect(html1).toContain('<a href="https://github.com/org/repo/pull/99?param=1&amp;other=%3Cscript%3E"');
+
+    const r2 = await fetch(`http://127.0.0.1:${server.port}/changes/${c2.id}`);
+    expect(r2.status).toBe(200);
+    const html2 = await r2.text();
+    expect(html2).toContain('PR: No medido');
+
+    const r3 = await fetch(`http://127.0.0.1:${server.port}/changes/${c3.id}`);
+    expect(r3.status).toBe(200);
+    const html3 = await r3.text();
+    expect(html3).toContain('PR: No medido');
+    expect(html3).not.toContain('http://insecure.test');
+  } finally {
+    server.stop(true);
+    store = new Store(join(dir, 'fabrica.db'));
+  }
+});
+
+test('T83: recordPrOpened solo admite https', () => {
+  const c = store.createChange('uno', 'c', '');
+  expect(() => store.recordPrOpened(c.id, 'http://inseguro.test')).toThrow();
+  expect(() => store.recordPrOpened(c.id, 'javascript:alert(1)')).toThrow();
+  store.recordPrOpened(c.id, 'https://github.com/owner/repo/pull/1');
+  expect(store.getChangePrUrl(c.id)).toBe('https://github.com/owner/repo/pull/1');
+  expect(changePrLink({ getChangePrUrl: () => 'http://insecure.test' } as any, c.id)).toBe('No medido');
+  expect(changePrLink({ getChangePrUrl: () => 'javascript:alert(1)' } as any, c.id)).toBe('No medido');
+});
+
+test('T82-H11: huecos de test (COUNT DISTINCT en merge/abiertos, fallback change_links.pr_json y catch de URL inválida)', () => {
+  // 1. COUNT DISTINCT en merge_completed y pr_opened (N10, N11)
+  const c = store.createChange('uno', 'Change dos merges y dos PRs', '');
+  store.db.query("UPDATE changes SET created_at=? WHERE id=?").run('2026-11-18T00:00:00Z', c.id);
+  store.db.query("INSERT INTO events (workstream_id, change_id, severity, message, created_at) VALUES (?, ?, 'info', 'merge_completed', '2026-11-18T04:00:00Z')").run(c.workstreamId, c.id);
+  store.db.query("INSERT INTO events (workstream_id, change_id, severity, message, created_at) VALUES (?, ?, 'info', 'merge_completed', '2026-11-18T08:00:00Z')").run(c.workstreamId, c.id);
+  store.db.query("INSERT INTO events (workstream_id, change_id, severity, message, created_at) VALUES (?, ?, 'info', 'pr_opened: https://github.com/org/repo/pull/10', '2026-11-18T01:00:00Z')").run(c.workstreamId, c.id);
+  store.db.query("INSERT INTO events (workstream_id, change_id, severity, message, created_at) VALUES (?, ?, 'info', 'pr_opened: https://github.com/org/repo/pull/11', '2026-11-18T02:00:00Z')").run(c.workstreamId, c.id);
+  const prs = store.metricsDailyPrs([c.id], '2026-11-18T23:59:59Z');
+  expect(prs.merged.get('2026-11-18')).toBe(1);
+  expect(prs.opened.get('2026-11-18')).toBe(1);
+
+  // 2. Fallback change_links.pr_json cuando no hay evento de PR (M28)
+  const c2 = store.createChange('uno', 'Change con link pr_json', '');
+  store.db.exec("CREATE TABLE IF NOT EXISTS change_links (change_id TEXT PRIMARY KEY, source_system TEXT, source_key TEXT, source_url TEXT, pr_json TEXT)");
+  store.db.query("INSERT INTO change_links (change_id, pr_json) VALUES (?, ?)").run(c2.id, JSON.stringify({ url: 'https://github.com/org/repo/pull/55' }));
+  expect(store.getChangePrUrl(c2.id)).toBe('https://github.com/org/repo/pull/55');
+  expect(changePrLink(store, c2.id)).toContain('https://github.com/org/repo/pull/55');
+
+  // 3. changePrLink maneja URL malformada sin lanzar excepción (N21)
+  const c3 = store.createChange('uno', 'Change link malformado', '');
+  store.db.query("INSERT INTO change_links (change_id, pr_json) VALUES (?, ?)").run(c3.id, JSON.stringify({ url: 'https://^invalid^' }));
+  expect(changePrLink(store, c3.id)).toBe('No medido');
+});
+

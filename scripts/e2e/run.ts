@@ -297,22 +297,31 @@ async function recorrido(login: string) {
 
   await flujo('perfil: guardar uno nuevo y asignarlo', async () => {
     const marca = ultimoEvento();
-    abrir('/perfiles?ws=plataforma');
-    const antes = leer(s => s.getWorkstream('plataforma').profile);
-    eq(antes, semilla.profiles.v2, 'perfil inicial (v2 con roles)');
+    // T84: asignar se rechaza con trabajo vivo; `archivo` (en pausa, sin changes) es el workstream que sí admite la asignación.
+    abrir('/perfiles?ws=archivo');
+    const antes = leer(s => s.getWorkstream('archivo').profile);
+    click('form[action="/perfiles/guardar"] details summary'); // T84: las plantillas van en un desplegable
     const campo = '[id="f-worker.investigate"]'; // se añade una línea: sustituir la plantilla entera pierde líneas obligatorias
     rellenar(campo, `${ab('get', 'value', campo)}\nLínea añadida por el e2e.`);
     click('form[action="/perfiles/guardar"] button'); await esperarTexto('Perfil guardado');
     const digest = /([0-9a-f]{64}) · Nuevo/.exec(paginaTexto())?.[1];
     assert(digest, 'la página no muestra el digest nuevo');
-    eq(leer(s => s.getWorkstream('plataforma').profile), antes, 'guardar no asigna');
+    eq(leer(s => s.getWorkstream('archivo').profile), antes, 'guardar no asigna');
     foto('perfil-guardado');
     ab('check', 'form[action="/perfiles/asignar"] input[name=confirm]');
     click('form[action="/perfiles/asignar"] button');
-    ab('wait', '--url', '**ws=plataforma'); // la página de «guardado» ya traía su aviso: se espera a la redirección de asignar
-    registrada('aviso de asignar');
-    eq(leer(s => s.getWorkstream('plataforma').profile), digest, 'perfil asignado');
-    eventosDe(marca);
+    ab('wait', '--url', '**ws=archivo'); // la redirección de asignar
+    eq(leer(s => s.getWorkstream('archivo').profile), digest, 'el perfil quedó asignado');
+    eventosDe(marca); // asignar deja su evento con actor web
+    // Con trabajo vivo (`plataforma`) la misma acción se rechaza y no cambia nada.
+    abrir('/perfiles?ws=plataforma');
+    const vivo = leer(s => s.getWorkstream('plataforma').profile);
+    eq(vivo, semilla.profiles.v2, 'perfil inicial de plataforma (v2 con roles)');
+    ab('check', 'form[action="/perfiles/asignar"] input[name=confirm]');
+    click('form[action="/perfiles/asignar"] button');
+    ab('wait', '--url', '**ws=plataforma');
+    await esperarTexto('El workstream tiene trabajo vivo');
+    eq(leer(s => s.getWorkstream('plataforma').profile), vivo, 'asignar con trabajo vivo no cambia el perfil');
   });
 
   await flujo('workstream: guardar ajustes', async () => {
@@ -364,6 +373,20 @@ async function recorrido(login: string) {
     abrir('/experimentos/perfil-e2e'); assert(paginaTexto().includes('Resumen por brazo'), 'detalle del experimento'); foto('experimento-detalle');
     abrir(`/changes/${id('completado')}`); await esperarTexto('Turnos'); assert(paginaTexto().includes('Sin turnos vivos'), 'sección de turnos'); foto('turnos');
     abrir('/changes/no-existe'); assert(paginaTexto().includes('Registro no encontrado'), '404 de un change inexistente');
+  });
+
+  await flujo('páginas de la ronda T77–T98 (solo lectura): webhooks, definición, benchmarks, automejora, claves API, automations, runners, roles y adjuntos', async () => {
+    const visita = (ruta: string, texto: string, nombre: string) => { abrir(ruta); assert(paginaTexto().includes(texto), `${nombre}: falta «${texto}»`); foto(nombre); };
+    visita('/webhooks', 'Webhooks', 'webhooks');
+    visita('/definicion', 'Definición', 'definicion');
+    visita('/benchmarks', 'No hay benchmarks', 'benchmarks');
+    visita('/automejora?ws=plataforma', 'Automejora', 'automejora');
+    visita('/config/claves-api', 'Claves API', 'claves-api');
+    visita('/automations/nueva', 'Crear automation', 'automation-nueva');
+    visita('/config/runners', 'Runners', 'runners');
+    visita('/perfiles?ws=plataforma', 'Resolución sin override de CLI', 'roles-perfil');
+    abrir(`/changes/${id('nota')}`); const selector = ab('get', 'count', 'input[type=file]') === '1';
+    eq(selector, true, 'el formulario de nota ofrece el selector de adjunto (estado 0700)'); foto('adjunto-formulario');
   });
 
   await flujo('pool fake: el change triado avanza y la web lo refleja', async () => {

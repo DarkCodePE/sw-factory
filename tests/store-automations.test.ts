@@ -3,7 +3,7 @@ import { Database } from 'bun:sqlite';
 import { mkdtempSync, readFileSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { Store } from '../src/store.ts';
+import { automationRevision, Store } from '../src/store.ts';
 
 const initial = '2026-11-19T07:00:00.000Z';
 const due = '2026-11-19T07:30:00.000Z';
@@ -216,7 +216,7 @@ test('borrar una automation conserva sus señales y borrar el workstream borra s
   const { signalId } = store.runAutomationNow(a.id);
   store.deleteAutomation(a.id);
   expect(store.listSignals('demo')[0]).toMatchObject({ id: signalId, source: 'automation:' + a.id });
-  expect(store.listEvents(workstreamId, 1)[0]!.message).toBe('automation diaria borrada');
+  expect(store.listEvents(workstreamId, 1)[0]!.message).toStartWith('automation diaria borrada ');
   expect(store.listAutomations()).toEqual([b]);
   for (const operation of [() => store.deleteAutomation(a.id), () => store.runAutomationNow(a.id), () => store.setAutomationEnabled(a.id, true)]) {
     expect(operation).toThrow(expect.objectContaining({ code: 'not_found' }));
@@ -261,6 +261,7 @@ test('migra una base anterior y un lector puede listar antes de migrarla sin cam
     const reader = new Store(path, { readonly: true });
     try {
       expect(reader.listAutomations()).toEqual([]);
+      expect(() => reader.getAutomation('ausente')).toThrow(expect.objectContaining({ code: 'not_found' }));
       expect(reader.listSignals('demo')[0]!.source).toBeNull();
     } finally {
       reader.close();
@@ -344,4 +345,155 @@ test('sin vencimiento no abre transacciones de escritura (H6)', () => {
   } finally {
     spy.mockRestore();
   }
+});
+
+test('edición valida, preserva identidad y audita solamente los valores anteriores efectivos', () => {
+  const before = store.createAutomation({ ...template, body: 'texto\n"api_key": "valor sintético con espacios"\nfin' });
+  const revision = automationRevision(before);
+  const { workstream: _, ...fields } = template;
+  const count = store.listEvents(workstreamId, -1).length;
+  expect(store.updateAutomation(before.id, revision, { ...fields, body: before.body })).toEqual(before);
+  expect(store.listEvents(workstreamId, -1)).toHaveLength(count);
+  store.createAutomation({ ...template, name: 'ocupada' });
+  for (const [patch, code] of [
+    [{ name: 'ocupada' }, 'conflict'], [{ name: 'MAL' }, 'invalid_input'], [{ title: '' }, 'invalid_input'],
+    [{ body: 'é'.repeat(4097) }, 'invalid_input'], [{ cron: '99 7 * * *' }, 'invalid_input'],
+  ] as const) {
+    expect(() => store.updateAutomation(before.id, revision, { ...fields, ...patch }))
+      .toThrow(expect.objectContaining({ code }));
+    expect(store.getAutomation(before.id)).toEqual(before);
+  }
+  const after = store.updateAutomation(before.id, revision, { ...fields, name: 'renombrada' });
+  expect(after).toEqual({ ...before, name: 'renombrada', body: template.body });
+  expect(store.listEvents(workstreamId, 1)[0]).toMatchObject({ actor: before.createdBy });
+  const message = String(store.listEvents(workstreamId, 1)[0]!.message);
+  expect(JSON.parse(message.slice(message.indexOf('{')))).toEqual({
+    id: before.id, previous: { name: before.name, body: 'texto\n"api_key": [REDACTED]\nfin' },
+  });
+  expect(message).not.toContain('valor sintético');
+  expect(message).not.toContain('renombrada');
+  expect(() => store.deleteAutomation(before.id, revision)).toThrow(expect.objectContaining({ code: 'conflict' }));
+  store.deleteAutomation(before.id, automationRevision(after));
+  const deletion = String(store.listEvents(workstreamId, 1)[0]!.message);
+  expect(JSON.parse(deletion.slice(deletion.indexOf('{')))).toEqual({
+    id: before.id, previous: { name: after.name, cron: after.cron, title: after.title, body: after.body },
+  });
+  expect(() => store.getAutomation(before.id)).toThrow(expect.objectContaining({ code: 'not_found' }));
+  expect(store.listSignals(workstreamId)).toEqual([]);
+});
+
+test('cambiar cron avanza el suelo sin retroceder y conserva pausa y último resultado', () => {
+  const a = store.createAutomation(template);
+  now = due;
+  const [run] = store.fireDueAutomations();
+  expect(automationRevision(store.getAutomation(a.id))).toBe(automationRevision(a));
+  store.setAutomationEnabled(a.id, false);
+  expect(() => store.deleteAutomation(a.id, automationRevision(a))).toThrow(expect.objectContaining({ code: 'conflict' }));
+  const edit = (patch: Partial<typeof template>) => store.updateAutomation(a.id, automationRevision(store.getAutomation(a.id)), {
+    name: a.name, cron: a.cron, title: a.title, body: a.body, ...patch,
+  });
+  now = '2026-11-19T07:10:00.000Z';
+  expect(edit({ title: 'Otra' }).lastDueAt).toBe(due);
+  expect(edit({ cron: '20 7 * * *' })).toMatchObject({
+    enabled: false, lastDueAt: due, lastResult: 'created', lastSignalId: run!.signalId,
+  });
+  expect(store.setAutomationEnabled(a.id, true).lastDueAt).toBe(due);
+  now = '2026-11-20T07:45:00.000Z';
+  store.ignoreSignal(run!.signalId!);
+  expect(edit({ cron: '35 7 * * *' }).lastDueAt).toBe(now);
+  expect(store.fireDueAutomations()).toEqual([]);
+  now = '2026-11-21T07:35:00.000Z';
+  expect(store.fireDueAutomations()[0]!.result).toBe('created');
+});
+
+test.each(['tick primero', 'edición primero', 'borrado primero'])('dos conexiones ordenan tick y mutación: %s', order => {
+  const dir = mkdtempSync(join(tmpdir(), 'fab-t86-'));
+  const path = join(dir, 'fabrica.db');
+  const editor = new Store(path, { clock });
+  const tick = new Store(path, { clock });
+  try {
+    const ws = activeWorkstream(editor, 'demo');
+    const a = editor.createAutomation(template);
+    const revision = automationRevision(a);
+    const update = () => editor.updateAutomation(a.id, revision, { ...template, title: 'Nueva', body: '<texto literal>' });
+    now = due;
+    if (order === 'tick primero') {
+      const [run] = tick.fireDueAutomations();
+      update();
+      expect(editor.getAutomation(a.id).lastSignalId).toBe(run!.signalId!);
+      now = '2026-11-20T07:30:00.000Z';
+      expect(tick.fireDueAutomations()).toEqual([{ id: a.id, result: 'skipped_open' }]);
+      editor.triageSignal(run!.signalId!);
+      expect(tick.runAutomationNow(a.id)).toEqual({ result: 'skipped_open' });
+      editor.deleteAutomation(a.id, automationRevision(editor.getAutomation(a.id)));
+      expect(editor.listSignals(ws)[0]).toMatchObject({ source: 'automation:' + a.id, body: a.body });
+    } else {
+      const retry = tick.withRetry.bind(tick);
+      const interleave = spyOn(tick, 'withRetry').mockImplementationOnce(fn => {
+        if (order === 'edición primero') update();
+        else editor.deleteAutomation(a.id, revision);
+        return retry(fn);
+      });
+      try { tick.fireDueAutomations(); } finally { interleave.mockRestore(); }
+      expect(editor.listSignals(ws)).toEqual(order === 'edición primero' ? [
+        expect.objectContaining({ source: 'automation:' + a.id, title: 'Nueva (2026-11-19)', body: '<texto literal>', status: 'new' }),
+      ] : []);
+      expect(editor.listChanges(ws)).toEqual([]);
+      expect(editor.listActivities({ workstream: ws })).toEqual([]);
+    }
+  } finally {
+    tick.close();
+    editor.close();
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test('el fallo del evento revierte edición y borrado, incluso si cambia el cursor', () => {
+  const a = store.createAutomation(template);
+  const rev = automationRevision(a);
+  now = due;
+  store.db.exec("CREATE TRIGGER rechazar_evento BEFORE INSERT ON events BEGIN SELECT RAISE(ABORT, 'evento rechazado'); END");
+  expect(() => store.updateAutomation(a.id, rev, { ...template, cron: '0 7 * * *' })).toThrow('evento rechazado');
+  expect(store.getAutomation(a.id)).toEqual(a);
+  expect(() => store.deleteAutomation(a.id, rev)).toThrow('evento rechazado');
+  expect(store.getAutomation(a.id)).toEqual(a);
+});
+
+// T86-H1/H2: lo que el evento de edición conserva del valor anterior.
+function auditedBody(body: string): string {
+  const a = store.createAutomation({ ...template, name: `auditada-${Math.random().toString(36).slice(2, 8)}`, body });
+  const { workstream: _, ...fields } = template;
+  store.updateAutomation(a.id, automationRevision(a), { ...fields, name: a.name, body: 'reemplazo' });
+  const message = String(store.listEvents(workstreamId, 1)[0]!.message);
+  return JSON.parse(message.slice(message.indexOf('{'))).previous.body;
+}
+
+test.each([
+  ['passwd=hunter2 y más', 'passwd= [REDACTED]'], ['pwd: otra clave larga', 'pwd: [REDACTED]'], ['key=abc123', 'key= [REDACTED]'],
+  ['mi_key = valor con espacios', 'mi_key = [REDACTED]'], ['DB_PASSWORD=zzz\nlinea2', 'DB_PASSWORD= [REDACTED]\nlinea2'],
+])('T86-H1: el valor anterior omite la credencial en «%s»', (body, expected) => {
+  expect(auditedBody(body)).toBe(expected);
+});
+
+test('T86-H1: palabras que solo contienen «key» o «pass» no se tratan como credenciales', () => {
+  expect(auditedBody('monkey=1 keyboard=azerty bypass=sí')).toBe('monkey=1 keyboard=azerty bypass=sí');
+});
+
+test('T86-H2: sin controles C0/C1 ni bidi, y lo serializado también respeta el tope de 8 KiB', () => {
+  expect(auditedBody('a\u009bb‮c\u0001d\te\nf')).toBe('a b c d\te\nf');
+  expect(auditedBody('\u0001'.repeat(8192))).toBe(' '.repeat(8192)); // antes: 49 304 bytes de «\u0001» en el evento
+  const quotes = '"'.repeat(5000); // 5000 bytes, pero 10 002 al serializar
+  expect(auditedBody(quotes)).toBe('[OMITIDO: más de 8 KiB]');
+  const message = String(store.listEvents(workstreamId, 1)[0]!.message);
+  expect(message.length).toBeLessThan(500);
+});
+
+test('T86-H4: el evento omite un valor anterior de más de 8 KiB (fila que el Store actual no escribiría) y una clave privada', () => {
+  const a = store.createAutomation({ ...template, name: 'enorme' });
+  store.db.query('UPDATE automations SET body = ? WHERE id = ?').run('x'.repeat(8193), a.id); // M15
+  const { workstream: _, ...fields } = template;
+  store.updateAutomation(a.id, automationRevision(store.getAutomation(a.id)), { ...fields, name: 'enorme', body: 'nuevo' });
+  const message = String(store.listEvents(workstreamId, 1)[0]!.message);
+  expect(JSON.parse(message.slice(message.indexOf('{'))).previous.body).toBe('[OMITIDO: más de 8 KiB]');
+  expect(auditedBody('antes\n-----BEGIN PRIVATE KEY-----\nMIIEvQIBADANBgkq\n-----END PRIVATE KEY-----\ndespués')).toBe('antes\n[REDACTED]'); // M15b
 });

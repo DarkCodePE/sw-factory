@@ -3,18 +3,26 @@
 import { existsSync, mkdirSync, readFileSync, renameSync, rmSync, writeFileSync } from 'node:fs';
 import { dirname, join, resolve } from 'node:path';
 import { randomUUID } from 'node:crypto';
-import { redact } from './evidence.ts';
+import { redact, redactField } from './evidence.ts';
 import type { Store } from './store.ts';
 import { DEFAULT_DIGEST, fabSha } from './profile.ts';
 import { GIT_SAFE_FLAGS, branchFor } from './worktrees.ts';
 
 export { redact, readEgressProbe } from './evidence.ts';
 
+/** Un .json válido se sanea por valores y nombres de campo: una regla de texto sobre el JSON serializado lo rompería (`"tokens": 5`). */
+function redactJson(text: string): string {
+  try {
+    const out = JSON.stringify(JSON.parse(text), (key, v) => typeof v === 'string' ? redactField(key, v) : v, text.includes('\n  ') ? 2 : 0);
+    return text.endsWith('\n') ? out + '\n' : out;
+  } catch { return redact(text); }
+}
+
 export function atomicEvidence(path: string, text: string): void {
   mkdirSync(dirname(path), { recursive: true, mode: 0o700 });
   const tmp = `${path}.${randomUUID()}.tmp`;
   try {
-    writeFileSync(tmp, redact(text), { mode: 0o600, flag: 'wx' });
+    writeFileSync(tmp, path.endsWith('.json') ? redactJson(text) : redact(text), { mode: 0o600, flag: 'wx' });
     renameSync(tmp, path);
   } finally { rmSync(tmp, { force: true }); }
 }
@@ -69,7 +77,7 @@ export function writeManifest(store: Store, changeId: string, stateDir = store.s
   const cleanup = { worktree: existsSync(join(stateDir, 'worktrees', c.id.slice(0, 8))) ? 'retained' : 'absent',
     branch: gitEvidence(ws.repo, 'show-ref', '--verify', `refs/heads/${branch}`) ? 'retained' : 'absent' };
   // Redact strings before JSON encoding so multiline PEMs cannot evade scrubbing.
-  const scrub = (_key: string, value: unknown) => typeof value === 'string' ? redact(value) : value;
+  const scrub = (key: string, value: unknown) => typeof value === 'string' ? redactField(key, value) : value;
   atomicEvidence(join(dir, 'run.json'), JSON.stringify({ schemaVersion: 1, changeId, status: c.status,
     profile: ws.profile ?? DEFAULT_DIGEST, fabSha: fabSha(),
     baseSha: c.baseSha, branch, head, createdAt: c.createdAt, updatedAt: c.updatedAt,

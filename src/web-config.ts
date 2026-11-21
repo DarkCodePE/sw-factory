@@ -8,6 +8,7 @@ import { jiraConfiguredInEnv } from './connectors/jira.ts';
 import { activityMetadata, redact } from './evidence.ts';
 import { listProfiles, resolveProfile } from './profile.ts';
 import { detectSandbox } from './sandbox/detect.ts';
+import { API_KEYS_PATH } from './web-api-keys.ts';
 import type { Store, Workstream } from './store.ts';
 
 type Escape = (value: unknown) => string;
@@ -138,7 +139,7 @@ async function mcpInventory(escape: Escape): Promise<string> {
   } catch { return '<p class="notice">Configuración MCP no disponible.</p>'; }
 }
 
-export async function configPage(store: Store, stateDir: string, url: URL, escape: Escape) {
+export async function configPage(store: Store, stateDir: string, url: URL, escape: Escape, csrf?: string) {
   const workstreams = store.listWorkstreams();
   const ws = url.searchParams.get('ws');
   const selected = ws ? store.getWorkstream(ws) : workstreams[0];
@@ -156,11 +157,16 @@ export async function configPage(store: Store, stateDir: string, url: URL, escap
       ['Aprobación de change', yesNo(selected.requireChangeApproval)],
       ['Aprobación de spec', yesNo(selected.requireApproval)],
     ])}</section>
-    <section><h2>Perfil vigente</h2>${profileView(stateDir, selected, escape)}</section>`
+    <section><h2>Perfil vigente</h2>${profileView(stateDir, selected, escape)}</section>
+    <section><h2>Definición</h2>
+      <p>El árbol de definición agrupa la configuración, el perfil y las skills en ficheros versionables.</p>
+      <p><a href="/definicion?ws=${escape(selected.slug)}">Ver árbol de definición (${escape(selected.slug)})</a></p>
+    </section>`
     : '<p class="empty">No hay workstreams.</p>';
   const egress = selected ? latestEgress(store, stateDir, selected, escape) : 'No medido';
   const [sandbox, mcp] = await Promise.all([detectSandbox(), mcpInventory(escape)]);
   return { title: 'Configuración', body: `<div class="config">
+    ${csrf ? '<p><a href="/config/runners">Runners</a></p>' : ''}
     ${workstream}
     <section><h2>Perfiles guardados</h2>${savedProfiles(stateDir, escape)}</section>
     <section><h2>Adaptadores</h2>${adapters(stateDir, escape)}</section>
@@ -169,7 +175,7 @@ export async function configPage(store: Store, stateDir: string, url: URL, escap
       ['Aislamiento de red disponible', yesNo(sandbox.network)],
       [`Última sonda de egress del workstream (últimas ${EGRESS_SCAN_LIMIT} activities)`, egress],
     ])}</section>
-    <section><h2>Integraciones</h2>${facts([
+    <section><h2>Integraciones</h2><p><a href="${API_KEYS_PATH}">Claves API</a></p>${facts([
       ['Jira (entorno)', configured(jiraConfiguredInEnv())],
       ['GitHub (entorno)', configured(!!(process.env.GH_TOKEN?.trim() || process.env.GITHUB_TOKEN?.trim()))],
     ])}</section>

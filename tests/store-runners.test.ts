@@ -58,12 +58,14 @@ test('asigna runner a un workstream; inexistente es not_found; borrar en uso es 
 
 test('el evento de un runner ssh avisa de que el código sale; el local no', () => {
   const w = ws();
-  store.createRunner({ name: 'torre', kind: 'ssh', target: 'torre' });
+  store.createRunner({ name: 'torre', kind: 'ssh', target: 'alias-privado' });
   store.createRunner({ name: 'loc', kind: 'local' });
   store.setWorkstreamRunner('w', 'torre');
   store.setWorkstreamRunner('w', 'loc');
   const msgs = (store.db.query('SELECT message FROM events WHERE workstream_id = ? ORDER BY id').all(w.id) as { message: string }[]).map(e => e.message);
-  expect(msgs).toContain('runner: ninguno -> torre; el código de este workstream se enviará a torre');
+  expect(msgs).toContain('runner: ninguno -> torre; el código de este workstream se enviará al runner remoto');
+  expect(msgs).toContain('runner: torre -> loc');
+  expect(msgs.join(' ')).not.toContain('alias-privado');
   expect(msgs.filter(m => m.includes('se enviará'))).toHaveLength(1);
 });
 
@@ -124,4 +126,68 @@ test('H6: pausar y activar un runner deja un evento en cada workstream que lo us
   const msgs = (id: string) => (store.db.query('SELECT message FROM events WHERE workstream_id = ? ORDER BY id').all(id) as { message: string }[]).map(e => e.message);
   expect(msgs(a.id)).toEqual(expect.arrayContaining(['runner torre pausado', 'runner torre activado']));
   expect(msgs(b.id).filter(m => m.includes('torre'))).toEqual([]);
+});
+
+test('inventario público en lectura: proyecta campos y admite bases sin tabla sin migrar', () => {
+  const path = join(dir, 'fabrica.db');
+  store.createRunner({ name: 'torre', kind: 'ssh', target: 'alias-privado', options: { maxBundleMb: 99 } });
+  store.setRunnerEnabled('torre', false);
+  store.createRunner({ name: 'casa', kind: 'local' });
+  const read = () => {
+    const reader = new Store(path, { readonly: true });
+    try { return reader.listRunnerSummaries(); } finally { reader.close(); }
+  };
+  expect(read()).toEqual([
+    { name: 'casa', kind: 'local', enabled: true, createdAt: store.getRunner('casa').createdAt },
+    { name: 'torre', kind: 'ssh', enabled: false, createdAt: store.getRunner('torre').createdAt },
+  ]);
+  store.db.exec('DROP TABLE runners');
+  expect(read()).toEqual([]);
+  expect(store.db.query("SELECT name FROM sqlite_schema WHERE name = 'runners'").get()).toBeNull();
+});
+
+test('asignación web por id compara la selección antes del no-op y comprueba estado y confirmación', () => {
+  const w = ws();
+  store.createRunner({ name: 'torre', kind: 'ssh', target: 'alias-privado' });
+  store.createRunner({ name: 'casa', kind: 'local' });
+  const other = new Store(join(dir, 'fabrica.db'));
+  const select = (runner: string | null, expected: string | null, confirmSsh = false) => {
+    const r = runner ? store.getRunner(runner) : undefined;
+    return store.setWorkstreamRunner(w.id, runner, { expected, confirmSsh, seen: r && { kind: r.kind, createdAt: r.createdAt } });
+  };
+  try {
+    expect(code(() => store.setWorkstreamRunner(w.slug, 'casa', { expected: null, confirmSsh: false }))).toStartWith('not_found');
+    expect(code(() => select('torre', null))).toStartWith('invalid_input');
+    other.setWorkstreamRunner(w.slug, 'torre');
+    expect(code(() => select('torre', null, true))).toStartWith('conflict');
+    const count = store.listEvents(w.id).length;
+    expect(select('torre', 'torre', true).runner).toBe('torre');
+    expect(store.listEvents(w.id).length).toBe(count);
+    other.setRunnerEnabled('casa', false);
+    expect(code(() => select('casa', 'torre'))).toStartWith('conflict');
+    expect(other.setWorkstreamRunner(w.slug, 'casa').runner).toBe('casa');
+    expect(code(() => select('casa', 'casa'))).toStartWith('conflict');
+    expect(select(null, 'casa').runner).toBeNull();
+    other.deleteRunner('casa');
+    expect(code(() => select('casa', null))).toStartWith('not_found');
+    other.setWorkstreamState(w.id, 'archived');
+    expect(code(() => select('torre', null, true))).toStartWith('conflict');
+    expect(store.getWorkstream(w.id).runner).toBeNull();
+  } finally { other.close(); }
+});
+
+test('T85-H2: la selección compara el tipo y el alta vistos de la fila, cada uno por su lado', () => {
+  const w = ws();
+  store.createRunner({ name: 'casa', kind: 'local' });
+  const r = store.getRunner('casa');
+  const pick = (seen?: { kind: 'local' | 'ssh'; createdAt: string }) =>
+    () => store.setWorkstreamRunner(w.id, 'casa', { expected: null, confirmSsh: true, seen });
+  expect(code(pick())).toStartWith('conflict');
+  expect(code(pick({ kind: 'ssh', createdAt: r.createdAt }))).toStartWith('conflict');
+  expect(code(pick({ kind: 'local', createdAt: '2000-01-01T00:00:00.000Z' }))).toStartWith('conflict');
+  expect(store.getWorkstream(w.id).runner).toBeNull();
+  // Mismo alta, otro tipo (fila editada fuera de la fab): también se rechaza.
+  store.db.query("UPDATE runners SET kind = 'ssh', target = 'alias-privado' WHERE name = 'casa'").run();
+  expect(code(pick({ kind: 'local', createdAt: r.createdAt }))).toStartWith('conflict');
+  expect(store.setWorkstreamRunner(w.id, 'casa', { expected: null, confirmSsh: true, seen: { kind: 'ssh', createdAt: r.createdAt } }).runner).toBe('casa');
 });

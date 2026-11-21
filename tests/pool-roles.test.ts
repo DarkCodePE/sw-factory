@@ -135,12 +135,18 @@ test('T57d A4: un pin distinto bloquea solo el adaptador del rol, salvo aceptaci
 
 test('T57d A6: el modelo resuelto excluye ANTHROPIC_MODEL del entorno confinado', async () => {
   const bin = stubBinary('bwrap');
-  await withEnv({ PATH: `${bin}:${process.env.PATH}`, ANTHROPIC_MODEL: 'canario-t57' }, () => {
+  // T98-H4(b): el lanzador ya no expone env ni argv; se comprueba lo que de verdad recibe el proceso, con un bwrap que lo vuelca.
+  const dump = (name: string) => join(dir, name);
+  writeFileSync(join(bin, 'bwrap'), `#!/bin/sh\nprintf '%s\\0' "$@" > ${dump('argv.dump')}\nenv > ${dump('env.dump')}\nexit 0\n`, { mode: 0o755 });
+  await withEnv({ PATH: `${bin}:${process.env.PATH}`, ANTHROPIC_MODEL: 'canario-t57' }, async () => {
     for (const model of [undefined, 'm1']) {
       const c = confineAgent('claude', ['sh', ...(model ? ['--model', model] : [])], repo, {}, undefined, undefined, model);
       try {
-        expect(c.env.ANTHROPIC_MODEL).toBe(model ? undefined : 'canario-t57');
-        expect(c.argv.includes('canario-t57')).toBe(false); // T72d: ningún valor en argv
+        expect(c.inspection.envNames.includes('ANTHROPIC_MODEL')).toBe(model === undefined);
+        expect(await c.spawn('ignore').exited).toBe(0);
+        const env = readFileSync(dump('env.dump'), 'utf8').split('\n');
+        expect(env.includes('ANTHROPIC_MODEL=canario-t57')).toBe(model === undefined); // el valor llega solo cuando no hay modelo resuelto
+        expect(readFileSync(dump('argv.dump'), 'utf8').includes('canario-t57')).toBe(false); // T72d: ningún valor en argv
       } finally { c.cleanup(); }
     }
   });

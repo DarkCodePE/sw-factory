@@ -199,17 +199,17 @@ export async function runAgent(
 ): Promise<AgentRun> {
   const start = Date.now();
   const argv = agent.command(prompt, { ...options, promptStdin: agent.promptStdin === true });
+  const input = agent.promptStdin ? new TextEncoder().encode(prompt) : 'ignore';
   const confined = options.confine ? confineAgent(agent.name, argv, cwd, agent.env?.(), options.claudeProjects, options.mcpConfig, options.model, options.envDecl) : undefined;
   let proc;
   try {
-    proc = Bun.spawn(confined?.argv ?? argv, {
+    proc = confined ? confined.spawn(input) : Bun.spawn(argv, {
       cwd,
-      env: confined?.env ?? agentEnv({ adapter: agent.name, confined: false, channel: false, wsAllow: null, roleEnv: [], mcpRequired: [], ...options.envDecl, host: { ...process.env, ...(agent.env?.() ?? {}) }, model: options.model }).env,
-      stdin: agent.promptStdin ? new TextEncoder().encode(prompt) : 'ignore', stdout: 'pipe', stderr: 'pipe', detached: true,
+      env: agentEnv({ adapter: agent.name, confined: false, channel: false, wsAllow: null, roleEnv: [], mcpRequired: [], ...options.envDecl, host: { ...process.env, ...(agent.env?.() ?? {}) }, model: options.model }).env,
+      stdin: input, stdout: 'pipe', stderr: 'pipe', detached: true,
     });
   } catch (e) {
     confined?.cleanup();
-    if (options.confine) throw new Error(`--confine: lanzamiento falló: ${(e as Error).message}`, { cause: e });
     throw e;
   }
 
@@ -258,19 +258,23 @@ export async function runAgent(
 
   // Los valores entregados (T72, S6) se limpian antes de que nada de la salida llegue al log, al error o al report.
   const clean = (t: string) => options.scrub ? scrubValues(t, options.scrub) : t;
-  const [stdout, stderr, exitCode] = await Promise.all([
-    new Response(proc.stdout).text().then(clean),
-    new Response(proc.stderr).text().then(clean),
-    proc.exited,
-  ]);
-
-  confined?.cleanup();
-  clearTimeout(timeoutTimer);
-  if (killTimer) {
+  let stdout: string, stderr: string, exitCode: number;
+  try {
+    [stdout, stderr, exitCode] = await Promise.all([
+      new Response(proc.stdout).text().then(clean),
+      new Response(proc.stderr).text().then(clean),
+      proc.exited,
+    ]);
+  } catch (e) {
+    killGroup('SIGKILL');
+    await proc.exited.catch(() => {});
+    if (confined) throw new Error('--confine: lectura de salida falló');
+    throw e;
+  } finally {
+    clearTimeout(timeoutTimer);
     clearTimeout(killTimer);
-  }
-  if (options.signal) {
-    options.signal.removeEventListener('abort', onAbort);
+    options.signal?.removeEventListener('abort', onAbort);
+    confined?.cleanup();
   }
 
   if (options.capturePath) atomicEvidence(options.capturePath, (existsSync(options.capturePath) ? readFileSync(options.capturePath, 'utf8') : '') + stdout + (stderr ? '\n[stderr]\n' + stderr : ''));

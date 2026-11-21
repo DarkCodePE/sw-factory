@@ -1,7 +1,9 @@
 // SQLite-backed store for workstreams, signals, changes, activities and events.
 // Every lifecycle transition goes through a compare-and-set UPDATE so concurrent workers
 // cannot double-claim or overwrite each other's results.
-import { DEFAULT_DIGEST, resolveProfile } from './profile.ts';
+import { DEFAULT_DIGEST, ROLES, isProfileDigest, resolveProfile, resolveRole, type Profile } from './profile.ts';
+import { AGENT_NAMES } from './agents.ts';
+import { CONFINABLE_AGENTS } from './sandbox/confine.ts';
 import { isForbiddenEnvName } from './mcp-registry.ts';
 import { Database } from 'bun:sqlite';
 import { createHash, randomBytes, randomUUID, timingSafeEqual } from 'node:crypto';
@@ -9,7 +11,12 @@ import { userInfo } from 'node:os';
 import { closeSync, existsSync, fstatSync, openSync, readFileSync } from 'node:fs';
 import { dirname, resolve } from 'node:path';
 import { gitEvidence, writeManifest } from './manifest.ts';
+import { redact, redactField } from './evidence.ts';
 import { lastDue, parseCron } from './cron.ts';
+import {
+  assertNoteAttachmentMounts, assertPrivateNoteDatabase, NOTE_ATTACHMENT_HISTORY_MAX, NOTE_ATTACHMENT_MAX,
+  NOTE_ATTACHMENT_REMOTE, NOTE_ATTACHMENT_WAIT, noteAttachmentInventory, validateNoteAttachment, type NoteAttachment, type NoteAttachmentMeta, type NoteAttachmentTarget, type NoteAttachmentWait,
+} from './note-attachments.ts';
 
 import {
   type ActivityKind as BaseActivityKind,
@@ -130,9 +137,54 @@ export interface Automation {
   lastSignalId: string | null;
 }
 
+type AutomationFields = Pick<Automation, 'name' | 'cron' | 'title' | 'body'>;
+const AUTOMATION_FIELDS = ['name', 'cron', 'title', 'body'] as const;
+
+export function automationRevision(a: Automation): string {
+  return createHash('sha256').update(JSON.stringify([a.id, a.name, a.cron, a.title, a.body, a.enabled])).digest('hex');
+}
+
+function validateAutomation({ name, cron, title, body }: AutomationFields): void {
+  if (!/^[a-z0-9][a-z0-9-]{0,40}$/.test(name)) {
+    throw new StoreError('invalid_input', 'nombre de automation inválido');
+  }
+  if (!title || [...title].length > 200) {
+    throw new StoreError('invalid_input', 'el título debe tener entre 1 y 200 caracteres');
+  }
+  if (!body || Buffer.byteLength(body, 'utf8') > 8192) {
+    throw new StoreError('invalid_input', 'el cuerpo debe ocupar entre 1 y 8192 bytes');
+  }
+  try {
+    parseCron(cron);
+  } catch (error) {
+    throw new StoreError('invalid_input', (error as Error).message);
+  }
+}
+
+// T86-H1: qué claves delatan un secreto lo decide `redactField` (T77), que ya cubre password, passwd, pwd, token…; `key` suelta es de esta plantilla.
+const isSecretKey = (key: string) => redactField(key, '') === '[REDACTED]' || /^key$|[_-]key$/i.test(key);
+
+function automationAuditValue(value: string): string {
+  if (Buffer.byteLength(value) > 8192) return '[OMITIDO: más de 8 KiB]';
+  const text = value.replace(/-----BEGIN (?:[A-Z]+ )?PRIVATE KEY-----[\s\S]*$/g, '[REDACTED]');
+  // Conserva la clave y omite el resto de la línea, incluidos valores con espacios.
+  const pair = /([\w-]+)(["']?[^\S\r\n]*[:=])/g;
+  let out = '', pos = 0, m: RegExpExecArray | null;
+  while ((m = pair.exec(text))) {
+    if (!isSecretKey(m[1]!)) continue;
+    const end = text.indexOf('\n', pair.lastIndex), lineEnd = end === -1 ? text.length : end;
+    out += `${text.slice(pos, pair.lastIndex)} [REDACTED]`; pos = lineEnd; pair.lastIndex = lineEnd;
+  }
+  // T86-H2: sin controles C0/C1 ni bidi (que `fab events` imprimiría crudos ni JSON.stringify expande ×6); se conservan TAB, LF y CR.
+  const clean = redact(out + text.slice(pos)).replace(/[^\P{Cc}\t\n\r]|\p{Cf}/gu, ' ');
+  return new TextDecoder().decode(Buffer.from(clean).subarray(0, 8192), { stream: true });
+}
+
 type AutomationRun =
   | { result: 'created'; signalId: string }
   | { result: 'skipped_open' | 'skipped_inactive'; signalId?: never };
+
+export const API_KEY_ACTIVE_LIMIT = 20;
 
 type ApiKeyScope = 'read' | 'decide';
 
@@ -161,8 +213,30 @@ export interface Change {
   updatedAt: string;
 }
 
-export type ChangeSource = 'cli' | 'channel' | 'jira';
-export interface ChangeSummary extends Change { source: ChangeSource | null; creator: string | null }
+export type ChangeSource = 'cli' | 'channel' | 'jira' | 'automation';
+/** `agents` y `roles` salen de las activities; vacíos = «No medido». `roles` es el validador o, si no hay, el tipo. */
+export interface ChangeAttribution extends Change { source: ChangeSource | null; creator: string | null }
+export interface ChangeSummary extends ChangeAttribution { activityCount: number; agents: string[]; roles: string[] }
+export interface ChangeLinks { source?: { system: string; key: string; url: string }; pr?: { repo: string; number: number; url: string } }
+
+export interface WebhookDelivery {
+  delivery_id: string;
+  event: string;
+  received_at: string;
+  bytes: number;
+  result: string;
+}
+
+export interface WebhookReceptorStatus {
+  hasTable: boolean;
+  active: boolean;
+  endpoint: string;
+  totalDeliveries: number;
+  lastDeliveryAt: string | null;
+  last24h: { result: string; count: number }[];
+  rejectedCount: number;
+  lastRejectedAt: string | null;
+}
 
 export interface ChangeNote {
   id: string;
@@ -173,7 +247,16 @@ export interface ChangeNote {
   activityId: string | null;
   attemptId: string | null;
   deliveredAt: string | null;
+  attachment?: NoteAttachmentMeta;
 }
+
+export interface ReservedChangeNote extends ChangeNote { attachmentBytes?: Uint8Array }
+export type HistoricalNoteBody = Pick<ChangeNote, 'id' | 'body' | 'createdAt'>;
+type NoteDelivery = (NoteAttachmentTarget & { fits?: (notes: ReservedChangeNote[]) => boolean })
+  | { blockedBy: 'remote' | 'transport' };
+const PLAIN_NOTE = '(attachment_name IS NULL AND attachment_bytes IS NULL)';
+const ATTACHMENT_EVENT = 'Adjuntos pendientes: ';
+const ATTACHMENT_READY = 'Adjuntos aptos para este turno.';
 
 export interface Activity {
   id: string;
@@ -214,6 +297,17 @@ export class StoreError extends Error {
     message: string
   ) {
     super(message);
+  }
+}
+
+/** T86-H3: el nombre ocupado es entrada inválida (la web devuelve el formulario relleno), no una revisión obsoleta. Sigue siendo `conflict` para la CLI. */
+export class AutomationNameTakenError extends StoreError {
+  constructor(message: string) { super('conflict', message); }
+}
+
+export class WorkstreamBusyError extends StoreError {
+  constructor() {
+    super('conflict', 'El workstream tiene trabajo vivo. Reintenta cuando termine el turno o se resuelva la espera o reanudación.');
   }
 }
 
@@ -312,6 +406,7 @@ function toWorkstream(r: Row): Workstream {
 }
 
 const RUNNER_NAME = /^[a-z0-9][a-z0-9-]{0,40}$/;
+export const isRunnerName = (name: string): boolean => RUNNER_NAME.test(name);
 const RUNNER_TARGET = /^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$/;
 
 function toRunner(r: Row): Runner {
@@ -410,6 +505,8 @@ function toChangeNote(r: Row): ChangeNote {
     activityId: r.activity_id as string | null,
     attemptId: r.attempt_id as string | null,
     deliveredAt: r.delivered_at as string | null,
+    ...(typeof r.attachment_name === 'string' && typeof r.attachment_size === 'number'
+      ? { attachment: { name: r.attachment_name, size: r.attachment_size } } : {}),
   };
 }
 
@@ -560,6 +657,8 @@ export class Store {
   }
 
   private migrate(): void {
+    this.addColumn('change_notes', 'attachment_name', 'TEXT');
+    this.addColumn('change_notes', 'attachment_bytes', 'BLOB');
     this.addColumn('activities', 'validator', 'TEXT');
     this.addColumn('workstreams', 'verify', 'TEXT');
     this.addColumn('workstreams', 'verify_setup', 'TEXT');
@@ -668,17 +767,80 @@ export class Store {
     return this.getWorkstream(id);
   }
 
-  /** Asigna un perfil al workstream (T58). `expected` es el digest vigente que vio quien pide el cambio; el evento guarda anterior y nuevo. */
-  assignProfile(idOrSlug: string, digest: string, expected: string): void {
-    try { resolveProfile(this.stateDir, digest); } catch (e) { throw new StoreError('invalid_input', (e as Error).message); }
+  /** Asigna un perfil bajo el mismo lock que el claim y las transiciones de sesión. */
+  assignProfile(idOrSlug: string, digest: string, expected: string, expectedAgent?: string): void {
+    if (!isProfileDigest(digest)) throw new StoreError('invalid_input', 'digest de perfil inválido');
     this.withRetry(() => {
       const ws = this.getWorkstream(idOrSlug);
       const current = ws.profile ?? DEFAULT_DIGEST;
-      if (current !== expected || current === digest) throw new StoreError('conflict', 'el perfil vigente cambió o ya es ese');
-      const r = this.db.query('UPDATE workstreams SET profile = ? WHERE id = ? AND COALESCE(profile, ?) = ?').run(digest === DEFAULT_DIGEST ? null : digest, ws.id, DEFAULT_DIGEST, expected);
-      if (r.changes !== 1) throw new StoreError('conflict', 'el perfil vigente cambió');
+      if (current !== expected || (expectedAgent !== undefined && ws.agent !== expectedAgent) || current === digest) {
+        throw new StoreError('conflict', 'la configuración vigente cambió o el perfil ya está asignado');
+      }
+      const next = this.#configurationProfile(digest);
+      // Restauración de T58: si falta el perfil anterior, el fallback manual es lo único conocido.
+      let before: Profile;
+      try { before = this.#configurationProfile(current); }
+      catch (e) {
+        if (digest !== DEFAULT_DIGEST || !(e instanceof StoreError)) throw e;
+        before = next;
+      }
+      this.#checkExecutionConfig(ws, before, next, ws.agent);
+      this.db.query('UPDATE workstreams SET profile = ? WHERE id = ?').run(digest === DEFAULT_DIGEST ? null : digest, ws.id);
       this.event(ws.id, 'info', `perfil asignado: ${current} → ${digest}`);
     });
+  }
+
+  setWorkstreamAgent(idOrSlug: string, agent: string, previous: string, profileExpected: string): void {
+    if (!AGENT_NAMES.includes(agent)) throw new StoreError('invalid_input', 'adaptador desconocido');
+    this.withRetry(() => {
+      const ws = this.getWorkstream(idOrSlug);
+      if (ws.agent !== previous || (ws.profile ?? DEFAULT_DIGEST) !== profileExpected || ws.agent === agent) {
+        throw new StoreError('conflict', 'la configuración vigente cambió o el adaptador ya está asignado');
+      }
+      const profile = this.#configurationProfile(ws.profile);
+      this.#checkExecutionConfig(ws, profile, profile, agent);
+      this.db.query('UPDATE workstreams SET agent = ? WHERE id = ?').run(agent, ws.id);
+      this.event(ws.id, 'info', `adaptador del workstream: ${ws.agent} → ${agent}`);
+    });
+  }
+
+  #configurationProfile(digest: string | null): Profile {
+    try { return resolveProfile(this.stateDir, digest).profile; }
+    catch { throw new StoreError('invalid_input', 'perfil desconocido, inaccesible o corrupto'); }
+  }
+
+  #hasTable(name: string): boolean {
+    return this.db.query("SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = ?").get(name) !== null;
+  }
+
+  #checkExecutionConfig(ws: Workstream, before: Profile, next: Profile, agent: string): void {
+    const claimed = this.db.query(`SELECT 1 FROM activities WHERE workstream_id = ?
+      AND status IN ('in_progress', 'waiting_reply') LIMIT 1`).get(ws.id);
+    const resuming = !claimed && this.#hasTable('adm_sessions') && this.db.query(`
+      SELECT 1 FROM activities a JOIN changes c ON c.id = a.change_id
+      JOIN adm_sessions s ON s.change_id = a.change_id AND s.kind = a.kind
+      WHERE a.workstream_id = ? AND a.status = 'pending' AND a.validator IS NULL
+        AND c.status NOT IN (${TERMINAL_CHANGE_STATUSES.map(() => '?').join(', ')})
+        AND s.status = 'open' AND s.launched_at IS NOT NULL
+        AND s.generation = (SELECT MAX(generation) FROM adm_sessions WHERE change_id = a.change_id AND kind = a.kind)
+      LIMIT 1`).get(ws.id, ...TERMINAL_CHANGE_STATUSES);
+    if (claimed || resuming) throw new WorkstreamBusyError();
+
+    const channel = (this.#hasTable('adm_thread_changes') && this.db.query(`
+      SELECT 1 FROM adm_thread_changes t JOIN changes c ON c.id = t.change_id WHERE c.workstream_id = ? LIMIT 1`).get(ws.id))
+      || (this.#hasTable('adm_thread_signals') && this.db.query(`
+      SELECT 1 FROM adm_thread_signals t JOIN signals s ON s.id = t.signal_id WHERE s.workstream_id = ? LIMIT 1`).get(ws.id));
+    if ((channel || agent !== ws.agent) && !CONFINABLE_AGENTS.includes(agent)) {
+      throw new StoreError('invalid_input', 'el adaptador fallback del workstream debe ser confinable');
+    }
+    for (const role of ROLES) {
+      const previous = resolveRole(before, role, ws.agent);
+      const effective = resolveRole(next, role, agent);
+      if ((channel || previous.adapter !== effective.adapter || previous.model !== effective.model)
+        && !CONFINABLE_AGENTS.includes(effective.adapter)) {
+        throw new StoreError('invalid_input', `el adaptador efectivo de ${role} debe ser confinable`);
+      }
+    }
   }
 
   setVerifySetupHash(id: string, hash: string): void {
@@ -760,7 +922,7 @@ export class Store {
   // ---- runners -----------------------------------------------------------
 
   createRunner(i: { name: string; kind: Runner['kind']; target?: string | null; options?: Record<string, unknown> }): Runner {
-    if (typeof i.name !== 'string' || !RUNNER_NAME.test(i.name)) throw new StoreError('invalid_input', 'name: use a-z, 0-9 y guiones (1-41 caracteres)');
+    if (typeof i.name !== 'string' || !isRunnerName(i.name)) throw new StoreError('invalid_input', 'name: use a-z, 0-9 y guiones (1-41 caracteres)');
     if (i.kind !== 'local' && i.kind !== 'ssh') throw new StoreError('invalid_input', 'kind: debe ser local o ssh');
     if (i.kind === 'ssh' && !(typeof i.target === 'string' && RUNNER_TARGET.test(i.target))) {
       throw new StoreError('invalid_input', 'target: alias de ~/.ssh/config (sin usuario@host ni espacios)');
@@ -779,6 +941,13 @@ export class Store {
 
   listRunners(): Runner[] {
     return (this.db.query('SELECT * FROM runners ORDER BY name').all() as Row[]).map(toRunner);
+  }
+
+  listRunnerSummaries(): Pick<Runner, 'name' | 'kind' | 'enabled' | 'createdAt'>[] {
+    if (!this.db.query("SELECT 1 FROM sqlite_schema WHERE type = 'table' AND name = 'runners'").get()) return [];
+    const rows = this.db.query('SELECT name, kind, enabled, created_at FROM runners ORDER BY name').all() as
+      { name: string; kind: Runner['kind']; enabled: number; created_at: string }[];
+    return rows.map(r => ({ name: r.name, kind: r.kind, enabled: r.enabled === 1, createdAt: r.created_at }));
   }
 
   getRunner(name: string): Runner {
@@ -808,15 +977,29 @@ export class Store {
     }).immediate());
   }
 
-  setWorkstreamRunner(idOrSlug: string, name: string | null): Workstream {
-    this.withRetry(() => this.db.transaction(() => {
-      const ws = this.getWorkstream(idOrSlug);
+  setWorkstreamRunner(idOrSlug: string, name: string | null, selection?: { expected: string | null; confirmSsh: boolean; seen?: { kind: Runner['kind']; createdAt: string } }): Workstream {
+    return this.withRetry(() => this.db.transaction(() => {
+      const row = selection ? this.db.query('SELECT * FROM workstreams WHERE id = ?').get(idOrSlug) as Row | null : null;
+      if (selection && !row) throw new StoreError('not_found', 'workstream no encontrado');
+      const ws = row ? toWorkstream(row) : this.getWorkstream(idOrSlug);
+      if (selection && (ws.state === 'archived' || ws.runner !== selection.expected)) {
+        throw new StoreError('conflict', 'el workstream está archivado o la selección cambió');
+      }
       const runner = name === null ? null : this.getRunner(name);
-      this.db.query('UPDATE workstreams SET runner = ? WHERE id = ?').run(name, ws.id);
-      const warn = runner?.kind === 'ssh' ? `; el código de este workstream se enviará a ${runner.target}` : '';
+      if (selection) {
+        // La fila que vio el dueño: un runner borrado y recreado (otro destino u otro tipo) no se asigna.
+        if (runner && (runner.kind !== selection.seen?.kind || runner.createdAt !== selection.seen.createdAt)) {
+          throw new StoreError('conflict', 'el runner cambió desde que se mostró');
+        }
+        if (runner && !runner.enabled) throw new StoreError('conflict', 'el runner está pausado');
+        if (runner?.kind === 'ssh' && !selection.confirmSsh) throw new StoreError('invalid_input', 'falta confirmar el envío al runner SSH');
+        if (ws.runner === name) return ws;
+      }
+      const updated = this.db.query('UPDATE workstreams SET runner = ? WHERE id = ? RETURNING *').get(name, ws.id) as Row;
+      const warn = runner?.kind === 'ssh' ? '; el código de este workstream se enviará al runner remoto' : '';
       this.event(ws.id, 'info', `runner: ${ws.runner ?? 'ninguno'} -> ${name ?? 'ninguno'}${warn}`);
+      return toWorkstream(updated);
     }).immediate());
-    return this.getWorkstream(idOrSlug);
   }
 
   // ---- signals -----------------------------------------------------------
@@ -873,29 +1056,16 @@ export class Store {
 
   // ---- automations -------------------------------------------------------
 
-  createAutomation(input: { workstream: string; name: string; cron: string; title: string; body: string }): Automation {
+  createAutomation(input: AutomationFields & { workstream: string }): Automation {
     const { workstream, name, cron, title, body } = input;
-    if (!/^[a-z0-9][a-z0-9-]{0,40}$/.test(name)) {
-      throw new StoreError('invalid_input', 'nombre de automation inválido');
-    }
-    if (!title || [...title].length > 200) {
-      throw new StoreError('invalid_input', 'el título debe tener entre 1 y 200 caracteres');
-    }
-    if (!body || Buffer.byteLength(body, 'utf8') > 8192) {
-      throw new StoreError('invalid_input', 'el cuerpo debe ocupar entre 1 y 8192 bytes');
-    }
-    try {
-      parseCron(cron);
-    } catch (error) {
-      throw new StoreError('invalid_input', (error as Error).message);
-    }
+    validateAutomation(input);
     return this.withRetry(() => {
       const ws = this.getWorkstream(workstream);
       const existing = this.db.query<{ name: string }, [string]>(
         'SELECT name FROM automations WHERE workstream_id = ?',
       ).all(ws.id);
       if (existing.some(a => a.name === name)) {
-        throw new StoreError('conflict', `ya existe la automation ${name} en ${ws.slug}`);
+        throw new AutomationNameTakenError(`ya existe la automation ${name} en ${ws.slug}`);
       }
       if (existing.length >= 20) {
         throw new StoreError('limit_reached', `el workstream ${ws.slug} tiene 20 automations`);
@@ -911,12 +1081,60 @@ export class Store {
 
   listAutomations(workstream?: string): Automation[] {
     const workstreamId = workstream === undefined ? undefined : this.getWorkstream(workstream).id;
-    // El lector puede abrir una base anterior a la migración.
-    if (!this.db.query("SELECT 1 FROM sqlite_schema WHERE type = 'table' AND name = 'automations'").get()) return [];
+    if (!this.hasAutomations()) return [];
     const rows = workstreamId === undefined
       ? this.db.query('SELECT * FROM automations ORDER BY created_at, name').all()
       : this.db.query('SELECT * FROM automations WHERE workstream_id = ? ORDER BY created_at, name').all(workstreamId);
     return (rows as Row[]).map(toAutomation);
+  }
+
+  // El lector puede abrir una base anterior a la migración.
+  private hasAutomations(): boolean {
+    return !!this.db.query("SELECT 1 FROM sqlite_schema WHERE type = 'table' AND name = 'automations'").get();
+  }
+
+  getAutomation(id: string): Automation {
+    const row = this.hasAutomations() ? this.db.query<Row, [string]>('SELECT * FROM automations WHERE id = ?').get(id) : null;
+    return this.requireAutomation(id, row);
+  }
+
+  private automationForWrite(id: string, expected: string | undefined): Automation {
+    const automation = this.getAutomation(id);
+    if (expected !== undefined && automationRevision(automation) !== expected) {
+      throw new StoreError('conflict', 'La automation cambió. Recarga el formulario.');
+    }
+    return automation;
+  }
+
+  updateAutomation(id: string, expected: string, input: AutomationFields): Automation {
+    return this.withRetry(() => {
+      const before = this.automationForWrite(id, expected);
+      validateAutomation(input);
+      const changed = AUTOMATION_FIELDS.filter(key => before[key] !== input[key]);
+      if (!changed.length) return before;
+      if (before.name !== input.name && this.db.query('SELECT 1 FROM automations WHERE workstream_id = ? AND name = ?')
+        .get(before.workstreamId, input.name)) {
+        throw new AutomationNameTakenError('Ya existe una automation con ese nombre en el workstream.');
+      }
+      const row = this.db.query<Row, [string, string, string, string, string | null, string]>(
+        'UPDATE automations SET name = ?, cron = ?, title = ?, body = ?, last_due_at = ? WHERE id = ? RETURNING *',
+      ).get(input.name, input.cron, input.title, input.body,
+        before.cron === input.cron ? before.lastDueAt : this.automationFloor(before.lastDueAt), id);
+      this.auditAutomation(before, 'editada', changed);
+      return this.requireAutomation(id, row);
+    });
+  }
+
+  private automationFloor(previous: string | null): string {
+    const now = this.now();
+    return previous && Date.parse(previous) > Date.parse(now) ? previous : now;
+  }
+
+  private auditAutomation(a: Automation, action: 'editada' | 'borrada', fields: readonly (keyof AutomationFields)[]): void {
+    // T86-H2: el límite también rige sobre lo serializado (las comillas y los saltos se escapan ×2 en el JSON).
+    const bounded = (value: string) => { const text = automationAuditValue(value); return JSON.stringify(text).length > 8192 + 2 ? '[OMITIDO: más de 8 KiB]' : text; };
+    const previous = Object.fromEntries(fields.map(key => [key, bounded(a[key])]));
+    this.event(a.workstreamId, 'info', `automation ${automationAuditValue(a.name)} ${action} ${JSON.stringify({ id: a.id, previous })}`);
   }
 
   private requireAutomation(id: string, row: Row | null): Automation {
@@ -926,21 +1144,22 @@ export class Store {
 
   setAutomationEnabled(id: string, enabled: boolean): Automation {
     return this.withRetry(() => {
-      const row = this.db.query<Row, [number, string, number, string]>(
+      const now = this.now();
+      const row = this.db.query<Row, [number, string, string, number, string]>(
         // Al reactivar, el suelo pasa a ahora: lo que venció durante la pausa no se recupera.
-        'UPDATE automations SET last_due_at = CASE WHEN ? = 1 AND enabled = 0 THEN ? ELSE last_due_at END, enabled = ? WHERE id = ? RETURNING *',
-      ).get(Number(enabled), this.now(), Number(enabled), id);
+        'UPDATE automations SET last_due_at = CASE WHEN ? = 1 AND enabled = 0 THEN CASE WHEN julianday(last_due_at) > julianday(?) THEN last_due_at ELSE ? END ELSE last_due_at END, enabled = ? WHERE id = ? RETURNING *',
+      ).get(Number(enabled), now, now, Number(enabled), id);
       const automation = this.requireAutomation(id, row);
       this.event(automation.workstreamId, 'info', `automation ${automation.name} ${enabled ? 'activada' : 'pausada'}`);
       return automation;
     });
   }
 
-  deleteAutomation(id: string): void {
+  deleteAutomation(id: string, expected?: string): void {
     this.withRetry(() => {
-      const row = this.db.query<Row, [string]>('DELETE FROM automations WHERE id = ? RETURNING *').get(id);
-      const automation = this.requireAutomation(id, row);
-      this.event(automation.workstreamId, 'info', `automation ${automation.name} borrada`);
+      const automation = this.automationForWrite(id, expected);
+      this.db.query('DELETE FROM automations WHERE id = ?').run(id);
+      this.auditAutomation(automation, 'borrada', AUTOMATION_FIELDS);
     });
   }
 
@@ -1073,17 +1292,66 @@ export class Store {
    */
   changeIndex(workstream?: string): ChangeSummary[] {
     const ws = workstream ? this.getWorkstream(workstream) : undefined;
-    const has = (t: string) => this.db.query("SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = ?").get(t) !== null;
-    const source = new Map<string, ChangeSource>();
-    const mark = (sql: string, map: (r: Row) => ChangeSource) => { for (const r of this.db.query(sql).all() as Row[]) source.set(r.change_id as string, map(r)); };
-    mark('SELECT change_id FROM signals WHERE change_id IS NOT NULL', () => 'cli');
-    if (has('adm_thread_changes')) mark('SELECT change_id FROM adm_thread_changes', () => 'channel');
-    if (has('change_links')) mark('SELECT change_id, source_system FROM change_links WHERE source_system IS NOT NULL', r => r.source_system === 'jira' ? 'jira' : 'channel');
-    if (has('jira_imports')) mark('SELECT s.change_id FROM jira_imports i JOIN signals s ON s.id = i.signal_id WHERE s.change_id IS NOT NULL', () => 'jira');
-    const creator = new Map((this.db.query('SELECT change_id, actor FROM events WHERE id IN (SELECT MIN(id) FROM events WHERE change_id IS NOT NULL GROUP BY change_id)').all() as Row[])
-      .map(r => [r.change_id as string, (r.actor as string | null) ?? null]));
     const rows = (ws ? this.db.query('SELECT * FROM changes WHERE workstream_id = ? ORDER BY created_at').all(ws.id) : this.db.query('SELECT * FROM changes ORDER BY created_at').all()) as Row[];
-    return rows.map(r => ({ ...toChange(r), source: source.get(r.id as string) ?? null, creator: creator.get(r.id as string) ?? null }));
+    const { source, creator } = this.resolveChangeAttribution();
+    const cols = (t: string) => new Set((this.db.query(`PRAGMA table_info(${t})`).all() as Row[]).map(r => r.name as string));
+    const count = new Map<string, number>(); const agents = new Map<string, Set<string>>(); const roles = new Map<string, Set<string>>();
+    const add = (m: Map<string, Set<string>>, id: string, v: unknown) => { if (typeof v === 'string' && v) m.set(id, (m.get(id) ?? new Set()).add(v)); };
+    const hasAgent = cols('activities').has('agent');
+    for (const r of this.db.query('SELECT change_id, COUNT(*) AS n FROM activities GROUP BY change_id').all() as Row[]) count.set(r.change_id as string, r.n as number);
+    // Sin agregar con GROUP_CONCAT: un adaptador con coma en el nombre se partiría.
+    for (const r of this.db.query(`SELECT DISTINCT change_id, ${hasAgent ? 'agent' : 'NULL'} AS agent, COALESCE(validator, kind) AS role FROM activities`).all() as Row[]) {
+      add(agents, r.change_id as string, r.agent); add(roles, r.change_id as string, r.role);
+    }
+    return rows.map(r => ({ ...toChange(r), source: source.get(r.id as string) ?? null, creator: creator.get(r.id as string) ?? null,
+      activityCount: count.get(r.id as string) ?? 0, agents: [...(agents.get(r.id as string) ?? [])].sort(), roles: [...(roles.get(r.id as string) ?? [])].sort() }));
+  }
+
+  /** Fuente y PR del change, sin crear tablas (sirve a un Store readonly). Los valores son datos no confiables. */
+  changeLinks(changeId: string): ChangeLinks {
+    const has = (t: string) => this.db.query("SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = ?").get(t) !== null;
+    const out: ChangeLinks = {};
+    const row = has('change_links') ? this.db.query('SELECT * FROM change_links WHERE change_id = ?').get(changeId) as Row | null : null;
+    if (row?.source_system && row.source_key && row.source_url) out.source = { system: String(row.source_system), key: String(row.source_key), url: String(row.source_url) };
+    // Una base anterior a T49 puede tener `jira_imports` sin `source_url`; el Store de solo lectura no la migra.
+    else if (has('jira_imports') && (this.db.query('PRAGMA table_info(jira_imports)').all() as Row[]).some(c => c.name === 'source_url')) {
+      const i = this.db.query('SELECT i.issue_key, i.source_url FROM jira_imports i JOIN signals s ON s.id = i.signal_id WHERE s.change_id = ?').get(changeId) as Row | null;
+      if (i?.source_url) out.source = { system: 'jira', key: String(i.issue_key), url: String(i.source_url) };
+    }
+    try {
+      const pr = row?.pr_json ? JSON.parse(String(row.pr_json)) as Record<string, unknown> : null;
+      if (pr && typeof pr.url === 'string' && typeof pr.number === 'number') out.pr = { repo: String(pr.repo ?? ''), number: pr.number, url: pr.url };
+    } catch { /* pr_json corrupto: el bloque no se muestra */ }
+    return out;
+  }
+
+  /** Resuelve fuente y creador para un conjunto de changes acotado (o todos si se omite). */
+  resolveChangeAttribution(changeIds?: string[]): { source: Map<string, ChangeSource>; creator: Map<string, string | null> } {
+    if (changeIds && !changeIds.length) return { source: new Map(), creator: new Map() };
+    const has = (t: string) => this.db.query("SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = ?").get(t) !== null;
+    const filter = changeIds ? ` WHERE change_id IN (${changeIds.map(() => '?').join(',')})` : '';
+    const filterAnd = changeIds ? ` AND change_id IN (${changeIds.map(() => '?').join(',')})` : '';
+    const params = changeIds ?? [];
+
+    const source = new Map<string, ChangeSource>();
+    const mark = (sql: string, sqlParams: string[], map: (r: Row) => ChangeSource) => {
+      for (const r of this.db.query(sql).all(...sqlParams) as Row[]) source.set(r.change_id as string, map(r));
+    };
+    mark(`SELECT change_id FROM signals WHERE change_id IS NOT NULL${filterAnd}`, params, () => 'cli');
+    // Las bases anteriores a T68 no tienen `signals.source`: un Store de solo lectura no puede migrarlas.
+    if ((this.db.query('PRAGMA table_info(signals)').all() as Row[]).some(r => r.name === 'source')) mark(`SELECT change_id FROM signals WHERE change_id IS NOT NULL AND source LIKE 'automation:%'${filterAnd}`, params, () => 'automation');
+    if (has('adm_thread_changes')) mark(`SELECT change_id FROM adm_thread_changes${filter}`, params, () => 'channel');
+    if (has('change_links')) mark(`SELECT change_id, source_system FROM change_links WHERE source_system IS NOT NULL${filterAnd}`, params, r => r.source_system === 'jira' ? 'jira' : 'channel');
+    if (has('jira_imports')) {
+      const jiraFilter = changeIds ? ` AND s.change_id IN (${changeIds.map(() => '?').join(',')})` : '';
+      mark(`SELECT s.change_id FROM jira_imports i JOIN signals s ON s.id = i.signal_id WHERE s.change_id IS NOT NULL${jiraFilter}`, params, () => 'jira');
+    }
+
+    const creatorFilter = changeIds ? ` AND change_id IN (${changeIds.map(() => '?').join(',')})` : '';
+    const creator = new Map((this.db.query(`SELECT change_id, actor FROM events WHERE id IN (SELECT MIN(id) FROM events WHERE change_id IS NOT NULL${creatorFilter} GROUP BY change_id)`).all(...params) as Row[])
+      .map(r => [r.change_id as string, (r.actor as string | null) ?? null]));
+
+    return { source, creator };
   }
 
   setChangeBranch(changeId: string, branch: string): void {
@@ -1138,7 +1406,37 @@ export class Store {
 
   // ---- notas del dueño ---------------------------------------------------
 
-  addChangeNote(changeId: string, body: string): ChangeNote {
+  noteRunnerIsRemote(workstreamId: string): boolean {
+    const runner = this.getWorkstream(workstreamId).runner;
+    return runner !== null && this.getRunner(runner).kind === 'ssh';
+  }
+
+  /** Comprobación barata (sin Git) del estado para avisar en la página antes de guardar. */
+  noteAttachmentStateProblem(): string | undefined {
+    try { assertPrivateNoteDatabase(this.dbPath); }
+    catch (error) { return (error as Error).message; }
+  }
+
+  /**
+   * Git corre aquí, antes de abrir la transacción IMMEDIATE del alta o de la reserva: dentro solo se compara
+   * el inventario con el estado. Si falla, dentro se repite y falla cerrado.
+   */
+  prepareNoteDelivery(target?: NoteAttachmentTarget): NoteAttachmentTarget {
+    try { return { ...target, inventory: noteAttachmentInventory(this.listWorkstreams().map(ws => ws.repo), target) }; }
+    catch { return { ...target }; }
+  }
+
+  hasPendingNoteAttachments(changeId: string): boolean {
+    return !!this.db.query(`SELECT 1 FROM change_notes WHERE change_id = ? AND delivered_at IS NULL AND NOT ${PLAIN_NOTE} LIMIT 1`).get(changeId);
+  }
+
+  assertNoteAttachmentState(target?: NoteAttachmentTarget): void {
+    assertPrivateNoteDatabase(this.dbPath);
+    assertNoteAttachmentMounts(this.dbPath, this.listWorkstreams().map(ws => ws.repo), target);
+  }
+
+  addChangeNote(changeId: string, body: string, attachment?: NoteAttachment): ChangeNote {
+    const prepared = attachment !== undefined ? this.prepareNoteDelivery() : undefined;
     return this.withRetry(() => {
       const change = this.getChange(changeId);
       if (isTerminalChange(change.status)) {
@@ -1153,33 +1451,112 @@ export class Store {
       ).get(changeId)!;
       if (n >= 20) throw new StoreError('limit_reached', 'el change tiene 20 notas sin entregar');
 
+      if (attachment !== undefined) {
+        const invalid = validateNoteAttachment(attachment);
+        if (invalid) throw new StoreError('invalid_input', invalid);
+        if (this.noteRunnerIsRemote(change.workstreamId)) {
+          throw new StoreError('invalid_input', NOTE_ATTACHMENT_REMOTE);
+        }
+        try { this.assertNoteAttachmentState(prepared); }
+        catch (error) { throw new StoreError('invalid_input', (error as Error).message); }
+        const { pending, total } = this.db.query<{ pending: number; total: number }, [string]>(`
+          SELECT COALESCE(SUM(CASE WHEN delivered_at IS NULL THEN length(attachment_bytes) ELSE 0 END), 0) AS pending,
+            COALESCE(SUM(length(attachment_bytes)), 0) AS total FROM change_notes WHERE change_id = ?
+        `).get(changeId)!;
+        if (pending + attachment.bytes.byteLength > NOTE_ATTACHMENT_MAX) {
+          throw new StoreError('limit_reached', 'El change admite hasta 65 536 bytes de adjuntos pendientes.');
+        }
+        if (total + attachment.bytes.byteLength > NOTE_ATTACHMENT_HISTORY_MAX) {
+          throw new StoreError('limit_reached', 'El change admite hasta 1 MiB de adjuntos en su histórico.');
+        }
+      }
+
       const id = randomUUID();
       const actor = process.env.FAB_ACTOR ?? userInfo().username;
       const createdAt = this.now();
-      this.db.query('INSERT INTO change_notes (id, change_id, body, actor, created_at) VALUES (?,?,?,?,?)')
-        .run(id, changeId, body, actor, createdAt);
-      this.event(change.workstreamId, 'info', `nota del dueño registrada (${id.slice(0, 8)}, ${bytes} bytes)`, changeId);
-      return { id, changeId, body, actor, createdAt, activityId: null, attemptId: null, deliveredAt: null };
+      const meta = attachment && { name: attachment.name, size: attachment.bytes.byteLength };
+      this.db.query(`INSERT INTO change_notes (id, change_id, body, actor, created_at, attachment_name, attachment_bytes)
+        VALUES (?,?,?,?,?,?,?)`).run(id, changeId, body, actor, createdAt, attachment?.name ?? null, attachment?.bytes ?? null);
+      this.event(change.workstreamId, 'info', `nota del dueño registrada (${id.slice(0, 8)}, ${bytes} bytes${meta ? `, adjunto de ${meta.size} bytes` : ''})`, changeId);
+      return { id, changeId, body, actor, createdAt, activityId: null, attemptId: null, deliveredAt: null, ...(meta && { attachment: meta }) };
     });
   }
 
   listChangeNotes(changeId: string): ChangeNote[] {
     // Una apertura de solo lectura puede encontrar una base anterior a las notas.
     if (!this.db.query("SELECT 1 FROM sqlite_schema WHERE type = 'table' AND name = 'change_notes'").get()) return [];
-    const rows = this.db.query<Row, [string]>(
-      'SELECT * FROM change_notes WHERE change_id = ? ORDER BY created_at, rowid'
-    ).all(changeId);
+    const columns = new Set(this.db.query<{ name: string }, []>('PRAGMA table_info(change_notes)').all().map(col => col.name));
+    const attachment = columns.has('attachment_name') && columns.has('attachment_bytes')
+      ? ', attachment_name, length(attachment_bytes) AS attachment_size' : '';
+    const rows = this.db.query<Row, [string]>(`SELECT id, change_id, body, actor, created_at, activity_id, attempt_id, delivered_at
+      ${attachment} FROM change_notes WHERE change_id = ? ORDER BY created_at, rowid`).all(changeId);
     return rows.map(toChangeNote);
   }
 
-  reserveNotes(changeId: string, activityId: string, attemptId: string): ChangeNote[] {
+  listHistoricalNoteBodies(changeId: string): HistoricalNoteBody[] {
+    return this.db.query<HistoricalNoteBody, [string]>(`SELECT id, body, created_at AS createdAt
+      FROM change_notes WHERE change_id = ? AND (${PLAIN_NOTE} OR delivered_at IS NOT NULL)
+      ORDER BY created_at, rowid`).all(changeId);
+  }
+
+  noteAttachmentWait(changeId: string): string | undefined {
+    const last = this.db.query<{ message: string }, [string, string, string]>(`SELECT message FROM events
+      WHERE change_id = ? AND (message LIKE ? OR message = ?) ORDER BY id DESC LIMIT 1`)
+      .get(changeId, ATTACHMENT_EVENT + '%', ATTACHMENT_READY)?.message;
+    return Object.values(NOTE_ATTACHMENT_WAIT).find(reason => ATTACHMENT_EVENT + reason === last);
+  }
+
+  reserveNotes(changeId: string, activityId: string, attemptId: string, delivery?: NoteDelivery): ReservedChangeNote[] {
     return this.withRetry(() => {
-      // Una reserva sin confirmar puede pertenecer a un intento interrumpido.
-      this.db.query(`UPDATE change_notes SET activity_id = ?, attempt_id = ?
-        WHERE change_id = ? AND delivered_at IS NULL`).run(activityId, attemptId, changeId);
-      const rows = this.db.query<Row, [string]>(`SELECT * FROM change_notes
-        WHERE change_id = ? AND delivered_at IS NULL ORDER BY created_at, rowid`).all(changeId);
-      return rows.map(toChangeNote);
+      const reserve = (filter: string) => {
+        // Una reserva sin confirmar puede pertenecer a un intento interrumpido.
+        this.db.query(`UPDATE change_notes SET activity_id = ?, attempt_id = ?
+          WHERE change_id = ? AND delivered_at IS NULL AND ${filter}`).run(activityId, attemptId, changeId);
+        return this.db.query<Row, [string, string, string]>(`SELECT * FROM change_notes
+          WHERE change_id = ? AND activity_id = ? AND attempt_id = ? AND delivered_at IS NULL AND ${filter}
+          ORDER BY created_at, rowid`).all(changeId, activityId, attemptId);
+      };
+      const pending = this.db.query(`SELECT 1 FROM change_notes WHERE change_id = ? AND delivered_at IS NULL AND NOT ${PLAIN_NOTE}`).get(changeId);
+      if (!pending) return reserve(PLAIN_NOTE).map(toChangeNote);
+
+      const { workstreamId } = this.getChange(changeId);
+      const previous = this.noteAttachmentWait(changeId);
+      const reason = (wait: NoteAttachmentWait) => {
+        if (previous !== NOTE_ATTACHMENT_WAIT[wait]) {
+          this.event(workstreamId, 'warning', ATTACHMENT_EVENT + NOTE_ATTACHMENT_WAIT[wait], changeId, activityId);
+        }
+        return reserve(PLAIN_NOTE).map(toChangeNote);
+      };
+      if (this.noteRunnerIsRemote(workstreamId) || (delivery && 'blockedBy' in delivery && delivery.blockedBy === 'remote')) return reason('remote');
+      if (!delivery || 'blockedBy' in delivery) return reason('transport');
+      const activity = this.getActivity(activityId);
+      if (activity.changeId !== changeId || activity.validator ||
+          (activity.kind !== 'investigation' && activity.kind !== 'implementation')) return reason('transport');
+      try { this.assertNoteAttachmentState(delivery); }
+      catch { return reason('state'); }
+
+      // El savepoint descarta la reserva provisional si el turno no puede llevar los adjuntos.
+      // Solo se leen BLOB de notas vinculadas a este intento y dentro de la misma transacción.
+      const tooLarge = new Error(), invalidFile = new Error();
+      try {
+        const notes = this.db.transaction(() => {
+          const batch = reserve('1 = 1').map(row => {
+            if (row.attachment_name === null && row.attachment_bytes === null) return toChangeNote(row);
+            const bytes = row.attachment_bytes;
+            if (typeof row.attachment_name !== 'string' || !(bytes instanceof Uint8Array)
+              || validateNoteAttachment({ name: row.attachment_name, bytes })) throw invalidFile;
+            return { ...toChangeNote({ ...row, attachment_size: bytes.byteLength }), attachmentBytes: bytes };
+          });
+          if (delivery.fits && !delivery.fits(batch)) throw tooLarge;
+          return batch;
+        })();
+        if (previous) this.event(workstreamId, 'info', ATTACHMENT_READY, changeId, activityId);
+        return notes;
+      } catch (error) {
+        if (error === tooLarge) return reason('size');
+        if (error === invalidFile) return reason('invalid');
+        throw error;
+      }
     });
   }
 
@@ -1214,8 +1591,8 @@ export class Store {
       const { count } = this.db.query<{ count: number }, []>(
         'SELECT COUNT(*) AS count FROM api_keys WHERE revoked_at IS NULL',
       ).get()!;
-      if (count >= 20) {
-        throw new StoreError('limit_reached', 'ya hay 20 claves API activas');
+      if (count >= API_KEY_ACTIVE_LIMIT) {
+        throw new StoreError('limit_reached', `ya hay ${API_KEY_ACTIVE_LIMIT} claves API activas`);
       }
       const id = randomBytes(6).toString('hex');
       const secret = randomBytes(32).toString('base64url');
@@ -1235,13 +1612,15 @@ export class Store {
     ).all();
   }
 
-  revokeApiKey(idOrName: string): void {
+  revokeApiKey(target: string | { id: string }): void {
     this.withRetry(() => {
-      // Si un nombre coincide con el id de otra clave, el id tiene prioridad.
+      // La CLI conserva la búsqueda por nombre con prioridad del id. La web identifica una fila por id.
+      const id = typeof target === 'string' ? target : target.id;
+      const name = typeof target === 'string' ? target : null;
       const { changes } = this.db.query(
         `UPDATE api_keys SET revoked_at = COALESCE(revoked_at, ?)
          WHERE id = (SELECT id FROM api_keys WHERE id = ? OR name = ? ORDER BY (id = ?) DESC LIMIT 1)`,
-      ).run(this.now(), idOrName, idOrName, idOrName);
+      ).run(this.now(), id, name, id);
       if (changes === 0) throw new StoreError('not_found', 'clave API no encontrada');
     });
   }
@@ -1987,25 +2366,95 @@ export class Store {
   }
 
   /** Cohorte acotada para métricas; solo SELECT, sin cargar cuerpos de eventos. */
-  metricsCohort(workstream: string | undefined, since: string | null, until: string, limit: number): { changes: Change[]; total: number } {
+  metricsCohort(workstream: string | undefined, since: string | null, until: string, limit: number): { changes: ChangeAttribution[]; total: number } {
     const wsId = workstream ? this.getWorkstream(workstream).id : null;
     const where = '(? IS NULL OR workstream_id = ?) AND (? IS NULL OR julianday(created_at) >= julianday(?)) AND julianday(created_at) <= julianday(?)';
     const params = [wsId, wsId, since, since, until];
     const total = (this.db.query(`SELECT COUNT(*) AS n FROM changes WHERE ${where}`).get(...params) as { n: number }).n;
-    const changes = (this.db.query(`SELECT * FROM changes WHERE ${where} ORDER BY julianday(created_at) DESC, id LIMIT ?`)
-      .all(...params, limit) as Row[]).map(toChange);
+    const rows = this.db.query(`SELECT * FROM changes WHERE ${where} ORDER BY julianday(created_at) DESC, id LIMIT ?`)
+      .all(...params, limit) as Row[];
+    const { source, creator } = this.resolveChangeAttribution(rows.map(r => r.id as string));
+    const changes: ChangeAttribution[] = rows.map(r => ({ ...toChange(r), source: source.get(r.id as string) ?? null, creator: creator.get(r.id as string) ?? null }));
     return { changes, total };
   }
 
+  /** Registra el PR abierto como evento de change. La URL debe comenzar por https:// y tener host válido. */
+  recordPrOpened(changeId: string, url: string): void {
+    let cleanUrl: string;
+    try {
+      const trimmed = url.trim();
+      if (trimmed.includes('\\')) throw new Error();
+      const u = new URL(trimmed);
+      if (u.protocol !== 'https:' || !u.hostname || trimmed.startsWith('https:///') || trimmed.startsWith('HTTPS:///')) throw new Error();
+      cleanUrl = u.href;
+    } catch {
+      throw new StoreError('invalid_input', 'la URL del PR debe comenzar por https:// y tener un host válido');
+    }
+    const c = this.getChange(changeId);
+    const existing = this.db.query("SELECT 1 FROM events WHERE change_id = ? AND message = ?").get(changeId, `pr_opened: ${cleanUrl}`);
+    if (existing) return;
+    this.event(c.workstreamId, 'info', `pr_opened: ${cleanUrl}`, changeId);
+  }
+
+  /** Obtiene la URL del PR asociada a un change, si existe y es https://. Solo lectura local. */
+  getChangePrUrl(changeId: string): string | null {
+    const ev = this.db.query("SELECT message FROM events WHERE change_id = ? AND message GLOB 'pr_opened: https://*' ORDER BY id DESC LIMIT 1").get(changeId) as { message: string } | null;
+    if (ev) {
+      const match = /^pr_opened:\s*(https:\/\/\S+)/i.exec(ev.message);
+      if (match && match[1]) return match[1];
+    }
+    const hasLinks = this.db.query("SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'change_links'").get();
+    if (hasLinks) {
+      const row = this.db.query('SELECT pr_json FROM change_links WHERE change_id = ?').get(changeId) as { pr_json: string | null } | null;
+      if (row?.pr_json) {
+        try {
+          const pr = JSON.parse(row.pr_json) as { url?: string };
+          if (pr.url && typeof pr.url === 'string' && pr.url.startsWith('https://')) return pr.url;
+        } catch {}
+      }
+    }
+    return null;
+  }
+
+  /** Intervenciones humanas agrupadas por día para series temporales. */
+  metricsDailyInterventions(changeIds: string[], until: string): Map<string, number> {
+    if (!changeIds.length) return new Map();
+    const review = "(message = 'change_review approved' OR message LIKE 'change_review approved:%' OR message = 'change_review commented' OR message LIKE 'change_review commented:%' OR message = 'change_review declined' OR message LIKE 'change_review declined:%' OR message = 'investigation approved' OR message LIKE 'investigation approved:%' OR message = 'investigation commented' OR message LIKE 'investigation commented:%' OR message = 'investigation declined' OR message LIKE 'investigation declined:%')";
+    const rows = this.db.query(`SELECT substr(created_at, 1, 10) AS day, COUNT(*) AS n
+      FROM events WHERE change_id IN (${changeIds.map(() => '?').join(',')}) AND julianday(created_at) <= julianday(?)
+      AND (${review} OR message GLOB 'human reply received (question *); re-queued' OR message GLOB 'change retried (*)')
+      AND (message NOT GLOB '* failed permanently:*' OR activity_id NOT IN (SELECT id FROM activities WHERE validator IS NOT NULL))
+      GROUP BY substr(created_at, 1, 10)`).all(...changeIds, until) as Array<{ day: string; n: number }>;
+    return new Map(rows.map(r => [r.day, r.n]));
+  }
+
+  /** PRs abiertos y fusionados agrupados por día para series temporales. */
+  metricsDailyPrs(changeIds: string[], until: string): { opened: Map<string, number>; merged: Map<string, number> } {
+    if (!changeIds.length) return { opened: new Map(), merged: new Map() };
+    const prOpen = "message GLOB 'pr_opened: https://*'";
+    const merge = "message = 'merge_completed'";
+    const openedRows = this.db.query(`SELECT substr(created_at, 1, 10) AS day, COUNT(DISTINCT change_id) AS n
+      FROM events WHERE change_id IN (${changeIds.map(() => '?').join(',')}) AND julianday(created_at) <= julianday(?)
+      AND ${prOpen} GROUP BY substr(created_at, 1, 10)`).all(...changeIds, until) as Array<{ day: string; n: number }>;
+    const mergedRows = this.db.query(`SELECT substr(created_at, 1, 10) AS day, COUNT(DISTINCT change_id) AS n
+      FROM events WHERE change_id IN (${changeIds.map(() => '?').join(',')}) AND julianday(created_at) <= julianday(?)
+      AND ${merge} GROUP BY substr(created_at, 1, 10)`).all(...changeIds, until) as Array<{ day: string; n: number }>;
+    return { opened: new Map(openedRows.map(r => [r.day, r.n])), merged: new Map(mergedRows.map(r => [r.day, r.n])) };
+  }
+
   /** Hitos y acciones humanas registrados. No interpreta texto de issues; ignora el agotamiento de reintentos de un validador (su cuarentena, bloqueo y reintento humano sí cuentan). */
-  metricsEvents(changeIds: string[], until: string): Array<{ changeId: string; reviewAt: string | null; decisionAt: string | null; terminalAt: string | null; reviews: number; answers: number; retries: number }> {
+  metricsEvents(changeIds: string[], until: string): Array<{ changeId: string; reviewAt: string | null; decisionAt: string | null; terminalAt: string | null; reviews: number; answers: number; retries: number; prOpenedAt: string | null; mergedAt: string | null }> {
     if (!changeIds.length) return [];
     const review = "(message = 'change_review approved' OR message LIKE 'change_review approved:%' OR message = 'change_review commented' OR message LIKE 'change_review commented:%' OR message = 'change_review declined' OR message LIKE 'change_review declined:%' OR message = 'investigation approved' OR message LIKE 'investigation approved:%' OR message = 'investigation commented' OR message LIKE 'investigation commented:%' OR message = 'investigation declined' OR message LIKE 'investigation declined:%')";
     const terminal = "(message IN ('change completed','change canceled','change_review declined','investigation declined') OR message LIKE 'change_review declined:%' OR message LIKE 'investigation declined:%' OR message LIKE 'blocked:%' OR message LIKE 'quarantined:%' OR message GLOB 'change_review failed permanently:*' OR message GLOB 'investigation failed permanently:*' OR message GLOB 'implementation failed permanently:*' OR message GLOB 'steward failed permanently:*' OR message GLOB 'gates failed permanently:*')";
+    const prOpen = "message GLOB 'pr_opened: https://*'";
+    const merge = "message = 'merge_completed'";
     return this.db.query(`SELECT change_id AS changeId,
       MIN(CASE WHEN message = 'investigation awaiting spec review' THEN created_at END) AS reviewAt,
       MIN(CASE WHEN ${review} THEN created_at END) AS decisionAt,
       MIN(CASE WHEN ${terminal} THEN created_at END) AS terminalAt,
+      MIN(CASE WHEN ${prOpen} THEN created_at END) AS prOpenedAt,
+      MIN(CASE WHEN ${merge} THEN created_at END) AS mergedAt,
       SUM(CASE WHEN ${review} THEN 1 ELSE 0 END) AS reviews,
       SUM(CASE WHEN message GLOB 'human reply received (question *); re-queued' THEN 1 ELSE 0 END) AS answers,
       SUM(CASE WHEN message GLOB 'change retried (*)' THEN 1 ELSE 0 END) AS retries
@@ -2019,5 +2468,72 @@ export class Store {
     const ws = this.getWorkstream(workstream);
     return (this.db.query('SELECT COUNT(*) AS n FROM events WHERE workstream_id = ? AND change_id = ?')
       .get(ws.id, changeId) as { n: number }).n;
+  }
+
+  /** ¿Existen las tablas de webhooks (adm_hook_deliveries)? */
+  hasWebhookTables(): boolean {
+    return this.db.query("SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'adm_hook_deliveries'").get() !== null;
+  }
+
+  /** Lista de entregas de webhooks (metadatos, nunca cuerpos ni secretos). */
+  listWebhookDeliveries(limit = 100): WebhookDelivery[] {
+    if (!this.hasWebhookTables()) return [];
+    return this.db.query('SELECT delivery_id, event, received_at, bytes, result FROM adm_hook_deliveries ORDER BY rowid DESC LIMIT ?')
+      .all(limit) as WebhookDelivery[];
+  }
+
+  /** Estado del receptor de webhooks y recuento de entregas recientes. */
+  webhookReceptorStatus(): WebhookReceptorStatus {
+    const hasTable = this.hasWebhookTables();
+    if (!hasTable) {
+      return {
+        hasTable: false,
+        active: false,
+        endpoint: '/github',
+        totalDeliveries: 0,
+        lastDeliveryAt: null,
+        last24h: [],
+        rejectedCount: 0,
+        lastRejectedAt: null,
+      };
+    }
+    let active = false;
+    const hasLock = this.db.query("SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'adm_lock'").get() !== null;
+    if (hasLock) {
+      const lock = this.db.query('SELECT heartbeat_at FROM adm_lock WHERE id = 1').get() as { heartbeat_at: number } | null;
+      if (lock && this.clock().getTime() - lock.heartbeat_at <= 30_000) active = true;
+    }
+    const total = (this.db.query('SELECT COUNT(*) AS count FROM adm_hook_deliveries').get() as { count: number }).count;
+    const last = (this.db.query('SELECT MAX(received_at) AS at FROM adm_hook_deliveries').get() as { at: string | null }).at;
+    const since24h = new Date(this.clock().getTime() - 86_400_000).toISOString();
+    const last24h = this.db.query('SELECT result, COUNT(*) AS count FROM adm_hook_deliveries WHERE received_at >= ? GROUP BY result ORDER BY result')
+      .all(since24h) as { result: string; count: number }[];
+
+    let rejectedCount = 0;
+    let lastRejectedAt: string | null = null;
+    const hasRejections = this.db.query("SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'adm_hook_rejections'").get() !== null;
+    if (hasRejections) {
+      try {
+        const rej = this.db.query('SELECT count, last_rejected_at FROM adm_hook_rejections WHERE id = 1').get() as { count: number; last_rejected_at: string } | null;
+        if (rej) {
+          rejectedCount = rej.count;
+          lastRejectedAt = rej.last_rejected_at;
+        }
+      } catch {
+        rejectedCount = 0;
+        lastRejectedAt = null;
+      }
+    }
+
+    return {
+      hasTable: true,
+      active,
+      endpoint: '/github',
+      totalDeliveries: total,
+      lastDeliveryAt: last,
+      last24h,
+      rejectedCount,
+      lastRejectedAt,
+    };
   }
 }

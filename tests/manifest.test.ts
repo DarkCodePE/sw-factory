@@ -3,6 +3,7 @@ import { mkdtempSync, readFileSync, rmSync, writeFileSync, existsSync } from 'no
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { Store } from '../src/store.ts';
+import { readEvidence } from '../src/evidence.ts';
 import { activityLog, atomicEvidence, gitEvidence, redact, runDirectory, writeManifest } from '../src/manifest.ts';
 import { getAgent } from '../src/agents.ts';
 import { processActivity } from '../src/pool.ts';
@@ -174,4 +175,39 @@ test('egressProbe: native deja la sonda en run.json; otro adaptador y sin sonda 
   expect(await run('native', false)).toBeNull();
   expect(await run('fake', true)).toBeNull();
   expect(await run('native', false, true)).toBeNull();
+});
+
+test('T77: redact cubre los formatos de H4 y no toca texto corriente', () => {
+  const secretos = [
+    'Authorization: Basic dXNlcjpwYXNzd29yZDEyMw==', 'Cookie: sid=abc123SECRET; theme=dark', 'Set-Cookie: sid=abc123SECRET; HttpOnly',
+    'glpat-AbCdEf0123456789xyzQ', 'npm_AbCdEf0123456789xyzQ12345', 'passwd=hunter2hunter2', 'pwd: hunter2hunter2', 'pass=hunter2hunter2',
+    'npm publish --token hunter2hunter2', 'cli --password=hunter2hunter2', 'curl -u admin:hunter2hunter2 https://x.test', 'private_key_id: 0123abcd4567ef',
+    '-----BEGIN PGP PRIVATE KEY BLOCK-----\nhunter2hunter2\n-----END PGP PRIVATE KEY BLOCK-----',
+    '{"authorization": "Basic hunter2hunter2"}', '{"pass": "hunter2hunter2"}', '{"password": "hunter2hunter2"}',
+  ];
+  for (const s of secretos) {
+    const out = redact(s);
+    expect(out, s).toContain('[REDACTED]');
+    expect(out, s).not.toMatch(/hunter2|AbCdEf0123|SECRET|dXNlcjpw|0123abcd/);
+  }
+  for (const s of ['bypass: true', 'compass=north', 'Basic setup guide', 'curl -s https://x.test', 'cookie banner shown', 'npm run test --silent']) expect(redact(s)).toBe(s);
+});
+
+test('T77: la evidencia JSON servida por la web redacta authorization, cookie, pass y private_key_id', () => {
+  writeFileSync(join(dir, 'e.json'), JSON.stringify({ authorization: 'Basic hunter2', cookie: 'sid=hunter2', pass: 'hunter2', private_key_id: 'hunter2', nota: 'bypass' }));
+  const out = readEvidence(dir, 'e.json')!.text;
+  expect(out).not.toContain('hunter2'); expect(out).toContain('bypass');
+});
+
+test('T77a: atomicEvidence conserva un .json válido aunque lleve claves con nombre de secreto y números', () => {
+  const p = join(dir, 'm.json');
+  atomicEvidence(p, JSON.stringify({ tokens: 5, usage: { token: 7 }, password: 'x', nota: 'ok', auth: 'Bearer abcdef123456' }));
+  expect(JSON.parse(readFileSync(p, 'utf8'))).toEqual({ tokens: 5, usage: { token: 7 }, password: '[REDACTED]', nota: 'ok', auth: 'Bearer [REDACTED]' });
+});
+
+test('T77-H6: un .json roto se sanea como texto y no conserva el secreto', () => {
+  const p = join(dir, 'roto.json');
+  atomicEvidence(p, '{"a": 1, "token": "zq9Xv7hunterK3", ');
+  const out = readFileSync(p, 'utf8');
+  expect(out).not.toContain('zq9Xv7'); expect(out).toContain('"a": 1');
 });

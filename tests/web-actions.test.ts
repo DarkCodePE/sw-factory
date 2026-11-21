@@ -291,7 +291,7 @@ test('H5 M51: PUT, DELETE y PATCH autenticados no ejecutan acciones', async () =
 
 test('T71c: ACTIONS tiene exactamente las acciones que ofrece la web', async () => {
   const { ACTIONS } = await import('../src/web-actions.ts');
-  expect(Object.keys(ACTIONS).sort()).toEqual(['activities/review', 'activities/score', 'automations/disable', 'automations/enable', 'automations/run', 'changes/cancel', 'changes/note', 'changes/rename', 'changes/retry', 'questions/answer', 'scorers/backfill', 'signals/create', 'signals/ignore', 'signals/triage', 'workstreams/archive', 'workstreams/create', 'workstreams/settings', 'workstreams/state']);
+  expect(Object.keys(ACTIONS).sort()).toEqual(['activities/review', 'activities/score', 'api-keys/create', 'api-keys/revoke', 'automations/create', 'automations/delete', 'automations/disable', 'automations/enable', 'automations/run', 'automations/update', 'automejora/save', 'benchmarks/cancel', 'changes/cancel', 'changes/note', 'changes/rename', 'changes/retry', 'changes/suite-task', 'questions/answer', 'runners/check', 'scorers/backfill', 'signals/create', 'signals/ignore', 'signals/triage', 'workstreams/adaptador', 'workstreams/archive', 'workstreams/create', 'workstreams/runner', 'workstreams/settings', 'workstreams/state']);
   for (const bad of ['merge', 'gate/allow', 'changes/merge']) expect(ACTIONS[bad]).toBeUndefined();
 });
 test('T71c: performAction fija el actor, valida la entrada y devuelve el destino', async () => {
@@ -370,4 +370,54 @@ test('T75-H3: assertLoopback exige que todas las direcciones sean de loopback y 
   const err = console.error; console.error = () => {};
   try { expect(await webMain(['--port', '0', '--write'], dir, async () => [{ address: '8.8.8.8' }])).toBe(1); }
   finally { console.error = err; }
+});
+
+test('T78: un error de acción se muestra con menú y enlace de vuelta, con su código y sin ejecutar nada', async () => {
+  await login();
+  const before = store.countEvents(store.getChange(change).workstreamId, change);
+  const r = await post(review(), { decision: 'comment', comment: '' }, { referer: `http://${server.host}:${server.port}/activities/${activity}` });
+  expect(r.status).toBe(400);
+  const page = await r.text();
+  expect(page).toContain('<nav'); expect(page).toContain('Elige una decisión');
+  expect(page).toContain(`href="/activities/${activity}"`);
+  expect(store.getActivity(activity).reviewStatus).toBe('awaiting');
+  expect(store.countEvents(store.getChange(change).workstreamId, change)).toBe(before);
+  // Sin Referer, el enlace sale de la ruta de la acción.
+  expect(await (await post(review(), { decision: 'invalid' })).text()).toContain(`href="/activities/${activity}"`);
+  // Todo error de acción lleva la plantilla: validación, límites, tipo, ruta desconocida y CSRF.
+  for (const [res, status] of [
+    [await post('/questions/q1/answer', { answer: '  ' }), 400], [await post(review(), {}, { 'content-type': 'application/json' }), 415],
+    [await post(review(), { padding: 'a'.repeat(16385) }), 413], [await post('/merge'), 404], [await post(review(), { csrf: 'x' }), 403],
+    [await post('/activities/a%3Cb/review', { decision: 'approve' }), 400],
+  ] as [Response, number][]) {
+    expect(res.status).toBe(status); expect(await res.text()).toContain('<nav');
+  }
+});
+test('T78: el texto del error se escapa y no se ofrece el sondeo que recargaría la ruta POST', async () => {
+  await login();
+  const page = await (await post(review(), { decision: 'comment', comment: '' }, { referer: `http://${server.host}:${server.port}/x"><script>alert(1)</script>` })).text();
+  expect(page).not.toContain('<script>alert'); expect(page).toContain('%22%3E%3Cscript%3E');
+  expect(page).not.toContain('poll.js');
+});
+
+test('T78-H1: si la base no abre al pintar el error, sale el error en texto con su estado y cabeceras, no un 500', async () => {
+  await login();
+  const { renameSync } = await import('node:fs');
+  store.close(); renameSync(join(dir, 'fabrica.db'), join(dir, 'fabrica.db.off'));
+  try {
+    const r = await post(review(), { decision: 'comment', comment: '' });
+    expect(r.status).toBe(400); expect(r.headers.get('content-security-policy')).toContain("default-src 'none'");
+    const t = await r.text(); expect(t).toContain('Elige una decisión'); expect(t).not.toContain('__bunfallback');
+  } finally { renameSync(join(dir, 'fabrica.db.off'), join(dir, 'fabrica.db')); store = new Store(join(dir, 'fabrica.db')); }
+});
+test('T78-H2/H3: el enlace de vuelta ignora Referers ajenos o protocol-relative y no apunta a páginas inexistentes', async () => {
+  await login();
+  const base = `http://${server.host}:${server.port}`;
+  for (const referer of [`${base}//evil.test/x`, `${base}/\\evil.test/x`, 'http://evil.test/activities/x']) {
+    const page = await (await post(review(), { decision: 'comment', comment: '' }, { referer })).text();
+    expect(page).not.toContain('evil.test'); expect(page).toContain(`href="/activities/${activity}"`);
+  }
+  // Sin Referer, una ruta de acción sin página padre vuelve a la raíz.
+  seedQuestion();
+  expect(await (await post('/questions/q1/answer', { answer: '  ' })).text()).toContain('<a href="/">Volver a la página de origen</a>');
 });

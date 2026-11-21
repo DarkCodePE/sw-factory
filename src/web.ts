@@ -6,24 +6,33 @@ import { ChangeStatus } from './enums.ts';
 import { activityCosts, activityMetadata, changeCost, evidencePath, readEvidence } from './evidence.ts';
 import { redact } from './manifest.ts';
 import { WEB_STYLE } from './web-style.ts';
+import { benchmarksPage } from './web-bench.ts';
+import { autoImprovePage } from './web-improve-auto.ts';
 import { experimentsPage } from './web-experiments.ts';
 import { NOTIFY, NOTIFY_ID, inboxCounts } from './web-notify.ts';
 import { configPage } from './web-config.ts';
+import { runnersPage } from './web-runners.ts';
+import { runnerCheckAction, type RunnerCheckOptions } from './web-runner-check.ts';
 import { PROFILE_BODY_LIMIT, profilesPage } from './web-profile.ts';
 
-import { INBOX_JS, changesView, inboxView, parseQuery, type Ui } from './web-changes.ts';
+import { INBOX_JS, changePrLink, changesView, copyButton, inboxView, linksBlock, parseQuery, roleLink, type Ui } from './web-changes.ts';
+import { THEME_JS, THEME_STYLE, themeControl } from './web-theme.ts';
+import { SIDEBAR_JS, SIDEBAR_STYLE, sidebarNav } from './web-sidebar.ts';
 import { activityScores } from './web-scorers.ts';
 import { metricsPage, METRICS_STYLE } from './web-metrics.ts';
 import { WebAuth, assertLoopback } from './web-auth.ts';
 import { turnsSection, notesSection, turnLogRoute } from './web-turns.ts';
 import { signalsView } from './web-signals.ts';
-import { automationsView } from './web-automations.ts';
+import { AUTOMATION_EDIT_ROUTE, AUTOMATION_EDITOR_JS, AUTOMATION_EDITOR_STYLE, automationEditor, automationsView } from './web-automations.ts';
 import { workstreamsBody, wizardPage } from './web-ws.ts';
 import { changeStages } from './flow.ts';
 import { actionForms, actionNotice, webAction } from './web-actions.ts';
 import { WEB_ACTION_STYLE } from './web-actions-style.ts';
+import { API_KEYS_PATH, ApiKeyUsage, apiKeysPage } from './web-api-keys.ts';
 import { handleApi, isApiPath } from './web-api.ts';
 import { FLOW_STYLE, flowPage } from './web-flow.ts';
+import { webhooksPage } from './web-webhooks.ts';
+import { definitionPage } from './web-definition.ts';
 
 const escape = (value: unknown): string => redact(String(value ?? '')).replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[c]!);
 const enc = encodeURIComponent;
@@ -33,10 +42,13 @@ const money = (cost: number | null) => cost === null ? 'No medido' : `${cost.toF
 const empty = (text: string) => `<p class="empty">${escape(text)}</p>`;
 const ui: Ui = { escape, badge, labels };
 const TIMELINE_LIMIT = 200;
-const POLL = `document.addEventListener('input',e=>{const f=e.target.closest('form[method=post]');if(f)f.setAttribute('data-dirty','');});setInterval(async()=>{if(document.querySelector('form[data-dirty]'))return;try{const r=await fetch(location.href,{cache:'no-store'});if(!r.ok)return;const doc=new DOMParser().parseFromString(await r.text(),'text/html');window.fabNotify?.(doc);if(document.querySelector('form[data-dirty]')||document.hidden||document.activeElement?.matches('input,select,textarea')||window.getSelection()?.toString()||document.querySelector('details[open]'))return;const old=document.querySelector('main'),next=doc.querySelector('main');if(next)window.fabPrepare?.(next);if(old&&next&&old.innerHTML!==next.innerHTML){old.replaceWith(next);}}catch{}},2000);`;
+const POLL = `document.addEventListener('input',e=>{const f=e.target.closest('form[method=post]');if(f)f.setAttribute('data-dirty','');});setInterval(async()=>{if(document.querySelector('form[data-dirty]'))return;try{const r=await fetch(location.href,{cache:'no-store'});if(!r.ok)return;const doc=new DOMParser().parseFromString(await r.text(),'text/html');window.fabNotify?.(doc);const oc=document.querySelector('nav a[href="/"]'),nc=doc.querySelector('nav a[href="/"]');if(oc&&nc&&oc.innerHTML!==nc.innerHTML)oc.innerHTML=nc.innerHTML;if(document.querySelector('form[data-dirty]')||document.hidden||document.activeElement?.matches('input:not([data-sel]),select,textarea')||window.getSelection()?.toString()||document.querySelector('details[open]'))return;const old=document.querySelector('main'),next=doc.querySelector('main');if(next)window.fabPrepare?.(next);if(old&&next&&old.innerHTML!==next.innerHTML){old.replaceWith(next);}}catch{}},2000);`;
 const READ_ASSETS = new Map([
+  ['/automation-editor.js', { body: AUTOMATION_EDITOR_JS, type: 'text/javascript; charset=utf-8' }],
   ['/metrics.css', { body: METRICS_STYLE, type: 'text/css; charset=utf-8' }],
   ['/inbox.js', { body: INBOX_JS, type: 'text/javascript; charset=utf-8' }],
+  ['/theme.js', { body: THEME_JS, type: 'text/javascript; charset=utf-8' }],
+  ['/sidebar.js', { body: SIDEBAR_JS, type: 'text/javascript; charset=utf-8' }],
   ['/notify.js', { body: NOTIFY, type: 'text/javascript; charset=utf-8' }],
 ]);
 const HEADERS = {
@@ -44,14 +56,14 @@ const HEADERS = {
   'X-Content-Type-Options': 'nosniff', 'Cache-Control': 'no-store', 'Referrer-Policy': 'no-referrer',
 };
 
-function tree(activities: Activity[]): string {
+function tree(activities: Activity[], slug: string): string {
   const byId = new Map(activities.map(a => [a.id, a]));
   const seen = new Set<string>();
   const row = (a: Activity): string => {
     if (seen.has(a.id)) return '';
     seen.add(a.id);
     const children = activities.filter(c => c.parentActivityId === a.id && !seen.has(c.id));
-    return `<li><div class="activity"><a href="/activities/${enc(a.id)}">${escape(a.validator ?? a.kind)}</a> ${badge(a.status)} ${a.reviewStatus ? badge(a.reviewStatus) : ''}<small>${escape(a.id.slice(0, 8))}</small></div>${children.length ? `<ul>${children.map(row).join('')}</ul>` : ''}</li>`;
+    return `<li><div class="activity"><a href="/activities/${enc(a.id)}">${escape(a.validator ?? a.kind)}</a> ${roleLink(ui, a, slug, 'Rol')} ${badge(a.status)} ${a.reviewStatus ? badge(a.reviewStatus) : ''}<small>${escape(a.id.slice(0, 8))}</small></div>${children.length ? `<ul>${children.map(row).join('')}</ul>` : ''}</li>`;
   };
   const roots = activities.filter(a => !a.parentActivityId || !byId.has(a.parentActivityId));
   // Datos antiguos o corruptos pueden contener ciclos: se muestran una sola vez, sin recursión infinita.
@@ -99,7 +111,11 @@ function page(store: Store, stateDir: string, url: URL, csrf?: string): { title:
     try { cost = changeCost(store, stateDir, id); } catch { /* Evidencia inaccesible: coste desconocido. */ }
     const events = store.listEvents(c.workstreamId, TIMELINE_LIMIT, id);
     const omitted = Math.max(0, store.countEvents(c.workstreamId, id) - events.length);
-    return { title: c.title, body: `<p><a href="/changes?ws=${enc(store.getWorkstream(c.workstreamId).slug)}">Volver a changes</a></p><div class="summary">${badge(c.status)}<span>Coste total: <strong>${money(cost)}</strong></span><span>Rama: ${escape(c.branch ?? 'No asignada')}</span></div><p class="description">${escape(c.description)}</p>${actionForms(store, url, csrf)}<h2>Activities</h2>${tree(activities)}${turnsSection(store.db, id, ui)}${notesSection(store.listChangeNotes(id), c.status, ui)}<h2>Timeline</h2>${omitted ? `<p class="notice">Se omiten ${omitted} eventos anteriores.</p>` : ''}${events.length ? `<ol class="timeline">${events.map(e => `<li><time>${escape(e.created_at)}</time><div><strong>${escape(e.severity)}</strong> · ${escape(e.actor ?? 'fab')}<p>${escape(e.message)}</p></div></li>`).join('')}</ol>` : empty('No hay eventos para este change.')}` };
+    const notes = store.listChangeNotes(id);
+    const attachmentWait = notes.some(note => note.attachment && !note.deliveredAt)
+      ? (store.noteRunnerIsRemote(c.workstreamId) ? 'El runner asignado es remoto.' : store.noteAttachmentWait(id))
+      : undefined;
+    return { title: c.title, body: `<p><a href="/changes?ws=${enc(store.getWorkstream(c.workstreamId).slug)}">Volver a changes</a></p><div class="summary">${badge(c.status)}<span>Coste total: <strong>${money(cost)}</strong></span><span>Rama: ${escape(c.branch ?? 'No asignada')}</span><span>PR: ${changePrLink(store, id)}</span>${copyButton(ui, c.id)}</div>${linksBlock(ui, { source: store.changeLinks(c.id).source })}<p class="description">${escape(c.description)}</p>${actionForms(store, url, csrf)}<h2>Activities</h2>${tree(activities, store.getWorkstream(c.workstreamId).slug)}${turnsSection(store.db, id, ui)}${notesSection(notes, c.status, ui, attachmentWait)}<h2>Timeline</h2>${omitted ? `<p class="notice">Se omiten ${omitted} eventos anteriores.</p>` : ''}${events.length ? `<ol class="timeline">${events.map(e => `<li><time>${escape(e.created_at)}</time><div><strong>${escape(e.severity)}</strong> · ${escape(e.actor ?? 'fab')}<p>${escape(e.message)}</p></div></li>`).join('')}</ol>` : empty('No hay eventos para este change.')}` };
   }
   const a = store.getActivity(id);
   const c = store.getChange(a.changeId);
@@ -108,13 +124,36 @@ function page(store: Store, stateDir: string, url: URL, csrf?: string): { title:
   const costs = activityCosts(a, meta);
   const count = Math.max(costs?.length ?? 0, a.retryCount + (a.status === 'failed' ? 0 : 1), 1);
   const duration = typeof meta?.durationMs === 'number' && Number.isFinite(meta.durationMs) ? meta.durationMs : null;
-  return { title: `Activity · ${a.validator ?? a.kind}`, body: `<p><a href="/changes/${enc(c.id)}">${escape(c.title)}</a></p><div class="summary">${badge(a.status)} ${a.reviewStatus ? badge(a.reviewStatus) : ''}<span>${escape(a.id)}</span></div>${actionForms(store, url, csrf)}${activityScores(store, stateDir, a, csrf)}<h2>Intentos</h2><div class="table-wrap"><table><thead><tr><th>Intento</th><th>Coste</th><th>Duración</th></tr></thead><tbody>${Array.from({ length: count }, (_, i) => `<tr><td>${i + 1}</td><td>${money(costs?.[i] ?? null)}</td><td>${i === count - 1 && duration !== null ? `${duration} ms` : 'No medida'}</td></tr>`).join('')}</tbody></table></div><p class="muted">La evidencia histórica solo conserva la duración del último intento.</p><h2>Veredicto y resultado</h2><p>Validador: ${escape(a.validator ?? (a.kind === 'gates' ? 'gate' : 'No aplica'))} · Revisión: ${escape(labels[a.reviewStatus ?? ''] ?? a.reviewStatus ?? 'Sin veredicto')}</p><pre tabindex="0">${escape([a.reviewComment, a.result, a.error].filter(Boolean).join('\n') || 'Sin resultado registrado.')}</pre>${evidence(stateDir, c.id, `${a.id}.log`, 'Log')}${evidence(stateDir, c.id, `${a.id}.json`, 'Metadata de ejecución')}${evidence(stateDir, c.id, 'run.json', 'run.json')}${evidence(stateDir, c.id, 'diff.patch', 'Diff')}` };
+  return { title: `Activity · ${a.validator ?? a.kind}`, body: `<p><a href="/changes/${enc(c.id)}">${escape(c.title)}</a></p><div class="summary">${badge(a.status)} ${a.reviewStatus ? badge(a.reviewStatus) : ''}<span>${escape(a.id)}</span>${copyButton(ui, a.id)}${roleLink(ui, a, store.getWorkstream(c.workstreamId).slug, 'Ver el rol en Perfiles')}</div>${actionForms(store, url, csrf)}${activityScores(store, stateDir, a, csrf)}<h2>Intentos</h2><div class="table-wrap"><table><thead><tr><th>Intento</th><th>Coste</th><th>Duración</th></tr></thead><tbody>${Array.from({ length: count }, (_, i) => `<tr><td>${i + 1}</td><td>${money(costs?.[i] ?? null)}</td><td>${i === count - 1 && duration !== null ? `${duration} ms` : 'No medida'}</td></tr>`).join('')}</tbody></table></div><p class="muted">La evidencia histórica solo conserva la duración del último intento.</p><h2>Veredicto y resultado</h2><p>Validador: ${escape(a.validator ?? (a.kind === 'gates' ? 'gate' : 'No aplica'))} · Revisión: ${escape(labels[a.reviewStatus ?? ''] ?? a.reviewStatus ?? 'Sin veredicto')}</p><pre tabindex="0">${escape([a.reviewComment, a.result, a.error].filter(Boolean).join('\n') || 'Sin resultado registrado.')}</pre>${evidence(stateDir, c.id, `${a.id}.log`, 'Log')}${evidence(stateDir, c.id, `${a.id}.json`, 'Metadata de ejecución')}${evidence(stateDir, c.id, 'run.json', 'run.json')}${evidence(stateDir, c.id, 'diff.patch', 'Diff')}` };
 }
+
+/** Un error de acción se muestra en la plantilla normal, con menú y enlace de vuelta a la página de origen (T78). */
+async function actionErrorPage(response: Response, req: Request, url: URL, openStore: () => Store, shell: (s: Store, c: { title: string; body: string }, nav: URL, still: boolean) => string): Promise<Response> {
+  const message = await response.text();
+  const plain = () => new Response(message, { status: response.status, headers: response.headers });
+  // Origen: el Referer si es de este mismo host y una ruta local (ni `//host` ni `\\`); si no, la ruta de la acción sin su último tramo
+  // cuando es una página conocida, y `/` en otro caso (`/questions/x/answer` → `/questions/x` no existe).
+  let back = url.pathname.replace(/\/[^/]*$/, '') || '/';
+  if (!KNOWN_BACK.test(back)) back = '/';
+  try { const r = new URL(req.headers.get('referer') ?? ''); if (r.host === url.host && /^\/(?![/\\])/.test(r.pathname) && !r.pathname.includes('\\')) back = r.pathname + r.search; } catch { /* sin Referer */ }
+  let store: Store | undefined;
+  try {
+    store = openStore();
+    const html = shell(store, { title: 'No se pudo completar la acción', body: `<p role="alert">${escape(message)}</p><p><a href="${escape(back)}">Volver a la página de origen</a></p>` }, new URL(back, url), true);
+    const headers = new Headers(response.headers); headers.set('Content-Type', 'text/html; charset=utf-8'); headers.delete('Content-Length');
+    return new Response(html, { status: response.status, headers });
+  } catch { return plain(); } // la base no abre (escritor activo): el error en texto, con su estado y cabeceras
+  finally { store?.close(); }
+}
+
+const KNOWN_BACK = /^\/(?:activities\/[\w-]+|changes(?:\/[\w-]+)?|workstreams|automations|signals|perfiles|config|experimentos|flujo|metricas)?$/;
 
 const loopback = (port: number) => [`127.0.0.1:${port}`, `localhost:${port}`];
 
-export function startWeb(stateDir: string, port = 4310, options: { write?: boolean } = {}) {
+export function startWeb(stateDir: string, port = 4310, options: { write?: boolean; clock?: () => Date; runnerCheck?: RunnerCheckOptions } = {}) {
   const auth = options.write ? new WebAuth() : undefined;
+  const keyUsage = new ApiKeyUsage(options.clock);
+  const runnerCheck = runnerCheckAction(stateDir, options.runnerCheck);
   const openStore = () => new Store(join(stateDir, 'fabrica.db'), { readonly: true });
   const initial = openStore();
   try { initial.listWorkstreams(); } finally { initial.close(); }
@@ -126,23 +165,43 @@ export function startWeb(stateDir: string, port = 4310, options: { write?: boole
       // Con escritura, las rutas con sesión solo se sirven en el host único; la API con clave no usa cookie y conserva loopback.
       const hosts = auth ? [`${auth.host}:${server.port}`, ...(isApiPath(url.pathname) ? loopback(server.port!) : [])] : loopback(server.port!);
       if (!hosts.includes(req.headers.get('host') ?? '')) return respond('Acceso denegado', 403, 'text/plain; charset=utf-8');
-      if (isApiPath(url.pathname)) return handleApi(req, url, openStore, auth ? { stateDir } : undefined);
+      if (isApiPath(url.pathname)) return handleApi(req, url, openStore, auth ? { stateDir } : undefined, keyUsage);
       const isMetrics = url.pathname === '/metricas';
       const isConfig = url.pathname === '/config';
+      const isRunners = url.pathname === '/config/runners';
+      const csrf = auth?.sessionCsrf(req);
       const isFlow = url.pathname === '/flujo';
+      const isApiKeys = url.pathname === API_KEYS_PATH;
+      const keysCsrf = isApiKeys ? auth?.sessionCsrf(req) : undefined;
       const isProfiles = url.pathname === '/perfiles';
-      const manual = isConfig || isProfiles; // sin sondeo: no pisar lo que se escribe
+      const isDefinition = url.pathname === '/definicion';
+      const isAutoImprove = url.pathname === '/automejora';
+      const automationEdit = AUTOMATION_EDIT_ROUTE.exec(url.pathname);
+      const automationCreate = url.pathname === '/automations/nueva';
+      const isAutomationEditor = automationCreate || !!automationEdit;
+      const manual = isConfig || isProfiles || isDefinition || isAutoImprove || isApiKeys || isAutomationEditor || isRunners; // sin sondeo: no pisar lo que se escribe
       const isExperiments = url.pathname === '/experimentos' || url.pathname.startsWith('/experimentos/');
+      const isBenchmarks = url.pathname === '/benchmarks' || url.pathname.startsWith('/benchmarks/');
+      const isWebhooks = url.pathname === '/webhooks';
       const readAsset = READ_ASSETS.get(url.pathname);
-      const readOnlyRoute = isFlow || isMetrics || isConfig || isExperiments || readAsset !== undefined;
+      const readOnlyRoute = isFlow || isMetrics || isConfig || isApiKeys || isExperiments || isAutomationEditor || isRunners || isWebhooks || isDefinition || readAsset !== undefined;
+      const shell = (store: Store, content: { title: string; body: string }, nav: URL = url, still = manual) => {
+        const workstreams = store.listWorkstreams();
+        const inboxStatuses = store.inbox().map(a => a.reviewStatus === 'awaiting' ? 'awaiting' : a.status);
+        return `<!doctype html><html lang="es"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><title>${escape(content.title)} · fab</title><link rel="stylesheet" href="/style.css"><script src="/theme.js"></script><script src="/sidebar.js" defer></script>${isMetrics ? '<link rel="stylesheet" href="/metrics.css">' : isAutomationEditor ? '<script src="/automation-editor.js" defer></script>' : still ? '' : '<script src="/poll.js" defer></script><script src="/inbox.js" defer></script><script src="/notify.js" defer></script>'}</head><body><a class="skip" href="#contenido">Saltar al contenido</a><aside><a class="brand" href="/">fab<span>Fábrica local</span></a><nav aria-label="Navegación principal"><a href="/"${nav.pathname === '/' ? ' aria-current="page"' : ''}>Bandeja${inboxStatuses.length ? ` <strong class="count" aria-label="${inboxStatuses.length} en la bandeja">${inboxStatuses.length}</strong>` : ''}</a><a href="/changes"${nav.pathname.startsWith('/changes') ? ' aria-current="page"' : ''}>Changes</a><a href="/signals"${nav.pathname === '/signals' ? ' aria-current="page"' : ''}>Señales</a><a href="/automations"${(nav.pathname === '/automations' || isAutomationEditor) ? ' aria-current="page"' : ''}>Automations</a><a href="/workstreams"${nav.pathname === '/workstreams' ? ' aria-current="page"' : ''}>Workstreams</a><a href="/flujo"${isFlow ? ' aria-current="page"' : ''}>Flujo</a><a href="/metricas"${isMetrics ? ' aria-current="page"' : ''}>Métricas</a><a href="/config"${isConfig || isApiKeys || isRunners ? ' aria-current="page"' : ''}>Configuración</a><a href="/definicion"${isDefinition ? ' aria-current="page"' : ''}>Definición</a><a href="/perfiles"${isProfiles ? ' aria-current="page"' : ''}>Perfiles</a><a href="/experimentos"${isExperiments ? ' aria-current="page"' : ''}>Experimentos</a><a href="/webhooks"${isWebhooks ? ' aria-current="page"' : ''}>Webhooks</a><a href="/benchmarks"${isBenchmarks ? ' aria-current="page"' : ''}>Benchmarks</a><a href="/automejora"${isAutoImprove ? ' aria-current="page"' : ''}>Automejora</a></nav>${sidebarNav(workstreams, escape)}<p class="local">${auth ? (auth.sessionCsrf(req) ? 'Escritura habilitada' : 'Escritura: abre el enlace de la terminal') : 'Solo lectura'}${isMetrics ? '<br>Actualización manual' : still ? '' : '<br>Actualización cada 2 s'}</p>${themeControl}${isMetrics || still ? '' : `<button type="button" id="${NOTIFY_ID}" hidden>Avisos: no</button>`}</aside><main id="contenido" data-inbox="${isRunners ? '' : escape(JSON.stringify(inboxCounts(inboxStatuses, labels)))}"><header><h1>${escape(content.title)}</h1></header>${content.body}</main></body></html>`;
+      };
       if (req.method === 'POST' && auth && !readOnlyRoute) {
         let response: Response;
-        try { response = await webAction(req, stateDir, server.port!, auth); }
+        try { response = await webAction(req, stateDir, server.port!, auth, keyUsage, runnerCheck, () => server.timeout(req, 35)); }
         catch { return respond('No se pudo registrar la acción.', 500, 'text/plain; charset=utf-8'); }
-        for (const [key, value] of Object.entries(HEADERS)) response.headers.set(key, value);
+        for (const [key, value] of Object.entries(HEADERS)) if (!response.headers.has(key)) response.headers.set(key, value);
+        // El editor de automations ya devuelve su propia página HTML de error (T86): no se envuelve de nuevo.
+        if (response.status >= 400 && !response.headers.get('Content-Type')?.startsWith('text/html')) return actionErrorPage(response, req, url, openStore, shell);
         return response;
       }
       if (req.method !== 'GET' && req.method !== 'HEAD') return respond('Método no permitido', 405, 'text/plain; charset=utf-8');
+      if (isApiKeys && !keysCsrf) return respond('Abre el enlace de acceso de fab web --write para administrar las claves API.', 401, 'text/plain; charset=utf-8');
+      if (isRunners && !csrf) return respond('Se necesita una sesión local.', 401, 'text/plain; charset=utf-8');
       let store: Store | undefined;
       try {
         if (url.pathname === '/auth' && auth) {
@@ -151,17 +210,22 @@ export function startWeb(stateDir: string, port = 4310, options: { write?: boole
           for (const [key, value] of Object.entries(HEADERS)) response.headers.set(key, value);
           return response;
         }
-        if (url.pathname === '/style.css') return respond(WEB_STYLE + WEB_ACTION_STYLE + FLOW_STYLE, 200, 'text/css; charset=utf-8');
+        if (url.pathname === '/style.css') return respond(WEB_STYLE + WEB_ACTION_STYLE + FLOW_STYLE + THEME_STYLE + SIDEBAR_STYLE + AUTOMATION_EDITOR_STYLE + '.count{font-size:13px;margin-left:6px}.bulk{display:flex;gap:8px;flex-wrap:wrap;margin:12px 0}.links{margin:8px 0}', 200, 'text/css; charset=utf-8');
+        if (url.pathname === '/definition') return new Response(null, { status: 301, headers: { Location: `/definicion${url.search}`, ...HEADERS } });
         if (url.pathname === '/poll.js') return respond(POLL, 200, 'text/javascript; charset=utf-8');
         if (readAsset) return respond(readAsset.body, 200, readAsset.type);
+        const csrf = auth?.sessionCsrf(req);
+        if (isAutomationEditor && !csrf) return respond('Se necesita una sesión local.', 401, 'text/plain; charset=utf-8');
         store = openStore();
         const log = turnLogRoute(store.db, stateDir, url.pathname);
         if (log) return respond(log.body, log.status, 'text/plain; charset=utf-8');
-        const content = isMetrics ? metricsPage(store, stateDir, url, auth?.sessionCsrf(req)) : isConfig ? await configPage(store, stateDir, url, escape) : isProfiles ? profilesPage(store, stateDir, url, escape, auth?.sessionCsrf(req)) : isExperiments ? experimentsPage(store.db, url.pathname) : isFlow ? flowPage(store, url, escape) : page(store, stateDir, url, auth?.sessionCsrf(req));
+        const content = isAutomationEditor ? automationEditor(store, csrf!, {
+          automation: automationEdit ? store.getAutomation(automationEdit[1]!) : undefined,
+          values: automationCreate ? { ws: url.searchParams.get('ws') ?? undefined } : undefined,
+        }) : keysCsrf ? apiKeysPage(store, escape, keysCsrf, keyUsage) : isMetrics ? metricsPage(store, stateDir, url, auth?.sessionCsrf(req)) : isConfig ? await configPage(store, stateDir, url, escape, csrf) : isRunners ? runnersPage(store, csrf!) : isProfiles ? profilesPage(store, stateDir, url, escape, auth?.sessionCsrf(req)) : isAutoImprove ? autoImprovePage(store, stateDir, url, escape, auth?.sessionCsrf(req)) : isExperiments ? experimentsPage(store.db, url.pathname) : isBenchmarks ? benchmarksPage(store, url, escape, auth?.sessionCsrf(req)) : isFlow ? flowPage(store, url, escape) : isWebhooks ? webhooksPage(store, url, escape) : isDefinition ? definitionPage(store, stateDir, url, escape) : page(store, stateDir, url, auth?.sessionCsrf(req));
         if (!content) return respond('Página no encontrada', 404, 'text/plain; charset=utf-8');
         content.body = actionNotice(req.method === 'GET' ? auth?.takeNotice(req, url.pathname) : undefined) + content.body;
-        const workstreams = store.listWorkstreams();
-        return respond(`<!doctype html><html lang="es"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><title>${escape(content.title)} · fab</title><link rel="stylesheet" href="/style.css">${isMetrics ? '<link rel="stylesheet" href="/metrics.css">' : manual ? '' : '<script src="/poll.js" defer></script><script src="/inbox.js" defer></script><script src="/notify.js" defer></script>'}</head><body><a class="skip" href="#contenido">Saltar al contenido</a><aside><a class="brand" href="/">fab<span>Fábrica local</span></a><nav aria-label="Navegación principal"><a href="/"${url.pathname === '/' ? ' aria-current="page"' : ''}>Bandeja</a><a href="/changes"${url.pathname.startsWith('/changes') ? ' aria-current="page"' : ''}>Changes</a><a href="/signals"${url.pathname === '/signals' ? ' aria-current="page"' : ''}>Señales</a><a href="/automations"${url.pathname === '/automations' ? ' aria-current="page"' : ''}>Automations</a><a href="/workstreams"${url.pathname === '/workstreams' ? ' aria-current="page"' : ''}>Workstreams</a><a href="/flujo"${isFlow ? ' aria-current="page"' : ''}>Flujo</a><a href="/metricas"${isMetrics ? ' aria-current="page"' : ''}>Métricas</a><a href="/config"${isConfig ? ' aria-current="page"' : ''}>Configuración</a><a href="/perfiles"${isProfiles ? ' aria-current="page"' : ''}>Perfiles</a><a href="/experimentos"${isExperiments ? ' aria-current="page"' : ''}>Experimentos</a></nav><nav aria-label="Workstreams"><h2>Workstreams</h2>${workstreams.map(w => `<a href="/changes?ws=${enc(w.slug)}">${escape(w.slug)}</a>`).join('') || '<p>Sin workstreams</p>'}</nav><p class="local">${auth ? (auth.sessionCsrf(req) ? 'Escritura habilitada' : 'Escritura: abre el enlace de la terminal') : 'Solo lectura'}${isMetrics ? '<br>Actualización manual' : manual ? '' : '<br>Actualización cada 2 s'}</p>${isMetrics || manual ? '' : `<button type="button" id="${NOTIFY_ID}" hidden>Avisos: no</button>`}</aside><main id="contenido" data-inbox="${escape(JSON.stringify(inboxCounts(store.inbox().map(a => a.reviewStatus === 'awaiting' ? 'awaiting' : a.status), labels)))}"><header><h1>${escape(content.title)}</h1></header>${content.body}</main></body></html>`);
+        return respond(shell(store, content));
       } catch (error) {
         if (error instanceof StoreError && error.code === 'not_found') return respond('Registro no encontrado', 404, 'text/plain; charset=utf-8');
         if (error instanceof URIError) return respond('Ruta inválida', 400, 'text/plain; charset=utf-8');

@@ -1,7 +1,7 @@
 // Definición de un workstream como árbol de ficheros versionable (T59): `fab definition export|import`.
 // Una superficie más sobre Store y perfil: no añade reglas. El árbol solo lleva nombres de env/mcp (D-K), nunca valores
 // ni rutas del dueño; importar crea un perfil y un workstream en draft nuevos, nunca muta el vigente.
-import { existsSync, lstatSync, mkdirSync, readFileSync, readdirSync, rmSync, writeFileSync } from 'node:fs';
+import { existsSync, lstatSync, mkdirSync, readFileSync, readdirSync, realpathSync, rmSync, writeFileSync } from 'node:fs';
 import { homedir } from 'node:os';
 import { join } from 'node:path';
 import { AGENT_NAMES } from './agents.ts';
@@ -39,13 +39,37 @@ export function buildDefinition(store: Store, stateDir: string | undefined, slug
   files.set('profile/profile.json', json(rest));
   for (const k of WORKER_KEYS) files.set(`profile/worker/${k}.md`, worker[k]);
   for (const k of VALIDATOR_KEYS) files.set(`profile/validators/${k}.md`, validators[k]);
-  const skills = join(ws.repo, '.agents', 'skills');
+  const dotAgents = join(ws.repo, '.agents');
+  const skills = join(dotAgents, 'skills');
   if (existsSync(skills)) {
-    for (const name of readdirSync(skills).sort()) {
-      const f = join(skills, name, 'SKILL.md');
-      if (!SKILL_NAME_RE.test(name) || !existsSync(f) || lstatSync(f).isSymbolicLink()) continue;
-      const text = readFileSync(f, 'utf8');
-      if (Buffer.byteLength(text) <= MAX_SKILL) files.set(`skills/${name}/SKILL.md`, text);
+    try {
+      const realRepo = realpathSync(ws.repo);
+      const realSkills = realpathSync(skills);
+      const isInsideRepo = realSkills.startsWith(realRepo.endsWith('/') ? realRepo : `${realRepo}/`);
+      if (isInsideRepo && !lstatSync(dotAgents).isSymbolicLink() && !lstatSync(skills).isSymbolicLink()) {
+        for (const name of readdirSync(skills).sort()) {
+          const skillDir = join(skills, name);
+          if (!SKILL_NAME_RE.test(name) || !existsSync(skillDir) || lstatSync(skillDir).isSymbolicLink() || !lstatSync(skillDir).isDirectory()) continue;
+          try {
+            const realSkillDir = realpathSync(skillDir);
+            if (!realSkillDir.startsWith(realRepo.endsWith('/') ? realRepo : `${realRepo}/`)) continue;
+          } catch {
+            continue;
+          }
+          const f = join(skillDir, 'SKILL.md');
+          if (!existsSync(f) || lstatSync(f).isSymbolicLink()) continue;
+          try {
+            const realF = realpathSync(f);
+            if (!realF.startsWith(realRepo.endsWith('/') ? realRepo : `${realRepo}/`)) continue;
+          } catch {
+            continue;
+          }
+          const text = readFileSync(f, 'utf8');
+          if (Buffer.byteLength(text) <= MAX_SKILL) files.set(`skills/${name}/SKILL.md`, text);
+        }
+      }
+    } catch {
+      // Ignorar si no se puede resolver la ruta real del repo o de las skills
     }
   }
   // Fail cerrado: ni rutas del dueño ni de la máquina en un árbol que va a un repo.
