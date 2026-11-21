@@ -10,6 +10,7 @@ import { _setSandboxDetectionForTesting } from '../src/sandbox/detect.ts';
 import { Store } from '../src/store.ts';
 import { configPage } from '../src/web-config.ts';
 import { startWeb } from '../src/web.ts';
+import pkg from '../package.json' with { type: 'json' };
 
 let dir: string;
 let server: ReturnType<typeof startWeb> | undefined;
@@ -544,9 +545,10 @@ test('T106: muestra binario, versión registrada, pin guardado y marca binarios 
   expect(html).toContain('<td>agy</td>');
   expect(html).toContain('0.9.1-registrada');
 
-  // native muestra versión del paquete fab
+  // native muestra versión del paquete fab leída de package.json dinámicamente
   expect(html).toContain('<td>native</td>');
-  expect(html).toContain('0.1.0-rc.12');
+  const nativeRow = html.match(/<tr[^>]*><td>native<\/td>.*?<\/tr>/s)?.[0] ?? '';
+  expect(nativeRow).toContain(`<td>${pkg.version}</td>`);
 
   // Sin formularios para fijar el pin en la web
   const adaptersSection = html.slice(html.indexOf('<h2>Adaptadores</h2>'), html.indexOf('<h2>Sandbox y red</h2>'));
@@ -608,5 +610,17 @@ test('T106-H6: sanea caracteres de control, limita a 40 caracteres y escapa HTML
   // El texto antes de escapar debe medir máximo 40 caracteres
   expect(versionCellMatch).toBeDefined();
 });
+
+test('T106-H5: valida versión de native dinámicamente contra package.json en lugar de literal', async () => {
+  new Store(join(dir, 'fabrica.db')).close();
+  start();
+
+  const html = await page('/config');
+  const nativeRow = html.match(/<tr[^>]*><td>native<\/td>.*?<\/tr>/s)?.[0] ?? '';
+  expect(nativeRow).toContain(`<td>${pkg.version}</td>`);
+  expect(pkg.version).toBeDefined();
+  expect(typeof pkg.version).toBe('string');
+});
+
 
 
