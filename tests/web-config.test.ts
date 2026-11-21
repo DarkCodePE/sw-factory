@@ -584,6 +584,7 @@ exit 0
   expect(claudeRow).toContain('<td>No medido</td>');
 });
 
+
 test('T106-H6: sanea caracteres de control, limita a 40 caracteres y escapa HTML en versiones registradas', async () => {
   const claudeBin = join(dir, 'claude');
   writeFileSync(claudeBin, '#!/bin/sh\nexit 0\n');
@@ -655,6 +656,49 @@ test('T106-H8: la web descarta la versión registrada si su sha no coincide con 
   const claudeRow = html.match(/<tr[^>]*><td>claude<\/td>.*?<\/tr>/s)?.[0] ?? '';
   expect(claudeRow).toContain('<td>No medido</td>');
 });
+
+test('T106-H9: la web nunca ejecuta binarios con pin discrepante ni sin pin (mata mutación N01)', async () => {
+  const counterFile = join(dir, 'exec-count-n01.txt');
+  writeFileSync(counterFile, '0');
+  const makeSpy = (name: string) => {
+    const bin = join(dir, name);
+    writeFileSync(bin, `#!/bin/sh
+count=$(cat "${counterFile}")
+count=$((count + 1))
+echo "$count" > "${counterFile}"
+echo "${name} 1.0"
+exit 0
+`);
+    chmodSync(bin, 0o755);
+    return bin;
+  };
+
+  makeSpy('codex'); // tendrá pin discrepante
+  makeSpy('agy');   // estará sin pin
+
+  writeFileSync(join(dir, 'agents.json'), JSON.stringify({
+    agentBinaries: {
+      codex: 'b'.repeat(64), // pin distinto
+      // agy sin pin
+    },
+  }));
+
+  new Store(join(dir, 'fabrica.db')).close();
+  start();
+
+  const html = await page('/config');
+  // NINGUNO se ejecuta: el contador permanece en 0
+  expect(readFileSync(counterFile, 'utf8').trim()).toBe('0');
+  expect(html).not.toContain('codex 1.0');
+  expect(html).not.toContain('agy 1.0');
+
+  const codexRow = html.match(/<tr[^>]*><td>codex<\/td>.*?<\/tr>/s)?.[0] ?? '';
+  expect(codexRow).toContain('<td>No medido</td>');
+  const agyRow = html.match(/<tr[^>]*><td>agy<\/td>.*?<\/tr>/s)?.[0] ?? '';
+  expect(agyRow).toContain('<td>No medido</td>');
+});
+
+
 
 
 
