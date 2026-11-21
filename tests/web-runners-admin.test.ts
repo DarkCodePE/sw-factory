@@ -77,7 +77,8 @@ test('GET y HEAD requieren sesión D11, no comprueban y el inventario protege su
   expect(r.status).toBe(200);
   const html = await r.text();
   expect(html).toContain('Sin comprobar');
-  expect(html).not.toMatch(/alias-canario|alias-dos|alias-pausado|987|poll\.js/);
+  const inventoryHtml = html.replaceAll(`name="csrf" value="${csrf}"`, 'name="csrf"');
+  expect(inventoryHtml).not.toMatch(/alias-canario|alias-dos|alias-pausado|987|poll\.js/);
   const head = await get(inventory, 'HEAD');
   expect(head.status).toBe(200);
   expect(await head.text()).toBe('');
