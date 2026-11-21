@@ -100,7 +100,17 @@ const confirmForm = (action: string, csrf: string, hidden: Record<string, string
   `<form action="${action}" method="post" class="web-action"><input type="hidden" name="csrf" value="${attr(csrf)}">${Object.entries(hidden).map(([k, v]) => `<input type="hidden" name="${k}" value="${attr(v)}">`).join('')}<label><input type="checkbox" name="confirm" value="yes" required> ${label}</label><button>Confirmar importación</button></form>`;
 
 /** Paso 1. Solo lee: el Store va en `readonly` y no se escribe nada hasta la confirmación. */
-export function importPreview(kind: ImportKind, stateDir: string, form: URLSearchParams, file: Uint8Array, csrf: string, escape: Escape): Response {
+export function importPreview(kind: ImportKind, stateDir: string, form: URLSearchParams, file: Uint8Array, csrf: string, htmlEscape: Escape): Response {
+  // T105-H6: lo que se ve es lo que se importa. Los caracteres de formato y de control se pintan como marcas visibles, y si el
+  // escape redacta algo con forma de secreto se avisa de que se importa entero.
+  let redacted = false;
+  const escape: Escape = text => {
+    const visible = text.replace(/[\p{Cc}\p{Cf}]/gu, c => /[\n\r\t]/.test(c) ? c : `⟦U+${c.codePointAt(0)!.toString(16).toUpperCase().padStart(4, '0')}⟧`);
+    const out = htmlEscape(visible);
+    if (out.includes('[REDACTED]') && !visible.includes('[REDACTED]')) redacted = true;
+    return out;
+  };
+  const note = () => redacted ? '<p class="notice" role="alert">Se muestra redactado texto con forma de secreto, pero se importa entero tal como viene en el paquete.</p>' : '';
   const payload = Buffer.from(file).toString('base64');
   const store = new Store(join(stateDir, 'fabrica.db'), { readonly: true });
   try {
@@ -109,9 +119,10 @@ export function importPreview(kind: ImportKind, stateDir: string, form: URLSearc
       const { profile, digest } = parseProfileBytes(file);
       const exists = digest === DEFAULT_DIGEST || (() => { try { resolveProfile(stateDir, digest); return true; } catch { return false; } })();
       const current = resolveProfile(stateDir, ws.profile).profile;
-      return doc('Importar perfil', `<p>Workstream <code>${escape(ws.slug)}</code> · digest <code>${digest}</code> · ${exists ? 'Ya existe en el almacén' : 'Nuevo'}</p>
+      const body = `<p>Workstream <code>${escape(ws.slug)}</code> · digest <code>${digest}</code> · ${exists ? 'Ya existe en el almacén' : 'Nuevo'}</p>
         ${diff(current, profile, escape)}<p>Guardar crea el perfil en el almacén; no se asigna al workstream (eso es un paso aparte en Perfiles).</p>
-        ${confirmForm('/perfiles/importar', csrf, { ws: ws.slug, payload, digest: seal('profile', file, ws.slug) }, 'Confirmo guardar este perfil')}`, `/perfiles?ws=${enc(ws.slug)}`);
+        ${confirmForm('/perfiles/importar', csrf, { ws: ws.slug, payload, digest: seal('profile', file, ws.slug) }, 'Confirmo guardar este perfil')}`;
+      return doc('Importar perfil', note() + body, `/perfiles?ws=${enc(ws.slug)}`);
     }
     const parsed = parseDefinitionBytes(file);
     const repo = form.get('repo') ?? '', slugField = (form.get('slug') ?? '').trim();
@@ -121,14 +132,15 @@ export function importPreview(kind: ImportKind, stateDir: string, form: URLSearc
     const known = (() => { try { resolveProfile(stateDir, parsed.digest); return true; } catch { return false; } })();
     const settings = Object.entries(parsed.settings).map(([k, v]) => `<tr><th scope="row"><code>${escape(k)}</code></th><td><pre><code>${escape(clip(typeof v === 'string' ? v : JSON.stringify(v)))}</code></pre></td></tr>`).join('');
     const names = [...parsed.files.keys()].sort().map(p => `<li><code>${escape(p)}</code> · ${Buffer.byteLength(parsed.files.get(p)!)} bytes</li>`).join('');
-    return doc('Importar definición', `<p>Se creará el workstream <code>${escape(slug)}</code> en borrador sobre <code>${escape(repo)}</code> con el perfil <code>${parsed.digest}</code> (${known ? 'ya existe' : 'nuevo'}).</p>
+    const body = `<p>Se creará el workstream <code>${escape(slug)}</code> en borrador sobre <code>${escape(repo)}</code> con el perfil <code>${parsed.digest}</code> (${known ? 'ya existe' : 'nuevo'}).</p>
       ${taken ? `<p class="notice" role="alert">Ya existe un workstream con el slug ${escape(slug)}: importar no lo modifica. Elige otro slug y vuelve a subir.</p>` : ''}
       <h2>Ajustes</h2><div class="table-wrap"><table><tbody>${settings}</tbody></table></div>
       <h2>Ficheros (${parsed.files.size})</h2><ul>${names}</ul>
       ${diff(defaultProfile(), parsed.profile, escape, 'Cambios del perfil respecto al perfil por defecto')}
       ${parsed.skills.length ? `<h2>Skills del paquete</h2><p class="muted">(no se escriben en el repo)</p>${parsed.skills.map(n => `<details open><summary><code>${escape(n)}</code></summary><pre><code>${escape(parsed.files.get(`skills/${n}/SKILL.md`)!)}</code></pre></details>`).join('')}` : ''}
       <p>Nada del paquete se ejecuta. Activar el workstream es un paso explícito aparte.</p>
-      ${taken ? '' : confirmForm('/definicion/importar', csrf, { repo, slug: slugField, payload, digest: seal('definition', file, repo, slugField) }, 'Confirmo crear el workstream en borrador')}`, '/definicion');
+      ${taken ? '' : confirmForm('/definicion/importar', csrf, { repo, slug: slugField, payload, digest: seal('definition', file, repo, slugField) }, 'Confirmo crear el workstream en borrador')}`;
+    return doc('Importar definición', note() + body, '/definicion');
   } finally { store.close(); }
 }
 

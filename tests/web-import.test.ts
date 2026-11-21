@@ -367,3 +367,19 @@ test('H7: un .tar o un fichero de un directorio gigantes se rechazan por tamaño
   const extra = join(d, 'enorme.bin'); writeFileSync(extra, ''); truncateSync(extra, 3 * 1024 ** 3);
   expect(() => readDefinition(d)).toThrow(/supera/);
 });
+
+// ---- T105-H6: lo que se ve es lo que se importa: bidi y formato visibles, y aviso si algo se redactó ---------------------------
+test('H6: la vista previa marca U+202E, U+2066 y U+200B en vez de pintarlos, y avisa de lo redactado', async () => {
+  const p = defaultProfile(); p.worker.investigate += '\nabc‮def⁦g​h ghp_' + 'a1B2'.repeat(9);
+  const html = await (await upload('/perfiles/importar', { ws: 'prueba' }, new TextEncoder().encode(JSON.stringify(p)))).text();
+  expect(html).not.toMatch(/[‪-‮⁦-⁩​-‏]/);
+  expect(html).toContain('⟦U+202E⟧'); expect(html).toContain('⟦U+2066⟧'); expect(html).toContain('⟦U+200B⟧');
+  expect(html).toContain('texto con forma de secreto'); // aviso: se muestra redactado pero se importa entero
+  const clean = await (await upload('/perfiles/importar', { ws: 'prueba' }, profileJson())).text();
+  expect(clean).not.toContain('texto con forma de secreto');
+});
+test('H6: lo mismo en la vista previa de una definición (skills y ajustes)', async () => {
+  const bytes = goodTar(f => { f.set('skills/u/SKILL.md', 'x‮y'); f.set('workstream.json', JSON.stringify({ slug: 'x', goal: 'g⁦h' })); });
+  const html = await (await upload('/definicion/importar', { repo, slug: '' }, bytes)).text();
+  expect(html).not.toMatch(/[‪-‮⁦-⁩​-‏]/); expect(html).toContain('⟦U+202E⟧'); expect(html).toContain('⟦U+2066⟧');
+});
