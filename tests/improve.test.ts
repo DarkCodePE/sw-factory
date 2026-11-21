@@ -3,7 +3,7 @@ import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
-import { armCost, armWorkerReport, createExperiment, deleteExperiment, describesTests, experimentRunsJson, parseSuite, reportExperiment, restoreProtected, rng, runExperiment, variance } from '../src/improve.ts';
+import { armCost, armWorkerReport, createExperiment, deleteExperiment, describesTests, experimentRunsJson, parseSuite, reportExperiment, restoreProtected, rng, runArm, runExperiment, variance } from '../src/improve.ts';
 import { getAgent } from '../src/agents.ts';
 import { processActivity } from '../src/pool.ts';
 import { runDirectory } from '../src/manifest.ts';
@@ -530,4 +530,18 @@ test('un intento que falla antes de lanzar el agente descarta la evidencia anter
   expect(armWorkerReport(store, dir, change.id)).toBeNull();
   expect(JSON.parse(readFileSync(join(run, `${activity.id}.json`), 'utf8')).attemptCosts).toEqual([0.25, 0]);
   expect(armCost(store, dir, change.id)).toBe(0.25);
+});
+
+test('T102-H6: el brazo con runner por rol devuelve un diagnóstico antes de clonar', async () => {
+  const profile = saveProfile(dir, {
+    ...defaultProfile(), schemaVersion: 2, roles: { implement: { runner: 'torre' } },
+  }).digest;
+  const root = join(dir, 'arm-con-runner');
+  const result = await runArm(dir, root, { id: 't1', repo, base, description: 'd', verify: 'true', split: 'development' },
+    profile, 'fake', false, false);
+  expect(result).toMatchObject({
+    success: false, changeId: null, costUsd: null,
+    error: 'El inventario de los experimentos y benchmarks no admite runners por rol (torre).',
+  });
+  expect(existsSync(root)).toBe(false);
 });
