@@ -5,6 +5,7 @@ import { existsSync, lstatSync, mkdirSync, readFileSync, readdirSync, realpathSy
 import { homedir } from 'node:os';
 import { join } from 'node:path';
 import { AGENT_NAMES } from './agents.ts';
+import { readTar } from './definition-tar.ts';
 import { resolveProfile, saveProfile, validateProfile, type Profile } from './profile.ts';
 import { StoreError, type Store } from './store.ts';
 
@@ -89,27 +90,41 @@ export function exportDefinition(store: Store, stateDir: string | undefined, slu
   return [...files.keys()];
 }
 
-/** Lee y valida el árbol entero sin tocar nada. Rechaza cualquier fichero fuera del esquema. */
-export function readDefinition(dir: string): { settings: Record<string, any>; profile: Profile; skills: string[] } {
-  if (!existsSync(dir) || !lstatSync(dir).isDirectory()) throw new StoreError('invalid_input', `${dir} no es un directorio`);
-  const found: string[] = [];
+/** Árbol en disco → ruta relativa → texto. Un symlink o cualquier otro tipo de entrada rechaza el árbol. */
+function walkDefinition(dir: string): Map<string, string> {
+  const files = new Map<string, string>();
   const walk = (rel: string) => {
     for (const e of readdirSync(join(dir, rel), { withFileTypes: true })) {
       const p = rel ? `${rel}/${e.name}` : e.name;
-      if (e.isDirectory()) walk(p); else if (e.isFile()) found.push(p);
+      if (e.isDirectory()) walk(p); else if (e.isFile()) files.set(p, readFileSync(join(dir, p), 'utf8'));
       else throw new StoreError('invalid_input', `${p}: solo se admiten ficheros y directorios`); // symlinks fuera
     }
   };
   walk('');
+  return files;
+}
+
+export type ParsedDefinition = { settings: Record<string, any>; profile: Profile; skills: string[] };
+
+/** Lee y valida el árbol entero sin tocar nada: un directorio o un .tar (T105). */
+export function readDefinition(path: string): ParsedDefinition {
+  if (existsSync(path) && lstatSync(path).isFile()) return parseDefinition(readTar(readFileSync(path)));
+  if (!existsSync(path) || !lstatSync(path).isDirectory()) throw new StoreError('invalid_input', `${path} no es un directorio`);
+  return parseDefinition(walkDefinition(path));
+}
+
+/** Valida el contenido (ruta → texto) con las reglas de la CLI. Rechaza cualquier fichero fuera del esquema. */
+export function parseDefinition(files: Map<string, string>): ParsedDefinition {
+  const found = [...files.keys()];
   const allowed = new Set(['workstream.json', 'profile/profile.json', ...WORKER_KEYS.map(k => `profile/worker/${k}.md`), ...VALIDATOR_KEYS.map(k => `profile/validators/${k}.md`)]);
   const skills: string[] = [];
   for (const p of found) {
     const m = /^skills\/([^/]+)\/SKILL\.md$/.exec(p);
-    if (m && SKILL_NAME_RE.test(m[1]!)) { skills.push(m[1]!); if (readFileSync(join(dir, p)).length > MAX_SKILL) throw new StoreError('invalid_input', `${p} supera ${MAX_SKILL} bytes`); }
+    if (m && SKILL_NAME_RE.test(m[1]!)) { skills.push(m[1]!); if (Buffer.byteLength(files.get(p)!) > MAX_SKILL) throw new StoreError('invalid_input', `${p} supera ${MAX_SKILL} bytes`); }
     else if (!allowed.has(p)) throw new StoreError('invalid_input', `fichero desconocido en la definición: ${p}`);
   }
   for (const p of allowed) if (!found.includes(p)) throw new StoreError('invalid_input', `falta ${p} en la definición`);
-  const read = (p: string) => readFileSync(join(dir, p), 'utf8');
+  const read = (p: string) => files.get(p)!;
   const parse = (p: string) => { try { return JSON.parse(read(p)); } catch { throw new StoreError('invalid_input', `${p} no es JSON válido`); } };
   const settings = parse('workstream.json');
   if (!settings || typeof settings !== 'object' || Array.isArray(settings)) throw new StoreError('invalid_input', 'workstream.json debe ser un objeto');
@@ -130,7 +145,10 @@ export function readDefinition(dir: string): { settings: Record<string, any>; pr
 
 /** Crea el perfil y un workstream en draft. Si el slug existe o algo falla, el estado queda como estaba. */
 export function importDefinition(store: Store, stateDir: string, dir: string, repo: string, slugOverride?: string): { slug: string; digest: string; skills: string[] } {
-  const { settings: s, profile, skills } = readDefinition(dir);
+  return applyDefinition(store, stateDir, readDefinition(dir), repo, slugOverride);
+}
+
+export function applyDefinition(store: Store, stateDir: string, { settings: s, profile, skills }: ParsedDefinition, repo: string, slugOverride?: string): { slug: string; digest: string; skills: string[] } {
   const slug = slugOverride ?? s.slug;
   if (store.listWorkstreams().some(w => w.slug === slug)) throw new StoreError('invalid_input', `el workstream ${slug} ya existe; importar no lo modifica`);
   const { digest, created } = saveProfile(stateDir, profile);
