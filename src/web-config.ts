@@ -258,7 +258,7 @@ function mcpRegistrySection(store: Store, stateDir: string, escape: Escape): str
     </table></div>`;
   } catch (e) {
     if (e instanceof McpRegistryError) return '<p class="notice">Registro MCP no disponible o inválido.</p>';
-    return '<p class="notice">Registro MCP no disponible o inválido.</p>';
+    throw e;
   }
 }
 

@@ -4,8 +4,10 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { sha256Of } from '../src/agents-verify.ts';
 import { defaultProfile, DEFAULT_DIGEST, saveProfile } from '../src/profile.ts';
+import * as mcpRegistry from '../src/mcp-registry.ts';
 import { _setSandboxDetectionForTesting } from '../src/sandbox/detect.ts';
 import { Store } from '../src/store.ts';
+import { configPage } from '../src/web-config.ts';
 import { startWeb } from '../src/web.ts';
 
 let dir: string;
@@ -384,6 +386,19 @@ test('T104: registro MCP vacío o inválido maneja estados sin 500 ni fugar erro
   const htmlBad = await page('/config');
   expect(htmlBad).toContain('Registro MCP no disponible o inválido.');
   expect(htmlBad).not.toContain('canario-invalido');
+});
+
+test('T104-H3: relanza errores que no sean McpRegistryError en lugar de enmascararlos', async () => {
+  const store = new Store(join(dir, 'fabrica.db'));
+  const spy = spyOn(mcpRegistry, 'loadMcpRegistry').mockImplementation(() => {
+    throw new TypeError('error-inesperado-no-mcp');
+  });
+  try {
+    await expect(configPage(store, dir, new URL('http://127.0.0.1/config'), x => String(x))).rejects.toThrow('error-inesperado-no-mcp');
+  } finally {
+    spy.mockRestore();
+    store.close();
+  }
 });
 
 test('T106: muestra binario, versión, pin guardado y marca binarios discrepantes', async () => {
