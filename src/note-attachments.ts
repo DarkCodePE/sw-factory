@@ -101,7 +101,7 @@ export function noteAttachmentInventory(repos: string[], target?: NoteAttachment
       try { for (const path of writableMounts(repo)) paths.add(path); }
       catch {
         // T96-H9: un repo que ya no es repo Git no tiene git dirs ni worktrees que inventariar; su propia ruta sigue contando como montaje.
-        const probe = Bun.spawnSync(['git', '-C', real, 'rev-parse', '--git-dir']);
+        const probe = Bun.spawnSync(['git', '-C', real, 'rev-parse', '--git-dir'], { env: { ...process.env, LC_ALL: 'C' } }); // el texto de error de git se compara en inglés: sin esto un git traducido cierra los adjuntos
         if (probe.exitCode !== 0 && /not a git repository|not a directory/i.test(probe.stderr.toString())) { paths.add(real); continue; }
         throw new Error();
       }

@@ -469,6 +469,20 @@ test('INT-H3: el estado dentro de un repo que ya no es Git sigue contando como m
   } finally { rmSync(dir, { recursive: true, force: true }); }
 });
 
+test('INT-H5: la sonda de repo sin Git corre con LC_ALL=C, para no depender del idioma de git', () => privateNotes((writer, id, cwd) => {
+  const plain = join(dirname(cwd), 'sin-git'); mkdirSync(plain);
+  writer.createWorkstream({ slug: 'sin-git', goal: 'g', repo: plain });
+  const spawn = Bun.spawnSync, locales: unknown[] = [];
+  Bun.spawnSync = ((...args: Parameters<typeof Bun.spawnSync>) => {
+    const [cmd, opts] = args as [string[], { env?: Record<string, string> } | undefined];
+    if (cmd.includes('rev-parse') && cmd.includes('--git-dir')) locales.push(opts?.env?.LC_ALL);
+    return spawn(...args);
+  }) as typeof Bun.spawnSync;
+  try { expect(writer.addChangeNote(id, 'con repo sin git', attachment()).attachment?.name).toBe('datos.txt'); }
+  finally { Bun.spawnSync = spawn; }
+  expect(locales).toEqual(['C']);
+}));
+
 test('T96-H10: el aviso de ancestro nombra el directorio que falla y el de ficheros habla de permisos', () => {
   const dir = mkdtempSync(join(tmpdir(), 'fab-anc-'));
   try {
