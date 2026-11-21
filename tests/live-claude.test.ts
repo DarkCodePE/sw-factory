@@ -130,6 +130,21 @@ EOF`);
       rmSync(join(dir, '..'), { recursive: true, force: true });
     }
   });
+  test('T99-H7: un fallo sin result conserva el diagnóstico por stdout y excluye el stream del monitor', async () => {
+    const f = fakeClaude("printf 'Diagnóstico del CLI sin result\\n'; exit 1");
+    const dir = mcpDir();
+    try {
+      Bun.spawnSync(['git', 'init', '-q', f.dir]);
+      const r = await claudeLive.run({ prompt: 'x', cwd: f.dir, attemptId: 'a', mcpConfigDir: dir });
+      expect(r.exitCode).toBe(1);
+      expect(r.output).toBe('Diagnóstico del CLI sin result');
+      expect(r.stdoutForMonitor).toBe('');
+    } finally {
+      f.restore();
+      rmSync(f.dir, { recursive: true, force: true });
+      rmSync(join(dir, '..'), { recursive: true, force: true });
+    }
+  });
   test('T99-H4: una mención intermedia no pierde la sesión reanudada', async () => {
     const f = fakeClaude(`cat <<'EOF'
 {"type":"assistant","message":{"content":[{"type":"text","text":"Documentación: No conversation found"}]}}

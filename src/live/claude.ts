@@ -57,7 +57,7 @@ export const claudeLive: LiveBackend = {
       configPath = join(dir, `mcp-${randomUUID()}.json`);
       writeFileSync(configPath, JSON.stringify({ mcpServers: { ...turn.mcpServers, [SERVER]: mcp } }), { mode: 0o600 });
       const path = configPath, base = getAgent('claude');
-      let stdoutForMonitor: string | undefined;
+      let stdoutForMonitor = '';
       const adapter: AgentAdapter = {
         ...base,
         command: (prompt, options) => liveClaudeArgv(base.command(prompt, { ...options, mcpConfig: undefined }), turn, sessionId, path),
@@ -69,7 +69,7 @@ export const claudeLive: LiveBackend = {
             stdoutForMonitor = line;
             return result;
           }
-          return { text: '' };
+          return null;
         },
       };
       let run;

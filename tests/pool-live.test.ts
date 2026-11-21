@@ -60,6 +60,19 @@ test.each([
   expect(readFileSync(join(dir, 'runs', c.id, row.log), 'utf8')).toContain(assistant);
 });
 
+test('T99-H7: sin result el monitor no vuelve al stream de un turno vivo', async () => {
+  const { ws, c } = setup();
+  const backend = fakeLive([{ reports: [{ state: 'done', summary: 'ok' }] }]);
+  const invoke = backend.run;
+  backend.run = async turn => ({
+    ...await invoke(turn),
+    stdout: '{"type":"assistant","message":"Mención en documentación: ~/.netrc"}',
+    stdoutForMonitor: '',
+  });
+  await pool(ws.id, { fake: backend });
+  expect(store.listActivities({ changeId: c.id })[0]?.status).toBe('completed');
+});
+
 test('T40: el turno vivo recibe claudeProjects = <stateDir>/live/<id-corto>/claude-projects', async () => {
   const { ws, c } = setup(), backend = fakeLive([{ reports: [{ state: 'done', summary: 'ok' }] }]);
   await pool(ws.id, { fake: backend });
