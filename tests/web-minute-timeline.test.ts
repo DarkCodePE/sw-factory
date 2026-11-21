@@ -5,6 +5,8 @@ import { join } from 'node:path';
 import { AdmissionDb } from '../src/admission/db.ts';
 import { Store } from '../src/store.ts';
 import { startWeb } from '../src/web.ts';
+import { minuteTimeline } from '../src/web-minute-timeline.ts';
+import type { TurnView } from '../src/admission/timeline.ts';
 
 const time = (hms: string) => `2026-11-21T${hms}.000Z`;
 let dir: string, store: Store, server: ReturnType<typeof startWeb>, ws: string, change: string, primary: string;
@@ -90,4 +92,22 @@ test('T100: base sin turnos, con fechas inválidas o sin datos, muestra No medid
   expect(partial).toContain('Fecha medida');
   expect(partial).not.toContain('Fecha ambigua');
   expect(store.db.query("SELECT 1 FROM sqlite_master WHERE name = 'adm_turns'").get()).toBeNull();
+});
+
+test('T100-H1: el renderizador acota los eventos y turnos aunque crezcan las consultas', () => {
+  const events = Array.from({ length: 201 }, (_, i) => ({
+    activity_id: `e-${i}`, created_at: time('10:00:00'), message: `Evento ${i} fin`,
+  }));
+  const turns: TurnView[] = Array.from({ length: 201 }, (_, i) => ({
+    attemptId: `t-${i}`, activityId: `t-${i}`, kind: 'implementation', generation: 1, sessionId: 's1', model: null,
+    plan: 'fresh', startedAt: time('10:00:00'), endedAt: null, outcome: null,
+    durationMs: null, costUsd: null, log: null, report: null, question: null, notes: [],
+  }));
+  const html = minuteTimeline([], events, turns, { escape: String, badge: String, labels: {} });
+  expect(html.match(/scope="col"/g)).toHaveLength(401);
+  expect(html).toContain('Se omiten 2 registros anteriores');
+  expect(html).not.toContain('Evento 0 fin');
+  expect(html).not.toContain('Activity · t-0</th>');
+  expect(html).toContain('Evento 200 fin');
+  expect(html).toContain('Activity · t-200</th>');
 });

@@ -4,6 +4,8 @@ import type { Ui } from './web-changes.ts';
 
 type Mark = { at: number; activityId: string | null; text: string };
 const MINUTE_MS = 60_000;
+// La tabla es densa. Conserva su presupuesto aunque se amplíen las consultas de eventos o turnos.
+const ENTRIES_PER_SOURCE = 200;
 
 // Las fechas de Store son ISO UTC. Rechaza fechas ambiguas y desbordes que Date.parse normaliza.
 function utcTime(value: unknown): number {
@@ -20,16 +22,17 @@ export function minuteTimeline(activities: Activity[], events: Record<string, un
     if (Number.isFinite(at)) marks.push({ activityId, at, text });
     else unmeasured++;
   };
-  for (const event of events) {
+  for (const event of events.slice(-ENTRIES_PER_SOURCE)) {
     const activityId = typeof event.activity_id === 'string' && event.activity_id ? event.activity_id : null;
     add(activityId, event.created_at, typeof event.message === 'string' ? event.message : 'Evento');
   }
-  for (const turn of turns) {
+  for (const turn of turns.slice(-ENTRIES_PER_SOURCE)) {
     add(turn.activityId, turn.startedAt, 'Inicio de turno');
     if (turn.endedAt !== null) add(turn.activityId, turn.endedAt, 'Fin de turno');
   }
 
-  const head = '<section aria-labelledby="timeline-minutos"><h2 id="timeline-minutos">Timeline por minuto</h2>';
+  const omitted = Math.max(0, events.length - ENTRIES_PER_SOURCE) + Math.max(0, turns.length - ENTRIES_PER_SOURCE);
+  const head = `<section aria-labelledby="timeline-minutos"><h2 id="timeline-minutos">Timeline por minuto</h2>${omitted ? `<p class="notice">Se omiten ${omitted} registros anteriores en esta tabla.</p>` : ''}`;
   if (!marks.length) return `${head}<p class="empty">No medido</p></section>`;
 
   const lanes = new Set(marks.map(mark => mark.activityId));
