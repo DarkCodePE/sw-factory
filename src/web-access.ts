@@ -21,6 +21,8 @@ export function accessInput(raw: Record<string, string | undefined>): Record<str
   if (Buffer.byteLength(text) > NAMES_LIMIT) throw new StoreError('invalid_input', REJECT);
   const names = text.split(/\r?\n/).map(l => l.trim()).filter(Boolean);
   if (names.some(n => n.length > 64 || /[\s=]/.test(n))) throw new StoreError('invalid_input', REJECT);
+  // T103-H3: con «modo anterior» los nombres no se guardan; avisar en vez de responder «Acción registrada» sin haber restringido nada.
+  if (mode === 'legacy' && names.length) throw new StoreError('invalid_input', 'Con modo anterior no se guardan nombres: elige Declarado o vacía la lista.');
   return { kind, mode, names: names.join('\n') };
 }
 
@@ -58,7 +60,7 @@ export function accessSection(stateDir: string, ws: Workstream, escape: Escape, 
   const form = (kind: Kind, label: string, current: string[] | null) => !csrf ? '' : `<form action="/workstreams/${encodeURIComponent(ws.id)}/acceso" method="post" class="web-action">
     <input type="hidden" name="csrf" value="${escape(csrf)}"><input type="hidden" name="kind" value="${kind}">
     <fieldset><legend>Editar ${label}</legend>
-    <label>Modo<select name="mode"><option value="declared"${current === null ? '' : ' selected'}>Declarado (solo estos nombres)</option><option value="legacy"${current === null ? ' selected' : ''}>Modo anterior (sin tope)</option></select></label>
+    <label>Modo<select name="mode"><option value="declared" selected>Declarado (solo estos nombres)</option><option value="legacy">Modo anterior (sin tope)</option></select></label>
     <label for="acceso-${kind}">Nombres, uno por línea (nunca valores)</label>
     <textarea id="acceso-${kind}" name="names" rows="4" maxlength="${NAMES_LIMIT}">\n${escape((current ?? []).join('\n'))}</textarea>
     <button>Guardar ${label}</button></fieldset></form>`;

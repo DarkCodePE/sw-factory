@@ -81,6 +81,16 @@ test('MCP: un nombre fuera del registro se rechaza sin nombrarlo; admite modo an
   expect((await acceso({ kind: 'otro', mode: 'declared', names: '' })).status).toBe(400);
 });
 
+test('T103-H3: «modo anterior» con nombres se rechaza en vez de descartarlos en silencio y el selector arranca en Declarado', async () => {
+  const r = await acceso({ kind: 'env', mode: 'legacy', names: 'TRACKER_TOKEN' });
+  expect(r.status).toBe(400);
+  expect(await r.text()).toContain('modo anterior');
+  expect(store.getWorkstream('prueba').envAllow).toBeNull();
+  const page = await (await get('/config')).text();
+  expect(page).toMatch(/<option value="declared" selected>/);
+  expect(page).not.toMatch(/<option value="legacy" selected>/);
+});
+
 test('límites del Store: demasiados nombres y repetidos se rechazan', async () => {
   const many = Array.from({ length: 17 }, (_, i) => `V${i}`).join('\n');
   expect((await acceso({ kind: 'env', mode: 'declared', names: many })).status).toBe(400);
