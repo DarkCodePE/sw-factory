@@ -8,7 +8,7 @@ import { verifierArgv } from './agent/mission-evidence.ts';
 import { applyDefinition, parseDefinition, type ParsedDefinition } from './definition.ts';
 import { readTar, TAR_MAX_BYTES } from './definition-tar.ts';
 import { redact } from './manifest.ts';
-import { defaultProfile, DEFAULT_DIGEST, isProfileDigest, profileDigest, resolveProfile, saveProfile, validateProfile, type Profile } from './profile.ts';
+import { assertRoleMcpRegistered, defaultProfile, DEFAULT_DIGEST, isProfileDigest, profileDigest, resolveProfile, saveProfile, validateProfile, type Profile } from './profile.ts';
 import { Store, StoreError } from './store.ts';
 import { DEFAULT_PROTECTED_PATHS } from './validators/integrity.ts';
 import { repoProblem } from './web-ws.ts';
@@ -98,6 +98,13 @@ function diff(before: Profile, after: Profile, escape: Escape, title = 'Cambios 
   return rows.length ? `<h2>${title} (${rows.length})</h2>${rows.join('')}` : '<p>Sin diferencias con el perfil de referencia.</p>';
 }
 
+/** IE1-H1: mismas guardas que `fab profile import`: el MCP por rol debe estar en el registro. */
+function parseChecked(stateDir: string, file: Uint8Array) {
+  const parsed = parseProfileBytes(file);
+  try { assertRoleMcpRegistered(stateDir, parsed.profile); } catch (e) { throw bad((e as Error).message); }
+  return parsed;
+}
+
 const confirmForm = (action: string, csrf: string, hidden: Record<string, string>, label: string) =>
   `<form action="${action}" method="post" class="web-action"><input type="hidden" name="csrf" value="${attr(csrf)}">${Object.entries(hidden).map(([k, v]) => `<input type="hidden" name="${k}" value="${attr(v)}">`).join('')}<label><input type="checkbox" name="confirm" value="yes" required> ${label}</label><button>Confirmar importación</button></form>`;
 
@@ -118,7 +125,7 @@ export function importPreview(kind: ImportKind, stateDir: string, form: URLSearc
   try {
     if (kind === 'profile') {
       const ws = store.getWorkstream(form.get('ws') ?? '');
-      const { profile, digest } = parseProfileBytes(file);
+      const { profile, digest } = parseChecked(stateDir, file);
       const exists = digest === DEFAULT_DIGEST || (() => { try { resolveProfile(stateDir, digest); return true; } catch { return false; } })();
       const current = resolveProfile(stateDir, ws.profile).profile;
       const body = `<p>Workstream <code>${escape(ws.slug)}</code> · digest <code>${digest}</code> · ${exists ? 'Ya existe en el almacén' : 'Nuevo'}</p>
@@ -160,7 +167,7 @@ export function importConfirm(kind: ImportKind, store: Store, stateDir: string, 
   const bytes = decodePayload(input.payload);
   if (kind === 'profile') {
     const ws = store.getWorkstream(input.ws!);
-    const { profile, digest } = parseProfileBytes(bytes);
+    const { profile, digest } = parseChecked(stateDir, bytes);
     if (!sealOk(input.digest, seal('profile', bytes, ws.slug))) throw bad('El paquete no coincide con la vista previa. Vuelve a subirlo.');
     const { created } = saveProfile(stateDir, profile);
     store.event(ws.id, 'info', `perfil importado desde la web: ${digest}${created ? '' : ' (ya existía)'}`);

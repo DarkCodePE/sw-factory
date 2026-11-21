@@ -421,3 +421,20 @@ test('H10: fab definition import no imprime ESC ni C1 de un paquete hostil', () 
   expect(r.exitCode).not.toBe(0); expect(err).toContain('clave desconocida');
   expect(err).not.toMatch(/[\x00-\x08\x0b-\x1f\x7f-\x9f]/);
 });
+
+// IE1-H1: la importación web de un perfil comprueba el registro MCP como la CLI (assertRoleMcpRegistered).
+test('IE1-H1: un perfil con un MCP por rol fuera del registro da 400 en la vista previa y al confirmar, y no se guarda', async () => {
+  const conMcp = (...mcp: string[]) => new TextEncoder().encode(JSON.stringify({ ...defaultProfile(), schemaVersion: 2, harness: 'claude', roles: { implement: { mcp } } }));
+  const before = snapshot();
+  const r = await upload('/perfiles/importar', { ws: 'prueba' }, conMcp('no-registrado'));
+  expect(r.status).toBe(400);
+  expect(await r.text()).not.toContain('no-registrado');
+  expect(snapshot()).toBe(before);
+  // Registrado: pasa la vista previa; si el registro cambia antes de confirmar, la confirmación también lo rechaza.
+  writeFileSync(join(dir, 'mcp-servers.json'), JSON.stringify({ servers: { tracker: { url: 'https://mcp.example.com/sse', headers: {} } } }));
+  const preview = await upload('/perfiles/importar', { ws: 'prueba' }, conMcp('tracker'));
+  expect(preview.status).toBe(200);
+  writeFileSync(join(dir, 'mcp-servers.json'), JSON.stringify({ servers: {} }));
+  expect((await confirmFrom(preview, '/perfiles/importar')).status).toBe(400);
+  expect(snapshot()).toBe(before);
+});
