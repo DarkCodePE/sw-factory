@@ -378,21 +378,25 @@ test('T104: lista servidores del registro MCP con tipo, variables requeridas y d
   expect(mcpSection).not.toContain('<form');
 });
 
-test('T104: registro MCP vacío o inválido maneja estados sin 500 ni fugar errores', async () => {
+test('T104-H2: registro MCP con error no fuga el canario del campo en el aviso y no genera filas ni tabla', async () => {
   new Store(join(dir, 'fabrica.db')).close();
-  start();
-  const htmlEmpty = await page('/config');
-  expect(htmlEmpty).toContain('Sin servidores en el registro MCP');
-
-  server!.stop(true);
   writeFileSync(join(dir, 'mcp-servers.json'), JSON.stringify({
-    servers: {},
-    canario_campo_prohibido: 'invalido',
+    servers: {
+      'canario-srv': {
+        url: 'https://127.0.0.1/mcp',
+        headers: {
+          'X-Canario-Secret': 'literal-no-permitido',
+        },
+      },
+    },
   }));
   start();
-  const htmlBad = await page('/config');
-  expect(htmlBad).toContain('Registro MCP no disponible o inválido.');
-  expect(htmlBad).not.toContain('canario_campo_prohibido');
+  const html = await page('/config');
+  expect(html).toContain('<p class="notice">Registro MCP no disponible o inválido.</p>');
+  expect(html).not.toContain('X-Canario-Secret');
+  expect(html).not.toContain('canario-srv');
+  expect(html).not.toContain('class="config-mcp"');
+  expect(html).not.toContain('<th>Variables requeridas</th>');
 });
 
 test('T104-H3: relanza errores que no sean McpRegistryError en lugar de enmascararlos', async () => {
