@@ -404,7 +404,7 @@ async function recorrido(login: string) {
     visita(`/activities/${semilla.activities.completado}?herramientas=1`, ['Transcript', 'Mostrar llamadas y resultados', 'Aplicar filtros'], 'etapa1-transcript');
     visita(`/changes/${id('completado')}`, ['Timeline por minuto'], 'etapa1-timeline-minuto');
     visita('/config/runners', ['Dar de alta un runner'], 'etapa1-runners-alta');
-    visita('/config?ws=plataforma', ['Secretos y MCP del workstream', 'Entrada: etiqueta de GitHub y Jira', 'Servidores MCP', 'Adaptadores'], 'etapa1-config-acceso-entrada-mcp');
+    visita('/config?ws=plataforma', ['Secretos y MCP del workstream', 'Entrada: etiqueta de GitHub y Jira', 'Servidores MCP', 'Variables requeridas', 'E2E_TRACKER_TOKEN (no definida en fab web)', 'Adaptadores', 'Pin guardado'], 'etapa1-config-acceso-entrada-mcp');
     visita('/perfiles?ws=plataforma', ['Importar perfil'], 'etapa1-importar-perfil');
     visita('/definicion', ['Importar definición'], 'etapa1-importar-definicion');
   });

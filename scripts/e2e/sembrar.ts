@@ -112,6 +112,7 @@ export function sembrar(root: string): Semilla {
   const run = s.db.query('INSERT INTO experiment_runs (experiment_id,batch,seed,split,task_id,repeat,arm,position,profile_digest,agent,success,diff_lines,duration_ms,cost_usd,created_at) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)');
   for (const t of suite.tasks) for (const [position, arm] of ['baseline', 'candidate', 'baseline_rep'].entries()) run.run('perfil-e2e', 'lote-e2e', 7, t.split, t.id, 0, arm, position, arm === 'candidate' ? d2 : d1, 'native', position % 2, 8 + position, 22000 + position * 900, 0.1 + position * 0.03, iso(40));
 
+  writeFileSync(join(stateDir, 'mcp-servers.json'), JSON.stringify({ servers: { tracker: { url: 'https://mcp.example.com/sse', headers: { Authorization: 'Bearer ${E2E_TRACKER_TOKEN}' } } } })); // T104: la tabla del registro MCP de /config
   s.db.exec('PRAGMA wal_checkpoint(TRUNCATE)');
   s.close();
   return { stateDir, repos, changes, activities, automation: automation.id, signal: sig.id, profiles: { v1: d1, v2: d2 } };
