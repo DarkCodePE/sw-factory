@@ -72,11 +72,16 @@ export function loadAgentVersions(home: string = factoryHome()): Record<string, 
   return {};
 }
 
-/** Extrae la versión del binario de forma segura: primera línea, sin caracteres de control y hasta 40 chars. */
+/** Extrae la versión del binario de forma segura: primera línea, sin caracteres de control y hasta 40 chars, con entorno mínimo. */
 export function binaryVersion(path: string): string | null {
   try {
     const proc = Bun.spawnSync([path, '--version'], {
       stdout: 'pipe', stderr: 'pipe', stdin: 'ignore', timeout: 1000,
+      env: {
+        PATH: process.env.PATH ?? '',
+        HOME: process.env.HOME ?? '',
+        TMPDIR: process.env.TMPDIR ?? '/tmp',
+      },
     });
     if (proc.exitCode === 0) {
       const out = (proc.stdout.toString() || proc.stderr.toString()).trim();
@@ -154,7 +159,7 @@ function rowDetail(s: AgentBinStatus): string {
   return s.verdict === 'ok' ? `sha ${short(s.digest)} coincide con el pin` : `pin ${short(s.pin)}, actual ${short(s.digest)}`;
 }
 
-/** `fab agents verify [--pin]`: lista el estado de cada binario; --pin guarda los pines actuales. */
+/** `fab agents verify [--pin]`: lista el estado de cada binario; --pin guarda los pines actuales y mide su versión con --version en un entorno mínimo (sin secretos del operador). */
 export async function agentsMain(argv: string[]): Promise<number> {
   const pin = argv.includes('--pin') || argv.includes('-p');
   const home = factoryHome();

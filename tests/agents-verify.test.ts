@@ -6,6 +6,7 @@ import { join } from 'node:path';
 import {
   agentBinStatus,
   agentsMain,
+  binaryVersion,
   factoryHome,
   loadAgentVersions,
   loadPins,
@@ -210,4 +211,30 @@ test('T106-H8: la versión registrada queda ligada al sha y se descarta si pin c
   const v2 = loadAgentVersions(scope.home).claude;
   expect(v2).toBeUndefined(); // Se descartó porque --version no respondió con éxito
 });
+
+test('T106-H11: binaryVersion ejecuta el binario con entorno mínimo sin tokens del operador', () => {
+  const spy = stubBin('claude', `#!/bin/sh
+if [ "$1" = "--version" ]; then
+  echo "v1.0 gh=\${GH_TOKEN:-vacio} ant=\${ANTHROPIC_API_KEY:-vacio}"
+  exit 0
+fi
+exit 0
+`);
+  // Proceso hijo con tokens del operador en su entorno de proceso
+  const proc = Bun.spawnSync([
+    process.execPath, '-e',
+    `import { binaryVersion } from './src/agents-verify.ts'; console.log(binaryVersion("${spy}"));`,
+  ], {
+    env: {
+      PATH: `${scope.binDir}:${scope.path}`,
+      GH_TOKEN: 'ghp_secreto_operador_canario',
+      ANTHROPIC_API_KEY: 'sk-ant-secreto-operador',
+    },
+  });
+  const output = proc.stdout.toString().trim();
+  expect(output).toBe('v1.0 gh=vacio ant=vacio');
+  expect(output).not.toContain('ghp_secreto_operador_canario');
+  expect(output).not.toContain('sk-ant-secreto-operador');
+});
+
 
