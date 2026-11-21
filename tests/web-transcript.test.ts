@@ -278,3 +278,33 @@ test('T99-H12: un turno sin init tras stderr avisa y deja abierto el log', async
     expect(body).toMatch(/<h2>Log<\/h2><pre[^>]*>[\s\S]*Diagnóstico[\s\S]*Segundo turno sin init/);
   }
 });
+
+test('T99-H13 R09: el JSON escrito por stderr no se convierte en un paso', async () => {
+  const first = '{"type":"assistant","message":{"content":"Paso real"}}';
+  const stderr = '{"type":"assistant","message":{"content":"JSON diagnóstico"}}';
+  writeFileSync(join(run, activity + '.log'), first + '\n[stderr]\n' + stderr + '\n');
+  const body = await (await activityPage()).text();
+  expect(onlyTranscript(body)).toContain('Paso real');
+  expect(onlyTranscript(body)).not.toContain('JSON diagnóstico');
+  expect(body).toContain('JSON diagnóstico');
+});
+
+test('T99-H13 R18: el log histórico aparece desplegado', async () => {
+  writeFileSync(join(run, activity + '.log'), 'Diagnóstico histórico visible');
+  const body = await (await activityPage()).text();
+  expect(body).toMatch(/<h2>Log<\/h2><pre[^>]*>Diagnóstico histórico visible<\/pre>/);
+});
+
+test('T99-H13 R22: un bloque inválido avisa aunque haya pasos válidos', async () => {
+  const frame = { type: 'assistant', message: { content: [{ type: 'text', text: 'Paso válido' }, null] } };
+  writeFileSync(join(run, activity + '.log'), JSON.stringify(frame));
+  const body = onlyTranscript(await (await activityPage()).text());
+  expect(body).toContain('Paso válido');
+  expect(body).toContain('Transcript incompleto.');
+});
+
+test('T99-H13 R25: un transcript dañado sin pasos muestra No medido y el aviso', async () => {
+  writeFileSync(join(run, activity + '.log'), '{"type":"assistant","message":{"content":12}}');
+  const body = await (await activityPage()).text();
+  expect(body).toMatch(/<h2>Transcript<\/h2><p[^>]*>No medido<\/p><p[^>]*>Transcript incompleto\.<\/p>/);
+});

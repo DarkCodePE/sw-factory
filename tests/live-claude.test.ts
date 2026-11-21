@@ -356,3 +356,17 @@ test('T99-H11: un turno parcial usa stderr como diagnóstico y deja los frames e
     expect(result.stdoutForMonitor).toBe('');
   }
 });
+
+test('T99-H13 R35: detecta una sesión perdida por el result sin stderr', async () => {
+  const frame = '{"type":"result","is_error":true,"errors":["No conversation found with session ID: perdida"]}';
+  await expect(runClaudeFixture("echo '" + frame + "'; exit 1", 'perdida')).rejects.toBeInstanceOf(SessionNotFoundError);
+});
+
+test('T99-H13 R38: el último result determina la salida, el coste y el monitor', async () => {
+  const first = '{"type":"result","result":"Primero","total_cost_usd":1}';
+  const last = '{"type":"result","result":"Último","total_cost_usd":2}';
+  const result = await runClaudeFixture("printf '%s\\n' '" + first + "' '" + last + "'");
+  expect(result.output).toBe('Último');
+  expect(result.usage?.costUsd).toBe(2);
+  expect(result.stdoutForMonitor).toBe(last);
+});
