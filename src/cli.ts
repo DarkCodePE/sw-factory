@@ -80,7 +80,7 @@ const HELP = `fab — agente de código y fábrica de software local
   fab --cwd <path> [prompt]     conversación, --use-spec o --mission --auto high
   fab web [--port 4310] [--write]  web local en 127.0.0.1; con --write habilita las acciones (enlace de un solo uso); --port 0 elige un puerto libre
   fab --version
-  fab agents verify [--pin]         pines sha256 de los binarios claude, codex, agy, droid; --pin guarda los actuales
+  fab agents verify [--pin]         pines sha256 de los binarios claude, codex, agy, droid; --pin guarda pines y mide versión (--version con entorno mínimo)
   fab update [--channel stable|prerelease] [--check]
   fab jira show <KEY> | import <KEY> --ws <slug> [--triage] [--dry-run]
   fab jira comment <changeId> [--dry-run]

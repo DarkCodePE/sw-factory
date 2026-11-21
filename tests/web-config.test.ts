@@ -1,12 +1,16 @@
 import { afterEach, beforeEach, expect, spyOn, test } from 'bun:test';
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, statSync, utimesSync, writeFileSync } from 'node:fs';
+import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, statSync, utimesSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { sha256Of } from '../src/agents-verify.ts';
 import { defaultProfile, DEFAULT_DIGEST, saveProfile } from '../src/profile.ts';
+import * as profileModule from '../src/profile.ts';
+import * as mcpRegistry from '../src/mcp-registry.ts';
 import { _setSandboxDetectionForTesting } from '../src/sandbox/detect.ts';
 import { Store } from '../src/store.ts';
+import { configPage } from '../src/web-config.ts';
 import { startWeb } from '../src/web.ts';
+import pkg from '../package.json' with { type: 'json' };
 
 let dir: string;
 let server: ReturnType<typeof startWeb> | undefined;
@@ -331,3 +335,418 @@ test('H4: un fichero de settings con esquema inválido no muestra servidores', a
     expect(html).not.toContain('canario-');
   }
 });
+
+test('T104: lista servidores del registro MCP con tipo, variables requeridas y dónde se usan, sin revelar secretos', async () => {
+  const store = new Store(join(dir, 'fabrica.db'));
+  const p = defaultProfile();
+  p.schemaVersion = 2;
+  p.harness = 'claude';
+  p.roles = {
+    investigate: { harness: 'claude', mcp: ['local-tool'] },
+  };
+  const { digest } = saveProfile(dir, p);
+  store.createWorkstream({ slug: 'ws-uno', goal: 'g', repo: '/repo', profile: digest });
+  store.setWorkstreamMcpAllow('ws-uno', ['local-tool']);
+  store.createWorkstream({ slug: 'ws-dos', goal: 'g', repo: '/repo' });
+  store.setWorkstreamMcpAllow('ws-dos', ['tracker']);
+  // Slug con caracteres especiales en DB
+  store.db.query("UPDATE workstreams SET slug = 'ws<b>xss</b>' WHERE slug = 'ws-dos'").run();
+  store.close();
+
+  env('TRK_TOKEN', 'canario-secreto-trk-valor');
+  writeFileSync(join(dir, 'mcp-servers.json'), JSON.stringify({
+    servers: {
+      tracker: { url: 'https://api.tracker.invalid/sse', headers: { Authorization: 'Bearer ${TRK_TOKEN}' } },
+      'local-tool': { command: ['/usr/bin/tool', '--flag'], env: { TOOL_KEY: '${TOOL_KEY}' } },
+    },
+  }));
+  start();
+
+  const html = await page('/config');
+  const rowTracker = html.match(/<tr><td><code>tracker<\/code><\/td>.*?<\/tr>/s)?.[0] ?? '';
+  expect(rowTracker).toContain('<td>url</td>');
+  expect(rowTracker).toContain('<td>TRK_TOKEN (definida)</td>');
+  expect(rowTracker).toContain('<td>permitido: ws&lt;b&gt;xss&lt;/b&gt;</td>');
+  expect(rowTracker).not.toContain('<b>xss</b>');
+
+  const rowLocalTool = html.match(/<tr><td><code>local-tool<\/code><\/td>.*?<\/tr>/s)?.[0] ?? '';
+  expect(rowLocalTool).toContain('<td>command</td>');
+  expect(rowLocalTool).toContain('<td>TOOL_KEY (no definida)</td>');
+  expect(rowLocalTool).toContain('<td>ws-uno (investigate)</td>');
+
+  expect(html).not.toContain('canario-secreto-trk-valor');
+  const mcpSection = html.slice(html.indexOf('<h2>Servidores MCP</h2>'));
+  expect(mcpSection).not.toContain('<form');
+});
+
+test('T104-H2: registro MCP con error no fuga el canario del campo en el aviso y no genera filas ni tabla', async () => {
+  new Store(join(dir, 'fabrica.db')).close();
+  writeFileSync(join(dir, 'mcp-servers.json'), JSON.stringify({
+    servers: {
+      'canario-srv': {
+        url: 'https://127.0.0.1/mcp',
+        headers: {
+          'X-Canario-Secret': 'literal-no-permitido',
+        },
+      },
+    },
+  }));
+  start();
+  const html = await page('/config');
+  expect(html).toContain('<p class="notice">Registro MCP no disponible o inválido.</p>');
+  expect(html).not.toContain('X-Canario-Secret');
+  expect(html).not.toContain('canario-srv');
+  expect(html).not.toContain('class="config-mcp"');
+  expect(html).not.toContain('<th>Variables requeridas</th>');
+});
+
+test('T104-H3: relanza errores que no sean McpRegistryError en lugar de enmascararlos', async () => {
+  const store = new Store(join(dir, 'fabrica.db'));
+  const spy = spyOn(mcpRegistry, 'loadMcpRegistry').mockImplementation(() => {
+    throw new TypeError('error-inesperado-no-mcp');
+  });
+  try {
+    await expect(configPage(store, dir, new URL('http://127.0.0.1/config'), x => String(x))).rejects.toThrow('error-inesperado-no-mcp');
+  } finally {
+    spy.mockRestore();
+    store.close();
+  }
+});
+
+test('T104-H4: precalcula el uso de servidores MCP una sola vez por petición en lugar de por cada servidor', async () => {
+  const store = new Store(join(dir, 'fabrica.db'));
+  const p1 = defaultProfile();
+  const { digest: d1 } = saveProfile(dir, p1);
+  const p2 = defaultProfile();
+  const { digest: d2 } = saveProfile(dir, p2);
+  store.createWorkstream({ slug: 'ws1', goal: 'g', repo: '/repo', profile: d1 });
+  store.createWorkstream({ slug: 'ws2', goal: 'g', repo: '/repo', profile: d2 });
+
+  writeFileSync(join(dir, 'mcp-servers.json'), JSON.stringify({
+    servers: {
+      s1: { url: 'https://a.invalid/sse', headers: {} },
+      s2: { url: 'https://b.invalid/sse', headers: {} },
+      s3: { url: 'https://c.invalid/sse', headers: {} },
+    },
+  }));
+
+  const origResolve = profileModule.resolveProfile;
+  let callCount = 0;
+  const spy = spyOn(profileModule, 'resolveProfile').mockImplementation((...args) => {
+    callCount++;
+    return origResolve(...args);
+  });
+
+  try {
+    // 2 workstreams en la base. Sin precomputar, para 3 servidores en mcpRegistrySection
+    // más el workstream seleccionado en profileView, callCount sería 3 * 2 + 1 = 7.
+    // Con precálculo una sola vez para mcpRegistrySection, el número de llamadas para MCP es a lo sumo 2.
+    await configPage(store, dir, new URL('http://127.0.0.1/config'), x => String(x));
+    // Total de llamadas a resolveProfile en la página completa: <= 3 (1 en profileView + 2 en buildMcpUsageMap)
+    expect(callCount).toBeLessThanOrEqual(3);
+  } finally {
+    spy.mockRestore();
+    store.close();
+  }
+});
+
+test('T104-H1: calcula dónde se usa como resolveAccess (rol pide y workstream permite) y muestra permitido aparte', async () => {
+  const store = new Store(join(dir, 'fabrica.db'));
+
+  // Perfil que pide s1 en investigate
+  const pConS1 = defaultProfile();
+  pConS1.schemaVersion = 2;
+  pConS1.harness = 'claude';
+  pConS1.roles = { investigate: { harness: 'claude', mcp: ['s1'] } };
+  const { digest: dConS1 } = saveProfile(dir, pConS1);
+
+  // Perfil que no pide nada de MCP
+  const pVacio = defaultProfile();
+  const { digest: dVacio } = saveProfile(dir, pVacio);
+
+  // 1. ws-usado: pide s1 y lo permite en mcpAllow -> usado
+  store.createWorkstream({ slug: 'ws-usado', goal: 'g', repo: '/repo', profile: dConS1 });
+  store.setWorkstreamMcpAllow('ws-usado', ['s1']);
+
+  // 2. ws-solo-allow: permite s1 pero su perfil no pide mcp -> permitido: ws-solo-allow
+  store.createWorkstream({ slug: 'ws-solo-allow', goal: 'g', repo: '/repo', profile: dVacio });
+  store.setWorkstreamMcpAllow('ws-solo-allow', ['s1']);
+
+  // 3. ws-sin-allow: pide s1 en perfil pero mcpAllow es [] (o null) -> no se entrega en resolveAccess
+  store.createWorkstream({ slug: 'ws-sin-allow', goal: 'g', repo: '/repo', profile: dConS1 });
+  store.setWorkstreamMcpAllow('ws-sin-allow', []);
+
+  writeFileSync(join(dir, 'mcp-servers.json'), JSON.stringify({
+    servers: {
+      s1: { url: 'https://a.invalid/sse', headers: {} },
+      s2: { url: 'https://b.invalid/sse', headers: {} },
+    },
+  }));
+  store.close();
+  start();
+
+  const html = await page('/config');
+  const rowS1 = html.match(/<tr><td><code>s1<\/code><\/td>.*?<\/tr>/s)?.[0] ?? '';
+  const rowS2 = html.match(/<tr><td><code>s2<\/code><\/td>.*?<\/tr>/s)?.[0] ?? '';
+
+  expect(rowS1).toContain('ws-usado (investigate)');
+  expect(rowS1).not.toContain('permitido: ws-usado');
+  expect(rowS1).toContain('permitido: ws-solo-allow');
+  expect(rowS1).not.toContain('ws-sin-allow');
+  expect(rowS2).toContain('<td>—</td>');
+});
+
+test('T106: muestra binario, versión registrada, pin guardado y marca binarios discrepantes', async () => {
+  const claudeBin = join(dir, 'claude');
+  const codexBin = join(dir, 'codex');
+  const agyBin = join(dir, 'agy');
+
+  writeFileSync(claudeBin, '#!/bin/sh\nexit 0\n');
+  chmodSync(claudeBin, 0o755);
+  writeFileSync(codexBin, '#!/bin/sh\nexit 0\n');
+  chmodSync(codexBin, 0o755);
+  writeFileSync(agyBin, '#!/bin/sh\nexit 0\n');
+  chmodSync(agyBin, 0o755);
+
+  writeFileSync(join(dir, 'agents.json'), JSON.stringify({
+    agentBinaries: {
+      claude: sha256Of(claudeBin),
+      codex: 'b'.repeat(64), // pin que no coincide
+      agy: sha256Of(agyBin),
+    },
+    agentVersions: {
+      claude: 'claude v2.5.0',
+      codex: 'codex 1.0.0', // pin no coincide: no debe mostrarse
+      agy: '0.9.1-registrada',
+    },
+  }));
+
+  new Store(join(dir, 'fabrica.db')).close();
+  start();
+
+  const html = await page('/config');
+  // claude coincide con el pin y muestra versión registrada y ruta
+  expect(html).toContain('<td>claude</td>');
+  expect(html).toContain('Coincide con el pin');
+  expect(html).toContain('claude v2.5.0');
+  expect(html).toContain(claudeBin);
+
+  // codex no coincide con el pin: sale marcado y con versión «No medido»
+  expect(html).toContain('<td>codex</td>');
+  expect(html).toContain('Distinto del pin');
+  expect(html).toContain('pin-mismatch');
+  expect(html).toContain('(no coincide)');
+  expect(html).not.toContain('codex 1.0.0');
+  const codexRow = html.match(/<tr[^>]*><td>codex<\/td>.*?<\/tr>/s)?.[0] ?? '';
+  expect(codexRow).toContain('<td>No medido</td>');
+  expect(html).toContain('bbbbbbbbbbbb…');
+
+  // agy lee versión del registro
+  expect(html).toContain('<td>agy</td>');
+  expect(html).toContain('0.9.1-registrada');
+
+  // native muestra versión del paquete fab leída de package.json dinámicamente
+  expect(html).toContain('<td>native</td>');
+  const nativeRow = html.match(/<tr[^>]*><td>native<\/td>.*?<\/tr>/s)?.[0] ?? '';
+  expect(nativeRow).toContain(`<td>${pkg.version}</td>`);
+
+  // Sin formularios para fijar el pin en la web
+  const adaptersSection = html.slice(html.indexOf('<h2>Adaptadores</h2>'), html.indexOf('<h2>Sandbox y red</h2>'));
+  expect(adaptersSection).not.toContain('<form');
+});
+
+test('T106-H1: la web nunca ejecuta binarios externos y muestra No medido si no hay registro o pin discrepante', async () => {
+  const counterFile = join(dir, 'exec-count.txt');
+  const spyBin = join(dir, 'claude');
+  writeFileSync(counterFile, '0');
+  writeFileSync(spyBin, `#!/bin/sh
+count=$(cat "${counterFile}")
+count=$((count + 1))
+echo "$count" > "${counterFile}"
+echo "spy 3.0"
+exit 0
+`);
+  chmodSync(spyBin, 0o755);
+
+  // claude tiene pin coincidente pero NO tiene agentVersions
+  writeFileSync(join(dir, 'agents.json'), JSON.stringify({
+    agentBinaries: { claude: sha256Of(spyBin) },
+  }));
+
+  new Store(join(dir, 'fabrica.db')).close();
+  start();
+
+  const html = await page('/config');
+  // NUNCA ejecutó el binario: el contador sigue en 0
+  expect(readFileSync(counterFile, 'utf8').trim()).toBe('0');
+  expect(html).not.toContain('spy 3.0');
+  const claudeRow = html.match(/<tr[^>]*><td>claude<\/td>.*?<\/tr>/s)?.[0] ?? '';
+  expect(claudeRow).toContain('<td>No medido</td>');
+});
+
+
+test('T106-H6: sanea caracteres de control, limita a 40 caracteres y escapa HTML en versiones registradas', async () => {
+  const claudeBin = join(dir, 'claude');
+  writeFileSync(claudeBin, '#!/bin/sh\nexit 0\n');
+  chmodSync(claudeBin, 0o755);
+
+  writeFileSync(join(dir, 'agents.json'), JSON.stringify({
+    agentBinaries: { claude: sha256Of(claudeBin) },
+    agentVersions: {
+      claude: 'v1.0\x1b[31m\x00<script>canario</script>' + 'x'.repeat(50),
+    },
+  }));
+
+  new Store(join(dir, 'fabrica.db')).close();
+  start();
+
+  const html = await page('/config');
+  expect(html).not.toContain('<script>canario</script>');
+  expect(html).toContain('&lt;script&gt;canario&lt;/script&gt;');
+  expect(html).not.toContain('\x1b');
+  expect(html).not.toContain('\x00');
+  // Comprobar que en la celda no excede 40 caracteres tras sanear
+  const claudeRow = html.match(/<tr[^>]*><td>claude<\/td>.*?<\/tr>/s)?.[0] ?? '';
+  const versionCellMatch = claudeRow.match(/<td>claude<\/td><td>[^<]*<\/td><td>[^<]*<\/td><td>[^<]*<\/td><td>([^<]*)<\/td>/);
+  expect(versionCellMatch).not.toBeNull();
+  const rawVersionInCell = (versionCellMatch?.[1] ?? '').replace(/&lt;/g, '<').replace(/&gt;/g, '>').replace(/&amp;/g, '&');
+  expect(rawVersionInCell.length).toBeLessThanOrEqual(40);
+  expect(rawVersionInCell.length).toBeGreaterThan(0);
+});
+
+test('T106-H10: la web no muestra versión registrada para un binario sin pin (mata mutación N05)', async () => {
+  const agyBin = join(dir, 'agy');
+  writeFileSync(agyBin, '#!/bin/sh\nexit 0\n');
+  chmodSync(agyBin, 0o755);
+
+  writeFileSync(join(dir, 'agents.json'), JSON.stringify({
+    // agy SIN pin en agentBinaries
+    agentBinaries: {},
+    agentVersions: { agy: '0.9.1-registrada' },
+  }));
+
+  new Store(join(dir, 'fabrica.db')).close();
+  start();
+
+  const html = await page('/config');
+  expect(html).not.toContain('0.9.1-registrada');
+  const agyRow = html.match(/<tr[^>]*><td>agy<\/td>.*?<\/tr>/s)?.[0] ?? '';
+  expect(agyRow).toContain('<td>No medido</td>');
+});
+
+test('T106-H5: valida versión de native dinámicamente contra package.json en lugar de literal', async () => {
+  new Store(join(dir, 'fabrica.db')).close();
+  start();
+
+  const html = await page('/config');
+  const nativeRow = html.match(/<tr[^>]*><td>native<\/td>.*?<\/tr>/s)?.[0] ?? '';
+  expect(nativeRow).toContain(`<td>${pkg.version}</td>`);
+  expect(pkg.version).toBeDefined();
+  expect(typeof pkg.version).toBe('string');
+});
+
+test('T106-H7: la hoja de estilo define reglas para .pin-mismatch y mark.alerta', async () => {
+  new Store(join(dir, 'fabrica.db')).close();
+  start();
+
+  const css = await page('/style.css');
+  expect(css).toContain('.pin-mismatch');
+  expect(css).toContain('mark.alerta');
+});
+
+test('T106-H8: la web descarta la versión registrada si su sha no coincide con el pin actual', async () => {
+  const claudeBin = join(dir, 'claude');
+  writeFileSync(claudeBin, '#!/bin/sh\nexit 0\n');
+  chmodSync(claudeBin, 0o755);
+
+  const currentSha = sha256Of(claudeBin);
+  const oldSha = 'c'.repeat(64);
+
+  // El binario coincide con su pin (currentSha), pero en agentVersions el sha registrado es oldSha
+  writeFileSync(join(dir, 'agents.json'), JSON.stringify({
+    agentBinaries: { claude: currentSha },
+    agentVersions: {
+      claude: { version: 'claude-version-desactualizada', sha256: oldSha },
+    },
+  }));
+
+  new Store(join(dir, 'fabrica.db')).close();
+  start();
+
+  const html = await page('/config');
+  expect(html).not.toContain('claude-version-desactualizada');
+  const claudeRow = html.match(/<tr[^>]*><td>claude<\/td>.*?<\/tr>/s)?.[0] ?? '';
+  expect(claudeRow).toContain('<td>No medido</td>');
+});
+
+test('T106-H9: la web nunca ejecuta binarios con pin discrepante ni sin pin (mata mutación N01)', async () => {
+  const counterFile = join(dir, 'exec-count-n01.txt');
+  writeFileSync(counterFile, '0');
+  const makeSpy = (name: string) => {
+    const bin = join(dir, name);
+    writeFileSync(bin, `#!/bin/sh
+count=$(cat "${counterFile}")
+count=$((count + 1))
+echo "$count" > "${counterFile}"
+echo "${name} 1.0"
+exit 0
+`);
+    chmodSync(bin, 0o755);
+    return bin;
+  };
+
+  makeSpy('codex'); // tendrá pin discrepante
+  makeSpy('agy');   // estará sin pin
+
+  writeFileSync(join(dir, 'agents.json'), JSON.stringify({
+    agentBinaries: {
+      codex: 'b'.repeat(64), // pin distinto
+      // agy sin pin
+    },
+  }));
+
+  new Store(join(dir, 'fabrica.db')).close();
+  start();
+
+  const html = await page('/config');
+  // NINGUNO se ejecuta: el contador permanece en 0
+  expect(readFileSync(counterFile, 'utf8').trim()).toBe('0');
+  expect(html).not.toContain('codex 1.0');
+  expect(html).not.toContain('agy 1.0');
+
+  const codexRow = html.match(/<tr[^>]*><td>codex<\/td>.*?<\/tr>/s)?.[0] ?? '';
+  expect(codexRow).toContain('<td>No medido</td>');
+  const agyRow = html.match(/<tr[^>]*><td>agy<\/td>.*?<\/tr>/s)?.[0] ?? '';
+  expect(agyRow).toContain('<td>No medido</td>');
+});
+
+test('T106-H12: neutraliza controles Unicode/bidi (\\p{Cf}) y loadAgentVersions filtra claves desconocidas', async () => {
+  const claudeBin = join(dir, 'claude');
+  writeFileSync(claudeBin, '#!/bin/sh\nexit 0\n');
+  chmodSync(claudeBin, 0o755);
+
+  writeFileSync(join(dir, 'agents.json'), JSON.stringify({
+    agentBinaries: { claude: sha256Of(claudeBin) },
+    agentVersions: {
+      claude: 'v1.0\u202Erev\u202Cotro\u200B', // U+202E (RTO), U+202C (PDF), U+200B (ZWSP)
+      clave_invalida_no_pinneada: 'hack',
+    },
+  }));
+
+  new Store(join(dir, 'fabrica.db')).close();
+  start();
+
+  const html = await page('/config');
+  expect(html).not.toContain('\u202E');
+  expect(html).not.toContain('\u202C');
+  expect(html).not.toContain('\u200B');
+  expect(html).not.toContain('clave_invalida_no_pinneada');
+  expect(html).toContain('v1.0revotro');
+});
+
+
+
+
+
+
+

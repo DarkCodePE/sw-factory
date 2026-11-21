@@ -3,15 +3,17 @@ import { homedir } from 'node:os';
 import { join } from 'node:path';
 import { configuredMcpNames } from './agent/settings.ts';
 import { AGENT_NAMES } from './agents.ts';
-import { agentBinStatus, PINNED_AGENTS, sha256Of, type AgentBinVerdict } from './agents-verify.ts';
+import { agentBinStatus, loadAgentVersions, PINNED_AGENTS, sha256Of, type AgentBinStatus, type AgentBinVerdict } from './agents-verify.ts';
 import { jiraConfiguredInEnv } from './connectors/jira.ts';
 import { activityMetadata, redact } from './evidence.ts';
+import { loadMcpRegistry, McpRegistryError } from './mcp-registry.ts';
 import { listProfiles, resolveProfile } from './profile.ts';
 import { detectSandbox } from './sandbox/detect.ts';
 import { accessSection } from './web-access.ts';
 import { API_KEYS_PATH } from './web-api-keys.ts';
 import { entradaSection } from './web-entrada.ts';
 import type { Store, Workstream } from './store.ts';
+import pkg from '../package.json' with { type: 'json' };
 
 type Escape = (value: unknown) => string;
 
@@ -36,6 +38,7 @@ function cachedSha256(path: string): string {
   digestCache.set(path, { size, mtimeMs, digest });
   return digest;
 }
+
 
 /** La sonda de egress se busca solo entre las activities más recientes del workstream. */
 export const EGRESS_SCAN_LIMIT = 200;
@@ -103,13 +106,75 @@ function credentialStatus(agent: string): string {
 }
 
 function adapters(stateDir: string, escape: Escape): string {
-  const binaryStatus = (agent: string): string => {
-    if (!PINNED_AGENTS.includes(agent)) return agent === 'native' ? 'Integrado' : 'De prueba';
-    try { return binLabels[agentBinStatus(agent, stateDir, cachedSha256).verdict]; } catch { return 'No medido'; }
-  };
+  const versionsFromRecord = loadAgentVersions(stateDir);
+  const rows = AGENT_NAMES.map(agent => {
+    const isPinned = PINNED_AGENTS.includes(agent);
+    let status: AgentBinStatus | undefined;
+    let verdict: string;
+    let isMismatch = false;
+
+    if (!isPinned) {
+      verdict = agent === 'native' ? 'Integrado' : 'De prueba';
+    } else {
+      try {
+        status = agentBinStatus(agent, stateDir, cachedSha256);
+        verdict = binLabels[status.verdict];
+        isMismatch = status.verdict === 'distinto';
+      } catch {
+        verdict = 'No medido';
+      }
+    }
+
+    const cred = credentialStatus(agent);
+
+    // Binario / Ruta
+    const binPath = !isPinned
+      ? (agent === 'native' ? 'src/agent/exec.ts' : 'De prueba')
+      : (status?.path ? status.path : '—');
+
+    // Versión
+    let version: string;
+    if (agent === 'native') {
+      version = pkg.version;
+    } else if (agent === 'fake') {
+      version = '—';
+    } else if (!status?.path || status.verdict === 'no_instalado') {
+      version = '—';
+    } else if (status.verdict === 'ok') {
+      const rec = versionsFromRecord[agent];
+      const raw = typeof rec === 'string' ? rec : rec?.version;
+      const recSha = typeof rec === 'object' && rec !== null ? rec.sha256 : undefined;
+      if (raw && (!recSha || recSha === status.pin)) {
+        const cleaned = raw.replace(/[\x00-\x1f\x7f\p{Cf}]/gu, '').trim();
+        version = cleaned ? cleaned.slice(0, 40) : 'No medido';
+      } else {
+        version = 'No medido';
+      }
+    } else {
+      version = 'No medido';
+    }
+
+    // Pin guardado
+    const pin = isPinned && status?.pin ? `${status.pin.slice(0, 12)}…` : '—';
+
+    // Marcado si no coincide con su pin
+    const statusCell = isMismatch
+      ? `${verdict} <mark class="alerta">(no coincide)</mark>`
+      : verdict;
+
+    return `<tr${isMismatch ? ' class="pin-mismatch"' : ''}>`
+      + `<td>${escape(agent)}</td>`
+      + `<td>${statusCell}</td>`
+      + `<td>${cred}</td>`
+      + `<td>${escape(binPath)}</td>`
+      + `<td>${escape(version)}</td>`
+      + `<td><code>${escape(pin)}</code></td>`
+      + `</tr>`;
+  }).join('');
+
   return `<div class="table-wrap" role="region" aria-label="Adaptadores" tabindex="0"><table class="config-adapters">
-    <thead><tr><th scope="col">Adaptador</th><th scope="col">Binario</th><th scope="col">Credencial local</th></tr></thead>
-    <tbody>${AGENT_NAMES.map(agent => `<tr><td>${escape(agent)}</td><td>${binaryStatus(agent)}</td><td>${credentialStatus(agent)}</td></tr>`).join('')}</tbody>
+    <thead><tr><th scope="col">Adaptador</th><th scope="col">Binario</th><th scope="col">Credencial local</th><th scope="col">Ruta</th><th scope="col">Versión</th><th scope="col">Pin guardado</th></tr></thead>
+    <tbody>${rows}</tbody>
   </table></div>`;
 }
 
@@ -130,6 +195,67 @@ function latestEgress(store: Store, stateDir: string, workstream: Workstream, es
   return latest
     ? `${latest.result} · <time>${escape(new Date(latest.timestamp).toISOString())}</time>`
     : 'No medido';
+}
+
+function buildMcpUsageMap(workstreams: Workstream[], stateDir: string): Map<string, string[]> {
+  const map = new Map<string, string[]>();
+  const add = (name: string, usage: string) => {
+    let list = map.get(name);
+    if (!list) { list = []; map.set(name, list); }
+    if (!list.includes(usage)) list.push(usage);
+  };
+  for (const ws of workstreams) {
+    const allowed = ws.mcpAllow ?? [];
+    if (!allowed.length) continue;
+    const usedInRoles = new Set<string>();
+    try {
+      const { profile } = resolveProfile(stateDir, ws.profile);
+      if (profile.roles) {
+        for (const [role, cfg] of Object.entries(profile.roles)) {
+          if (cfg?.mcp) {
+            for (const name of cfg.mcp) {
+              if (allowed.includes(name)) {
+                usedInRoles.add(name);
+                add(name, `${ws.slug} (${role})`);
+              }
+            }
+          }
+        }
+      }
+    } catch {}
+    for (const name of allowed) {
+      if (!usedInRoles.has(name)) {
+        add(name, `permitido: ${ws.slug}`);
+      }
+    }
+  }
+  return map;
+}
+
+function mcpRegistrySection(store: Store, stateDir: string, escape: Escape, workstreams: Workstream[]): string {
+  try {
+    const registry = loadMcpRegistry(stateDir);
+    const entries = Object.entries(registry);
+    if (!entries.length) {
+      return '<p class="muted">Sin servidores en el registro MCP.</p>';
+    }
+    const usageMap = buildMcpUsageMap(workstreams, stateDir);
+    const rows = entries.map(([name, s]) => {
+      const req = s.required.length
+        ? s.required.map(n => `${escape(n)} (${process.env[n] !== undefined ? 'definida' : 'no definida'})`).join(', ')
+        : '—';
+      const usages = usageMap.get(name) ?? [];
+      const usageText = usages.length ? usages.map(u => escape(u)).join(', ') : '—';
+      return `<tr><td><code>${escape(name)}</code></td><td>${escape(s.kind)}</td><td>${req}</td><td>${usageText}</td></tr>`;
+    }).join('');
+    return `<div class="table-wrap" role="region" aria-label="Registro MCP" tabindex="0"><table class="config-mcp">
+      <thead><tr><th scope="col">Servidor</th><th scope="col">Tipo</th><th scope="col">Variables requeridas</th><th scope="col">Dónde se usa</th></tr></thead>
+      <tbody>${rows}</tbody>
+    </table></div>`;
+  } catch (e) {
+    if (e instanceof McpRegistryError) return '<p class="notice">Registro MCP no disponible o inválido.</p>';
+    throw e;
+  }
 }
 
 async function mcpInventory(escape: Escape): Promise<string> {
@@ -183,6 +309,6 @@ export async function configPage(store: Store, stateDir: string, url: URL, escap
       ['GitHub (entorno)', configured(!!(process.env.GH_TOKEN?.trim() || process.env.GITHUB_TOKEN?.trim()))],
     ])}</section>
     ${entradaSection(stateDir, workstreams, escape, csrf)}
-    <section><h2>Servidores MCP</h2>${mcp}</section>
+    <section><h2>Servidores MCP</h2>${mcpRegistrySection(store, stateDir, escape, workstreams)}${mcp}</section>
   </div>` };
 }

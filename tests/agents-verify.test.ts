@@ -1,11 +1,14 @@
 import { afterEach, beforeEach, expect, test } from 'bun:test';
-import { chmodSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { chmodSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
 import {
   agentBinStatus,
+  agentsMain,
+  binaryVersion,
   factoryHome,
+  loadAgentVersions,
   loadPins,
   resolveBinary,
   savePins,
@@ -131,3 +134,164 @@ test('runPool: sin pin solo avisa y no arranca bloqueado (el pool sigue)', async
 test('factoryHome respeta FABRICA_HOME', () => {
   expect(factoryHome()).toBe(scope.home);
 });
+
+test('loadAgentVersions lee versiones registradas de agents.json', () => {
+  expect(loadAgentVersions(scope.home)).toEqual({});
+  mkdirSync(scope.home, { recursive: true });
+  mkdirSync(scope.home, { recursive: true });
+  writeFileSync(join(scope.home, 'agents.json'), JSON.stringify({
+    agentBinaries: { claude: 'a'.repeat(64) },
+    agentVersions: {
+      claude: { version: '2.5.0', sha256: 'a'.repeat(64) },
+      codex: '1.0.0', // soporte de formato simple retrocompatible
+    },
+  }));
+  expect(loadAgentVersions(scope.home)).toEqual({
+    claude: { version: '2.5.0', sha256: 'a'.repeat(64) },
+    codex: { version: '1.0.0' },
+  });
+});
+
+test('T106-H4: savePins no conserva claves numéricas si el archivo previo no es un objeto', () => {
+  mkdirSync(scope.home, { recursive: true });
+  writeFileSync(join(scope.home, 'agents.json'), '[1, 2, 3]');
+  savePins({ claude: 'a'.repeat(64) }, scope.home);
+  const raw = JSON.parse(readFileSync(join(scope.home, 'agents.json'), 'utf8'));
+  expect(raw).toEqual({ agentBinaries: { claude: 'a'.repeat(64) } });
+  expect(Object.keys(raw)).toEqual(['agentBinaries']);
+});
+
+test('T106-H3: fab agents verify --pin escribe agentVersions en agents.json', async () => {
+  stubBin('claude', '#!/bin/sh\nif [ "$1" = "--version" ]; then echo "claude v2.5.0"; exit 0; fi\nexit 0\n');
+  stubBin('codex', '#!/bin/sh\nexit 1\n'); // no responde a --version
+
+  const log = console.log;
+  console.log = () => {};
+  try {
+    const code = await agentsMain(['--pin']);
+    expect(code).toBe(0);
+  } finally {
+    console.log = log;
+  }
+
+  const versions = loadAgentVersions(scope.home);
+  expect(versions.claude?.version).toBe('claude v2.5.0');
+  expect(versions.claude?.sha256).toBe(loadPins(scope.home).claude);
+  expect(versions.codex).toBeUndefined();
+  expect(loadPins(scope.home).claude).toBe(sha256Of(join(scope.binDir, 'claude')));
+});
+
+test('T106-H8: la versión registrada queda ligada al sha y se descarta si pin cambia o --version no responde (escenario N1)', async () => {
+  // 1. claude inicial con versión 1.0.0
+  stubBin('claude', '#!/bin/sh\nif [ "$1" = "--version" ]; then echo "claude 1.0.0"; exit 0; fi\nexit 0\n');
+  const log = console.log;
+  console.log = () => {};
+  try {
+    await agentsMain(['--pin']);
+  } finally {
+    console.log = log;
+  }
+  const v1 = loadAgentVersions(scope.home).claude;
+  expect(v1?.version).toBe('claude 1.0.0');
+  expect(v1?.sha256).toBe(loadPins(scope.home).claude);
+
+  // 2. Se reemplaza claude por un binario cuyo --version falla (exit 3)
+  stubBin('claude', '#!/bin/sh\nexit 3\n');
+  const newSha = sha256Of(join(scope.binDir, 'claude'));
+  expect(newSha).not.toBe(v1?.sha256);
+
+  console.log = () => {};
+  try {
+    await agentsMain(['--pin']);
+  } finally {
+    console.log = log;
+  }
+
+  // 3. El nuevo pin está registrado, pero la versión vieja DEBE haberse descartado
+  expect(loadPins(scope.home).claude).toBe(newSha);
+  const v2 = loadAgentVersions(scope.home).claude;
+  expect(v2).toBeUndefined(); // Se descartó porque --version no respondió con éxito
+});
+
+test('T106-H11: binaryVersion ejecuta el binario con entorno mínimo sin tokens del operador', () => {
+  const spy = stubBin('claude', `#!/bin/sh
+if [ "$1" = "--version" ]; then
+  echo "v1.0 gh=\${GH_TOKEN:-vacio} ant=\${ANTHROPIC_API_KEY:-vacio}"
+  exit 0
+fi
+exit 0
+`);
+  // Proceso hijo con tokens del operador en su entorno de proceso
+  const proc = Bun.spawnSync([
+    process.execPath, '-e',
+    `import { binaryVersion } from './src/agents-verify.ts'; console.log(binaryVersion("${spy}"));`,
+  ], {
+    env: {
+      PATH: `${scope.binDir}:${scope.path}`,
+      GH_TOKEN: 'ghp_secreto_operador_canario',
+      ANTHROPIC_API_KEY: 'sk-ant-secreto-operador',
+    },
+  });
+  const output = proc.stdout.toString().trim();
+  expect(output).toBe('v1.0 gh=vacio ant=vacio');
+  expect(output).not.toContain('ghp_secreto_operador_canario');
+  expect(output).not.toContain('sk-ant-secreto-operador');
+});
+
+test('T106-H12: binaryVersion neutraliza controles Unicode/bidi y loadAgentVersions ignora claves desconocidas', () => {
+  stubBin('claude', `#!/bin/sh
+if [ "$1" = "--version" ]; then
+  echo "v1.0\u202Erev\u200B"
+  exit 0
+fi
+exit 0
+`);
+  const v = binaryVersion(join(scope.binDir, 'claude'));
+  expect(v).toBe('v1.0rev');
+  expect(v).not.toContain('\u202E');
+  expect(v).not.toContain('\u200B');
+
+  mkdirSync(scope.home, { recursive: true });
+  writeFileSync(join(scope.home, 'agents.json'), JSON.stringify({
+    agentBinaries: { claude: 'a'.repeat(64) },
+    agentVersions: {
+      claude: '2.5.0',
+      clave_desconocida_xyz: 'invalido',
+    },
+  }));
+  const versions = loadAgentVersions(scope.home);
+  expect(versions.clave_desconocida_xyz).toBeUndefined();
+  expect(Object.keys(versions)).toEqual(['claude']);
+});
+
+test('T106-H10: binaryVersion maneja errores, multilínea, caracteres de control, tope 40 y timeout (N17–N21)', () => {
+  // N17: exit code != 0
+  const binFail = stubBin('claude-fail', '#!/bin/sh\nexit 1\n');
+  expect(binaryVersion(binFail)).toBeNull();
+
+  // N18: caracteres de control C0 y DEL
+  const binControl = stubBin('claude-ctrl', '#!/bin/sh\necho "v1.0\x07\x1b[31m\x7fok"\nexit 0\n');
+  const vCtrl = binaryVersion(binControl);
+  expect(vCtrl).toBe('v1.0[31mok');
+  expect(vCtrl).not.toContain('\x07');
+  expect(vCtrl).not.toContain('\x1b');
+  expect(vCtrl).not.toContain('\x7f');
+
+  // N19: tope de 40 caracteres
+  const binLargo = stubBin('claude-long', '#!/bin/sh\necho "' + 'x'.repeat(100) + '"\nexit 0\n');
+  const vLong = binaryVersion(binLargo);
+  expect(vLong).not.toBeNull();
+  expect(vLong!.length).toBe(40);
+
+  // N20: solo primera línea
+  const binMulti = stubBin('claude-multi', '#!/bin/sh\necho "primera linea"\necho "segunda linea"\nexit 0\n');
+  expect(binaryVersion(binMulti)).toBe('primera linea');
+
+  // N21: timeout (bucle infinito que supera 1s sin depender de binarios de PATH)
+  const binSleep = stubBin('claude-sleep', '#!/bin/sh\nwhile true; do :; done\n');
+  expect(binaryVersion(binSleep)).toBeNull();
+});
+
+
+
+

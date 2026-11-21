@@ -47,12 +47,75 @@ export function loadPins(home: string = factoryHome()): Record<string, string> {
   return {};
 }
 
+export type AgentVersionEntry = { version: string; sha256?: string };
+
+/** Versiones persistentes o registradas de agentes (agents.json), si existen. */
+export function loadAgentVersions(home: string = factoryHome()): Record<string, AgentVersionEntry> {
+  try {
+    const raw = JSON.parse(readFileSync(pinsFile(home), 'utf8'));
+    const versions = raw && typeof raw === 'object' && !Array.isArray(raw) ? (raw as { agentVersions?: unknown }).agentVersions : undefined;
+    if (versions && typeof versions === 'object' && !Array.isArray(versions)) {
+      const result: Record<string, AgentVersionEntry> = {};
+      for (const [k, v] of Object.entries(versions)) {
+        if (!PINNED_AGENTS.includes(k)) continue;
+        if (typeof v === 'string') {
+          result[k] = { version: v };
+        } else if (v && typeof v === 'object' && !Array.isArray(v) && typeof (v as { version?: unknown }).version === 'string') {
+          const entry: AgentVersionEntry = { version: (v as { version: string }).version };
+          if (typeof (v as { sha256?: unknown }).sha256 === 'string') entry.sha256 = (v as { sha256: string }).sha256;
+          result[k] = entry;
+        }
+      }
+      return result;
+    }
+  } catch {}
+  return {};
+}
+
+/** Extrae la versión del binario de forma segura: primera línea, sin caracteres de control y hasta 40 chars, con entorno mínimo. */
+export function binaryVersion(path: string): string | null {
+  try {
+    const proc = Bun.spawnSync([path, '--version'], {
+      stdout: 'pipe', stderr: 'pipe', stdin: 'ignore', timeout: 1000,
+      env: {
+        PATH: process.env.PATH ?? '',
+        HOME: process.env.HOME ?? '',
+        TMPDIR: process.env.TMPDIR ?? '/tmp',
+      },
+    });
+    if (proc.exitCode === 0) {
+      const out = (proc.stdout.toString() || proc.stderr.toString()).trim();
+      const firstLine = out.split('\n')[0]?.trim();
+      if (firstLine) {
+        const cleaned = firstLine.replace(/[\x00-\x1f\x7f\p{Cf}]/gu, '').trim();
+        return cleaned ? cleaned.slice(0, 40) : null;
+      }
+    }
+  } catch {}
+  return null;
+}
+
 /** Guarda los pines con escritura atómica, siguiendo la convención de chat.json (0600 + rename). */
-export function savePins(pins: Record<string, string>, home: string = factoryHome()): void {
+export function savePins(pins: Record<string, string>, home: string = factoryHome(), versions?: Record<string, AgentVersionEntry | string>): void {
   mkdirSync(home, { recursive: true, mode: 0o700 });
   const file = pinsFile(home);
+  let existing: Record<string, unknown> = {};
+  try {
+    const raw = JSON.parse(readFileSync(file, 'utf8'));
+    if (raw && typeof raw === 'object' && !Array.isArray(raw)) existing = raw;
+  } catch {}
+  const payload: Record<string, unknown> = { ...existing, agentBinaries: pins };
+  if (versions) {
+    const cleanVersions: Record<string, unknown> = {};
+    for (const [k, v] of Object.entries(versions)) {
+      if (PINNED_AGENTS.includes(k) && pins[k]) {
+        cleanVersions[k] = v;
+      }
+    }
+    payload.agentVersions = cleanVersions;
+  }
   const temp = join(home, `agents.json.${randomUUID()}.tmp`);
-  writeFileSync(temp, JSON.stringify({ agentBinaries: pins }, null, 2) + '\n', { mode: 0o600 });
+  writeFileSync(temp, JSON.stringify(payload, null, 2) + '\n', { mode: 0o600 });
   renameSync(temp, file);
 }
 
@@ -96,21 +159,34 @@ function rowDetail(s: AgentBinStatus): string {
   return s.verdict === 'ok' ? `sha ${short(s.digest)} coincide con el pin` : `pin ${short(s.pin)}, actual ${short(s.digest)}`;
 }
 
-/** `fab agents verify [--pin]`: lista el estado de cada binario; --pin guarda los pines actuales. */
+/** `fab agents verify [--pin]`: lista el estado de cada binario; --pin guarda los pines actuales y mide su versión con --version en un entorno mínimo (sin secretos del operador). */
 export async function agentsMain(argv: string[]): Promise<number> {
   const pin = argv.includes('--pin') || argv.includes('-p');
   const home = factoryHome();
   if (pin) {
     const pins = loadPins(home);
+    const versions = loadAgentVersions(home);
     let written = 0;
     for (const agent of PINNED_AGENTS) {
       const path = resolveBinary(agent);
-      if (!path) { console.log(`${agent.padEnd(8)} no instalado, sin pin`); continue; }
-      pins[agent] = sha256Of(path);
+      if (!path) {
+        delete pins[agent];
+        delete versions[agent];
+        console.log(`${agent.padEnd(8)} no instalado, sin pin`);
+        continue;
+      }
+      const digest = sha256Of(path);
+      pins[agent] = digest;
+      const v = binaryVersion(path);
+      if (v) {
+        versions[agent] = { version: v, sha256: digest };
+      } else {
+        delete versions[agent];
+      }
       written += 1;
-      console.log(`${agent.padEnd(8)} pin ${pins[agent]}`);
+      console.log(`${agent.padEnd(8)} pin ${pins[agent]}${v ? ` (versión: ${v})` : ''}`);
     }
-    savePins(pins, home);
+    savePins(pins, home, versions);
     console.log(`pines escritos: ${written} (archivo ${pinsFile(home)})`);
     return 0;
   }
