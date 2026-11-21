@@ -6,7 +6,7 @@ import { Store, StoreError, type ProfileRunnerConsent, type Workstream } from '.
 import { AGENT_NAMES } from './agents.ts';
 import { agentBinStatus, PINNED_AGENTS, type AgentBinVerdict } from './agents-verify.ts';
 import { verifierArgv } from './agent/mission-evidence.ts';
-import { listProfiles, resolveProfile } from './profile.ts';
+import { listProfiles, profileRunnerNames, resolveProfile } from './profile.ts';
 import { redact } from './manifest.ts';
 import { profileRunnerConfirmation } from './web-profile.ts';
 import { workstreamRunner } from './web-runners.ts';
@@ -103,9 +103,14 @@ export function workstreamsBody(store: Store, ui: { badge(s: string): string }, 
   const list = store.listWorkstreams();
   const runners = store.listRunnerSummaries();
   const items = list.map(w => {
+    let roleRunners = false;
+    if (w.profile) {
+      try { roleRunners = profileRunnerNames(resolveProfile(store.stateDir, w.profile).profile).length > 0; }
+      catch { /* El detalle de Perfiles diagnostica perfiles ilegibles. */ }
+    }
     const running = csrf ? store.changeIndex(w.slug).filter(c => c.status === 'in_progress').length : 0;
     const finish = csrf && w.state === 'draft' ? `<h3>Antes de activar</h3>${checklist({ agent: w.agent, verify: w.verify?.length ? 'definido' : '' })}` : '';
-    return `<li><h2><a href="/changes?ws=${enc(w.slug)}">${esc(w.slug)}</a> ${ui.badge(w.state)}</h2><p>${esc(w.goal)}</p><p class="muted">Agente: ${esc(w.agent)} · ${esc(w.repo)} · Workers: ${w.workerConcurrency} · Tope: ${w.taskLimit}</p>${workstreamRunner(w, runners, csrf)}${finish}${csrf ? cardForms(w, csrf, running) : ''}</li>`;
+    return `<li><h2><a href="/changes?ws=${enc(w.slug)}">${esc(w.slug)}</a> ${ui.badge(w.state)}</h2><p>${esc(w.goal)}</p><p class="muted">Agente: ${esc(w.agent)} · ${esc(w.repo)} · Workers: ${w.workerConcurrency} · Tope: ${w.taskLimit}</p>${workstreamRunner(w, runners, csrf, roleRunners)}${finish}${csrf ? cardForms(w, csrf, running) : ''}</li>`;
   });
   return `<p class="intro">Frentes de trabajo y su objetivo.</p>${csrf ? '<p><a href="/workstreams/nuevo">Nuevo workstream</a></p>' : ''}<ul class="workstreams">${items.join('')}</ul>${!list.length ? '<p class="empty">No hay workstreams. Crea uno desde fab ws create.</p>' : ''}`;
 }

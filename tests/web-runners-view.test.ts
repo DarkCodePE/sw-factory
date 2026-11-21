@@ -2,6 +2,7 @@ import { afterEach, beforeEach, expect, test } from 'bun:test';
 import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
+import { DEFAULT_DIGEST, defaultProfile, saveProfile } from '../src/profile.ts';
 import { Store } from '../src/store.ts';
 import { runnersPage } from '../src/web-runners.ts';
 import { workstreamsBody } from '../src/web-ws.ts';
@@ -83,4 +84,18 @@ test('T101-H7: cada tipo de alta tiene solo sus campos y conserva la validación
   expect(ssh).not.toContain('name="confine"');
   expect(ssh).toMatch(/name="target"[^>]* required/);
   expect(ssh).toContain('name="maxBundleMb"');
+});
+
+test('T102-H8: la tarjeta distingue el runner heredado y enlaza a los runners del perfil asignado', () => {
+  const w = store.createWorkstream({ slug: 'prueba', goal: 'g', repo: '/repo' });
+  store.createRunner({ name: 'casa', kind: 'local' });
+  store.createRunner({ name: 'torre', kind: 'ssh', target: 'alias' });
+  store.setWorkstreamRunner(w.id, 'casa');
+  const ui = { badge: (state: string) => state };
+  expect(workstreamsBody(store, ui)).not.toContain('Ver runners por rol');
+  const digest = saveProfile(dir, { ...defaultProfile(), schemaVersion: 2, roles: { qa: { runner: 'torre' } } }).digest;
+  store.assignProfile(w.id, digest, DEFAULT_DIGEST);
+  const html = workstreamsBody(store, ui);
+  expect(html).toContain('Runner heredado: casa (Activado)');
+  expect(html).toContain('<a href="/perfiles?ws=prueba">Ver runners por rol</a>');
 });

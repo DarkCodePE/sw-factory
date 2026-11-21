@@ -84,11 +84,13 @@ export function runnersPage(store: Store, csrf: string, edit?: string | null): {
     ${runnerCreateForm('ssh', csrf)}` };
 }
 
-export function workstreamRunner(w: Workstream, runners: Runners, csrf?: string): string {
+export function workstreamRunner(w: Workstream, runners: Runners, csrf?: string, roleRunners = false): string {
   const current = runners.find(r => r.name === w.runner);
   const label = current ? `${escape(current.name)} (${stateLabel(current.enabled)})`
     : w.runner === null ? 'Predeterminado' : `${escape(w.runner)} (Fuera del inventario)`;
-  const summary = `<p class="muted">Runner: ${label}</p>`;
+  const summary = roleRunners
+    ? `<p class="muted">Runner heredado: ${label} · <a href="/perfiles?ws=${encodeURIComponent(w.slug)}">Ver runners por rol</a></p>`
+    : `<p class="muted">Runner: ${label}</p>`;
   const available = runners.filter(r => r.enabled && isRunnerName(r.name));
   if (!csrf || w.state === 'archived' || (!available.length && w.runner === null)) return summary;
   const options = available.map(r =>
