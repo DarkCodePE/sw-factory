@@ -513,7 +513,7 @@ export async function processActivity(
     // corrió sin aislamiento previo (p. ej. con agy). La mitigación de fondo de H1 es envolver
     // los CLIs en sandboxes de egress, fuera de este plan.
     const monitor = new ThreatMonitor(defaultRules(), 'HIGH');
-    monitor.observe('stdout', run.stdout ?? '');
+    monitor.observe('stdout', run.stdoutForMonitor ?? run.stdout ?? '');
     monitor.observe('stderr', run.stderr ?? '');
     const worktreeDiff = await getWorktreeDiff(path, baseSha);
     monitor.observe('patch', worktreeDiff);

@@ -105,6 +105,31 @@ describe('live claude run', () => {
       rmSync(join(dir, '..'), { recursive: true, force: true });
     }
   });
+  test('T99: captura stream-json y conserva el resultado final y su coste', async () => {
+    const f = fakeClaude(`cat <<'EOF'
+{"type":"system","subtype":"init"}
+{"type":"assistant","message":{"content":[{"type":"text","text":"paso"}]}}
+{"type":"result","result":"STATUS: done\\nTrabajo hecho","total_cost_usd":0.042,"usage":{"input_tokens":3,"output_tokens":2}}
+EOF`);
+    const dir = mcpDir();
+    try {
+      Bun.spawnSync(['git', 'init', '-q', f.dir]);
+      const r = await claudeLive.run({ prompt: 'x', cwd: f.dir, attemptId: 'a', mcpConfigDir: dir });
+      const argv = readFileSync(join(f.dir, 'argv'), 'utf8').trimEnd().split('\n');
+      expect(argv.filter(arg => arg === '--output-format')).toHaveLength(1);
+      expect(argv[argv.indexOf('--output-format') + 1]).toBe('stream-json');
+      expect(argv).toContain('--verbose');
+      expect(r.stdout).toContain('"type":"assistant"');
+      expect(r.stdoutForMonitor).toBe(r.stdout?.trimEnd().split('\n').at(-1));
+      expect(r.output).toBe('STATUS: done\nTrabajo hecho');
+      expect(r.status.kind).toBe('done');
+      expect(r.usage).toEqual({ costUsd: 0.042, inputTokens: 3, outputTokens: 2 });
+    } finally {
+      f.restore();
+      rmSync(f.dir, { recursive: true, force: true });
+      rmSync(join(dir, '..'), { recursive: true, force: true });
+    }
+  });
   test('unknown session id raises SessionNotFoundError', async () => {
     const f = fakeClaude(`echo "No conversation found with session ID: $2" >&2; exit 1`);
     Bun.spawnSync(['git', 'init', '-q', f.dir]); // hostDir resuelve el git dir

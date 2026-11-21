@@ -4,7 +4,8 @@ import { isAbsolute, join, relative, resolve, sep } from 'node:path';
 import type { Activity, Store } from './store.ts';
 
 export const EVIDENCE_LIMIT = 256 * 1024;
-export interface EvidenceText { text: string; truncated: boolean }
+export type ClaudeFrame = Record<string, unknown>;
+export interface EvidenceText { text: string; truncated: boolean; claudeFrames?: ClaudeFrame[] }
 const inside = (root: string, path: string) => { const rel = relative(root, path); return rel !== '..' && !rel.startsWith(`..${sep}`) && !isAbsolute(rel); };
 
 /** Las rutas son relativas a stateDir. Se rechazan todos los symlinks, incluidos los internos. */
@@ -35,6 +36,9 @@ export function readEvidence(stateDir: string, path: string): EvidenceText | nul
     }
     const truncated = count > EVIDENCE_LIMIT;
     let text = buffer.subarray(0, Math.min(count, EVIDENCE_LIMIT)).toString('utf8');
+    if (path.endsWith('.log') && /^\s*\{\s*"type"\s*:\s*"(?:system|assistant|user|stream_event|rate_limit_event)"/.test(text)) {
+      return readClaudeEvidence(text, truncated);
+    }
     // No presentar un token cortado: podría no encajar ya en su patrón de redacción.
     if (truncated) {
       const floor = Math.max(0, text.length - 4096);
@@ -71,6 +75,39 @@ export function evidencePath(changeId: string, file: string): string {
 // Palabras que delatan un valor secreto en una clave; `pass` y las cabeceras van aparte y exactas, para no atrapar «bypass» o «Cookie banner».
 const SECRET_WORDS = 'api[_-]?key|token(?!izer)|secret|password|passwd|credential|private[_-]?key';
 const SECRET_KEY = new RegExp(`${SECRET_WORDS}|^(?:pass|pwd|authorization|proxy-authorization|cookie|set-cookie)$|[_-]pwd$`, 'i');
+
+// Redacta objetos y claves sensibles después de decodificar escapes JSON. Acota el anidamiento del log no confiable.
+function redactLogValue(value: unknown, depth = 0): unknown {
+  if (depth >= 64) return '[REDACTED]';
+  if (typeof value === 'string') return redactForWeb(value);
+  if (Array.isArray(value)) return value.map(item => redactLogValue(item, depth + 1));
+  if (!value || typeof value !== 'object') return value;
+  return Object.fromEntries(Object.entries(value).map(([key, item]) => [
+    redactForWeb(key),
+    typeof item === 'number' && /^(?:input|output|cache_creation_input|cache_read_input)_tokens$/.test(key) ? item
+      : SECRET_KEY.test(key) ? '[REDACTED]' : redactLogValue(item, depth + 1),
+  ]));
+}
+
+function readClaudeEvidence(text: string, truncated: boolean): EvidenceText {
+  const unavailable = { text: 'No medido', truncated, claudeFrames: [] };
+  if (truncated) return unavailable;
+  const marker = '\n[stderr]\n';
+  const at = text.indexOf(marker);
+  const stdout = at < 0 ? text : text.slice(0, at);
+  const frames: ClaudeFrame[] = [];
+  try {
+    for (const line of stdout.split('\n')) {
+      if (!line.trim()) continue;
+      const value = JSON.parse(line) as ClaudeFrame | null;
+      if (!value || typeof value.type !== 'string') return unavailable;
+      frames.push(redactLogValue(value) as ClaudeFrame);
+    }
+  } catch { return unavailable; }
+  const stderr = at < 0 ? '' : redactForWeb(text.slice(at + marker.length));
+  return { text: frames.map(frame => JSON.stringify(frame)).join('\n') + (at < 0 ? '' : marker + stderr), truncated, claudeFrames: frames };
+}
+
 // Valor: entre comillas con escapes, comilla sin cierre (corte de evidencia o valor enorme: hasta fin de línea), o hasta el siguiente separador.
 const VALUE = String.raw`("(?:[^"\\\n]|\\.){0,4096}"|'(?:[^'\\\n]|\\.){0,4096}'|["'][^\r\n]*|[^\s"',}]+)`;
 const quoted = (v: string) => /^["']/.test(v) ? `${v[0]}[REDACTED]${v[0]}` : '[REDACTED]';

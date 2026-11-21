@@ -27,6 +27,8 @@ export interface AgentRun {
   status: AgentRunStatus;
   usage?: AgentUsage;
   stdout?: string;
+  /** Salida comparable al formato anterior cuando stdout incluye el transcript de un turno vivo. */
+  stdoutForMonitor?: string;
   stderr?: string;
 }
 

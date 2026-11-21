@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, expect, test } from 'bun:test';
-import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { AdmissionDb } from '../src/admission/db.ts';
@@ -38,6 +38,26 @@ test('rama viva: la sesión se escribe antes de lanzar, el report manda y la act
   expect(s).toMatchObject({ launched: true, generation: 1, backend: 'fake', sessionId: backend.turns[0]!.newSessionId });
   expect(backend.turns[0]!.prompt).toContain('mcp__fab__report'); // el agente sabe que existe la tool
   expect(adm.db.query('SELECT applied_at FROM adm_reports').all()).toEqual([{ applied_at: expect.any(String) }]);
+});
+
+test.each([
+  ['sin referencia', 'completado', 'completed'],
+  ['con referencia', 'Referencia en resultado final: ~/.netrc', 'quarantined'],
+])('T99: el monitor usa el resultado final %s y el log conserva el stream', async (_case, result, status) => {
+  const { ws, c } = setup();
+  const backend = fakeLive([{ reports: [{ state: 'done', summary: 'ok' }] }]);
+  const invoke = backend.run;
+  const assistant = JSON.stringify({ type: 'assistant', message: { content: [{ type: 'text', text: 'Documentación que menciona ~/.netrc' }] } });
+  backend.run = async turn => {
+    const run = await invoke(turn);
+    const stdoutForMonitor = JSON.stringify({ type: 'result', result });
+    return { ...run, stdout: `${assistant}\n${stdoutForMonitor}\n`, stdoutForMonitor };
+  };
+  await pool(ws.id, { fake: backend });
+  const [inv] = store.listActivities({ changeId: c.id });
+  expect(inv).toMatchObject({ status });
+  const row = store.db.query<{ log: string }, [string]>('SELECT log FROM adm_turns WHERE activity_id = ?').get(inv!.id)!;
+  expect(readFileSync(join(dir, 'runs', c.id, row.log), 'utf8')).toContain(assistant);
 });
 
 test('T40: el turno vivo recibe claudeProjects = <stateDir>/live/<id-corto>/claude-projects', async () => {
