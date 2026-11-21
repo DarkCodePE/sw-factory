@@ -5,7 +5,7 @@ Un **runner remoto** es otra máquina tuya donde corre el proceso del agente de 
 !!! warning "Qué sale de casa"
     - **Sale el código** del workstream (todo su historial la primera vez; después, solo lo nuevo). `fab runner add --ssh` y `fab ws runner` te lo recuerdan, y la asignación deja un evento.
     - **No sale ninguna credencial**: ni del proveedor del modelo, ni de git, ni de GitHub, ni variables declaradas (D-K). El mensaje que viaja no tiene campo para ellas.
-    - Un turno remoto corre **de un disparo**. Si el perfil define runners por rol, `fab run --live` bloquea los turnos que resuelven a SSH. Con solo un runner remoto para todo el workstream, el pool rechaza `--live` al arrancar. Un turno remoto con `env` o `mcp` declarados se bloquea (`ENV_NOT_REMOTE`, `MCP_NOT_REMOTE`).
+    - Un turno remoto corre **de un disparo**. El pool rechaza `fab run --live` al arrancar si algún rol efectivo usa SSH. Si la asignación cambia después del arranque, la activity que resuelva a SSH se bloquea antes de lanzar. Un turno remoto con `env` o `mcp` declarados se bloquea (`ENV_NOT_REMOTE`, `MCP_NOT_REMOTE`).
 
 ## Qué necesita cada máquina
 

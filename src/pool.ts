@@ -23,7 +23,7 @@ import { backendOf, liveBackendFor, runLiveActivity } from './live/turn.ts';
 import type { LiveOutcome } from './admission/reports.ts';
 import type { LiveBackend } from './live/contract.ts';
 import { buildWorkerPrompt, notesBlock } from './prompts.ts';
-import { fabSha, profileRunnerNames, resolveProfile, resolveRole, roleOf, roleRunner, type RoleConfig } from './profile.ts';
+import { fabSha, profileRunnerNames, resolveProfile, resolveRole, roleOf, roleRunner, ROLES, type Profile, type RoleConfig } from './profile.ts';
 import { HEARTBEAT_INTERVAL_MS, isBusyError, LEASE_TTL_MS, StoreError, type Activity, type Runner, type Store, type Workstream } from './store.ts';
 import { buildValidatorPrompt } from './validators/prompts.ts';
 import { protectedIntegrity, purgeRegenerableCaches } from './validators/integrity.ts';
@@ -658,14 +658,21 @@ export async function runPool(store: Store, opts: PoolOptions): Promise<void> {
   // Conserva la comprobación inicial y reutilízala al comprobar cada adaptador por rol.
   const startupAdapter = opts.agentOverride ?? ws.agent;
   const fallback = ws.runner ? store.findRunner(ws.runner) : null;
-  let perRole = false;
-  try { perRole = profileRunnerNames(resolveProfile(opts.stateDir, ws.profile).profile).length > 0; }
-  catch { perRole = true; } // el reclamo registra el error del perfil en la activity
-  const remote = fallback?.kind === 'ssh';
-  // Un runner remoto corre de un disparo: la sesión del harness y el servidor de `report` no pueden cruzar la red (T74 §1).
-  if (opts.live && remote && !perRole) throw new StoreError('invalid_input', `LIVE_NOT_REMOTE: el workstream usa el runner remoto ${ws.runner}; --live no es compatible`);
-  // El binario de un runner remoto lo comprueba el runner, no esta máquina.
-  const agentCheck = perRole || remote || (ws.runner !== null && !fallback?.enabled) ? undefined : verifyAgentStart(startupAdapter);
+  let profile: Profile | undefined;
+  try { profile = resolveProfile(opts.stateDir, ws.profile).profile; }
+  catch { /* el reclamo registra el error del perfil en la activity */ }
+  // Un runner remoto corre de un disparo. Rechazar antes de tocar la cola aunque solo lo use un rol.
+  if (opts.live) {
+    const runners = profile ? new Set(ROLES.map(role => roleRunner(profile, role) ?? ws.runner)) : [ws.runner];
+    for (const name of runners) {
+      if (name === null) continue;
+      const runner = name === ws.runner ? fallback : store.findRunner(name);
+      if (runner?.kind === 'ssh') throw new StoreError('invalid_input', `LIVE_NOT_REMOTE: el workstream usa el runner remoto ${runner.name}; --live no es compatible`);
+    }
+  }
+  // Un perfil ilegible o una selección por rol se comprueban al reclamar, cuando se conoce el adaptador efectivo.
+  const agentCheck = !profile || profileRunnerNames(profile).length || fallback?.kind === 'ssh'
+    || (ws.runner !== null && !fallback?.enabled) ? undefined : verifyAgentStart(startupAdapter);
   const agentChecks = new Map<string, AgentStartCheck>(agentCheck ? [[startupAdapter, agentCheck]] : []);
   if (agentCheck?.violation && !opts.acceptAgentBinaries) throw new Error(agentCheck.violation);
   if (agentCheck?.warning) log(agentCheck.warning);

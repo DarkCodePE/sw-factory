@@ -5,7 +5,7 @@ import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync
 import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
 import { processActivity, runPool, type PoolOptions } from '../src/pool.ts';
-import { defaultProfile, saveProfile, validateProfile, type Profile } from '../src/profile.ts';
+import { defaultProfile, ROLES, saveProfile, validateProfile, type Profile } from '../src/profile.ts';
 import type { Transport } from '../src/runners/client.ts';
 import { Store } from '../src/store.ts';
 import { runDirectory } from '../src/manifest.ts';
@@ -308,10 +308,15 @@ for (const state of ['disabled', 'missing', 'live'] as const) {
     if (state === 'disabled') store.setRunnerEnabled('torre', false);
     if (state === 'missing') store.db.query("DELETE FROM runners WHERE name = 'torre'").run();
     let sessions = 0;
-    await runPool(store, opts(ws.id, { live: state === 'live', runnerTransport: r => {
+    const options = opts(ws.id, { live: state === 'live', runnerTransport: r => {
       sessions++;
       return fake('auto')(r);
-    } }));
+    } });
+    if (state === 'live') {
+      // El pool que ya arrancó mantiene la barrera por activity si después cambia la configuración.
+      await processActivity(store, store.claimActivity(ws.id, 'worker')!, 'worker', options);
+      await processActivity(store, store.claimActivity(ws.id, 'worker')!, 'worker', options);
+    } else await runPool(store, options);
     expect(sessions).toBe(0);
     const [first, second] = store.listActivities({ changeId: change.id });
     expect(first).toMatchObject({ kind: 'investigation', status: 'completed', runner: 'casa' });
@@ -319,3 +324,34 @@ for (const state of ['disabled', 'missing', 'live'] as const) {
       error: expect.stringContaining(({ disabled: 'RUNNER_DISABLED', missing: 'RUNNER_NOT_FOUND', live: 'LIVE_NOT_REMOTE' })[state]) });
   });
 }
+
+test('T102-H2: --live rechaza en el arranque si un rol efectivo usa SSH', async () => {
+  store.createRunner({ name: 'casa', kind: 'local' });
+  const base = { ...defaultProfile(), schemaVersion: 2 as const };
+  const inherited = saveProfile(dir, { ...base, roles: { investigate: { runner: 'casa' } } }).digest;
+  const explicit = saveProfile(dir, { ...base, roles: { qa: { runner: 'torre' } } }).digest;
+  for (const [slug, fallback, profile] of [['hereda', 'torre', inherited], ['explicito', 'casa', explicit]] as const) {
+    const ws = workstream({ slug, profile });
+    store.setWorkstreamRunner(ws.id, fallback);
+    const change = store.createChange(ws.id, 'x', 'd');
+    const before = store.listActivities({ changeId: change.id });
+    await expect(runPool(store, opts(ws.id, { live: true, runnerTransport: noSession() }))).rejects.toThrow('LIVE_NOT_REMOTE');
+    expect(store.listActivities({ changeId: change.id })).toEqual(before);
+    expect(store.getChange(change.id).status).toBe(change.status);
+  }
+});
+
+test('T102-H2/P7: --live permite SSH del workstream si todos los roles efectivos son locales', async () => {
+  store.createRunner({ name: 'casa', kind: 'local' });
+  const profile = saveProfile(dir, {
+    ...defaultProfile(), schemaVersion: 2,
+    roles: Object.fromEntries(ROLES.map(role => [role, { runner: 'casa' }])),
+  }).digest;
+  const ws = workstream({ profile });
+  store.setWorkstreamRunner(ws.id, 'torre');
+  const change = store.createChange(ws.id, 'x', 'd');
+  await runPool(store, opts(ws.id, { live: true, runnerTransport: noSession() }));
+  expect(store.listActivities({ changeId: change.id }).map(a => [a.status, a.runner])).toEqual([
+    ['completed', 'casa'], ['completed', 'casa'],
+  ]);
+});
