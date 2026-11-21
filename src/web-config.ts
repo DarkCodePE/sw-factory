@@ -242,7 +242,7 @@ function mcpRegistrySection(store: Store, stateDir: string, escape: Escape, work
     const usageMap = buildMcpUsageMap(workstreams, stateDir);
     const rows = entries.map(([name, s]) => {
       const req = s.required.length
-        ? s.required.map(n => `${escape(n)} (${process.env[n] !== undefined ? 'definida' : 'no definida'})`).join(', ')
+        ? s.required.map(n => `${escape(n)} (${process.env[n] !== undefined ? 'definida en fab web' : 'no definida en fab web'})`).join(', ')
         : '—';
       const usages = usageMap.get(name) ?? [];
       const usageText = usages.length ? usages.map(u => escape(u)).join(', ') : '—';

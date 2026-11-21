@@ -105,6 +105,8 @@ test('la página muestra nombres y roles pero nunca un valor del entorno', async
   store.assignProfile(wsId, digest, store.getWorkstream('prueba').profile ?? (await import('../src/profile.ts')).DEFAULT_DIGEST);
   const page = await (await get('/config')).text();
   expect(page).toContain('Secretos y MCP del workstream');
+  expect(page).toContain('entorno del proceso fab web'); // IE1-H5: la frase coincide con lo que mide la tabla del registro
+  expect(page).not.toContain('definida en el entorno del pool');
   expect(page).toContain('<code>TRACKER_TOKEN</code>');
   expect(page).toContain('FUERA_TOPE</code> <em>(fuera del tope');
   expect(page).not.toContain(SECRET);

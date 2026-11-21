@@ -365,13 +365,13 @@ test('T104: lista servidores del registro MCP con tipo, variables requeridas y d
   const html = await page('/config');
   const rowTracker = html.match(/<tr><td><code>tracker<\/code><\/td>.*?<\/tr>/s)?.[0] ?? '';
   expect(rowTracker).toContain('<td>url</td>');
-  expect(rowTracker).toContain('<td>TRK_TOKEN (definida)</td>');
+  expect(rowTracker).toContain('<td>TRK_TOKEN (definida en fab web)</td>');
   expect(rowTracker).toContain('<td>permitido: ws&lt;b&gt;xss&lt;/b&gt;</td>');
   expect(rowTracker).not.toContain('<b>xss</b>');
 
   const rowLocalTool = html.match(/<tr><td><code>local-tool<\/code><\/td>.*?<\/tr>/s)?.[0] ?? '';
   expect(rowLocalTool).toContain('<td>command</td>');
-  expect(rowLocalTool).toContain('<td>TOOL_KEY (no definida)</td>');
+  expect(rowLocalTool).toContain('<td>TOOL_KEY (no definida en fab web)</td>');
   expect(rowLocalTool).toContain('<td>ws-uno (investigate)</td>');
 
   expect(html).not.toContain('canario-secreto-trk-valor');

@@ -70,7 +70,7 @@ export function accessSection(stateDir: string, ws: Workstream, escape: Escape, 
     ${current === null ? '<label><input type="checkbox" name="confirm" value="yes"> Confirmo: una lista vacía no permite nada a los workers</label>' : ''}
     <button>Guardar ${label}</button></fieldset></form>`;
   return `<section><h2>Secretos y MCP del workstream</h2>
-    <p class="muted">Solo nombres: la fábrica nunca guarda ni muestra valores. Si una variable está definida en el entorno del pool, es No medido desde la web.</p>
+    <p class="muted">Solo nombres: la fábrica nunca guarda ni muestra valores. La tabla del registro MCP indica si la variable está definida en el entorno del proceso fab web; el del pool es No medido desde la web.</p>
     <dl class="config-facts"><div><dt>Variables permitidas</dt><dd>${list(ws.envAllow, escape)}</dd></div><div><dt>Servidores MCP permitidos</dt><dd>${list(ws.mcpAllow, escape)}</dd></div></dl>
     ${registry}${roleRows(stateDir, ws, escape)}${form('env', 'variables', ws.envAllow)}${form('mcp', 'servidores MCP', ws.mcpAllow)}</section>`;
 }
