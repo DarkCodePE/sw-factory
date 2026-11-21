@@ -193,3 +193,42 @@ test('T99-H6: el JSON de herramienta anidado no amplifica la página por sangrí
   expect(transcript).toContain(input);
   expect(Buffer.byteLength(transcript)).toBeLessThan(Buffer.byteLength(log) * 2);
 });
+
+test('T99-H8: el título de herramienta se escapa antes de entrar en summary', async () => {
+  const name = '<img src=x data-caso=titulo>';
+  const frame = { type: 'assistant', message: { content: [{ type: 'tool_use', name, input: {} }] } };
+  writeFileSync(join(run, `${activity}.log`), JSON.stringify(frame));
+  const html = onlyTranscript(await (await activityPage('?herramientas=1')).text());
+  expect(html).toContain('<summary>Llamada a herramienta · &lt;img src=x data-caso=titulo&gt;</summary>');
+  expect(html).not.toContain(name);
+});
+
+test('T99-H8: el log plano redacta stderr y nombres de claves decodificadas', async () => {
+  const stderrSecret = 'ghp_' + 'z'.repeat(36);
+  const frame = { type: 'assistant', message: { content: [{ type: 'tool_use', name: 'X', input: { [token]: 'valor visible' } }] } };
+  const log = JSON.stringify(frame).replace(token, '\\u0067' + token.slice(1)) + '\n[stderr]\nAviso: ' + stderrSecret + '\n';
+  writeFileSync(join(run, `${activity}.t-turno.log`), log);
+  const raw = await (await get(`/changes/${change}/turns/turno/log`)).text();
+  expect(raw).toContain('"[REDACTED]":"valor visible"');
+  expect(raw).toContain('Aviso: [REDACTED]');
+  expect(raw).not.toContain(stderrSecret);
+  expect(raw).not.toContain(token);
+});
+
+test('T99-H8: ws se escapa en el atributo del filtro por turno', async () => {
+  writeFileSync(join(run, `${activity}.t-turno.log`), stream);
+  const hostile = '"><img src=x data-caso=ws>';
+  const html = await (await get(turnPage() + '?ws=' + encodeURIComponent(hostile))).text();
+  expect(html).toContain('name="ws" value="&quot;&gt;&lt;img src=x data-caso=ws&gt;"');
+  expect(html).not.toContain('<img src=x data-caso=ws>');
+});
+
+test('T99-H8: el valor a profundidad excesiva queda redactado', async () => {
+  const depth = 100;
+  const input = '['.repeat(depth) + '"contenido profundo"' + ']'.repeat(depth);
+  const frame = '{"type":"assistant","message":{"content":[{"type":"tool_use","name":"X","input":' + input + '}]}}';
+  writeFileSync(join(run, `${activity}.t-turno.log`), frame);
+  const raw = await (await get(`/changes/${change}/turns/turno/log`)).text();
+  expect(raw).toContain('[REDACTED]');
+  expect(raw).not.toContain('contenido profundo');
+});
