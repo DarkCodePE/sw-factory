@@ -32,6 +32,8 @@ import { API_KEYS_PATH, ApiKeyUsage, apiKeysPage } from './web-api-keys.ts';
 import { handleApi, isApiPath } from './web-api.ts';
 import { FLOW_STYLE, flowPage } from './web-flow.ts';
 import { webhooksPage } from './web-webhooks.ts';
+import { jiraImportAction } from './web-entrada.ts';
+import type { TicketGateway } from './connectors/types.ts';
 import { definitionPage } from './web-definition.ts';
 
 const escape = (value: unknown): string => redact(String(value ?? '')).replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[c]!);
@@ -150,10 +152,11 @@ const KNOWN_BACK = /^\/(?:activities\/[\w-]+|changes(?:\/[\w-]+)?|workstreams|au
 
 const loopback = (port: number) => [`127.0.0.1:${port}`, `localhost:${port}`];
 
-export function startWeb(stateDir: string, port = 4310, options: { write?: boolean; clock?: () => Date; runnerCheck?: RunnerCheckOptions } = {}) {
+export function startWeb(stateDir: string, port = 4310, options: { write?: boolean; clock?: () => Date; runnerCheck?: RunnerCheckOptions; jira?: TicketGateway } = {}) {
   const auth = options.write ? new WebAuth() : undefined;
   const keyUsage = new ApiKeyUsage(options.clock);
   const runnerCheck = runnerCheckAction(stateDir, options.runnerCheck);
+  const jiraImport = jiraImportAction(stateDir, options.jira);
   const openStore = () => new Store(join(stateDir, 'fabrica.db'), { readonly: true });
   const initial = openStore();
   try { initial.listWorkstreams(); } finally { initial.close(); }
@@ -192,7 +195,7 @@ export function startWeb(stateDir: string, port = 4310, options: { write?: boole
       };
       if (req.method === 'POST' && auth && !readOnlyRoute) {
         let response: Response;
-        try { response = await webAction(req, stateDir, server.port!, auth, keyUsage, runnerCheck, () => server.timeout(req, 35)); }
+        try { response = await webAction(req, stateDir, server.port!, auth, keyUsage, runnerCheck, () => server.timeout(req, 35), jiraImport); }
         catch { return respond('No se pudo registrar la acción.', 500, 'text/plain; charset=utf-8'); }
         for (const [key, value] of Object.entries(HEADERS)) if (!response.headers.has(key)) response.headers.set(key, value);
         // El editor de automations ya devuelve su propia página HTML de error (T86): no se envuelve de nuevo.

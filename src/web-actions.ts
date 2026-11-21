@@ -23,6 +23,9 @@ import type { WebAuth } from './web-auth.ts';
 import { PROFILE_BODY_LIMIT, ProfileInputError, checkProfileFields, profileAction } from './web-profile.ts';
 import { enqueueBackfill, enqueueManual, ensureSchema, previewBackfill } from './scorers.ts';
 import { archiveWorkstream, createWorkstream, workstreamSettings, workstreamState, wsFields } from './web-ws.ts';
+import { accessInput, setAccess } from './web-access.ts';
+import { JIRA_IMPORT_PATH, JIRA_MESSAGES, residentChanges, residentInput, type jiraImportAction } from './web-entrada.ts';
+import { saveResidentConfig } from './admission/config.ts';
 import { result as inertPage, RUNNER_CHECK_PATH, type runnerCheckAction } from './web-runner-check.ts';
 
 import { scheduleExpr } from './cron.ts';
@@ -40,6 +43,7 @@ const messages: Record<string, string> = {
   not_found: 'not_found: no se encontró el registro.', invalid_input: 'invalid_input: revisa los datos de la acción.',
   workstream_busy: 'El workstream tiene trabajo vivo. Reintenta cuando termine el turno o se resuelva la espera o reanudación.',
   error: 'No se pudo registrar la acción. Revisa el estado antes de volver a intentarlo.',
+  ...JIRA_MESSAGES,
 };
 const runnerErrors: Record<string, string> = {
   conflict: 'La selección cambió (runner pausado, cambiado o workstream archivado): recarga Workstreams y vuelve a elegir.',
@@ -100,6 +104,7 @@ type Outcome = { destination: string; result: string; repo?: string };
 type Action = { path: RegExp; automationForm?: 'create' | 'update' | 'delete'; /** false: solo la web con sesión; la API con clave no la expone (decisión del dueño sobre H1). */ api?: false; httpErrors?: true; input: (raw: Raw) => Raw; run: (store: Store, id: string, input: Raw, out: Outcome, actor: string, stateDir: string, attachment?: NoteAttachment) => void };
 
 type CheckAction = { path: RegExp; automationForm?: undefined; api: false; check: true };
+type JiraAction = { path: RegExp; automationForm?: undefined; api: false; jira: true };
 type WebResponseAction = { path: RegExp; automationForm?: undefined; api: false; respond: (stateDir: string, id: string, form: URLSearchParams, usage: ApiKeyUsage) => Response };
 
 const text = (raw: Raw, key: string) => raw[key] ?? '';
@@ -118,6 +123,11 @@ const findSignal = (store: Store, id: string) => {
   if (!s) throw new StoreError('not_found', 'señal inexistente');
   if (s.status !== 'new') throw new StoreError('conflict', 'señal ya resuelta');
   return s;
+};
+
+// Los validadores de los módulos web lanzan StoreError invalid_input con textos fijos (sin eco de lo escrito): aquí pasan a 400.
+const asInput = <T>(f: () => T): T => {
+  try { return f(); } catch (e) { if (e instanceof StoreError && e.code === 'invalid_input') throw new InputError(400, e.message); throw e; }
 };
 
 // URL-encoded: cada LF puede convertirse en %0D%0A. Deja margen para los demás campos.
@@ -161,7 +171,7 @@ function automationInput(mode: NonNullable<Action['automationForm']>, raw: Raw):
 }
 
 // Registro único de acciones: los formularios de la web y, después, la API pasan por aquí.
-export const ACTIONS: Record<string, Action | CheckAction | WebResponseAction> = {
+export const ACTIONS: Record<string, Action | CheckAction | WebResponseAction | JiraAction> = {
   'api-keys/create': { api: false, path: new RegExp(`^${API_KEY_CREATE_PATH}$`), respond: createApiKeyResponse },
   'api-keys/revoke': { api: false, path: route(API_KEYS_PATH.slice(1), 'revocar'), respond: revokeApiKeyResponse },
   'activities/review': {
@@ -453,6 +463,28 @@ export const ACTIONS: Record<string, Action | CheckAction | WebResponseAction> =
         seen: runner ? { kind: kind as 'ssh' | 'local', createdAt: createdAt! } : undefined });
     },
   },
+  // T103: nombres de secretos y MCP del workstream, nunca valores (D-K). Mismo Store y mismas guardas que fab ws env|mcp.
+  'workstreams/acceso': {
+    api: false,
+    path: route('workstreams', 'acceso'),
+    input: raw => asInput(() => accessInput(raw)),
+    run: (store, id, input, out, _actor, stateDir) => {
+      const ws = store.getWorkstream(id);
+      out.destination = `/config?ws=${encodeURIComponent(ws.slug)}`;
+      asInput(() => setAccess(store, stateDir, ws.id, input));
+    },
+  },
+  // T107: resident.json (lo que acepta fab resident) y la importación de Jira (async: se despacha en webAction).
+  'resident/config': {
+    api: false,
+    path: /^\/config\/(entrada)$/,
+    input: raw => asInput(() => residentInput(raw)),
+    run: (_store, _id, input, out, actor, stateDir) => {
+      out.destination = '/config';
+      asInput(() => { try { saveResidentConfig(stateDir, residentChanges(input), actor); } catch (e) { throw new StoreError('invalid_input', (e as Error).message); } });
+    },
+  },
+  'jira/import': { api: false, path: JIRA_IMPORT_PATH, jira: true },
   'runners/check': { path: RUNNER_CHECK_PATH, api: false, check: true },
 };
 
@@ -582,7 +614,7 @@ function automationFailure(stateDir: string, mode: NonNullable<Action['automatio
 }
 
 export async function webAction(req: Request, stateDir: string, port: number, auth: WebAuth, usage: ApiKeyUsage,
-  runnerCheck: ReturnType<typeof runnerCheckAction>, extendCheckTimeout: () => void): Promise<Response> {
+  runnerCheck: ReturnType<typeof runnerCheckAction>, extendCheckTimeout: () => void, jiraImport: ReturnType<typeof jiraImportAction>): Promise<Response> {
   const csrf = auth.sessionCsrf(req);
   if (!csrf) return new Response('Se necesita una sesión local.', { status: 401 });
   if (req.headers.get('origin') !== `http://${auth.host}:${port}`) return new Response('Origin rechazado.', { status: 403 });
@@ -609,6 +641,11 @@ export async function webAction(req: Request, stateDir: string, port: number, au
       const location = response.headers.get('location');
       if (response.status === 303 && location) auth.rememberNotice(req, location, 'ok');
       return response;
+    }
+    if ('jira' in action) {
+      ({ destination, result } = await jiraImport(form));
+      auth.rememberNotice(req, destination.split('?')[0]!, result);
+      return new Response(null, { status: 303, headers: { Location: destination } });
     }
     id = name.endsWith('/create') ? '' : decodeURIComponent(raw);
     if ('check' in action) return await runnerCheck(id, extendCheckTimeout);

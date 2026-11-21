@@ -8,7 +8,9 @@ import { jiraConfiguredInEnv } from './connectors/jira.ts';
 import { activityMetadata, redact } from './evidence.ts';
 import { listProfiles, resolveProfile } from './profile.ts';
 import { detectSandbox } from './sandbox/detect.ts';
+import { accessSection } from './web-access.ts';
 import { API_KEYS_PATH } from './web-api-keys.ts';
+import { entradaSection } from './web-entrada.ts';
 import type { Store, Workstream } from './store.ts';
 
 type Escape = (value: unknown) => string;
@@ -157,6 +159,7 @@ export async function configPage(store: Store, stateDir: string, url: URL, escap
       ['Aprobación de change', yesNo(selected.requireChangeApproval)],
       ['Aprobación de spec', yesNo(selected.requireApproval)],
     ])}</section>
+    ${accessSection(stateDir, selected, escape, csrf)}
     <section><h2>Perfil vigente</h2>${profileView(stateDir, selected, escape)}</section>
     <section><h2>Definición</h2>
       <p>El árbol de definición agrupa la configuración, el perfil y las skills en ficheros versionables.</p>
@@ -179,6 +182,7 @@ export async function configPage(store: Store, stateDir: string, url: URL, escap
       ['Jira (entorno)', configured(jiraConfiguredInEnv())],
       ['GitHub (entorno)', configured(!!(process.env.GH_TOKEN?.trim() || process.env.GITHUB_TOKEN?.trim()))],
     ])}</section>
+    ${entradaSection(stateDir, workstreams, escape, csrf)}
     <section><h2>Servidores MCP</h2>${mcp}</section>
   </div>` };
 }

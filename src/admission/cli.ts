@@ -10,6 +10,7 @@ import { DEFAULT_POLICY } from './gate.ts';
 import { AdmissionDb } from './db.ts';
 import { buildReport, formatReport } from './report.ts';
 import { Resident } from './resident.ts';
+import { loadResidentConfig, saveResidentConfig } from './config.ts';
 
 export async function residentMain(argv: string[], store: Store, deps: { run?: CommandRunner } = {}): Promise<number> {
   try {
@@ -23,9 +24,21 @@ export async function residentMain(argv: string[], store: Store, deps: { run?: C
       console.log(values.json ? JSON.stringify(report, null, 2) : formatReport(report));
       return 0;
     }
+    if (argv[0] === 'config') {
+      const { values } = parseArgs({ args: argv.slice(1), options: { repo: { type: 'string' }, label: { type: 'string' }, interval: { type: 'string' }, mode: { type: 'string' } } });
+      if (!store.stateDir) throw new Error('fab resident config necesita una base en disco');
+      const set = values.repo !== undefined || values.label !== undefined || values.interval !== undefined || values.mode !== undefined;
+      const cfg = set ? saveResidentConfig(store.stateDir, { repo: values.repo, label: values.label, mode: values.mode as 'off' | 'observe' | undefined,
+        intervalSec: values.interval === undefined ? undefined : /^\d+$/.test(values.interval) ? Number(values.interval) : NaN }, process.env.FAB_ACTOR ?? 'cli') : loadResidentConfig(store.stateDir);
+      console.log(JSON.stringify(cfg, null, 2));
+      return 0;
+    }
+    const saved = store.stateDir ? loadResidentConfig(store.stateDir) : {}; // los flags mandan sobre resident.json (T107)
     const { values } = parseArgs({ args: argv, options: {
-      repo: { type: 'string' }, mode: { type: 'string', default: 'observe' }, once: { type: 'boolean' }, interval: { type: 'string', default: '60' }, since: { type: 'string' },
-      label: { type: 'string', default: DEFAULT_POLICY.triggerLabel }, self: { type: 'string' }, workstream: { type: 'string' }, comments: { type: 'boolean' }, 'hook-port': { type: 'string' }, 'allow-author': { type: 'string', multiple: true }, trust: { type: 'string' } } });
+      repo: { type: 'string' }, mode: { type: 'string' }, once: { type: 'boolean' }, interval: { type: 'string' }, since: { type: 'string' },
+      label: { type: 'string' }, self: { type: 'string' }, workstream: { type: 'string' }, comments: { type: 'boolean' }, 'hook-port': { type: 'string' }, 'allow-author': { type: 'string', multiple: true }, trust: { type: 'string' } } });
+    values.repo ??= saved.repo; values.mode ??= saved.mode ?? 'observe'; values.label ??= saved.label ?? DEFAULT_POLICY.triggerLabel;
+    values.interval ??= String(saved.intervalSec ?? 60);
     if (values.mode !== 'off' && values.mode !== 'observe' && values.mode !== 'auto') throw new Error('--mode debe ser off|observe|auto');
     if (values.mode === 'auto') { if (!values.workstream) throw new Error('el modo auto exige --workstream <slug>'); store.getWorkstream(values.workstream); } // existe el workstream donde se crearán los changes
     if (!values.repo) throw new Error('falta --repo owner/name');
