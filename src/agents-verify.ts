@@ -47,12 +47,28 @@ export function loadPins(home: string = factoryHome()): Record<string, string> {
   return {};
 }
 
+/** Versiones persistentes o registradas de agentes (agents.json), si existen. */
+export function loadAgentVersions(home: string = factoryHome()): Record<string, string> {
+  try {
+    const raw = JSON.parse(readFileSync(pinsFile(home), 'utf8'));
+    const versions = raw && typeof raw === 'object' && !Array.isArray(raw) ? (raw as { agentVersions?: unknown }).agentVersions : undefined;
+    if (versions && typeof versions === 'object' && !Array.isArray(versions)) {
+      return Object.fromEntries(
+        Object.entries(versions).filter(([k, v]) => typeof v === 'string')
+      ) as Record<string, string>;
+    }
+  } catch {}
+  return {};
+}
+
 /** Guarda los pines con escritura atómica, siguiendo la convención de chat.json (0600 + rename). */
 export function savePins(pins: Record<string, string>, home: string = factoryHome()): void {
   mkdirSync(home, { recursive: true, mode: 0o700 });
   const file = pinsFile(home);
+  let existing: Record<string, unknown> = {};
+  try { existing = JSON.parse(readFileSync(file, 'utf8')); } catch {}
   const temp = join(home, `agents.json.${randomUUID()}.tmp`);
-  writeFileSync(temp, JSON.stringify({ agentBinaries: pins }, null, 2) + '\n', { mode: 0o600 });
+  writeFileSync(temp, JSON.stringify({ ...existing, agentBinaries: pins }, null, 2) + '\n', { mode: 0o600 });
   renameSync(temp, file);
 }
 

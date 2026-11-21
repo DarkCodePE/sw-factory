@@ -6,6 +6,7 @@ import { join } from 'node:path';
 import {
   agentBinStatus,
   factoryHome,
+  loadAgentVersions,
   loadPins,
   resolveBinary,
   savePins,
@@ -131,3 +132,14 @@ test('runPool: sin pin solo avisa y no arranca bloqueado (el pool sigue)', async
 test('factoryHome respeta FABRICA_HOME', () => {
   expect(factoryHome()).toBe(scope.home);
 });
+
+test('loadAgentVersions lee versiones registradas de agents.json', () => {
+  expect(loadAgentVersions(scope.home)).toEqual({});
+  mkdirSync(scope.home, { recursive: true });
+  writeFileSync(join(scope.home, 'agents.json'), JSON.stringify({
+    agentBinaries: { claude: 'a'.repeat(64) },
+    agentVersions: { claude: '2.5.0', codex: '1.0.0' },
+  }));
+  expect(loadAgentVersions(scope.home)).toEqual({ claude: '2.5.0', codex: '1.0.0' });
+});
+

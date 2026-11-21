@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, expect, spyOn, test } from 'bun:test';
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, statSync, utimesSync, writeFileSync } from 'node:fs';
+import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, statSync, utimesSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { sha256Of } from '../src/agents-verify.ts';
@@ -385,4 +385,101 @@ test('T104: registro MCP vacío o inválido maneja estados sin 500 ni fugar erro
   expect(htmlBad).toContain('Registro MCP no disponible o inválido.');
   expect(htmlBad).not.toContain('canario-invalido');
 });
+
+test('T106: muestra binario, versión, pin guardado y marca binarios discrepantes', async () => {
+  const claudeBin = join(dir, 'claude');
+  const codexBin = join(dir, 'codex');
+  const agyBin = join(dir, 'agy');
+
+  writeFileSync(claudeBin, '#!/bin/sh\nif [ "$1" = "--version" ]; then echo "claude v2.5.0"; exit 0; fi\nexit 0\n');
+  chmodSync(claudeBin, 0o755);
+  writeFileSync(codexBin, '#!/bin/sh\nif [ "$1" = "--version" ]; then echo "codex 1.0.0"; exit 0; fi\nexit 0\n');
+  chmodSync(codexBin, 0o755);
+  writeFileSync(agyBin, '#!/bin/sh\nexit 0\n');
+  chmodSync(agyBin, 0o755);
+
+  writeFileSync(join(dir, 'agents.json'), JSON.stringify({
+    agentBinaries: {
+      claude: sha256Of(claudeBin),
+      codex: 'b'.repeat(64), // pin que no coincide
+    },
+    agentVersions: {
+      agy: '0.9.1-registrada',
+    },
+  }));
+
+  new Store(join(dir, 'fabrica.db')).close();
+  start();
+
+  const html = await page('/config');
+  // claude coincide con el pin y muestra versión y ruta
+  expect(html).toContain('<td>claude</td>');
+  expect(html).toContain('Coincide con el pin');
+  expect(html).toContain('claude v2.5.0');
+  expect(html).toContain(claudeBin);
+
+  // codex no coincide con el pin: sale marcado
+  expect(html).toContain('<td>codex</td>');
+  expect(html).toContain('Distinto del pin');
+  expect(html).toContain('pin-mismatch');
+  expect(html).toContain('(no coincide)');
+  expect(html).toContain('codex 1.0.0');
+  expect(html).toContain('bbbbbbbbbbbb…');
+
+  // agy lee versión del registro
+  expect(html).toContain('<td>agy</td>');
+  expect(html).toContain('0.9.1-registrada');
+
+  // native muestra versión del paquete fab
+  expect(html).toContain('<td>native</td>');
+  expect(html).toContain('0.1.0-rc.12');
+
+  // Sin formularios para fijar el pin en la web
+  const adaptersSection = html.slice(html.indexOf('<h2>Adaptadores</h2>'), html.indexOf('<h2>Sandbox y red</h2>'));
+  expect(adaptersSection).not.toContain('<form');
+});
+
+test('T106: no ejecuta binarios en cada carga de página (caché)', async () => {
+  const counterFile = join(dir, 'exec-count.txt');
+  const spyBin = join(dir, 'claude');
+  writeFileSync(counterFile, '0');
+  writeFileSync(spyBin, `#!/bin/sh
+if [ "$1" = "--version" ]; then
+  count=$(cat "${counterFile}")
+  count=$((count + 1))
+  echo "$count" > "${counterFile}"
+  echo "spy 3.0"
+  exit 0
+fi
+exit 0
+`);
+  chmodSync(spyBin, 0o755);
+  const fixed = new Date('2026-01-01T00:00:00Z');
+  utimesSync(spyBin, fixed, fixed);
+
+  writeFileSync(join(dir, 'agents.json'), JSON.stringify({
+    agentBinaries: { claude: sha256Of(spyBin) },
+  }));
+
+  new Store(join(dir, 'fabrica.db')).close();
+  start();
+
+  // Primera carga
+  const html1 = await page('/config');
+  expect(html1).toContain('spy 3.0');
+  expect(readFileSync(counterFile, 'utf8').trim()).toBe('1');
+
+  // Segunda carga: debe salir de la caché sin ejecutar el binario
+  const html2 = await page('/config');
+  expect(html2).toContain('spy 3.0');
+  expect(readFileSync(counterFile, 'utf8').trim()).toBe('1');
+
+  // Si cambia mtime, se recalcula
+  const later = new Date('2026-01-02T00:00:00Z');
+  utimesSync(spyBin, later, later);
+  const html3 = await page('/config');
+  expect(html3).toContain('spy 3.0');
+  expect(readFileSync(counterFile, 'utf8').trim()).toBe('2');
+});
+
 

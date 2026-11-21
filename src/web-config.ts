@@ -3,7 +3,7 @@ import { homedir } from 'node:os';
 import { join } from 'node:path';
 import { configuredMcpNames } from './agent/settings.ts';
 import { AGENT_NAMES } from './agents.ts';
-import { agentBinStatus, PINNED_AGENTS, sha256Of, type AgentBinVerdict } from './agents-verify.ts';
+import { agentBinStatus, loadAgentVersions, PINNED_AGENTS, sha256Of, type AgentBinStatus, type AgentBinVerdict } from './agents-verify.ts';
 import { jiraConfiguredInEnv } from './connectors/jira.ts';
 import { activityMetadata, redact } from './evidence.ts';
 import { loadMcpRegistry, McpRegistryError } from './mcp-registry.ts';
@@ -11,6 +11,7 @@ import { listProfiles, resolveProfile } from './profile.ts';
 import { detectSandbox } from './sandbox/detect.ts';
 import { API_KEYS_PATH } from './web-api-keys.ts';
 import type { Store, Workstream } from './store.ts';
+import pkg from '../package.json' with { type: 'json' };
 
 type Escape = (value: unknown) => string;
 
@@ -34,6 +35,36 @@ function cachedSha256(path: string): string {
   const digest = sha256Of(path);
   digestCache.set(path, { size, mtimeMs, digest });
   return digest;
+}
+
+/** Resumen de versión por ruta, tamaño y mtime: GET /config no ejecuta binarios en cada petición (T106). */
+const versionCache = new Map<string, { size: number; mtimeMs: number; version: string }>();
+
+function runBinaryVersion(path: string): string {
+  try {
+    const proc = Bun.spawnSync([path, '--version'], {
+      stdout: 'pipe', stderr: 'pipe', stdin: 'ignore', timeout: 1000,
+    });
+    if (proc.exitCode === 0) {
+      const out = (proc.stdout.toString() || proc.stderr.toString()).trim();
+      const firstLine = out.split('\n')[0]?.trim();
+      if (firstLine) return firstLine.slice(0, 40);
+    }
+  } catch {}
+  return 'No medido';
+}
+
+function cachedAgentVersion(path: string): string {
+  try {
+    const { size, mtimeMs } = statSync(path);
+    const hit = versionCache.get(path);
+    if (hit && hit.size === size && hit.mtimeMs === mtimeMs) return hit.version;
+    const version = runBinaryVersion(path);
+    versionCache.set(path, { size, mtimeMs, version });
+    return version;
+  } catch {
+    return 'No medido';
+  }
 }
 
 /** La sonda de egress se busca solo entre las activities más recientes del workstream. */
@@ -102,13 +133,67 @@ function credentialStatus(agent: string): string {
 }
 
 function adapters(stateDir: string, escape: Escape): string {
-  const binaryStatus = (agent: string): string => {
-    if (!PINNED_AGENTS.includes(agent)) return agent === 'native' ? 'Integrado' : 'De prueba';
-    try { return binLabels[agentBinStatus(agent, stateDir, cachedSha256).verdict]; } catch { return 'No medido'; }
-  };
+  const versionsFromRecord = loadAgentVersions(stateDir);
+  const rows = AGENT_NAMES.map(agent => {
+    const isPinned = PINNED_AGENTS.includes(agent);
+    let status: AgentBinStatus | undefined;
+    let verdict: string;
+    let isMismatch = false;
+
+    if (!isPinned) {
+      verdict = agent === 'native' ? 'Integrado' : 'De prueba';
+    } else {
+      try {
+        status = agentBinStatus(agent, stateDir, cachedSha256);
+        verdict = binLabels[status.verdict];
+        isMismatch = status.verdict === 'distinto';
+      } catch {
+        verdict = 'No medido';
+      }
+    }
+
+    const cred = credentialStatus(agent);
+
+    // Binario / Ruta
+    const binPath = !isPinned
+      ? (agent === 'native' ? 'src/agent/exec.ts' : 'De prueba')
+      : (status?.path ? status.path : '—');
+
+    // Versión
+    let version: string;
+    if (agent === 'native') {
+      version = pkg.version;
+    } else if (agent === 'fake') {
+      version = '—';
+    } else if (!status?.path) {
+      version = '—';
+    } else if (versionsFromRecord[agent]) {
+      version = versionsFromRecord[agent];
+    } else {
+      version = cachedAgentVersion(status.path);
+    }
+
+    // Pin guardado
+    const pin = isPinned && status?.pin ? `${status.pin.slice(0, 12)}…` : '—';
+
+    // Marcado si no coincide con su pin
+    const statusCell = isMismatch
+      ? `${verdict} <mark class="alerta">(no coincide)</mark>`
+      : verdict;
+
+    return `<tr${isMismatch ? ' class="pin-mismatch"' : ''}>`
+      + `<td>${escape(agent)}</td>`
+      + `<td>${statusCell}</td>`
+      + `<td>${cred}</td>`
+      + `<td>${escape(binPath)}</td>`
+      + `<td>${escape(version)}</td>`
+      + `<td><code>${escape(pin)}</code></td>`
+      + `</tr>`;
+  }).join('');
+
   return `<div class="table-wrap" role="region" aria-label="Adaptadores" tabindex="0"><table class="config-adapters">
-    <thead><tr><th scope="col">Adaptador</th><th scope="col">Binario</th><th scope="col">Credencial local</th></tr></thead>
-    <tbody>${AGENT_NAMES.map(agent => `<tr><td>${escape(agent)}</td><td>${binaryStatus(agent)}</td><td>${credentialStatus(agent)}</td></tr>`).join('')}</tbody>
+    <thead><tr><th scope="col">Adaptador</th><th scope="col">Binario</th><th scope="col">Credencial local</th><th scope="col">Ruta</th><th scope="col">Versión</th><th scope="col">Pin guardado</th></tr></thead>
+    <tbody>${rows}</tbody>
   </table></div>`;
 }
 
