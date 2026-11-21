@@ -2,11 +2,12 @@
 import { afterEach, beforeEach, expect, test } from 'bun:test';
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
-import { buildDefinition, exportDefinition, readDefinition } from '../src/definition.ts';
+import { applyDefinition, buildDefinition, exportDefinition, readDefinition } from '../src/definition.ts';
 import { defaultProfile, DEFAULT_DIGEST, listProfiles, profileDigest } from '../src/profile.ts';
 import { Store } from '../src/store.ts';
 import { startWeb } from '../src/web.ts';
 import { ACTIONS } from '../src/web-actions.ts';
+import { DEFAULT_PROTECTED_PATHS } from '../src/validators/integrity.ts';
 
 let dir: string, repo: string, store: Store, server: ReturnType<typeof startWeb>, cookie: string, csrf: string;
 const base = () => `http://${server.host ?? '127.0.0.1'}:${server.port}`;
@@ -48,7 +49,7 @@ const treeOf = (files: Map<string, string>): Entry[] => [...files].map(([name, d
 const goodFiles = () => {
   const p = defaultProfile();
   const f = new Map<string, string>();
-  f.set('workstream.json', JSON.stringify({ slug: 'importado', goal: 'meta importada', agent: 'native', workerConcurrency: 1, taskLimit: 5, verify: ['bun test'] }));
+  f.set('workstream.json', JSON.stringify({ slug: 'importado', goal: 'meta importada', agent: 'native' }));
   const { worker, validators, ...rest } = p;
   f.set('profile/profile.json', JSON.stringify(rest));
   for (const [k, v] of Object.entries(worker)) f.set(`profile/worker/${k}.md`, v);
@@ -151,7 +152,7 @@ test('las páginas ofrecen los formularios con sesión de escritura y escapan lo
 // ---- definición --------------------------------------------------------------------------------------------------
 test('definición: vista previa sin escribir; confirmar crea el workstream en borrador con perfil y auditoría web; nada se ejecuta', async () => {
   const canary = join(dir, 'CANARIO');
-  const bytes = goodTar(f => { f.set('workstream.json', JSON.stringify({ slug: 'importado', goal: 'meta', verify: [`touch ${canary}`] })); f.set('skills/util/SKILL.md', 'texto'); });
+  const bytes = goodTar(f => { f.set('workstream.json', JSON.stringify({ slug: 'importado', goal: 'meta' })); f.set('skills/util/SKILL.md', 'texto'); });
   const before = snapshot();
   const preview = await upload('/definicion/importar', { repo, slug: '' }, bytes);
   expect(preview.status).toBe(200);
@@ -164,6 +165,10 @@ test('definición: vista previa sin escribir; confirmar crea el workstream en bo
   expect(ws).toMatchObject({ state: 'draft', repo, goal: 'meta' });
   expect(ws.profile).toBeNull() ; // perfil por defecto → sin fijar
   expect(existsSync(canary)).toBe(false);
+  // La CLI sí admite verify; importar tampoco lo ejecuta.
+  const cli = goodFiles(); cli.set('workstream.json', JSON.stringify({ slug: 'por-cli', goal: 'g', verify: [`touch ${canary}`] }));
+  applyDefinition(store, dir, parseDefinition(cli), repo);
+  expect(existsSync(canary)).toBe(false); expect(store.getWorkstream('por-cli').verify).toEqual([['touch', canary]]);
   expect(existsSync(join(repo, '.agents'))).toBe(false);
   const mine = events().filter(e => e.message.includes('importado') || e.message.includes('definición importada'));
   expect(mine.length).toBe(2); expect(mine.every(e => e.actor === 'web')).toBe(true);
@@ -221,7 +226,7 @@ test('definición: D-F, sin bajar aprobaciones ni vaciar rutas protegidas desde 
     expect((await upload('/definicion/importar', { repo, slug: '' }, bytes)).status).toBe(400);
   }
   expect(snapshot()).toBe(before);
-  const ok = goodTar(f => { f.set('workstream.json', JSON.stringify({ slug: 'x', goal: 'g', requireApproval: true, protectedPaths: ['secrets/**'] })); });
+  const ok = goodTar(f => { f.set('workstream.json', JSON.stringify({ slug: 'x', goal: 'g', requireApproval: true, requireChangeApproval: true, workerConcurrency: 2, taskLimit: 20, verify: [], verifySetup: [], protectedPaths: [...DEFAULT_PROTECTED_PATHS] })); });
   expect((await upload('/definicion/importar', { repo, slug: '' }, ok)).status).toBe(200);
 });
 
@@ -285,3 +290,13 @@ test.each(BAD_TYPES.slice(0, 6))('la web rechaza %j con 400 y no crea el workstr
   expect((await confirmFrom(good, '/definicion/importar', { payload: Buffer.from(bytes).toString('base64') })).status).toBe(400);
   expect(snapshot()).toBe(before);
 });
+
+// ---- T105-H8: la web no fija por importación lo que el asistente web no ofrece (D-F); eso es solo de la CLI -----------------
+test.each([{ verify: ['bun test'] }, { verifySetup: ['bun install'] }, { protectedPaths: ['secrets/**'] }, { workerConcurrency: 8 }, { taskLimit: 500 }, { agent: 'fake', verify: ['x'] }] as Record<string, unknown>[])(
+  'la web rechaza %j (solo por CLI) y la CLI lo acepta', async extra => {
+    const before = snapshot();
+    const files = withSettings(extra);
+    expect((await upload('/definicion/importar', { repo, slug: '' }, tar(treeOf(files)))).status).toBe(400);
+    expect(() => parseDefinition(files)).not.toThrow(); // la CLI sigue pudiendo
+    expect(snapshot()).toBe(before);
+  });

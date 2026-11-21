@@ -8,6 +8,7 @@ import { readTar, TAR_MAX_BYTES } from './definition-tar.ts';
 import { redact } from './manifest.ts';
 import { DEFAULT_DIGEST, isProfileDigest, profileDigest, resolveProfile, saveProfile, validateProfile, type Profile } from './profile.ts';
 import { Store, StoreError } from './store.ts';
+import { DEFAULT_PROTECTED_PATHS } from './validators/integrity.ts';
 import { repoProblem } from './web-ws.ts';
 
 type Escape = (value: string) => string;
@@ -42,9 +43,12 @@ function parseDefinitionBytes(bytes: Uint8Array): ParsedDefinition & { files: Ma
   const files = readTar(bytes);
   const parsed = parseDefinition(files);
   const s = parsed.settings;
-  // D-F: aprobaciones y rutas protegidas se bajan solo con la CLI.
-  if (s.requireApproval === false || s.requireChangeApproval === false) throw bad('workstream.json: bajar las aprobaciones solo se hace con la CLI (fab definition import)');
-  if (Array.isArray(s.protectedPaths) && s.protectedPaths.length === 0) throw bad('workstream.json: vaciar protectedPaths solo se hace con la CLI (fab definition import)');
+  // D-F: la web no da más poder que la CLI ni fija lo que el asistente web no ofrece. Valores por defecto y ausentes pasan; el resto va por la CLI.
+  const cli = (what: string) => bad(`workstream.json: ${what} solo se fija con la CLI (fab definition import)`);
+  if (s.requireApproval === false || s.requireChangeApproval === false) throw cli('bajar las aprobaciones');
+  if (s.verify?.length || s.verifySetup?.length) throw cli('verify y verifySetup');
+  if (s.protectedPaths?.some((p: string) => !DEFAULT_PROTECTED_PATHS.includes(p)) || s.protectedPaths?.length === 0) throw cli('protectedPaths distinto del valor por defecto');
+  if ((s.workerConcurrency ?? 2) !== 2 || (s.taskLimit ?? 20) !== 20) throw cli('workerConcurrency y taskLimit distintos del valor por defecto');
   return { ...parsed, files, digest: profileDigest(parsed.profile) };
 }
 
