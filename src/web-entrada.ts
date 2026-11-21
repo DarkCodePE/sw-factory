@@ -22,6 +22,8 @@ export const JIRA_MESSAGES: Record<string, string> = {
 
 /** Campos del formulario de resident.json; vacío = no cambiar. Mensajes fijos de `checkResidentConfig`. */
 export function residentInput(raw: Record<string, string | undefined>): Record<string, string> {
+  // T107-H9: como los demás editores, un campo ajeno invalida el envío.
+  if (Object.keys(raw).some(k => !['csrf', 'repo', 'label', 'interval', 'mode'].includes(k))) throw new StoreError('invalid_input', 'El formulario contiene campos inesperados.');
   const interval = (raw.interval ?? '').trim();
   const clean = (k: string) => (raw[k] ?? '').trim();
   try {

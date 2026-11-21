@@ -225,3 +225,8 @@ test('T107-H8: un resident.json ilegible dice cómo repararlo, también en la p�
   try { expect(await residentMain(['config', '--repo', 'a/b'], store)).toBe(1); } finally { console.error = err; }
   expect(errors.join()).toContain('borra resident.json');
 });
+
+test('T107-H9: el formulario del residente rechaza campos desconocidos', async () => {
+  expect((await post('/config/entrada', { repo: 'a/b', extra: 'x' })).status).toBe(400);
+  expect(existsSync(join(dir, 'resident.json'))).toBe(false);
+});
