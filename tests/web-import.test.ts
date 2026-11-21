@@ -389,3 +389,11 @@ test('H9: el goal se ve entero en la vista previa de la definición, también m�
   const html = await (await upload('/definicion/importar', { repo, slug: '' }, tar(treeOf(withSettings({ goal }))))).text();
   expect(html).toContain('COLA-DEL-GOAL');
 });
+
+test('H11: un [REDACTED] literal en el texto no silencia el aviso de redacción', async () => {
+  const goal = '[REDACTED] usa ghp_' + 'a1B2'.repeat(9);
+  const html = await (await upload('/definicion/importar', { repo, slug: '' }, tar(treeOf(withSettings({ goal }))))).text();
+  expect(html).toContain('texto con forma de secreto');
+  const clean = await (await upload('/definicion/importar', { repo, slug: '' }, tar(treeOf(withSettings({ goal: '[REDACTED] sin secreto' }))))).text();
+  expect(clean).not.toContain('texto con forma de secreto');
+});

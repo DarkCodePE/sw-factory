@@ -105,7 +105,7 @@ export function importPreview(kind: ImportKind, stateDir: string, form: URLSearc
   const escape: Escape = text => {
     const visible = text.replace(/[\p{Cc}\p{Cf}]/gu, c => /[\n\r\t]/.test(c) ? c : `⟦U+${c.codePointAt(0)!.toString(16).toUpperCase().padStart(4, '0')}⟧`);
     const out = htmlEscape(visible);
-    if (out.includes('[REDACTED]') && !visible.includes('[REDACTED]')) redacted = true;
+    if (out.split('[REDACTED]').length > visible.split('[REDACTED]').length) redacted = true; // T105-H11: cuenta apariciones; un literal ya presente no lo silencia
     return out;
   };
   const note = () => redacted ? '<p class="notice" role="alert">Se muestra redactado texto con forma de secreto, pero se importa entero tal como viene en el paquete.</p>' : '';
