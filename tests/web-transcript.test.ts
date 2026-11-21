@@ -262,3 +262,19 @@ test.each(['recorte a 256 KiB', 'línea inválida', 'JSON sin tipo', 'JSON en st
     }
   },
 );
+
+test('T99-H12: un turno sin init tras stderr avisa y deja abierto el log', async () => {
+  const first = '{"type":"assistant","message":{"content":"Primer turno"}}';
+  const next = [
+    { type: 'assistant', message: { content: 'Segundo turno sin init' } },
+    { type: 'user', message: { content: 'Segundo turno sin init' } },
+    { type: 'result', result: 'Segundo turno sin init' },
+  ];
+  for (const frame of next) {
+    writeFileSync(join(run, activity + '.log'), first + '\n[stderr]\nDiagnóstico\n' + JSON.stringify(frame));
+    const body = await (await activityPage()).text();
+    expect(onlyTranscript(body)).toContain('Transcript incompleto.');
+    expect(onlyTranscript(body)).toContain('Primer turno');
+    expect(body).toMatch(/<h2>Log<\/h2><pre[^>]*>[\s\S]*Diagnóstico[\s\S]*Segundo turno sin init/);
+  }
+});

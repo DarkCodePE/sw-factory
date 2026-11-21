@@ -128,6 +128,7 @@ function readClaudeEvidence(text: string, truncated: boolean): EvidenceText {
             rendered.push(JSON.stringify(redacted));
             continue;
           }
+          if (stderr && (value?.type === 'assistant' || value?.type === 'user' || value?.type === 'result')) incomplete = true;
           fallback = { text: JSON.stringify(redacted) };
         } catch {
           fallback.decoded = decodeLogFragment(line);
