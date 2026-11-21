@@ -461,3 +461,29 @@ test('T101: las tres mutaciones exigen escritura, Host, Origin, sesión y CSRF y
   for (const p of paths) expect((await post(p)).status).toBe(405);
   expect(store.listRunners()).toHaveLength(4);
 });
+
+test('T101-H1: un runner asignado conserva confinamiento y límite, y los ajustes más estrictos dejan evento', async () => {
+  boot();
+  await login();
+  store.updateRunner('casa', { options: { confine: true } });
+  store.setWorkstreamRunner(workstream, 'casa');
+  const local = await revisionFrom('casa');
+  expect((await post(editRunnerPath('casa'), { revision: local })).status).toBe(409);
+  expect(store.getRunner('casa').options).toEqual({ confine: true });
+
+  store.updateRunner('torre', { target: 'alias-canario', options: { maxBundleMb: 64 } });
+  store.setWorkstreamRunner(workstream, 'torre');
+  const ssh = await revisionFrom('torre');
+  for (const maxBundleMb of ['65', '']) {
+    expect((await post(editRunnerPath('torre'), { revision: ssh, target: 'alias-canario', maxBundleMb })).status).toBe(409);
+    expect(store.getRunner('torre').options).toEqual({ maxBundleMb: 64 });
+  }
+  expect((await post(editRunnerPath('torre'), { revision: ssh, target: 'alias-canario', maxBundleMb: '32' })).status).toBe(303);
+  expect(store.getRunner('torre').options).toEqual({ maxBundleMb: 32 });
+  const edits = store.listEvents(workstream).filter(e => String(e.message).startsWith('runner torre actualizado'));
+  expect(edits.map(e => [e.actor, e.message])).toEqual([['web', 'runner torre actualizado: límite de envío 64 → 32 MiB']]);
+
+  store.setWorkstreamRunner(workstream, null);
+  expect((await post(editRunnerPath('casa'), { revision: local })).status).toBe(303);
+  expect(store.getRunner('casa').options).toEqual({});
+});

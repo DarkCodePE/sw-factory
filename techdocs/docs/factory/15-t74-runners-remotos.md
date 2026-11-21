@@ -105,7 +105,7 @@ fab ws runner <workstream> torre
 
 ## Inventario web y runner por rol
 
-En `fab web --write`, abre **Configuración → Runners** para registrar, editar o dar de baja un runner. Nombre y tipo identifican la entrada. Los ajustes editables son el confinamiento local o el alias SSH y el límite de envío. En la CLI se editan con `fab runner update` y se pausan con `fab runner disable`. Para cambiar un alias o borrar un runner, retira primero las asignaciones del workstream y de sus perfiles vigentes. La edición y la baja esperan a que termine el trabajo vivo.
+En `fab web --write`, abre **Configuración → Runners** para registrar, editar o dar de baja un runner. Nombre y tipo identifican la entrada. Los ajustes editables son el confinamiento local o el alias SSH y el límite de envío. En la CLI se editan con `fab runner update` y se pausan con `fab runner disable`. Para cambiar un alias, quitar el confinamiento, subir el límite de envío o borrar un runner, retira primero las asignaciones del workstream y de sus perfiles vigentes. Endurecer una opción de un runner asignado deja un evento por workstream. La edición y la baja esperan a que termine el trabajo vivo.
 
 Un perfil v2 admite, por ejemplo, `"roles": { "implement": { "runner": "torre" } }`. Los roles sin runner propio heredan el del workstream. Guarda una copia desde **Perfiles**, revisa la procedencia y confirma la asignación. En la CLI usa `fab profile import <archivo>` y `fab ws profile <ws> <digest>`. El pool resuelve cada activity al reclamarla y conserva el runner del intento. Los gates se ejecutan en casa. Un runner ausente o pausado bloquea la activity que lo eligió según las reglas del change. Los adjuntos esperan un turno local confinado.
 

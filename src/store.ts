@@ -3,6 +3,7 @@
 // cannot double-claim or overwrite each other's results.
 import { DEFAULT_DIGEST, ROLES, isProfileDigest, resolveProfile, resolveRole, profileRunnerNames, roleOf, roleRunner, type Profile } from './profile.ts';
 import { isRunnerName } from './runners/name.ts';
+import { LIMITS as RUNNER_LIMITS } from './runners/protocol.ts';
 import { AGENT_NAMES } from './agents.ts';
 import { CONFINABLE_AGENTS } from './sandbox/confine.ts';
 import { isForbiddenEnvName } from './mcp-registry.ts';
@@ -445,6 +446,9 @@ function validateRunnerConfig({ kind, target, options = {} }: RunnerConfig): voi
   if (kind === 'local' && target != null) throw new StoreError('invalid_input', 'target: un runner local no lo lleva');
   checkRunnerOptions(kind, options);
 }
+
+const runnerBundleMb = (options: Record<string, unknown>): number =>
+  typeof options.maxBundleMb === 'number' ? options.maxBundleMb : RUNNER_LIMITS.jobBundleBytes / 1024 ** 2;
 
 export function runnerRevision(r: Runner): string {
   return createHash('sha256').update(JSON.stringify([
@@ -1036,11 +1040,19 @@ export class Store {
       }
       validateRunnerConfig({ ...input, kind: current.kind });
       const target = input.target ?? null;
-      // Cambiar el alias de un runner asignado redirigiría los próximos envíos de código.
-      if (target !== current.target) this.#checkRunnerUnused(name);
+      const options = input.options ?? {};
+      const beforeConfine = current.options.confine === true, afterConfine = options.confine === true;
+      const beforeLimit = runnerBundleMb(current.options), afterLimit = runnerBundleMb(options);
+      // Desasignar primero si cambia el destino o se amplía la configuración ya autorizada.
+      if (target !== current.target || (beforeConfine && !afterConfine) || afterLimit > beforeLimit) this.#checkRunnerUnused(name);
       this.#checkRunnerLive(name);
       const row = this.db.query('UPDATE runners SET target = ?, options = ? WHERE name = ? RETURNING *')
-        .get(target, JSON.stringify(input.options ?? {}), name) as Row;
+        .get(target, JSON.stringify(options), name) as Row;
+      const change = beforeConfine !== afterConfine ? `confinamiento ${afterConfine ? 'activado' : 'desactivado'}`
+        : beforeLimit !== afterLimit ? `límite de envío ${beforeLimit} → ${afterLimit} MiB` : null;
+      if (change) {
+        for (const w of this.#runnerAssignments(name)) this.event(w.id, 'info', `runner ${name} actualizado: ${change}`);
+      }
       return toRunner(row);
     });
   }
