@@ -451,6 +451,24 @@ test('T96-H9: un repo que ya no es repo Git, o que es un fichero, no bloquea los
   expect(writer.addChangeNote(id, 'con repos raros', attachment()).attachment?.name).toBe('datos.txt');
 }));
 
+test('INT-H3: el estado dentro de un repo que ya no es Git sigue contando como montaje y rechaza el adjunto', () => {
+  const dir = mkdtempSync(join(tmpdir(), 'fab-h9-'));
+  try {
+    const good = join(dir, 'repo'); mkdirSync(good);
+    expect(Bun.spawnSync(['git', 'init', '-q', good]).exitCode).toBe(0);
+    const plain = join(dir, 'sin-git'); mkdirSync(plain, { mode: 0o700 }); // ya no es Git; el estado cuelga de él
+    const state = join(plain, 'state'); mkdirSync(state, { mode: 0o700 });
+    const writer = new Store(join(state, 'fabrica.db'), { clock });
+    try {
+      const ws = writer.createWorkstream({ slug: 'bueno', goal: 'g', repo: good, requireChangeApproval: false });
+      writer.createWorkstream({ slug: 'sin-git', goal: 'g', repo: plain });
+      const id = writer.createChange(ws.id, 't', 'd').id;
+      expect(() => writer.addChangeNote(id, 'con archivo', attachment())).toThrow(/cae dentro de un repo/); // quitar `paths.add(real)` lo aceptaba
+      expect(writer.listChangeNotes(id)).toHaveLength(0);
+    } finally { writer.close(); }
+  } finally { rmSync(dir, { recursive: true, force: true }); }
+});
+
 test('T96-H10: el aviso de ancestro nombra el directorio que falla y el de ficheros habla de permisos', () => {
   const dir = mkdtempSync(join(tmpdir(), 'fab-anc-'));
   try {
