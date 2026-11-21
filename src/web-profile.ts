@@ -23,6 +23,8 @@ const TEMPLATES = [
 ] as const;
 const roleFields = ROLES.flatMap(role => [`roles.${role}.harness`, `roles.${role}.model`]);
 const roleFormFields = ['model', ...roleFields];
+// T103: nombres de variables y de servidores MCP por rol; opcionales en el formulario (un POST antiguo sin ellos los conserva).
+const roleAccessFields = ROLES.flatMap(role => [`roles.${role}.env`, `roles.${role}.mcp`]);
 const saveFields = ['csrf', 'ws', 'base', 'expectedAgent', 'mode', ...TEMPLATES.map(([group, key]) => `${group}.${key}`)];
 const ASSIGN_FIELDS = ['csrf', 'ws', 'previous', 'expectedAgent', 'digest', 'confirm'];
 const MASK = '[REDACTED]';
@@ -64,7 +66,9 @@ function profileEditor(profile: Profile, hidden: string, escape: Escape) {
     const cfg = profile.roles?.[role];
     return `<fieldset><legend>${ROLE_LABELS[role]}</legend>
       <label>Adaptador<select name="roles.${role}.harness"><option value="">Heredar del workstream</option>${adapterOptions(Array.from(new Set([...OFFERED, ...(cfg?.harness ? [cfg.harness] : [])])), cfg?.harness, escape)}</select></label>
-      ${modelInput(`roles.${role}.model`, 'Modelo del rol', cfg?.model)}</fieldset>`;
+      ${modelInput(`roles.${role}.model`, 'Modelo del rol', cfg?.model)}
+      <label>Variables permitidas (nombres, separados por coma; nunca valores)<input type="text" name="roles.${role}.env" maxlength="1024" value="${escape((cfg?.env ?? []).join(', '))}" placeholder="Ninguna"></label>
+      <label>Servidores MCP (nombres del registro, separados por coma)<input type="text" name="roles.${role}.mcp" maxlength="512" value="${escape((cfg?.mcp ?? []).join(', '))}" placeholder="Ninguno"></label></fieldset>`;
   }).join('');
   let hasMasked = false;
   const areas = TEMPLATES.map(([group, key, label]) => {
@@ -150,7 +154,7 @@ function editProfile(profile: Profile, form: URLSearchParams, editRoles: boolean
     (profile[group] as unknown as Record<string, string>)[key] = value;
   }
   if (!editRoles) return profile;
-  if (profile.schemaVersion === 1 && roleFormFields.every(name => form.get(name) === '')) return profile;
+  if (profile.schemaVersion === 1 && roleFormFields.every(name => form.get(name) === '') && roleAccessFields.every(name => !form.get(name))) return profile;
   const modelValue = (name: string, original?: string) => {
     const value = form.get(name)!;
     return value === MASK && original && masked(original) ? original : value;
@@ -169,6 +173,14 @@ function editProfile(profile: Profile, form: URLSearchParams, editRoles: boolean
     else delete cfg.harness;
     if (model) cfg.model = model;
     else delete cfg.model;
+    for (const key of ['env', 'mcp'] as const) {
+      const input = form.get(`roles.${role}.${key}`);
+      if (input === null) continue;
+      const names = input.split(/[\s,]+/).filter(Boolean);
+      // Un `=` delata un valor pegado: se rechaza sin repetirlo.
+      if (names.some(n => n.includes('='))) throw new ProfileInputError('Escribe solo nombres: un valor pegado se rechaza y no se guarda.');
+      if (names.length) cfg[key] = names; else delete cfg[key];
+    }
     if (Object.keys(cfg).length) roles[role] = cfg;
   }
   if (Object.keys(roles).length) profile.roles = roles;
@@ -179,7 +191,7 @@ function editProfile(profile: Profile, form: URLSearchParams, editRoles: boolean
 /** Guardar lee el perfil de origen y sus dos precondiciones en una sola transacción. */
 export function profileAction(stateDir: string, kind: 'guardar' | 'asignar', form: URLSearchParams): { destination: string; result: string } {
   const editRoles = kind === 'guardar' && form.get('mode') === 'roles';
-  checkProfileFields(form, kind === 'asignar' ? ASSIGN_FIELDS : editRoles ? [...saveFields, ...roleFormFields] : saveFields);
+  checkProfileFields(form, kind === 'asignar' ? ASSIGN_FIELDS : editRoles ? [...saveFields, ...roleFormFields, ...roleAccessFields] : saveFields);
   if (kind === 'guardar' && ((form.has('mode') && !editRoles) || (editRoles && roleFormFields.some(name => !form.has(name))))) {
     throw new ProfileInputError('Completa la configuración de todos los roles y del modelo predeterminado.');
   }

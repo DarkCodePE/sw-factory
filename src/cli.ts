@@ -9,7 +9,7 @@ import { parseArgs } from 'node:util';
 import { captureMain } from './manifest-capture.ts';
 import { AGENT_NAMES } from './agents.ts';
 import { agentsMain } from './agents-verify.ts';
-import { loadMcpRegistry, mcpListMain, McpRegistryError } from './mcp-registry.ts';
+import { mcpListMain, McpRegistryError, unregisteredMcp } from './mcp-registry.ts';
 import { profileMain } from './profile-cli.ts';
 import { exportDefinition, importDefinition } from './definition.ts';
 import { benchMain } from './bench-cli.ts';
@@ -123,6 +123,7 @@ const HELP = `fab — agente de código y fábrica de software local
   --verify-setup <comando>  Fase previa al gate, repetible: con red, worktree solo lectura, escribe solo en $FAB_DEPS; el gate lo monta ro
                       (PYTHONPATH, PATH/bin, NODE_PATH). Se repite solo si cambia. Ej: --verify-setup 'python3 -m pip install --target $FAB_DEPS pytest' --verify 'pytest -q'
   fab resident report [--json]  informe de solo lectura de lo registrado (cursor, decisiones, label-not-verified, efectos con reintentos)
+  fab resident config [--repo owner/name] [--label fab] [--interval s] [--mode off|observe]  muestra o guarda resident.json (lo que edita la web); los flags de fab resident mandan sobre él
   fab resident --repo owner/name [--mode off|observe|auto] [--workstream <slug>] [--once] [--since ISO] [--interval s] [--label fab] [--allow-author u] [--trust OWNER,MEMBER] [--hook-port N]
                                 residente en modo observe: registra would_admit de issues sin crear changes
   fab automation add <slug> --name <n> (--cron "<e>" | --every hour|day|week [--at HH:MM] [--weekday N]) --title <t> --body-file <f>
@@ -318,9 +319,8 @@ async function main(argv: string[]): Promise<number> {
           else if (values.import !== undefined) names = readNameList(values.import);
           if (names !== undefined) {
             if (!isEnv && names?.length) {
-              let reg;
-              try { reg = loadMcpRegistry(STATE_DIR); } catch (e) { if (e instanceof McpRegistryError) throw new StoreError('invalid_input', `fab ws mcp: ${e.message}`); throw e; }
-              const unknown = names!.filter(n => !(n in reg));
+              let unknown: string[];
+              try { unknown = unregisteredMcp(STATE_DIR, names!); } catch (e) { if (e instanceof McpRegistryError) throw new StoreError('invalid_input', `fab ws mcp: ${e.message}`); throw e; }
               if (unknown.length) throw new StoreError('invalid_input', `fab ws mcp: no está en el registro MCP (mcp-servers.json): ${unknown.join(', ')}`);
             }
             const upd = isEnv ? store.setWorkstreamEnvAllow(ws.id, names) : store.setWorkstreamMcpAllow(ws.id, names);

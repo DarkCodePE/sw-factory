@@ -95,6 +95,12 @@ export function loadMcpRegistry(stateDir: string): McpRegistry {
   return Object.fromEntries(Object.entries(raw.servers).map(([n, s]) => [n, parseServer(n, s)]));
 }
 
+/** Nombres que no están en el registro (CLI y web comparten la comprobación). Lanza McpRegistryError si el registro es defectuoso. */
+export function unregisteredMcp(stateDir: string, names: string[]): string[] {
+  const reg = loadMcpRegistry(stateDir);
+  return names.filter(n => !Object.hasOwn(reg, n));
+}
+
 /** fab mcp list (sin --settings): nombre, tipo y variables requeridas con «definida»/«no definida»; ningún valor. */
 export function mcpListMain(stateDir: string, env: NodeJS.ProcessEnv = process.env): number {
   try {
