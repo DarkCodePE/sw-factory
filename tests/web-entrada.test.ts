@@ -100,6 +100,14 @@ test('fab resident config muestra y guarda; los flags mandan sobre resident.json
       expect(await residentMain(['--mode', 'bogus'], store)).toBe(1);
     } finally { console.error = err; }
     expect(loadResidentConfig(dir)).toMatchObject({ repo: 'a/b', intervalSec: 30 });
+    // Un flag inválido se valida aunque resident.json traiga un valor bueno: el flag manda.
+    const errors: string[] = [], err2 = console.error; console.error = (s: string) => { errors.push(String(s)); };
+    try {
+      saveResidentConfig(dir, { mode: 'observe' }, 'cli'); rmSync(join(dir, 'resident.json'));
+      saveResidentConfig(dir, { mode: 'observe' }, 'cli');
+      expect(await residentMain(['--mode', 'bogus'], store)).toBe(1);
+      expect(errors.join()).toContain('--mode debe ser');
+    } finally { console.error = err2; }
   } finally { console.log = log; }
 });
 
@@ -123,7 +131,7 @@ test('importa una HU acotada: crea la señal, deja auditoría y respeta la confi
   await importar();
   expect(await notice()).toContain('ya estaba importada');
   expect(store.listSignals('prueba')).toHaveLength(1);
-  for (const bad of [{ confirm: 'no' }, { key: 'kan-1' }, { key: 'KAN-1; rm' }, { ws: 'no-existe' }, { ws: '../x' }] as Record<string, string>[]) await importar(bad);
+  for (const bad of [{ confirm: 'no', key: 'KAN-3' }, { key: 'kan-1' }, { key: 'KAN-1; rm' }, { ws: 'no-existe' }, { ws: '../x' }] as Record<string, string>[]) await importar(bad);
   expect(calls).toEqual(['KAN-1']);
   await post('/config/jira/importar', { ws: 'prueba', key: 'KAN-2', confirm: 'yes', extra: 'x' });
   expect(calls).toEqual(['KAN-1']);

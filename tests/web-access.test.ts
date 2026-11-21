@@ -57,7 +57,9 @@ test('un valor pegado se rechaza y no se guarda ni se repite en la respuesta', a
   for (const names of [`TOKEN=${SECRET}`, SECRET, `export TOKEN=${SECRET}`, `sk-${SECRET}`, 'A'.repeat(65)]) {
     const r = await acceso({ kind: 'env', mode: 'declared', names });
     expect(r.status).toBe(400);
-    expect(await r.text()).not.toContain(SECRET);
+    const text = await r.text();
+    expect(text).not.toContain(SECRET);
+    if (/[\s=]/.test(names)) expect(text).toContain('un valor pegado se rechaza'); // la guarda propia, no solo el formato del Store
     expect(store.getWorkstream('prueba').envAllow).toBeNull();
   }
   // Pasa el formato de un nombre de variable pero está prohibido (cargador de librerías).
@@ -116,7 +118,9 @@ test('perfiles: nombres por rol con las mismas validaciones; un valor pegado se 
   for (const bad of [`TOKEN=${SECRET}`, SECRET, 'LD_PRELOAD']) {
     const r = await send({ 'roles.qa.harness': 'claude', 'roles.qa.env': bad });
     expect(r.status).toBe(400);
-    expect(await r.text()).not.toContain(SECRET);
+    const text = await r.text();
+    expect(text).not.toContain(SECRET);
+    if (bad.includes('=')) expect(text).toContain('un valor pegado se rechaza');
   }
   const ok = await send({ 'roles.qa.harness': 'claude', 'roles.qa.env': 'TRACKER_TOKEN, OTRA', 'roles.qa.mcp': 'tracker' });
   expect(ok.status).toBe(303);
