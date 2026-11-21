@@ -1,7 +1,8 @@
 // Configuración del residente que se edita desde la web y desde `fab resident config` (T107).
 // Solo guarda lo que `fab resident` ya acepta como flag y nunca un secreto (el del webhook sigue en el entorno).
 // El modo `auto` no se puede fijar aquí: exige --workstream y --self, y sigue siendo decisión de la línea de comandos.
-import { lstatSync, readFileSync, renameSync, writeFileSync } from 'node:fs';
+import { randomBytes } from 'node:crypto';
+import { chmodSync, lstatSync, readFileSync, renameSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { validateRepo } from '../connectors/github.ts';
 import { ensureStateDir } from '../state-dir.ts';
@@ -57,9 +58,10 @@ export function saveResidentConfig(stateDir: string, changes: ResidentConfig, ac
   const prev = loadResidentConfig(stateDir);
   const next: ResidentConfig = { ...prev, ...checkResidentConfig(changes), updatedAt: now.toISOString(), updatedBy: actor };
   ensureStateDir(stateDir);
-  const path = join(stateDir, RESIDENT_CONFIG), tmp = `${path}.${process.pid}.tmp`;
+  const path = join(stateDir, RESIDENT_CONFIG), tmp = `${path}.${randomBytes(8).toString('hex')}.tmp`;
   try { if (lstatSync(path).isSymbolicLink()) throw new Error('resident.json es un enlace simbólico'); } catch (e) { if ((e as NodeJS.ErrnoException).code !== 'ENOENT') throw e; }
-  writeFileSync(tmp, JSON.stringify(next, null, 2) + '\n', { mode: 0o600, flag: 'w' });
+  writeFileSync(tmp, JSON.stringify(next, null, 2) + '\n', { mode: 0o600, flag: 'wx' }); // T107-H6: nombre aleatorio y wx: no sigue un enlace plantado
+  chmodSync(tmp, 0o600);
   renameSync(tmp, path);
   // T107-H5: la etiqueta y el repo son la entrada del gate de admisión; cada cambio queda con su actor (el del proceso, vía FAB_ACTOR).
   const diff = (['repo', 'label', 'intervalSec', 'mode'] as const).filter(k => prev[k] !== next[k])

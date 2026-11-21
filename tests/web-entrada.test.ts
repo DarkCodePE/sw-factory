@@ -1,6 +1,6 @@
 // T107: configuración del residente y importación de Jira desde la web.
 import { afterEach, beforeEach, expect, test } from 'bun:test';
-import { existsSync, lstatSync, mkdtempSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
+import { chmodSync, existsSync, lstatSync, readFileSync, mkdtempSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { loadResidentConfig, saveResidentConfig } from '../src/admission/config.ts';
@@ -195,4 +195,15 @@ test('sin --write es solo lectura: se ve la configuración, sin formularios ni P
   expect(page).not.toContain('Importar HU');
   expect(page).not.toContain('/config/entrada');
   expect((await fetch(`http://127.0.0.1:${server.port}/config/jira/importar`, { method: 'POST' })).status).toBe(405);
+});
+
+test('T107-H6: un temporal previsible plantado como enlace no recibe la escritura y el fichero final queda en 0600', () => {
+  const victim = join(dir, 'victima'); writeFileSync(victim, 'intacto');
+  for (const name of [`resident.json.${process.pid}.tmp`, 'resident.json.tmp']) symlinkSync(victim, join(dir, name));
+  saveResidentConfig(dir, { repo: 'a/b' }, 'cli');
+  expect(readFileSync(victim, 'utf8')).toBe('intacto');
+  expect(lstatSync(join(dir, 'resident.json')).isSymbolicLink()).toBe(false);
+  chmodSync(join(dir, 'resident.json'), 0o644);
+  saveResidentConfig(dir, { label: 'x' }, 'cli');
+  expect(lstatSync(join(dir, 'resident.json')).mode & 0o777).toBe(0o600);
 });
