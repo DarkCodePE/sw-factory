@@ -216,39 +216,48 @@ function latestEgress(store: Store, stateDir: string, workstream: Workstream, es
     : 'No medido';
 }
 
-function findMcpUsage(serverName: string, store: Store, stateDir: string): string[] {
-  const usages: string[] = [];
-  const workstreams = store.listWorkstreams();
+function buildMcpUsageMap(workstreams: Workstream[], stateDir: string): Map<string, string[]> {
+  const map = new Map<string, string[]>();
+  const add = (name: string, usage: string) => {
+    let list = map.get(name);
+    if (!list) { list = []; map.set(name, list); }
+    if (!list.includes(usage)) list.push(usage);
+  };
   for (const ws of workstreams) {
-    if (ws.mcpAllow !== null && ws.mcpAllow.includes(serverName)) {
-      usages.push(ws.slug);
+    if (ws.mcpAllow !== null) {
+      for (const name of ws.mcpAllow) {
+        add(name, ws.slug);
+      }
     }
     try {
       const { profile } = resolveProfile(stateDir, ws.profile);
       if (profile.roles) {
         for (const [role, cfg] of Object.entries(profile.roles)) {
-          if (cfg?.mcp?.includes(serverName)) {
-            usages.push(`${ws.slug} (${role})`);
+          if (cfg?.mcp) {
+            for (const name of cfg.mcp) {
+              add(name, `${ws.slug} (${role})`);
+            }
           }
         }
       }
     } catch {}
   }
-  return usages;
+  return map;
 }
 
-function mcpRegistrySection(store: Store, stateDir: string, escape: Escape): string {
+function mcpRegistrySection(store: Store, stateDir: string, escape: Escape, workstreams: Workstream[]): string {
   try {
     const registry = loadMcpRegistry(stateDir);
     const entries = Object.entries(registry);
     if (!entries.length) {
       return '<p class="muted">Sin servidores en el registro MCP.</p>';
     }
+    const usageMap = buildMcpUsageMap(workstreams, stateDir);
     const rows = entries.map(([name, s]) => {
       const req = s.required.length
         ? s.required.map(n => `${escape(n)} (${process.env[n] !== undefined ? 'definida' : 'no definida'})`).join(', ')
         : '—';
-      const usages = findMcpUsage(name, store, stateDir);
+      const usages = usageMap.get(name) ?? [];
       const usageText = usages.length ? usages.map(u => escape(u)).join(', ') : '—';
       return `<tr><td><code>${escape(name)}</code></td><td>${escape(s.kind)}</td><td>${req}</td><td>${usageText}</td></tr>`;
     }).join('');
@@ -311,6 +320,6 @@ export async function configPage(store: Store, stateDir: string, url: URL, escap
       ['Jira (entorno)', configured(jiraConfiguredInEnv())],
       ['GitHub (entorno)', configured(!!(process.env.GH_TOKEN?.trim() || process.env.GITHUB_TOKEN?.trim()))],
     ])}</section>
-    <section><h2>Servidores MCP</h2>${mcpRegistrySection(store, stateDir, escape)}${mcp}</section>
+    <section><h2>Servidores MCP</h2>${mcpRegistrySection(store, stateDir, escape, workstreams)}${mcp}</section>
   </div>` };
 }

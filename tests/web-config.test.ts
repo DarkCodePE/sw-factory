@@ -4,6 +4,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { sha256Of } from '../src/agents-verify.ts';
 import { defaultProfile, DEFAULT_DIGEST, saveProfile } from '../src/profile.ts';
+import * as profileModule from '../src/profile.ts';
 import * as mcpRegistry from '../src/mcp-registry.ts';
 import { _setSandboxDetectionForTesting } from '../src/sandbox/detect.ts';
 import { Store } from '../src/store.ts';
@@ -395,6 +396,43 @@ test('T104-H3: relanza errores que no sean McpRegistryError en lugar de enmascar
   });
   try {
     await expect(configPage(store, dir, new URL('http://127.0.0.1/config'), x => String(x))).rejects.toThrow('error-inesperado-no-mcp');
+  } finally {
+    spy.mockRestore();
+    store.close();
+  }
+});
+
+test('T104-H4: precalcula el uso de servidores MCP una sola vez por petición en lugar de por cada servidor', async () => {
+  const store = new Store(join(dir, 'fabrica.db'));
+  const p1 = defaultProfile();
+  const { digest: d1 } = saveProfile(dir, p1);
+  const p2 = defaultProfile();
+  const { digest: d2 } = saveProfile(dir, p2);
+  store.createWorkstream({ slug: 'ws1', goal: 'g', repo: '/repo', profile: d1 });
+  store.createWorkstream({ slug: 'ws2', goal: 'g', repo: '/repo', profile: d2 });
+
+  writeFileSync(join(dir, 'mcp-servers.json'), JSON.stringify({
+    servers: {
+      s1: { url: 'https://a.invalid/sse', headers: {} },
+      s2: { url: 'https://b.invalid/sse', headers: {} },
+      s3: { url: 'https://c.invalid/sse', headers: {} },
+    },
+  }));
+
+  const origResolve = profileModule.resolveProfile;
+  let callCount = 0;
+  const spy = spyOn(profileModule, 'resolveProfile').mockImplementation((...args) => {
+    callCount++;
+    return origResolve(...args);
+  });
+
+  try {
+    // 2 workstreams en la base. Sin precomputar, para 3 servidores en mcpRegistrySection
+    // más el workstream seleccionado en profileView, callCount sería 3 * 2 + 1 = 7.
+    // Con precálculo una sola vez para mcpRegistrySection, el número de llamadas para MCP es a lo sumo 2.
+    await configPage(store, dir, new URL('http://127.0.0.1/config'), x => String(x));
+    // Total de llamadas a resolveProfile en la página completa: <= 3 (1 en profileView + 2 en buildMcpUsageMap)
+    expect(callCount).toBeLessThanOrEqual(3);
   } finally {
     spy.mockRestore();
     store.close();
