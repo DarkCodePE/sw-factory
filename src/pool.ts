@@ -23,8 +23,8 @@ import { backendOf, liveBackendFor, runLiveActivity } from './live/turn.ts';
 import type { LiveOutcome } from './admission/reports.ts';
 import type { LiveBackend } from './live/contract.ts';
 import { buildWorkerPrompt, notesBlock } from './prompts.ts';
-import { fabSha, resolveProfile, resolveRole, roleOf, type RoleConfig } from './profile.ts';
-import { HEARTBEAT_INTERVAL_MS, isBusyError, LEASE_TTL_MS, StoreError, type Activity, type Store, type Workstream } from './store.ts';
+import { fabSha, profileRunnerNames, resolveProfile, resolveRole, roleOf, roleRunner, ROLES, type Profile, type RoleConfig } from './profile.ts';
+import { HEARTBEAT_INTERVAL_MS, isBusyError, LEASE_TTL_MS, StoreError, type Activity, type Runner, type Store, type Workstream } from './store.ts';
 import { buildValidatorPrompt } from './validators/prompts.ts';
 import { protectedIntegrity, purgeRegenerableCaches } from './validators/integrity.ts';
 import { parseVerdict } from './validators/verdict.ts';
@@ -189,7 +189,6 @@ export async function processActivity(
   agentChecks = new Map<string, AgentStartCheck>(),
 ): Promise<void> {
   const log = opts.log ?? console.log;
-  const ws = store.getWorkstream(activity.workstreamId);
   const heartbeatIntervalMs = opts.heartbeatMs ?? HEARTBEAT_INTERVAL_MS;
 
   let mcpConfigPath: string | undefined;
@@ -220,8 +219,24 @@ export async function processActivity(
       return;
     }
 
-    const { digest: profileDigest, profile } = resolveProfile(opts.stateDir, ws.profile);
     const role = roleOf(a);
+    const { ws, profile, digest: profileDigest, runner, runnerProblem } = store.withRetry(() => {
+      const ws = store.getWorkstream(a.workstreamId);
+      const resolved = resolveProfile(opts.stateDir, ws.profile);
+      const name = a.kind === 'gates' ? null : roleRunner(resolved.profile, role) ?? ws.runner;
+      let runner: Runner | null = null;
+      let runnerProblem: string | undefined;
+      if (name !== null) {
+        try { runner = store.reserveActivityRunner(a.id, workerId, name); }
+        catch (error) {
+          if (!(error instanceof StoreError && error.code === 'not_found')) throw error;
+          runnerProblem = `RUNNER_NOT_FOUND: ${name}`;
+        }
+        if (runner && !runner.enabled) runnerProblem = `RUNNER_DISABLED: ${name}`;
+        else if (runner?.kind === 'ssh' && opts.live) runnerProblem = `LIVE_NOT_REMOTE: ${name}`;
+      }
+      return { ws, ...resolved, runner, runnerProblem };
+    });
     const { adapter, model } = resolveRole(profile, role, ws.agent, opts.agentOverride);
     const meta = `${runDirectory(opts.stateDir, change.id)}/${a.id}.json`;
     const previous = existsSync(meta) ? JSON.parse(readFileSync(meta, 'utf8')) : null;
@@ -232,6 +247,11 @@ export async function processActivity(
     // Reset before setup too: a launch/setup failure must not reuse an earlier report or cost.
     const pendingEvidence = { isolation: opts.confine ? 'bwrap-allowlist' : isolationFor(adapter), workerReport: null, attemptCosts };
     atomicEvidence(meta, JSON.stringify(pendingEvidence));
+    if (runnerProblem) {
+      store.setActivityProvenance(a.id, profileDigest, fabSha());
+      store.blockActivity(a.id, workerId, runnerProblem);
+      return;
+    }
     const { path, branch, baseSha } = await ensureWorktree(ws.repo, opts.stateDir, change.id);
     store.setChangeBranch(change.id, branch);
     store.setChangeBase(change.id, baseSha);
@@ -294,12 +314,6 @@ export async function processActivity(
     }
     if (a.validator && ws.verify?.length && !verifiedWorkspace(a.verifiedHead)) {
       store.blockActivity(a.id, workerId, 'GATE_HEAD_CHANGED: validator requires the verified HEAD and a clean worktree');
-      return;
-    }
-    // T74f: runner del workstream. Sin runner todo sigue como antes; un runner desactivado bloquea, nunca cae a local (R9).
-    const runner = ws.runner ? store.getRunner(ws.runner) : null;
-    if (runner && !runner.enabled) {
-      store.blockActivity(a.id, workerId, `RUNNER_DISABLED: ${runner.name}`);
       return;
     }
     const remote = runner?.kind === 'ssh' ? runner : null;
@@ -438,6 +452,12 @@ export async function processActivity(
         const head = gitEvidence(path, 'rev-parse', 'HEAD');
         if (!head) throw new Error('no se pudo leer HEAD del worktree');
         const attempt = a.retryCount + 1, jobId = `${a.id}-${attempt}`;
+        // La reserva protege la configuración. Una pausa todavía puede llegar mientras se prepara el turno.
+        const current = store.findRunner(remote.name);
+        if (!current?.enabled) {
+          store.blockActivity(a.id, workerId, `${current ? 'RUNNER_DISABLED' : 'RUNNER_NOT_FOUND'}: ${remote.name}`);
+          return;
+        }
         store.event(ws.id, 'info', `encargo enviado al runner ${remote.name} (${jobId})`, change.id, a.id);
         try {
           const done = await runRemoteAgent({ name: remote.name, target: remote.target! }, {
@@ -643,11 +663,22 @@ export async function runPool(store: Store, opts: PoolOptions): Promise<void> {
   const ws = store.getWorkstream(opts.workstream);
   // Conserva la comprobación inicial y reutilízala al comprobar cada adaptador por rol.
   const startupAdapter = opts.agentOverride ?? ws.agent;
-  const remote = ws.runner ? store.getRunner(ws.runner).kind === 'ssh' : false;
-  // Un runner remoto corre de un disparo: la sesión del harness y el servidor de `report` no pueden cruzar la red (T74 §1).
-  if (opts.live && remote) throw new StoreError('invalid_input', `LIVE_NOT_REMOTE: el workstream usa el runner remoto ${ws.runner}; --live no es compatible`);
-  // El binario de un runner remoto lo comprueba el runner, no esta máquina.
-  const agentCheck = remote ? undefined : verifyAgentStart(startupAdapter);
+  const fallback = ws.runner ? store.findRunner(ws.runner) : null;
+  let profile: Profile | undefined;
+  try { profile = resolveProfile(opts.stateDir, ws.profile).profile; }
+  catch { /* el reclamo registra el error del perfil en la activity */ }
+  // Un runner remoto corre de un disparo. Rechazar antes de tocar la cola aunque solo lo use un rol.
+  if (opts.live) {
+    const runners = profile ? new Set(ROLES.map(role => roleRunner(profile, role) ?? ws.runner)) : [ws.runner];
+    for (const name of runners) {
+      if (name === null) continue;
+      const runner = name === ws.runner ? fallback : store.findRunner(name);
+      if (runner?.kind === 'ssh') throw new StoreError('invalid_input', `LIVE_NOT_REMOTE: el workstream usa el runner remoto ${runner.name}; --live no es compatible`);
+    }
+  }
+  // Un perfil ilegible o una selección por rol se comprueban al reclamar, cuando se conoce el adaptador efectivo.
+  const agentCheck = !profile || profileRunnerNames(profile).length || fallback?.kind === 'ssh'
+    || (ws.runner !== null && !fallback?.enabled) ? undefined : verifyAgentStart(startupAdapter);
   const agentChecks = new Map<string, AgentStartCheck>(agentCheck ? [[startupAdapter, agentCheck]] : []);
   if (agentCheck?.violation && !opts.acceptAgentBinaries) throw new Error(agentCheck.violation);
   if (agentCheck?.warning) log(agentCheck.warning);

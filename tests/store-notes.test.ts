@@ -4,6 +4,7 @@ import { chmodSync, linkSync, mkdirSync, mkdtempSync, readdirSync, readFileSync,
 import { userInfo } from 'node:os';
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
+import { DEFAULT_DIGEST, defaultProfile, saveProfile } from '../src/profile.ts';
 import { Store } from '../src/store.ts';
 import { reserveTurnPrompt } from '../src/note-delivery.ts';
 import { assertNoteAttachmentMounts, assertPrivateNoteDatabase } from '../src/note-attachments.ts';
@@ -512,4 +513,22 @@ test('T96-H12: si Git falla al inventariar, el alta falla cerrada y no acepta un
   try { expect(() => writer.addChangeNote(id, 'con archivo', attachment())).toThrow('No se pudo inventariar'); } // S06: devolver [] fuera aceptaba el alta
   finally { Bun.spawnSync = spawn; }
   expect(writer.listChangeNotes(id)).toHaveLength(0);
+}));
+
+test('T102: un runner SSH del rol aplaza el adjunto aunque el workstream sea local', () => privateNotes((writer, id, cwd) => {
+  const worker = writer.listActivities({ changeId: id })[0]!;
+  const file = writer.addChangeNote(id, 'adjunto local', attachment());
+  writer.addChangeNote(id, 'solo texto');
+  writer.createRunner({ name: 'casa', kind: 'local' });
+  writer.createRunner({ name: 'torre', kind: 'ssh', target: 'alias' });
+  writer.setWorkstreamRunner(worker.workstreamId, 'casa');
+  const profile = saveProfile(writer.stateDir!, {
+    ...defaultProfile(), schemaVersion: 2, roles: { investigate: { runner: 'torre' } },
+  }).digest;
+  writer.assignProfile(worker.workstreamId, profile, DEFAULT_DIGEST);
+  expect(writer.noteRunnerIsRemote(id)).toBe(true);
+  expect(() => writer.addChangeNote(id, 'otro archivo', attachment())).toThrow(/remoto/);
+  expect(writer.reserveNotes(id, worker.id, 't102', { cwd }).map(note => note.body)).toEqual(['solo texto']);
+  expect(writer.confirmNotes('t102')).toBe(1);
+  expect(writer.listChangeNotes(id)[0]).toEqual(file);
 }));

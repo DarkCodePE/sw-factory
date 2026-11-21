@@ -2,6 +2,7 @@
 // Idea: ext/esf/internal/harnessprofile/profile.go@d901657 (MIT); reimplementado, sin copiar código.
 import { createHash, randomUUID } from 'node:crypto';
 import { existsSync, linkSync, mkdirSync, readFileSync, readdirSync, rmSync, writeFileSync } from 'node:fs';
+import { isRunnerName } from './runners/name.ts';
 import { join } from 'node:path';
 import { AGENT_NAMES, MCP_AGENTS, MODEL_AGENTS } from './agents.ts';
 import { isForbiddenEnvName, McpRegistryError, unregisteredMcp } from './mcp-registry.ts';
@@ -12,7 +13,7 @@ import { DEFAULT_VALIDATOR_TEMPLATES, type ValidatorTemplates } from './validato
 export const ROLES = ['investigate', 'implement', 'code_review', 'security_audit', 'qa'] as const;
 export type Role = (typeof ROLES)[number];
 /** `env` y `mcp` son solo nombres (D-K); el workstream pone el tope (T72). */
-export interface RoleConfig { harness?: string; model?: string; env?: string[]; mcp?: string[] }
+export interface RoleConfig { harness?: string; model?: string; runner?: string; env?: string[]; mcp?: string[] }
 
 export interface Profile {
   schemaVersion: 1 | 2;
@@ -22,7 +23,7 @@ export interface Profile {
   repo?: string;
   worker: WorkerTemplates;
   validators: ValidatorTemplates;
-  /** Solo v2: adaptador y modelo por rol; cada rol y cada campo son opcionales. */
+  /** Solo v2: adaptador, modelo y runner por rol; cada rol y cada campo son opcionales. */
   roles?: Partial<Record<Role, RoleConfig>>;
   /** Solo v2: jueces que clasifican ejecuciones terminadas. Son un aviso, nunca una puerta (T64). */
   scorers?: Record<string, ScorerDef>;
@@ -177,8 +178,11 @@ export function validateProfile(raw: unknown): Profile {
         if (!(ROLES as readonly string[]).includes(role)) throw new Error(`perfil inválido: clave desconocida roles.${role}`);
         if (!cfg || typeof cfg !== 'object' || Array.isArray(cfg)) throw new Error(`perfil inválido: roles.${role} debe ser un objeto`);
         const c = cfg as RoleConfig;
-        for (const k of Object.keys(c)) if (!['harness', 'model', 'env', 'mcp'].includes(k)) throw new Error(`perfil inválido: clave desconocida roles.${role}.${k}`);
+        for (const k of Object.keys(c)) if (!['harness', 'model', 'runner', 'env', 'mcp'].includes(k)) throw new Error(`perfil inválido: clave desconocida roles.${role}.${k}`);
         if (c.harness !== undefined && (typeof c.harness !== 'string' || !AGENT_NAMES.includes(c.harness))) throw new Error(`perfil inválido: roles.${role}.harness debe ser uno de ${AGENT_NAMES.join(', ')}`);
+        if (c.runner !== undefined && (typeof c.runner !== 'string' || !isRunnerName(c.runner))) {
+          throw new Error(`perfil inválido: roles.${role}.runner debe ser un nombre de inventario`);
+        }
         modelOk(c.model, c.harness ?? o.harness, `roles.${role}.model`);
         if (c.env !== undefined) names(c.env, `roles.${role}.env`, 16, ENV_NAME_RE, n => isForbiddenEnvName(n) ? 'es un nombre prohibido (controla el cargador, git o la fab)' : null);
         if (c.mcp !== undefined) {
@@ -205,6 +209,14 @@ export function validateProfile(raw: unknown): Profile {
 export function roleOf(a: { kind: string; validator: string | null }): Role | null {
   if (a.validator) return (ROLES as readonly string[]).includes(a.validator) ? (a.validator as Role) : null;
   return a.kind === 'investigation' ? 'investigate' : a.kind === 'implementation' ? 'implement' : null;
+}
+
+export function roleRunner(profile: Profile, role: Role | null): string | undefined {
+  return profile.schemaVersion === 2 && role ? profile.roles?.[role]?.runner : undefined;
+}
+
+export function profileRunnerNames(profile: Profile): string[] {
+  return [...new Set(ROLES.flatMap(role => roleRunner(profile, role) ?? []))];
 }
 
 /**

@@ -2,12 +2,13 @@
 // D-F: los flags de aprobación, las rutas protegidas y merge/gate allow no se leen aquí; siguen en la CLI.
 import { existsSync, statSync } from 'node:fs';
 import { isAbsolute, join } from 'node:path';
-import { Store, StoreError, type Workstream } from './store.ts';
+import { Store, StoreError, type ProfileRunnerConsent, type Workstream } from './store.ts';
 import { AGENT_NAMES } from './agents.ts';
 import { agentBinStatus, PINNED_AGENTS, type AgentBinVerdict } from './agents-verify.ts';
 import { verifierArgv } from './agent/mission-evidence.ts';
-import { listProfiles } from './profile.ts';
+import { listProfiles, profileRunnerNames, resolveProfile } from './profile.ts';
 import { redact } from './manifest.ts';
+import { profileRunnerConfirmation } from './web-profile.ts';
 import { workstreamRunner } from './web-runners.ts';
 
 const esc = (v: unknown) => redact(String(v ?? '')).replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[c]!);
@@ -80,7 +81,12 @@ export function wizardPage(store: Store, stateDir: string, url: URL, csrf?: stri
   const nav = `<p class="muted">Paso ${step} de ${STEPS.length + 1}${step > 1 ? ` · <a href="/workstreams/nuevo?${new URLSearchParams({ paso: String(step - 1), ...v })}">Atrás</a>` : ''}</p>`;
   const err = error ? `<p class="notice" role="alert">${esc(error)}</p>` : '';
   if (step <= STEPS.length) return { title, body: `${nav}${err}<form action="/workstreams/nuevo" method="get" class="web-action"><fieldset><legend>${STEPS[step - 1]!.title}</legend><input type="hidden" name="paso" value="${step + 1}">${hidden([step - 1])}${field(step - 1, v, stateDir)}<button>Siguiente</button></fieldset></form>` };
-  return { title, body: `${nav}<form action="/workstreams/nuevo" method="post" class="web-action"><fieldset><legend>Revisar y crear en borrador</legend><input type="hidden" name="csrf" value="${esc(csrf)}">${hidden([])}<dl><dt>Repositorio</dt><dd>${esc(v.repo)}</dd><dt>Slug</dt><dd>${esc(v.slug)}</dd><dt>Objetivo</dt><dd>${esc(v.goal)}</dd><dt>Adaptador</dt><dd>${esc(v.agent)}</dd><dt>Verificación</dt><dd>${esc(v.verify || 'Ninguna')}</dd></dl><h2>Antes de activar</h2>${checklist(v)}<button>Crear en borrador</button></fieldset></form>` };
+  let runnerConsent = '';
+  if (v.profile) {
+    try { runnerConsent = profileRunnerConfirmation(store, resolveProfile(stateDir, v.profile).profile, esc); }
+    catch { return { title, body: `${nav}<p class="notice">El perfil ya no está disponible.</p>` }; }
+  }
+  return { title, body: `${nav}<form action="/workstreams/nuevo" method="post" class="web-action"><fieldset><legend>Revisar y crear en borrador</legend><input type="hidden" name="csrf" value="${esc(csrf)}">${hidden([])}<dl><dt>Repositorio</dt><dd>${esc(v.repo)}</dd><dt>Slug</dt><dd>${esc(v.slug)}</dd><dt>Objetivo</dt><dd>${esc(v.goal)}</dd><dt>Adaptador</dt><dd>${esc(v.agent)}</dd><dt>Verificación</dt><dd>${esc(v.verify || 'Ninguna')}</dd></dl><h2>Antes de activar</h2>${checklist(v)}${runnerConsent}<button>Crear en borrador</button></fieldset></form>` };
 }
 
 // ---- lista, ajustes y archivo (T60) -----------------------------------------
@@ -97,9 +103,14 @@ export function workstreamsBody(store: Store, ui: { badge(s: string): string }, 
   const list = store.listWorkstreams();
   const runners = store.listRunnerSummaries();
   const items = list.map(w => {
+    let roleRunners = false;
+    if (w.profile) {
+      try { roleRunners = profileRunnerNames(resolveProfile(store.stateDir, w.profile).profile).length > 0; }
+      catch { /* El detalle de Perfiles diagnostica perfiles ilegibles. */ }
+    }
     const running = csrf ? store.changeIndex(w.slug).filter(c => c.status === 'in_progress').length : 0;
     const finish = csrf && w.state === 'draft' ? `<h3>Antes de activar</h3>${checklist({ agent: w.agent, verify: w.verify?.length ? 'definido' : '' })}` : '';
-    return `<li><h2><a href="/changes?ws=${enc(w.slug)}">${esc(w.slug)}</a> ${ui.badge(w.state)}</h2><p>${esc(w.goal)}</p><p class="muted">Agente: ${esc(w.agent)} · ${esc(w.repo)} · Workers: ${w.workerConcurrency} · Tope: ${w.taskLimit}</p>${workstreamRunner(w, runners, csrf)}${finish}${csrf ? cardForms(w, csrf, running) : ''}</li>`;
+    return `<li><h2><a href="/changes?ws=${enc(w.slug)}">${esc(w.slug)}</a> ${ui.badge(w.state)}</h2><p>${esc(w.goal)}</p><p class="muted">Agente: ${esc(w.agent)} · ${esc(w.repo)} · Workers: ${w.workerConcurrency} · Tope: ${w.taskLimit}</p>${workstreamRunner(w, runners, csrf, roleRunners)}${finish}${csrf ? cardForms(w, csrf, running) : ''}</li>`;
   });
   return `<p class="intro">Frentes de trabajo y su objetivo.</p>${csrf ? '<p><a href="/workstreams/nuevo">Nuevo workstream</a></p>' : ''}<ul class="workstreams">${items.join('')}</ul>${!list.length ? '<p class="empty">No hay workstreams. Crea uno desde fab ws create.</p>' : ''}`;
 }
@@ -107,10 +118,10 @@ export function workstreamsBody(store: Store, ui: { badge(s: string): string }, 
 // ---- mutaciones: las llama el registro ACTIONS (web-actions.ts), con el Store de escritura y FAB_ACTOR=web ----
 export const wsFields = (raw: Record<string, string | undefined>): Values => values(k => raw[k] ?? null);
 
-export function createWorkstream(store: Store, stateDir: string, v: Values): void {
+export function createWorkstream(store: Store, stateDir: string, v: Values, runnerConsent: ProfileRunnerConsent): void {
   for (const s of STEPS) { const e = s.check(v, store, stateDir); if (e) throw input(e); }
   // Mismos valores y mismos valores por defecto que `fab ws create`, sin flags de aprobación ni rutas protegidas.
-  store.createWorkstream({ slug: v.slug, goal: v.goal, repo: v.repo, agent: v.agent, profile: v.profile || undefined, verify: v.verify ? [v.verify] : undefined });
+  store.createWorkstream({ slug: v.slug, goal: v.goal, repo: v.repo, agent: v.agent, profile: v.profile || undefined, verify: v.verify ? [v.verify] : undefined }, runnerConsent);
 }
 
 export function workstreamSettings(store: Store, slug: string, raw: Record<string, string | undefined>): void {

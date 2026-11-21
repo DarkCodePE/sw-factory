@@ -26,6 +26,7 @@ import { archiveWorkstream, createWorkstream, workstreamSettings, workstreamStat
 import { accessInput, setAccess } from './web-access.ts';
 import { JIRA_IMPORT_PATH, JIRA_MESSAGES, residentChanges, residentInput, type jiraImportAction } from './web-entrada.ts';
 import { auditAll, saveResidentConfig } from './admission/config.ts';
+import { RUNNERS_PATH, runRunnerAdmin, runnerAdminFields, type RunnerAdminMode } from './web-runners.ts';
 import { result as inertPage, RUNNER_CHECK_PATH, type runnerCheckAction } from './web-runner-check.ts';
 
 import { scheduleExpr } from './cron.ts';
@@ -80,7 +81,7 @@ export function actionForms(store: Store, url: URL, csrf?: string): string {
     if (waiting || ['failed', 'blocked', 'quarantined', 'implemented'].includes(c.status)) body += form(`/changes/${id}/retry`, `<input type="hidden" name="revision" value="${retryRevision(store, id)}"><button>Reintentar change</button><p class="muted">Reencola la última activity fallida; si espera una respuesta, abandona esa espera.</p>`);
     if (!store.isTerminalChange(c.status)) {
       const planned = activities.some(a => ['pending', 'in_progress', 'waiting_reply'].includes(a.status));
-      body += noteForm(id, hidden, planned, store.noteRunnerIsRemote(c.workstreamId), store.noteAttachmentStateProblem(), escape);
+      body += noteForm(id, hidden, planned, store.noteRunnerIsRemote(c.id), store.noteAttachmentStateProblem(), escape);
     }
     if (!FINAL_STATUSES.includes(c.status)) body += form(`/changes/${id}/cancel`, `<fieldset><legend>Cancelar change</legend><label><input type="checkbox" name="confirm" value="yes" required> Confirmo: cancela el change y borra su worktree (igual que fab reject)</label><button>Cancelar change</button></fieldset>`);
     return `<section aria-label="Decisiones">${body}${suiteTaskForm(c, store.stateDir, url, escape, csrf)}</section>`;
@@ -169,6 +170,23 @@ function automationInput(mode: NonNullable<Action['automationForm']>, raw: Raw):
   }
   return { ws: raw.ws, name: raw.name, title: lf(raw.title), body, cron, revision: raw.revision, schedule: raw.schedule };
 }
+
+function runnerAdmin(mode: RunnerAdminMode, path: RegExp): Action {
+  return {
+    api: false, path, input: raw => raw,
+    run: (store, id, input, out) => {
+      out.destination = RUNNERS_PATH;
+      try { runRunnerAdmin(store, mode, id, input); }
+      catch (error) {
+        if (!(error instanceof StoreError)) throw error;
+        const status = error.code === 'conflict' ? 409 : error.code === 'not_found' ? 404 : 400;
+        const message = status === 404 ? 'No se encontró el runner.' : redact(error.message);
+        throw new InputError(status, message);
+      }
+    },
+  };
+}
+const isRunnerAdmin = (mode: string): mode is RunnerAdminMode => Object.hasOwn(runnerAdminFields, mode);
 
 // Registro único de acciones: los formularios de la web y, después, la API pasan por aquí.
 export const ACTIONS: Record<string, Action | CheckAction | WebResponseAction | JiraAction> = {
@@ -398,13 +416,14 @@ export const ACTIONS: Record<string, Action | CheckAction | WebResponseAction | 
   'workstreams/create': {
     api: false,
     path: /^\/(workstreams)\/nuevo$/,
-    input: wsFields,
+    input: raw => ({ ...wsFields(raw), runnerRevision: raw.runnerRevision, confirmRunnerSsh: raw.confirmRunnerSsh }),
     run: (store, _id, input, out, _actor, stateDir) => {
       out.destination = '/workstreams';
-      try { createWorkstream(store, stateDir, input as ReturnType<typeof wsFields>); }
+      const { runnerRevision, confirmRunnerSsh, ...fields } = input;
+      try { createWorkstream(store, stateDir, wsFields(fields), { revision: runnerRevision, confirmSsh: confirmRunnerSsh === 'yes' }); }
       catch (e) {
         // T60-H4: un dato inválido devuelve al asistente, que muestra el paso que falla con lo escrito.
-        if (e instanceof StoreError && e.code === 'invalid_input') out.destination = `/workstreams/nuevo?${new URLSearchParams({ ...(input as Record<string, string>), paso: '5' })}`;
+        if (e instanceof StoreError && e.code === 'invalid_input') out.destination = `/workstreams/nuevo?${new URLSearchParams({ ...wsFields(fields), paso: '5' })}`;
         throw e;
       }
     },
@@ -448,19 +467,18 @@ export const ACTIONS: Record<string, Action | CheckAction | WebResponseAction | 
     path: route('workstreams', 'runner'),
     input: raw => {
       const { runner, expected, confirm, confirm_ssh } = raw;
-      // «tipo alta»: lo que mostró el formulario de ese runner; `created_at` es ISO y no lleva espacios.
+      // Revisión de la configuración que vio el dueño, sin enviar el alias al formulario.
       const seen = runner ? raw[`seen.${runner}`] ?? '' : '';
       if (runner === undefined || (runner !== '' && !isRunnerName(runner)) || expected === undefined || confirm !== 'yes'
-        || (runner !== '' && !/^(ssh|local) \S+$/.test(seen))) {
+        || (runner !== '' && !/^[0-9a-f]{64}$/.test(seen))) {
         throw new InputError(400, 'Elige un runner y confirma la selección.');
       }
       return { runner, expected, confirm_ssh, seen };
     },
     run: (store, id, { runner, expected, confirm_ssh, seen }, out) => {
       out.destination = '/workstreams';
-      const [kind, createdAt] = seen!.split(' ');
       store.setWorkstreamRunner(id, runner || null, { expected: expected || null, confirmSsh: confirm_ssh === 'yes',
-        seen: runner ? { kind: kind as 'ssh' | 'local', createdAt: createdAt! } : undefined });
+        seen: runner ? seen : undefined });
     },
   },
   // T103: nombres de secretos y MCP del workstream, nunca valores (D-K). Mismo Store y mismas guardas que fab ws env|mcp.
@@ -485,6 +503,9 @@ export const ACTIONS: Record<string, Action | CheckAction | WebResponseAction | 
     },
   },
   'jira/import': { api: false, path: JIRA_IMPORT_PATH, jira: true },
+  'runners/create': runnerAdmin('create', /^\/config\/runners\/alta$/),
+  'runners/update': runnerAdmin('update', route('config/runners', 'editar')),
+  'runners/delete': runnerAdmin('delete', route('config/runners', 'borrar')),
   'runners/check': { path: RUNNER_CHECK_PATH, api: false, check: true },
 };
 
@@ -651,6 +672,8 @@ export async function webAction(req: Request, stateDir: string, port: number, au
     if ('check' in action) return await runnerCheck(id, extendCheckTimeout);
     if (id && !/^[\w-]+$/.test(id)) return new Response('Identificador inválido.', { status: 400 });
     if (name === 'workstreams/adaptador') checkProfileFields(form, ['csrf', ...ADAPTER_FIELDS]);
+    const runnerMode = name.startsWith('runners/') ? name.slice('runners/'.length) : '';
+    if (isRunnerAdmin(runnerMode)) checkProfileFields(form, runnerAdminFields[runnerMode]);
     let repeated = false;
     // Las acciones anteriores conservan el primer valor. En los editores importa cada campo.
     for (const [k, v] of form) {
