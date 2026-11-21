@@ -489,7 +489,7 @@ test('T96-H10: el aviso de ancestro nombra el directorio que falla y el de fiche
     const loose = join(dir, 'suelto'); mkdirSync(loose); chmodSync(loose, 0o775); // escribible por el grupo: no es privado
     const state = join(loose, 'estado'); mkdirSync(state, { mode: 0o700 });
     expect(() => assertPrivateNoteDatabase(join(state, 'fabrica.db'))).toThrow(`Directorio: ${loose}`);
-    writeFileSync(join(state, 'fabrica.db'), 'x', { mode: 0o664 });
+    writeFileSync(join(state, 'fabrica.db'), 'x'); chmodSync(join(state, 'fabrica.db'), 0o664); // explícito: el umask de CI (022) quitaría el permiso de grupo
     chmodSync(loose, 0o700);
     expect(() => assertPrivateNoteDatabase(join(state, 'fabrica.db'))).toThrow('chmod 600');
   } finally { rmSync(dir, { recursive: true, force: true }); }
