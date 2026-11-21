@@ -5,7 +5,7 @@ import type { Activity, Store } from './store.ts';
 
 export const EVIDENCE_LIMIT = 256 * 1024;
 export type ClaudeFrame = Record<string, unknown>;
-export interface EvidenceText { text: string; truncated: boolean; claudeFrames?: ClaudeFrame[] }
+export interface EvidenceText { text: string; truncated: boolean; claudeFrames?: ClaudeFrame[]; claudeIncomplete?: boolean }
 const inside = (root: string, path: string) => { const rel = relative(root, path); return rel !== '..' && !rel.startsWith(`..${sep}`) && !isAbsolute(rel); };
 
 /** Las rutas son relativas a stateDir. Se rechazan todos los symlinks, incluidos los internos. */
@@ -61,7 +61,7 @@ export function readEvidence(stateDir: string, path: string): EvidenceText | nul
 }
 
 function redactEvidenceText(text: string): string {
-return redactForWeb(text.replace(new RegExp(`("[\\w-]*(?:${SECRET_WORDS})[\\w-]*"\\s*:\\s*)"(?:[^"\\\\]|\\\\.)*"`, 'gi'), '$1"[REDACTED]"'));
+  return redactForWeb(text.replace(new RegExp(`("[\\w-]*(?:${SECRET_WORDS})[\\w-]*"\\s*:\\s*)"(?:[^"\\\\]|\\\\.)*"`, 'gi'), '$1"[REDACTED]"'));
 }
 
 // Regla de presentación; no amplía redact ni cambia la lectura histórica de improve.
@@ -92,22 +92,36 @@ function redactLogValue(value: unknown, depth = 0): unknown {
 }
 
 function readClaudeEvidence(text: string, truncated: boolean): EvidenceText {
-  const unavailable = { text: 'No medido', truncated, claudeFrames: [] };
   const marker = '\n[stderr]\n';
   const at = text.indexOf(marker);
   const end = at >= 0 ? at : truncated ? Math.max(0, text.lastIndexOf('\n')) : text.length;
-  const stdout = text.slice(0, end);
   const frames: ClaudeFrame[] = [];
-  try {
-    for (const line of stdout.split('\n')) {
-      if (!line.trim()) continue;
-      const value = JSON.parse(line) as ClaudeFrame | null;
-      if (!value || typeof value.type !== 'string') return unavailable;
-      frames.push(redactLogValue(value) as ClaudeFrame);
+  const rendered: string[] = [];
+  let plain: string[] = [];
+  let incomplete = truncated;
+  const flushPlain = () => {
+    if (!plain.length) return;
+    rendered.push(redactEvidenceText(plain.join('\n')));
+    plain = [];
+  };
+  for (const line of text.slice(0, end).split('\n')) {
+    if (line.trim()) {
+      try {
+        const value = JSON.parse(line) as ClaudeFrame | null;
+        if (value && typeof value.type === 'string') {
+          const frame = redactLogValue(value) as ClaudeFrame;
+          flushPlain();
+          frames.push(frame);
+          rendered.push(JSON.stringify(frame));
+          continue;
+        }
+      } catch { /* Conserva la línea de diagnóstico aunque no se pueda interpretar. */ }
+      incomplete = true;
     }
-  } catch { return unavailable; }
-  const remainder = redactEvidenceText(text.slice(end));
-  return { text: frames.map(frame => JSON.stringify(frame)).join('\n') + remainder, truncated, claudeFrames: frames };
+    plain.push(line);
+  }
+  flushPlain();
+  return { text: rendered.join('\n') + redactEvidenceText(text.slice(end)), truncated, claudeFrames: frames, claudeIncomplete: incomplete };
 }
 
 // Valor: entre comillas con escapes, comilla sin cierre (corte de evidencia o valor enorme: hasta fin de línea), o hasta el siguiente separador.

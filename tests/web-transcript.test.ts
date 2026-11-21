@@ -87,10 +87,9 @@ test('T99: transcript por intento, enlace desde el change y log de texto redacta
   expect((await get(turnPage(another))).status).toBe(404);
 });
 
-test('T99: stream roto o truncado, evidencia ausente y symlink mantienen la página', async () => {
+test('T99: un stream sin pasos válidos y un symlink mantienen la página', async () => {
   const log = join(run, `${activity}.log`);
   for (const bad of [
-    stream.replace('\n\n[stderr]', '\n{"type":\n\n[stderr]'),
     '{"type":"assistant","message":{"content":12}}',
   ]) {
     writeFileSync(log, bad);
@@ -130,3 +129,30 @@ test('T99-H1: un stream real de más de 256 KiB conserva pasos completos y log',
   expect(raw).toContain('[log recortado a 256 KiB]');
   expect(raw).not.toContain('LECTURA_SINTETICA_COMPLETA');
 });
+
+test.each(['línea final cortada', 'aviso entre frames', 'mensaje con forma inválida'])(
+  'T99-H2: %s mantiene pasos completos, aviso y texto de diagnóstico', async (scenario) => {
+    const lines = realStream().split('\n');
+    const firstResult = lines.findIndex(line => line.includes('"type":"tool_result"'));
+    const kept = lines.slice(0, firstResult + 1).join('\n') + '\n';
+    const nextResult = lines.findIndex((line, i) => i > firstResult && line.includes('"type":"tool_result"'));
+    const bad = scenario === 'línea final cortada' ? lines[nextResult]!.slice(0, 200)
+      : scenario === 'aviso entre frames' ? 'Advertencia del wrapper\n' + lines[firstResult + 1]
+      : '{"type":"assistant","message":{"content":12}}';
+    const input = kept + bad + '\n[stderr]\nDiagnóstico después del fallo\n';
+    expect(Buffer.byteLength(input)).toBeLessThan(EVIDENCE_LIMIT);
+    writeFileSync(join(run, `${activity}.log`), input);
+    writeFileSync(join(run, `${activity}.t-turno.log`), input);
+    for (const response of [await activityPage('?herramientas=1'), await get(turnPage() + '?herramientas=1')]) {
+      expect(response.status).toBe(200);
+      const page = await response.text();
+      expect(page).toContain('<summary>Resultado de herramienta</summary>');
+      expect(page).toContain('Transcript incompleto');
+      expect(page).toContain('<h2>Log</h2>');
+      expect(page).toContain('Diagnóstico después del fallo');
+    }
+    const raw = await (await get(`/changes/${change}/turns/turno/log`)).text();
+    expect(raw).toContain(bad.split('\n')[0]!);
+    expect(raw).toContain('Diagnóstico después del fallo');
+  },
+);
