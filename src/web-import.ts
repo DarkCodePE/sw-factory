@@ -4,6 +4,7 @@
 // D-F: la web no da más poder que la CLI; un árbol que baje las aprobaciones o vacíe las rutas protegidas se rechaza aquí.
 import { createHash, createHmac, randomBytes, timingSafeEqual } from 'node:crypto';
 import { join } from 'node:path';
+import { verifierArgv } from './agent/mission-evidence.ts';
 import { applyDefinition, parseDefinition, type ParsedDefinition } from './definition.ts';
 import { readTar, TAR_MAX_BYTES } from './definition-tar.ts';
 import { redact } from './manifest.ts';
@@ -54,7 +55,10 @@ function parseDefinitionBytes(bytes: Uint8Array): ParsedDefinition & { files: Ma
   // D-F: la web no da más poder que la CLI ni fija lo que el asistente web no ofrece. Valores por defecto y ausentes pasan; el resto va por la CLI.
   const cli = (what: string) => bad(`workstream.json: ${what} solo se fija con la CLI (fab definition import)`);
   if (s.requireApproval === false || s.requireChangeApproval === false) throw cli('bajar las aprobaciones');
-  if (s.verify?.length || s.verifySetup?.length) throw cli('verify y verifySetup');
+  // T105-H12: el asistente web ofrece un único comando `verify`, validado con verifierArgv; verifySetup y varios comandos son de la CLI.
+  if (s.verifySetup?.length) throw cli('verifySetup');
+  if ((s.verify?.length ?? 0) > 1) throw cli('más de un comando verify');
+  if (s.verify?.length) try { verifierArgv(s.verify[0]); } catch (e) { throw bad(`workstream.json: verify no es válido: ${(e as Error).message}`); }
   if (s.protectedPaths?.some((p: string) => !DEFAULT_PROTECTED_PATHS.includes(p)) || s.protectedPaths?.length === 0) throw cli('protectedPaths distinto del valor por defecto');
   if ((s.workerConcurrency ?? 2) !== 2 || (s.taskLimit ?? 20) !== 20) throw cli('workerConcurrency y taskLimit distintos del valor por defecto');
   return { ...parsed, files, digest: profileDigest(parsed.profile) };

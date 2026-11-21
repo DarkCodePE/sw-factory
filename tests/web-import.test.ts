@@ -292,7 +292,7 @@ test.each(BAD_TYPES.slice(0, 6))('la web rechaza %j con 400 y no crea el workstr
 });
 
 // ---- T105-H8: la web no fija por importación lo que el asistente web no ofrece (D-F); eso es solo de la CLI -----------------
-test.each([{ verify: ['bun test'] }, { verifySetup: ['bun install'] }, { protectedPaths: ['secrets/**'] }, { workerConcurrency: 8 }, { taskLimit: 500 }, { agent: 'fake', verify: ['x'] }] as Record<string, unknown>[])(
+test.each([{ verify: ['bun test', 'bun lint'] }, { verifySetup: ['bun install'] }, { protectedPaths: ['secrets/**'] }, { workerConcurrency: 8 }, { taskLimit: 500 }, { agent: 'fake', verify: ['x', 'y'] }] as Record<string, unknown>[])(
   'la web rechaza %j (solo por CLI) y la CLI lo acepta', async extra => {
     const before = snapshot();
     const files = withSettings(extra);
@@ -396,4 +396,17 @@ test('H11: un [REDACTED] literal en el texto no silencia el aviso de redacción'
   expect(html).toContain('texto con forma de secreto');
   const clean = await (await upload('/definicion/importar', { repo, slug: '' }, tar(treeOf(withSettings({ goal: '[REDACTED] sin secreto' }))))).text();
   expect(clean).not.toContain('texto con forma de secreto');
+});
+
+test('H12: un único verify válido se importa por la web como en el asistente; varios, setup o uno inválido, no', async () => {
+  const before = snapshot();
+  const preview = await upload('/definicion/importar', { repo, slug: '' }, tar(treeOf(withSettings({ slug: 'con-verify', verify: ['bun test'] }))));
+  expect(preview.status).toBe(200);
+  expect((await confirmFrom(preview, '/definicion/importar')).status).toBe(303);
+  expect(store.getWorkstream('con-verify').verify).toEqual([['bun', 'test']]);
+  for (const extra of [{ verify: ['a', 'b'] }, { verify: ['bun "test'] }, { verify: [''] }, { verify: ['bun test'], verifySetup: ['bun install'] }]) {
+    expect((await upload('/definicion/importar', { repo, slug: '' }, tar(treeOf(withSettings(extra))))).status).toBe(400);
+  }
+  expect(store.listWorkstreams().map(w => w.slug).sort()).toEqual(['con-verify', 'prueba']);
+  expect(before).not.toBe(snapshot());
 });
