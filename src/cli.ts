@@ -518,7 +518,7 @@ async function main(argv: string[]): Promise<number> {
         let attachment;
         if (values.file) { // el Store valida nombre, extensión, tamaño y estado privado, igual que la web
           let size: number;
-          try { size = statSync(values.file).size; } catch { throw new StoreError('invalid_input', `no se puede leer ${values.file}`); }
+          try { const st = statSync(values.file); if (!st.isFile()) throw 0; size = st.size; } catch { throw new StoreError('invalid_input', `no se puede leer ${values.file}: no es un fichero regular`); } // C90-H2
           if (size > NOTE_ATTACHMENT_MAX) throw new StoreError('invalid_input', `el adjunto ocupa ${size} bytes; el máximo es ${NOTE_ATTACHMENT_MAX}`);
           attachment = { name: basename(values.file), bytes: new Uint8Array(readFileSync(values.file)) };
         }

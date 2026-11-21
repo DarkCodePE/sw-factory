@@ -208,3 +208,16 @@ test('C90-H1: update con --at o --weekday sin --every ni --cron falla y no cambi
   expect((await run(store, ['update', id, '--every', 'day', '--at', '09:00'])).code).toBe(0);
   store.close();
 });
+test('C90-H2: --body-file exige un fichero regular (directorio y /dev/zero fallan sin leer)', async () => {
+  const { root, store } = fixture();
+  await run(store, ['add', 'ws', '--name', 'a', '--cron', '5 4 * * *', '--title', 't', '--body-file', join(root, 'body.md')]);
+  const id = store.listAutomations()[0]!.id;
+  for (const f of [root, '/dev/zero']) {
+    for (const args of [['update', id], ['add', 'ws', '--name', 'z', '--cron', '5 4 * * *', '--title', 't']]) {
+      const r = await run(store, [...args, '--body-file', f]);
+      expect(r.code).toBe(1); expect(r.err).toContain('no es un fichero regular');
+    }
+  }
+  expect(store.listAutomations()).toHaveLength(1);
+  store.close();
+});

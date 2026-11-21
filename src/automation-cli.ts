@@ -18,7 +18,7 @@ const fail = (m: string) => new StoreError('invalid_input', m);
 
 function readBody(file: string): string {
   let size: number;
-  try { size = statSync(file).size; } catch { throw fail(`no se puede leer ${file}`); }
+  try { const st = statSync(file); if (!st.isFile()) throw 0; size = st.size; } catch { throw fail(`no se puede leer ${file}: no es un fichero regular`); } // C90-H2: /dev/zero no termina
   if (size > MAX_BODY) throw fail(`el fichero del cuerpo ocupa ${size} bytes; el máximo es ${MAX_BODY}`);
   return readFileSync(file, 'utf8');
 }
