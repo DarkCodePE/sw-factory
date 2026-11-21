@@ -264,5 +264,34 @@ exit 0
   expect(Object.keys(versions)).toEqual(['claude']);
 });
 
+test('T106-H10: binaryVersion maneja errores, multilínea, caracteres de control, tope 40 y timeout (N17–N21)', () => {
+  // N17: exit code != 0
+  const binFail = stubBin('claude-fail', '#!/bin/sh\nexit 1\n');
+  expect(binaryVersion(binFail)).toBeNull();
+
+  // N18: caracteres de control C0 y DEL
+  const binControl = stubBin('claude-ctrl', '#!/bin/sh\necho "v1.0\x07\x1b[31m\x7fok"\nexit 0\n');
+  const vCtrl = binaryVersion(binControl);
+  expect(vCtrl).toBe('v1.0[31mok');
+  expect(vCtrl).not.toContain('\x07');
+  expect(vCtrl).not.toContain('\x1b');
+  expect(vCtrl).not.toContain('\x7f');
+
+  // N19: tope de 40 caracteres
+  const binLargo = stubBin('claude-long', '#!/bin/sh\necho "' + 'x'.repeat(100) + '"\nexit 0\n');
+  const vLong = binaryVersion(binLargo);
+  expect(vLong).not.toBeNull();
+  expect(vLong!.length).toBe(40);
+
+  // N20: solo primera línea
+  const binMulti = stubBin('claude-multi', '#!/bin/sh\necho "primera linea"\necho "segunda linea"\nexit 0\n');
+  expect(binaryVersion(binMulti)).toBe('primera linea');
+
+  // N21: timeout (bucle infinito que supera 1s sin depender de binarios de PATH)
+  const binSleep = stubBin('claude-sleep', '#!/bin/sh\nwhile true; do :; done\n');
+  expect(binaryVersion(binSleep)).toBeNull();
+});
+
+
 
 

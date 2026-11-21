@@ -608,8 +608,30 @@ test('T106-H6: sanea caracteres de control, limita a 40 caracteres y escapa HTML
   // Comprobar que en la celda no excede 40 caracteres tras sanear
   const claudeRow = html.match(/<tr[^>]*><td>claude<\/td>.*?<\/tr>/s)?.[0] ?? '';
   const versionCellMatch = claudeRow.match(/<td>claude<\/td><td>[^<]*<\/td><td>[^<]*<\/td><td>[^<]*<\/td><td>([^<]*)<\/td>/);
-  // El texto antes de escapar debe medir máximo 40 caracteres
-  expect(versionCellMatch).toBeDefined();
+  expect(versionCellMatch).not.toBeNull();
+  const rawVersionInCell = (versionCellMatch?.[1] ?? '').replace(/&lt;/g, '<').replace(/&gt;/g, '>').replace(/&amp;/g, '&');
+  expect(rawVersionInCell.length).toBeLessThanOrEqual(40);
+  expect(rawVersionInCell.length).toBeGreaterThan(0);
+});
+
+test('T106-H10: la web no muestra versión registrada para un binario sin pin (mata mutación N05)', async () => {
+  const agyBin = join(dir, 'agy');
+  writeFileSync(agyBin, '#!/bin/sh\nexit 0\n');
+  chmodSync(agyBin, 0o755);
+
+  writeFileSync(join(dir, 'agents.json'), JSON.stringify({
+    // agy SIN pin en agentBinaries
+    agentBinaries: {},
+    agentVersions: { agy: '0.9.1-registrada' },
+  }));
+
+  new Store(join(dir, 'fabrica.db')).close();
+  start();
+
+  const html = await page('/config');
+  expect(html).not.toContain('0.9.1-registrada');
+  const agyRow = html.match(/<tr[^>]*><td>agy<\/td>.*?<\/tr>/s)?.[0] ?? '';
+  expect(agyRow).toContain('<td>No medido</td>');
 });
 
 test('T106-H5: valida versión de native dinámicamente contra package.json en lugar de literal', async () => {
