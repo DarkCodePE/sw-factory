@@ -13,6 +13,7 @@ beforeEach(() => {
   mkdirSync(join(repo, '.agents/skills/lint'), { recursive: true });
   writeFileSync(join(repo, '.agents/skills/lint/SKILL.md'), 'usa el linter\n');
   mkdirSync(a); mkdirSync(b);
+  for (const d of [a, b]) writeFileSync(join(d, 'mcp-servers.json'), JSON.stringify({ servers: { docs: { url: 'https://docs.example.com/mcp', headers: {} } } })); // el perfil de seed declara el MCP «docs»
   storeA = new Store(join(a, 'fab.db')); storeB = new Store(join(b, 'fab.db'));
 });
 afterEach(() => { storeA.close(); storeB.close(); rmSync(dir, { recursive: true, force: true }); });

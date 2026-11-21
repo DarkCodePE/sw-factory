@@ -4,7 +4,7 @@ import { createHash, randomUUID } from 'node:crypto';
 import { existsSync, linkSync, mkdirSync, readFileSync, readdirSync, rmSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { AGENT_NAMES, MCP_AGENTS, MODEL_AGENTS } from './agents.ts';
-import { isForbiddenEnvName } from './mcp-registry.ts';
+import { isForbiddenEnvName, McpRegistryError, unregisteredMcp } from './mcp-registry.ts';
 import { CONFINABLE_AGENTS } from './sandbox/confine.ts';
 import { COMMIT_LINE, DEFAULT_WORKER_TEMPLATES, type WorkerTemplates } from './prompts.ts';
 import { DEFAULT_VALIDATOR_TEMPLATES, type ValidatorTemplates } from './validators/prompts.ts';
@@ -238,6 +238,16 @@ const fileFor = (stateDir: string, digest: string) => join(profilesDir(stateDir)
 export const isProfileDigest = (s: string) => /^[0-9a-f]{64}$/.test(s);
 
 /** Guarda el perfil direccionado por contenido. Reimportar el mismo es idempotente. */
+/** T103-H11: D-K también por la CLI. Los nombres MCP por rol deben estar en el registro; se cuenta, no se nombra (un valor pegado cumple el formato). */
+export function assertRoleMcpRegistered(stateDir: string, profile: Profile): void {
+  const names = [...new Set(Object.values(profile.roles ?? {}).flatMap(c => c.mcp ?? []))];
+  if (!names.length) return;
+  let unknown: string[];
+  try { unknown = unregisteredMcp(stateDir, names); }
+  catch (e) { if (e instanceof McpRegistryError) throw new Error('El registro MCP (mcp-servers.json) no es válido: no se puede comprobar el MCP por rol.'); throw e; }
+  if (unknown.length) throw new Error(`${unknown.length} nombre(s) MCP por rol no están en el registro MCP (mcp-servers.json).`);
+}
+
 export function saveProfile(stateDir: string, raw: unknown): { digest: string; created: boolean } {
   const profile = validateProfile(raw);
   const digest = profileDigest(profile);

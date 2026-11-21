@@ -2,7 +2,7 @@
 import { readFileSync, writeFileSync } from 'node:fs';
 import { parseArgs } from 'node:util';
 import { StoreError } from './store.ts';
-import { canonicalJson, defaultProfile, DEFAULT_DIGEST, listProfiles, loadProfile, profileDigest, saveProfile } from './profile.ts';
+import { assertRoleMcpRegistered, canonicalJson, defaultProfile, DEFAULT_DIGEST, listProfiles, loadProfile, profileDigest, saveProfile, validateProfile } from './profile.ts';
 
 export function profileMain(argv: string[], stateDir: string): number {
   const { values, positionals } = parseArgs({ args: argv, allowPositionals: true, options: { out: { type: 'string' } } });
@@ -15,7 +15,9 @@ export function profileMain(argv: string[], stateDir: string): number {
       if (values.out) console.log(`perfil por defecto exportado a ${values.out} (digest ${DEFAULT_DIGEST})`);
     } else if (sub === 'import') {
       if (!arg) throw fail('usage: fab profile import <archivo>');
-      const { digest, created } = saveProfile(stateDir, JSON.parse(readFileSync(arg, 'utf8')));
+      const profile = validateProfile(JSON.parse(readFileSync(arg, 'utf8')));
+      assertRoleMcpRegistered(stateDir, profile);
+      const { digest, created } = saveProfile(stateDir, profile);
       console.log(`${digest}${created ? '' : ' (ya existía)'}`);
     } else if (sub === 'inspect') {
       if (!arg) throw fail('usage: fab profile inspect <digest>');

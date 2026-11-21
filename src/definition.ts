@@ -5,7 +5,7 @@ import { existsSync, lstatSync, mkdirSync, readFileSync, readdirSync, realpathSy
 import { homedir } from 'node:os';
 import { join } from 'node:path';
 import { AGENT_NAMES } from './agents.ts';
-import { resolveProfile, saveProfile, validateProfile, type Profile } from './profile.ts';
+import { assertRoleMcpRegistered, resolveProfile, saveProfile, validateProfile, type Profile } from './profile.ts';
 import { StoreError, type Store } from './store.ts';
 
 const WORKER_KEYS = ['rules', 'investigate', 'implement'] as const;
@@ -133,6 +133,7 @@ export function importDefinition(store: Store, stateDir: string, dir: string, re
   const { settings: s, profile, skills } = readDefinition(dir);
   const slug = slugOverride ?? s.slug;
   if (store.listWorkstreams().some(w => w.slug === slug)) throw new StoreError('invalid_input', `el workstream ${slug} ya existe; importar no lo modifica`);
+  assertRoleMcpRegistered(stateDir, profile);
   const { digest, created } = saveProfile(stateDir, profile);
   try {
     store.createWorkstream({
