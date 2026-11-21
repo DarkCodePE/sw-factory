@@ -509,6 +509,7 @@ async function main(argv: string[]): Promise<number> {
       }
       case 'note': {
         const c = findByPrefix(allChanges(store), sub ?? '', 'change');
+        if (!rest.length && values.file) throw new StoreError('invalid_input', 'fab note --file necesita el texto de la nota'); // C90-H4
         if (!rest.length) { // sin texto: lista las notas con su estado de entrega
           const notes = store.listChangeNotes(c.id);
           if (!notes.length) console.log(`change ${short(c.id)}: sin notas`);
