@@ -139,9 +139,15 @@ test('loadAgentVersions lee versiones registradas de agents.json', () => {
   mkdirSync(scope.home, { recursive: true });
   writeFileSync(join(scope.home, 'agents.json'), JSON.stringify({
     agentBinaries: { claude: 'a'.repeat(64) },
-    agentVersions: { claude: '2.5.0', codex: '1.0.0' },
+    agentVersions: {
+      claude: { version: '2.5.0', sha256: 'a'.repeat(64) },
+      codex: '1.0.0', // soporte de formato simple retrocompatible
+    },
   }));
-  expect(loadAgentVersions(scope.home)).toEqual({ claude: '2.5.0', codex: '1.0.0' });
+  expect(loadAgentVersions(scope.home)).toEqual({
+    claude: { version: '2.5.0', sha256: 'a'.repeat(64) },
+    codex: { version: '1.0.0' },
+  });
 });
 
 test('T106-H4: savePins no conserva claves numéricas si el archivo previo no es un objeto', () => {
@@ -167,8 +173,41 @@ test('T106-H3: fab agents verify --pin escribe agentVersions en agents.json', as
   }
 
   const versions = loadAgentVersions(scope.home);
-  expect(versions.claude).toBe('claude v2.5.0');
+  expect(versions.claude?.version).toBe('claude v2.5.0');
+  expect(versions.claude?.sha256).toBe(loadPins(scope.home).claude);
   expect(versions.codex).toBeUndefined();
   expect(loadPins(scope.home).claude).toBe(sha256Of(join(scope.binDir, 'claude')));
+});
+
+test('T106-H8: la versión registrada queda ligada al sha y se descarta si pin cambia o --version no responde (escenario N1)', async () => {
+  // 1. claude inicial con versión 1.0.0
+  stubBin('claude', '#!/bin/sh\nif [ "$1" = "--version" ]; then echo "claude 1.0.0"; exit 0; fi\nexit 0\n');
+  const log = console.log;
+  console.log = () => {};
+  try {
+    await agentsMain(['--pin']);
+  } finally {
+    console.log = log;
+  }
+  const v1 = loadAgentVersions(scope.home).claude;
+  expect(v1?.version).toBe('claude 1.0.0');
+  expect(v1?.sha256).toBe(loadPins(scope.home).claude);
+
+  // 2. Se reemplaza claude por un binario cuyo --version falla (exit 3)
+  stubBin('claude', '#!/bin/sh\nexit 3\n');
+  const newSha = sha256Of(join(scope.binDir, 'claude'));
+  expect(newSha).not.toBe(v1?.sha256);
+
+  console.log = () => {};
+  try {
+    await agentsMain(['--pin']);
+  } finally {
+    console.log = log;
+  }
+
+  // 3. El nuevo pin está registrado, pero la versión vieja DEBE haberse descartado
+  expect(loadPins(scope.home).claude).toBe(newSha);
+  const v2 = loadAgentVersions(scope.home).claude;
+  expect(v2).toBeUndefined(); // Se descartó porque --version no respondió con éxito
 });
 

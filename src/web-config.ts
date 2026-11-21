@@ -139,8 +139,10 @@ function adapters(stateDir: string, escape: Escape): string {
     } else if (!status?.path || status.verdict === 'no_instalado') {
       version = '—';
     } else if (status.verdict === 'ok') {
-      const raw = versionsFromRecord[agent];
-      if (raw) {
+      const rec = versionsFromRecord[agent];
+      const raw = typeof rec === 'string' ? rec : rec?.version;
+      const recSha = typeof rec === 'object' && rec !== null ? rec.sha256 : undefined;
+      if (raw && (!recSha || recSha === status.pin)) {
         const cleaned = raw.replace(/[\x00-\x1f\x7f]/g, '').trim();
         version = cleaned ? cleaned.slice(0, 40) : 'No medido';
       } else {

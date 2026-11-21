@@ -631,6 +631,31 @@ test('T106-H7: la hoja de estilo define reglas para .pin-mismatch y mark.alerta'
   expect(css).toContain('mark.alerta');
 });
 
+test('T106-H8: la web descarta la versión registrada si su sha no coincide con el pin actual', async () => {
+  const claudeBin = join(dir, 'claude');
+  writeFileSync(claudeBin, '#!/bin/sh\nexit 0\n');
+  chmodSync(claudeBin, 0o755);
+
+  const currentSha = sha256Of(claudeBin);
+  const oldSha = 'c'.repeat(64);
+
+  // El binario coincide con su pin (currentSha), pero en agentVersions el sha registrado es oldSha
+  writeFileSync(join(dir, 'agents.json'), JSON.stringify({
+    agentBinaries: { claude: currentSha },
+    agentVersions: {
+      claude: { version: 'claude-version-desactualizada', sha256: oldSha },
+    },
+  }));
+
+  new Store(join(dir, 'fabrica.db')).close();
+  start();
+
+  const html = await page('/config');
+  expect(html).not.toContain('claude-version-desactualizada');
+  const claudeRow = html.match(/<tr[^>]*><td>claude<\/td>.*?<\/tr>/s)?.[0] ?? '';
+  expect(claudeRow).toContain('<td>No medido</td>');
+});
+
 
 
 
