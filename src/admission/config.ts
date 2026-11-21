@@ -43,14 +43,16 @@ export function checkResidentConfig(i: { repo?: unknown; label?: unknown; interv
 
 export function loadResidentConfig(stateDir: string): ResidentConfig {
   const path = join(stateDir, RESIDENT_CONFIG);
+  // T107-H8: ni la web ni la CLI pueden reparar un fichero que no leen; el mensaje dice la salida.
+  const fix = (why: string) => new Error(`${why}; borra resident.json (o corrígelo a mano) y vuelve a guardar`);
   let text: string;
-  try { text = readFileSync(path, 'utf8'); } catch (e) { if ((e as NodeJS.ErrnoException).code === 'ENOENT') return {}; throw new Error('resident.json no se puede leer'); }
+  try { text = readFileSync(path, 'utf8'); } catch (e) { if ((e as NodeJS.ErrnoException).code === 'ENOENT') return {}; throw fix('resident.json no se puede leer'); }
   let raw: unknown;
-  try { raw = JSON.parse(text); } catch { throw new Error('resident.json no es JSON válido'); }
-  if (!raw || typeof raw !== 'object' || Array.isArray(raw) || Object.keys(raw).some(k => !KEYS.includes(k))) throw new Error('resident.json tiene campos desconocidos');
+  try { raw = JSON.parse(text); } catch { throw fix('resident.json no es JSON válido'); }
+  if (!raw || typeof raw !== 'object' || Array.isArray(raw) || Object.keys(raw).some(k => !KEYS.includes(k))) throw fix('resident.json tiene campos desconocidos');
   const r = raw as Record<string, unknown>;
   const meta = { ...(typeof r.updatedAt === 'string' ? { updatedAt: r.updatedAt } : {}), ...(typeof r.updatedBy === 'string' ? { updatedBy: r.updatedBy } : {}) };
-  try { return { ...checkResidentConfig(r), ...meta }; } catch (e) { throw new Error(`resident.json inválido: ${(e as Error).message}`); }
+  try { return { ...checkResidentConfig(r), ...meta }; } catch (e) { throw fix(`resident.json inválido: ${(e as Error).message}`); }
 }
 
 /** Fusiona los campos dados con lo guardado y escribe de forma atómica (0600). Sin bloqueo: un único dueño y el último guardado gana. */

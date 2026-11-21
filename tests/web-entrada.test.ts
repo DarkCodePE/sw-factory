@@ -216,3 +216,12 @@ test('T107-H7: una clave de HU de más de 40 caracteres se rechaza antes de la a
   expect(store.listEvents('prueba', 50).length).toBe(before);
   expect(await notice()).toContain('Revisa la clave');
 });
+
+test('T107-H8: un resident.json ilegible dice cómo repararlo, también en la página y en fab resident config', async () => {
+  writeFileSync(join(dir, 'resident.json'), '{no');
+  expect(() => loadResidentConfig(dir)).toThrow('borra');
+  expect(await notice()).toContain('borra resident.json');
+  const errors: string[] = [], err = console.error; console.error = (m: string) => { errors.push(String(m)); };
+  try { expect(await residentMain(['config', '--repo', 'a/b'], store)).toBe(1); } finally { console.error = err; }
+  expect(errors.join()).toContain('borra resident.json');
+});
