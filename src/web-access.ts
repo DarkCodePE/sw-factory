@@ -23,12 +23,15 @@ export function accessInput(raw: Record<string, string | undefined>): Record<str
   if (names.some(n => n.length > 64 || /[\s=]/.test(n))) throw new StoreError('invalid_input', REJECT);
   // T103-H3: con «modo anterior» los nombres no se guardan; avisar en vez de responder «Acción registrada» sin haber restringido nada.
   if (mode === 'legacy' && names.length) throw new StoreError('invalid_input', 'Con modo anterior no se guardan nombres: elige Declarado o vacía la lista.');
-  return { kind, mode, names: names.join('\n') };
+  return { kind, mode, names: names.join('\n'), confirm: raw.confirm === 'yes' ? 'yes' : '' };
 }
 
 /** Mismas guardas que `fab ws env|mcp`: el Store valida los nombres; para MCP además deben estar en el registro. */
 export function setAccess(store: Store, stateDir: string, id: string, input: Record<string, string | undefined>): void {
   const names = input.mode === 'legacy' ? null : (input.names ? input.names.split('\n') : []);
+  // T103-H13: desde el modo anterior, «Declarado» vacío corta todas las variables o MCP de los workers: se pide confirmación.
+  const ws = store.getWorkstream(id), current = input.kind === 'env' ? ws.envAllow : ws.mcpAllow;
+  if (current === null && names?.length === 0 && input.confirm !== 'yes') throw new StoreError('invalid_input', 'Una lista vacía no permite nada a los workers: marca la confirmación para guardarla.');
   if (input.kind === 'mcp' && names?.length) {
     let unknown: string[];
     try { unknown = unregisteredMcp(stateDir, names); }
@@ -64,6 +67,7 @@ export function accessSection(stateDir: string, ws: Workstream, escape: Escape, 
     <label>Modo<select name="mode"><option value="declared" selected>Declarado (solo estos nombres)</option><option value="legacy">Modo anterior (sin tope)</option></select></label>
     <label for="acceso-${kind}">Nombres, uno por línea (nunca valores)</label>
     <textarea id="acceso-${kind}" name="names" rows="4" maxlength="${NAMES_LIMIT}">\n${escape((current ?? []).join('\n'))}</textarea>
+    ${current === null ? '<label><input type="checkbox" name="confirm" value="yes"> Confirmo: una lista vacía no permite nada a los workers</label>' : ''}
     <button>Guardar ${label}</button></fieldset></form>`;
   return `<section><h2>Secretos y MCP del workstream</h2>
     <p class="muted">Solo nombres: la fábrica nunca guarda ni muestra valores. Si una variable está definida en el entorno del pool, es No medido desde la web.</p>
