@@ -5,7 +5,7 @@ import { existsSync, lstatSync, mkdirSync, readFileSync, readdirSync, realpathSy
 import { homedir } from 'node:os';
 import { join } from 'node:path';
 import { AGENT_NAMES } from './agents.ts';
-import { quoteName, readTar } from './definition-tar.ts';
+import { quoteName, readTar, TAR_MAX_BYTES } from './definition-tar.ts';
 import { resolveProfile, saveProfile, validateProfile, type Profile } from './profile.ts';
 import { StoreError, type Store } from './store.ts';
 
@@ -96,7 +96,12 @@ function walkDefinition(dir: string): Map<string, string> {
   const walk = (rel: string) => {
     for (const e of readdirSync(join(dir, rel), { withFileTypes: true })) {
       const p = rel ? `${rel}/${e.name}` : e.name;
-      if (e.isDirectory()) walk(p); else if (e.isFile()) files.set(p, readFileSync(join(dir, p), 'utf8'));
+      if (e.isDirectory()) walk(p);
+      else if (e.isFile()) {
+        // Antes de leer: ningún fichero admitido pasa de MAX_SKILL, y uno enorme no debe cargarse en memoria para rechazarlo (T105-H7).
+        if (lstatSync(join(dir, p)).size > MAX_SKILL) throw new StoreError('invalid_input', `${quoteName(p)} supera ${MAX_SKILL} bytes`);
+        files.set(p, readFileSync(join(dir, p), 'utf8'));
+      }
       else throw new StoreError('invalid_input', `${p}: solo se admiten ficheros y directorios`); // symlinks fuera
     }
   };
@@ -108,7 +113,10 @@ export type ParsedDefinition = { settings: Record<string, any>; profile: Profile
 
 /** Lee y valida el árbol entero sin tocar nada: un directorio o un .tar (T105). */
 export function readDefinition(path: string): ParsedDefinition {
-  if (existsSync(path) && lstatSync(path).isFile()) return parseDefinition(readTar(readFileSync(path)));
+  if (existsSync(path) && lstatSync(path).isFile()) {
+    if (lstatSync(path).size > TAR_MAX_BYTES) throw new StoreError('invalid_input', `${quoteName(path)} supera ${TAR_MAX_BYTES} bytes`);
+    return parseDefinition(readTar(readFileSync(path)));
+  }
   if (!existsSync(path) || !lstatSync(path).isDirectory()) throw new StoreError('invalid_input', `${path} no es un directorio`);
   return parseDefinition(walkDefinition(path));
 }

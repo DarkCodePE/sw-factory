@@ -357,3 +357,13 @@ test('H4: un fichero desconocido con nombre hostil en un directorio tampoco sale
   let msg = ''; try { readDefinition(d); } catch (e) { msg = (e as Error).message; }
   expect(msg).toContain('desconocido'); expect(msg).not.toMatch(/[\u0000-\u001f\u007f-\u009f]/);
 });
+
+// ---- T105-H7: la CLI mira el tamaño antes de leer ----------------------------------------------------------------------------
+import { truncateSync } from 'node:fs';
+test('H7: un .tar o un fichero de un directorio gigantes se rechazan por tamaño sin leerlos', () => {
+  const big = join(dir, 'enorme.tar'); writeFileSync(big, ''); truncateSync(big, 3 * 1024 ** 3); // dispersa: no ocupa disco
+  expect(() => readDefinition(big)).toThrow(/supera/);
+  const d = join(dir, 'arbol'); mkdirSync(d); for (const [p, t] of goodFiles()) { mkdirSync(join(d, p, '..'), { recursive: true }); writeFileSync(join(d, p), t); }
+  const extra = join(d, 'enorme.bin'); writeFileSync(extra, ''); truncateSync(extra, 3 * 1024 ** 3);
+  expect(() => readDefinition(d)).toThrow(/supera/);
+});
