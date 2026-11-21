@@ -749,9 +749,10 @@ export class Store {
     if (!/^[a-z0-9][a-z0-9-]{0,62}$/.test(input.slug)) {
       throw new StoreError('invalid_input', `invalid slug "${input.slug}" (use a-z, 0-9, -)`);
     }
-    const verify = (input.verify ?? []).map(command => verifierArgv(command));
+    const argvOf = (command: string) => { try { return verifierArgv(command); } catch (e) { throw new StoreError('invalid_input', (e as Error).message); } };
+    const verify = (input.verify ?? []).map(argvOf);
     // $FAB_DEPS is the one expansion allowed: it is substituted by the runner, never by a shell.
-    const verifySetup = (input.verifySetup ?? []).map(command => verifierArgv(command.replaceAll('$FAB_DEPS', 'FAB_DEPS_SLOT')).map(a => a.replaceAll('FAB_DEPS_SLOT', '$FAB_DEPS')));
+    const verifySetup = (input.verifySetup ?? []).map(command => argvOf(command.replaceAll('$FAB_DEPS', 'FAB_DEPS_SLOT')).map(a => a.replaceAll('FAB_DEPS_SLOT', '$FAB_DEPS')));
     if (verifySetup.length && !verify.length) throw new StoreError('invalid_input', '--verify-setup exige --verify');
     const additions = input.protectedPaths ?? [];
     validateProtectedPatterns(additions);

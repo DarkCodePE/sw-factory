@@ -1,7 +1,9 @@
 // fab profile export|import|inspect|list. Los perfiles viven en <stateDir>/profiles/<digest>.json.
-import { readFileSync, writeFileSync } from 'node:fs';
+import { readFileSync, statSync, writeFileSync } from 'node:fs';
 import { parseArgs } from 'node:util';
+import { printable } from './printable.ts';
 import { StoreError } from './store.ts';
+import { TAR_MAX_BYTES } from './definition-tar.ts';
 import { assertRoleMcpRegistered, canonicalJson, defaultProfile, DEFAULT_DIGEST, listProfiles, loadProfile, profileDigest, saveProfile, validateProfile } from './profile.ts';
 
 export function profileMain(argv: string[], stateDir: string): number {
@@ -15,6 +17,9 @@ export function profileMain(argv: string[], stateDir: string): number {
       if (values.out) console.log(`perfil por defecto exportado a ${values.out} (digest ${DEFAULT_DIGEST})`);
     } else if (sub === 'import') {
       if (!arg) throw fail('usage: fab profile import <archivo>');
+      let size: number;
+      try { const st = statSync(arg); if (!st.isFile()) throw 0; size = st.size; } catch { throw fail(`no se puede leer ${arg}: no es un fichero regular`); } // IE1-H4: /dev/zero o un FIFO no terminan
+      if (size > TAR_MAX_BYTES) throw fail(`el perfil ocupa ${size} bytes; el máximo es ${TAR_MAX_BYTES}`);
       const profile = validateProfile(JSON.parse(readFileSync(arg, 'utf8')));
       assertRoleMcpRegistered(stateDir, profile);
       const { digest, created } = saveProfile(stateDir, profile);
@@ -31,7 +36,7 @@ export function profileMain(argv: string[], stateDir: string): number {
     } else throw fail('fab profile export|import|inspect|list');
     return 0;
   } catch (err) {
-    console.error(err instanceof StoreError ? `error (${err.code}): ${err.message}` : `error: ${(err as Error).message}`);
+    console.error(err instanceof StoreError ? `error (${err.code}): ${printable(err.message)}` : `error: ${printable((err as Error).message)}`);
     return 1;
   }
 }

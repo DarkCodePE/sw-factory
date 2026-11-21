@@ -12,6 +12,7 @@ import { agentsMain } from './agents-verify.ts';
 import { mcpListMain, McpRegistryError, unregisteredMcp } from './mcp-registry.ts';
 import { profileMain } from './profile-cli.ts';
 import { exportDefinition, importDefinition } from './definition.ts';
+import { printable } from './printable.ts';
 import { benchMain } from './bench-cli.ts';
 import { improveMain } from './improve-cli.ts';
 import { abortOnSigint, scoreMain } from './scorers-cli.ts';
@@ -153,8 +154,6 @@ function openStore(): Store {
 }
 
 const short = (id: string): string => id.slice(0, 8);
-/** T105-H10: un mensaje de error puede traer texto de un paquete ajeno; los caracteres de control y de formato (ESC, OSC) no llegan a la terminal. */
-const printable = (text: string): string => text.replace(/[\p{Cc}\p{Cf}]/gu, c => /[\n\t]/.test(c) ? c : `\\u${c.codePointAt(0)!.toString(16).padStart(4, '0')}`);
 
 function findByPrefix<T extends { id: string }>(items: T[], prefix: string, what: string): T {
   const matches = items.filter((i) => i.id.startsWith(prefix));
@@ -190,7 +189,7 @@ async function main(argv: string[]): Promise<number> {
   if (argv[0] === 'runner') {
     const store = openStore();
     try { return await runnerMain(argv.slice(1), store); } catch (err) {
-      console.error(err instanceof StoreError ? `error (${err.code}): ${err.message}` : `error: ${(err as Error).message}`);
+      console.error(err instanceof StoreError ? `error (${err.code}): ${printable(err.message)}` : `error: ${printable((err as Error).message)}`);
       return 1;
     } finally { store.close(); }
   }
@@ -556,7 +555,7 @@ async function main(argv: string[]): Promise<number> {
         return 1;
     }
   } catch (err) {
-    console.error(err instanceof StoreError ? `error (${err.code}): ${printable(err.message)}` : err);
+    console.error(err instanceof StoreError ? `error (${err.code}): ${printable(err.message)}` : printable(String((err as Error)?.stack ?? err)));
     return 1;
   } finally {
     store.close();

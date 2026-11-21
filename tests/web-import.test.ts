@@ -447,3 +447,29 @@ test('IE1-H3: el aviso de redacción sale aunque el literal [REDACTED] vaya pega
     expect(html).toContain('texto con forma de secreto');
   }
 });
+
+// IE1-H2/H4: ninguna ruta de salida de la CLI imprime control crudo de un paquete ajeno, y `profile import` solo lee ficheros regulares.
+const fab = (args: string[], timeout = 15_000) => Bun.spawnSync(['bun', 'src/cli.ts', ...args], { env: { ...process.env, FABRICA_HOME: dir }, timeout });
+test('IE1-H2: profile import (clave y JSON roto) y definition import (verify) no imprimen ESC ni controles', () => {
+  const hostil = join(dir, 'p.json');
+  writeFileSync(hostil, JSON.stringify({ ...defaultProfile(), ['\x1b]0;PWN\x07\x1b[2J']: 1 }));
+  const rota = join(dir, 'rota.json'); writeFileSync(rota, '{"a":\x1b[2J');
+  const d = join(dir, 'def'); mkdirSync(d);
+  const files = goodFiles(); files.set('workstream.json', JSON.stringify({ slug: 'x', goal: 'g', verify: ['echo \x1b]0;PWN\x07 $(x)'] }));
+  for (const [p, t] of files) { mkdirSync(join(d, p, '..'), { recursive: true }); writeFileSync(join(d, p), t); }
+  for (const args of [['profile', 'import', hostil], ['profile', 'import', rota], ['definition', 'import', d, '--repo', repo]]) {
+    const r = fab(args);
+    expect(r.exitCode).toBe(1);
+    expect(r.stderr.toString()).not.toMatch(/[\x00-\x08\x0b-\x1f\x7f-\x9f]/);
+  }
+  expect(fab(['definition', 'import', d, '--repo', repo]).stderr.toString()).toContain('error (invalid_input)');
+});
+
+test('IE1-H4: fab profile import rechaza /dev/zero y un FIFO sin leerlos', () => {
+  const fifo = join(dir, 'fifo'); expect(Bun.spawnSync(['mkfifo', fifo]).exitCode).toBe(0);
+  for (const path of ['/dev/zero', fifo]) {
+    const r = fab(['profile', 'import', path], 8_000);
+    expect(r.exitCode).toBe(1);
+    expect(r.stderr.toString()).toContain('no es un fichero regular');
+  }
+});
