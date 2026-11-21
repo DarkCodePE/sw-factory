@@ -3,7 +3,7 @@ import { Database } from 'bun:sqlite';
 import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { Store, StoreError } from '../src/store.ts';
+import { runnerRevision, Store, StoreError } from '../src/store.ts';
 
 let dir: string;
 let store: Store;
@@ -93,7 +93,7 @@ test('una base anterior se abre con runner nulo', () => {
   } finally { s.close(); }
 });
 
-test('CLI: add, list, ws runner con aviso, rm en uso falla', () => {
+test('CLI: add, update, list, ws runner con aviso, rm en uso falla', () => {
   const env = { ...process.env, FABRICA_HOME: dir };
   const fab = (...a: string[]) => Bun.spawnSync(['bun', 'src/cli.ts', ...a], { env, cwd: join(import.meta.dir, '..') });
   const out = (r: ReturnType<typeof fab>) => r.stdout.toString() + r.stderr.toString();
@@ -105,9 +105,14 @@ test('CLI: add, list, ws runner con aviso, rm en uso falla', () => {
   expect(out(fab('runner', 'list'))).toContain('torre.lan');
   expect(JSON.parse(out(fab('runner', 'list', '--json')))[0]).toMatchObject({ name: 'torre', options: { maxBundleMb: 64 } });
   expect(out(fab('runner', 'add', 'x', '--ssh', 'u@h'))).toContain('invalid_input');
+  const update = fab('runner', 'update', 'torre', '--ssh', 'otro-alias', '--max-bundle-mb', '32');
+  expect(update.exitCode).toBe(0);
+  expect(JSON.parse(out(fab('runner', 'list', '--json')))[0]).toMatchObject({ target: 'otro-alias', options: { maxBundleMb: 32 } });
+  expect(fab('runner', 'update', 'torre', '--local').exitCode).toBe(1);
   const assign = fab('ws', 'runner', 'w', 'torre');
   expect(assign.exitCode).toBe(0);
   expect(out(assign)).toContain('sale de tu máquina');
+  expect(fab('runner', 'update', 'torre', '--ssh', 'alias-no-autorizado').exitCode).toBe(1);
   const rm = fab('runner', 'rm', 'torre');
   expect(rm.exitCode).toBe(1);
   expect(out(rm)).toContain('conflict');
@@ -138,8 +143,8 @@ test('inventario público en lectura: proyecta campos y admite bases sin tabla s
     try { return reader.listRunnerSummaries(); } finally { reader.close(); }
   };
   expect(read()).toEqual([
-    { name: 'casa', kind: 'local', enabled: true, createdAt: store.getRunner('casa').createdAt },
-    { name: 'torre', kind: 'ssh', enabled: false, createdAt: store.getRunner('torre').createdAt },
+    { name: 'casa', kind: 'local', enabled: true, createdAt: store.getRunner('casa').createdAt, revision: runnerRevision(store.getRunner('casa')) },
+    { name: 'torre', kind: 'ssh', enabled: false, createdAt: store.getRunner('torre').createdAt, revision: runnerRevision(store.getRunner('torre')) },
   ]);
   store.db.exec('DROP TABLE runners');
   expect(read()).toEqual([]);
@@ -153,7 +158,7 @@ test('asignación web por id compara la selección antes del no-op y comprueba e
   const other = new Store(join(dir, 'fabrica.db'));
   const select = (runner: string | null, expected: string | null, confirmSsh = false) => {
     const r = runner ? store.getRunner(runner) : undefined;
-    return store.setWorkstreamRunner(w.id, runner, { expected, confirmSsh, seen: r && { kind: r.kind, createdAt: r.createdAt } });
+    return store.setWorkstreamRunner(w.id, runner, { expected, confirmSsh, seen: r && runnerRevision(r) });
   };
   try {
     expect(code(() => store.setWorkstreamRunner(w.slug, 'casa', { expected: null, confirmSsh: false }))).toStartWith('not_found');
@@ -176,18 +181,17 @@ test('asignación web por id compara la selección antes del no-op y comprueba e
   } finally { other.close(); }
 });
 
-test('T85-H2: la selección compara el tipo y el alta vistos de la fila, cada uno por su lado', () => {
+test('T85-H2/T101: la selección compara la revisión del runner, incluido su destino', () => {
   const w = ws();
-  store.createRunner({ name: 'casa', kind: 'local' });
-  const r = store.getRunner('casa');
-  const pick = (seen?: { kind: 'local' | 'ssh'; createdAt: string }) =>
+  store.createRunner({ name: 'casa', kind: 'ssh', target: 'primero' });
+  const original = store.getRunner('casa');
+  const pick = (seen?: string) =>
     () => store.setWorkstreamRunner(w.id, 'casa', { expected: null, confirmSsh: true, seen });
   expect(code(pick())).toStartWith('conflict');
-  expect(code(pick({ kind: 'ssh', createdAt: r.createdAt }))).toStartWith('conflict');
-  expect(code(pick({ kind: 'local', createdAt: '2000-01-01T00:00:00.000Z' }))).toStartWith('conflict');
+  expect(code(pick(runnerRevision({ ...original, kind: 'local' })))).toStartWith('conflict');
+  expect(code(pick(runnerRevision({ ...original, createdAt: '2000-01-01T00:00:00.000Z' })))).toStartWith('conflict');
+  const updated = store.updateRunner('casa', { target: 'segundo' });
+  expect(code(pick(runnerRevision(original)))).toStartWith('conflict');
   expect(store.getWorkstream(w.id).runner).toBeNull();
-  // Mismo alta, otro tipo (fila editada fuera de la fab): también se rechaza.
-  store.db.query("UPDATE runners SET kind = 'ssh', target = 'alias-privado' WHERE name = 'casa'").run();
-  expect(code(pick({ kind: 'local', createdAt: r.createdAt }))).toStartWith('conflict');
-  expect(store.setWorkstreamRunner(w.id, 'casa', { expected: null, confirmSsh: true, seen: { kind: 'ssh', createdAt: r.createdAt } }).runner).toBe('casa');
+  expect(pick(runnerRevision(updated))().runner).toBe('casa');
 });

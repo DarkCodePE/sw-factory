@@ -28,7 +28,7 @@ test('el inventario empieza vacío y solo ofrece comprobar SSH habilitado', () =
   expect(html).toContain('<td>SSH</td><td>Pausado</td>');
   expect(html).toContain('Sin comprobar');
   expect(html.match(/action="[^"]+\/comprobar"/g)).toEqual(['action="/config/runners/torre/comprobar"']);
-  expect(html).not.toMatch(/alias-canario|alias-pausado|987|maxBundleMb/);
+  expect(html).not.toMatch(/alias-canario|alias-pausado|value="987"/);
 });
 
 test('la tarjeta muestra la asignación pausada y permite seleccionar runner o predeterminado con confirmación', () => {

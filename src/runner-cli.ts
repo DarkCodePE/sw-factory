@@ -1,4 +1,4 @@
-// fab runner add|list|enable|disable|rm|check. Gestión (T74a); solo `check` abre una conexión (T74e).
+// fab runner add|update|list|enable|disable|rm|check. Gestión (T74a); solo `check` abre una conexión (T74e).
 import { parseArgs } from 'node:util';
 import { StoreError, type Runner, type Store } from './store.ts';
 import { resolve } from 'node:path';
@@ -18,14 +18,19 @@ export async function runnerMain(argv: string[], store: Store, transport?: Trans
   });
   const [sub, name] = positionals;
   const need = () => { if (!name) throw new StoreError('invalid_input', 'falta el nombre del runner'); return name; };
-  if (sub === 'add') {
-    if (!!values.ssh === !!values.local) throw new StoreError('invalid_input', 'fab runner add <nombre> --ssh <alias> [--max-bundle-mb N] | --local [--confine]');
+  if (sub === 'add' || sub === 'update') {
+    if (!!values.ssh === !!values.local) throw new StoreError('invalid_input', `fab runner ${sub} <nombre> --ssh <alias> [--max-bundle-mb N] | --local [--confine]`);
     if (values.ssh !== undefined && values.confine) throw new StoreError('invalid_input', '--confine solo existe con --local');
     if (values.local && values['max-bundle-mb'] !== undefined) throw new StoreError('invalid_input', '--max-bundle-mb solo existe con --ssh');
     const options: Record<string, unknown> = values.local ? { confine: !!values.confine } : {};
     if (values['max-bundle-mb'] !== undefined) options.maxBundleMb = Number(values['max-bundle-mb']);
-    const r = store.createRunner({ name: need(), kind: values.local ? 'local' : 'ssh', target: values.ssh, options });
-    console.log(`runner ${r.name} creado (${r.kind}${r.target ? ` ${r.target}` : ''})`);
+    const kind = values.local ? 'local' : 'ssh';
+    const input = { target: values.ssh, options };
+    const r = sub === 'add' ? store.createRunner({ name: need(), kind, ...input }) : store.withRetry(() => {
+      if (store.getRunner(need()).kind !== kind) throw new StoreError('invalid_input', 'el tipo del runner es fijo');
+      return store.updateRunner(need(), input);
+    });
+    console.log(`runner ${r.name} ${sub === 'add' ? 'creado' : 'actualizado'} (${r.kind}${r.target ? ` ${r.target}` : ''})`);
     if (r.kind === 'ssh') console.log(`aviso: ${CODE_LEAVES_WARNING} ${r.target} cuando se lo asignes.`);
   } else if (sub === 'list') {
     const all = store.listRunners();
@@ -55,7 +60,7 @@ export async function runnerMain(argv: string[], store: Store, transport?: Trans
       console.error(e.message);
       return 1;
     }
-  } else throw new StoreError('invalid_input', 'fab runner add|list|enable|disable|rm|check');
+  } else throw new StoreError('invalid_input', 'fab runner add|update|list|enable|disable|rm|check');
   return 0;
 }
 

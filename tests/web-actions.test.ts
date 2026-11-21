@@ -291,7 +291,7 @@ test('H5 M51: PUT, DELETE y PATCH autenticados no ejecutan acciones', async () =
 
 test('T71c: ACTIONS tiene exactamente las acciones que ofrece la web', async () => {
   const { ACTIONS } = await import('../src/web-actions.ts');
-  expect(Object.keys(ACTIONS).sort()).toEqual(['activities/review', 'activities/score', 'api-keys/create', 'api-keys/revoke', 'automations/create', 'automations/delete', 'automations/disable', 'automations/enable', 'automations/run', 'automations/update', 'automejora/save', 'benchmarks/cancel', 'changes/cancel', 'changes/note', 'changes/rename', 'changes/retry', 'changes/suite-task', 'questions/answer', 'runners/check', 'scorers/backfill', 'signals/create', 'signals/ignore', 'signals/triage', 'workstreams/adaptador', 'workstreams/archive', 'workstreams/create', 'workstreams/runner', 'workstreams/settings', 'workstreams/state']);
+  expect(Object.keys(ACTIONS).sort()).toEqual(['activities/review', 'activities/score', 'api-keys/create', 'api-keys/revoke', 'automations/create', 'automations/delete', 'automations/disable', 'automations/enable', 'automations/run', 'automations/update', 'automejora/save', 'benchmarks/cancel', 'changes/cancel', 'changes/note', 'changes/rename', 'changes/retry', 'changes/suite-task', 'questions/answer', 'runners/check', 'runners/create', 'runners/delete', 'runners/update', 'scorers/backfill', 'signals/create', 'signals/ignore', 'signals/triage', 'workstreams/adaptador', 'workstreams/archive', 'workstreams/create', 'workstreams/runner', 'workstreams/settings', 'workstreams/state']);
   for (const bad of ['merge', 'gate/allow', 'changes/merge']) expect(ACTIONS[bad]).toBeUndefined();
 });
 test('T71c: performAction fija el actor, valida la entrada y devuelve el destino', async () => {

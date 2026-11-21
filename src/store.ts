@@ -432,6 +432,23 @@ function checkRunnerOptions(kind: Runner['kind'], options: Record<string, unknow
   }
 }
 
+type RunnerConfig = { kind: Runner['kind']; target?: string | null; options?: Record<string, unknown> };
+
+function validateRunnerConfig({ kind, target, options = {} }: RunnerConfig): void {
+  if (kind !== 'local' && kind !== 'ssh') throw new StoreError('invalid_input', 'kind: debe ser local o ssh');
+  if (kind === 'ssh' && !(typeof target === 'string' && RUNNER_TARGET.test(target))) {
+    throw new StoreError('invalid_input', 'target: alias de ~/.ssh/config (sin usuario@host ni espacios)');
+  }
+  if (kind === 'local' && target != null) throw new StoreError('invalid_input', 'target: un runner local no lo lleva');
+  checkRunnerOptions(kind, options);
+}
+
+export function runnerRevision(r: Runner): string {
+  return createHash('sha256').update(JSON.stringify([
+    r.name, r.kind, r.target, r.options, r.enabled, r.createdAt, r.createdBy,
+  ])).digest('hex');
+}
+
 const ENV_NAME = /^[A-Z_][A-Z0-9_]{0,63}$/;
 const MCP_NAME = /^[a-z0-9][a-z0-9-]{0,40}$/;
 
@@ -921,15 +938,10 @@ export class Store {
 
   // ---- runners -----------------------------------------------------------
 
-  createRunner(i: { name: string; kind: Runner['kind']; target?: string | null; options?: Record<string, unknown> }): Runner {
+  createRunner(i: RunnerConfig & { name: string }): Runner {
     if (typeof i.name !== 'string' || !isRunnerName(i.name)) throw new StoreError('invalid_input', 'name: use a-z, 0-9 y guiones (1-41 caracteres)');
-    if (i.kind !== 'local' && i.kind !== 'ssh') throw new StoreError('invalid_input', 'kind: debe ser local o ssh');
-    if (i.kind === 'ssh' && !(typeof i.target === 'string' && RUNNER_TARGET.test(i.target))) {
-      throw new StoreError('invalid_input', 'target: alias de ~/.ssh/config (sin usuario@host ni espacios)');
-    }
-    if (i.kind === 'local' && i.target != null) throw new StoreError('invalid_input', 'target: un runner local no lo lleva');
+    validateRunnerConfig(i);
     const options = i.options ?? {};
-    checkRunnerOptions(i.kind, options);
     return this.withRetry(() => this.db.transaction(() => {
       if (this.db.query('SELECT 1 FROM runners WHERE name = ?').get(i.name)) throw new StoreError('conflict', `ya existe el runner ${i.name}`);
       const row = this.db.query(
@@ -943,11 +955,62 @@ export class Store {
     return (this.db.query('SELECT * FROM runners ORDER BY name').all() as Row[]).map(toRunner);
   }
 
-  listRunnerSummaries(): Pick<Runner, 'name' | 'kind' | 'enabled' | 'createdAt'>[] {
+  listRunnerSummaries(): (Pick<Runner, 'name' | 'kind' | 'enabled' | 'createdAt'> & { revision: string })[] {
     if (!this.db.query("SELECT 1 FROM sqlite_schema WHERE type = 'table' AND name = 'runners'").get()) return [];
-    const rows = this.db.query('SELECT name, kind, enabled, created_at FROM runners ORDER BY name').all() as
-      { name: string; kind: Runner['kind']; enabled: number; created_at: string }[];
-    return rows.map(r => ({ name: r.name, kind: r.kind, enabled: r.enabled === 1, createdAt: r.created_at }));
+    return this.listRunners().map(r => ({
+      name: r.name, kind: r.kind, enabled: r.enabled, createdAt: r.createdAt, revision: runnerRevision(r),
+    }));
+  }
+
+  /** Configuración solo para el editor autenticado. Una base antigua puede carecer de inventario. */
+  runnerForEdit(name: string): Runner | null {
+    if (!this.#hasTable('runners')) return null;
+    const row = this.db.query('SELECT * FROM runners WHERE name = ?').get(name) as Row | null;
+    return row ? toRunner(row) : null;
+  }
+
+  #runnerAssignments(name: string): string[] {
+    return (this.db.query('SELECT slug FROM workstreams WHERE runner = ?').all(name) as { slug: string }[]).map(w => w.slug);
+  }
+
+  #checkRunnerLive(name: string): void {
+    if (this.db.query("SELECT 1 FROM activities WHERE runner = ? AND status IN ('in_progress', 'waiting_reply') LIMIT 1").get(name)) {
+      throw new StoreError('conflict', `el runner ${name} tiene trabajo vivo`);
+    }
+  }
+
+  #checkRunnerUnused(name: string): void {
+    const users = this.#runnerAssignments(name);
+    if (users.length) throw new StoreError('conflict', `el runner ${name} lo usa ${users.join(', ')}`);
+  }
+
+  updateRunner(name: string, input: Omit<RunnerConfig, 'kind'>, expected?: string): Runner {
+    return this.withRetry(() => {
+      const current = this.getRunner(name);
+      if (expected !== undefined && runnerRevision(current) !== expected) {
+        throw new StoreError('conflict', 'el runner cambió desde que se mostró');
+      }
+      validateRunnerConfig({ kind: current.kind, ...input });
+      const target = input.target ?? null;
+      // Cambiar el alias de un runner asignado redirigiría los próximos envíos de código.
+      if (target !== current.target) this.#checkRunnerUnused(name);
+      this.#checkRunnerLive(name);
+      const row = this.db.query('UPDATE runners SET target = ?, options = ? WHERE name = ? RETURNING *')
+        .get(target, JSON.stringify(input.options ?? {}), name) as Row;
+      return toRunner(row);
+    });
+  }
+
+  /** Lee y reserva el runner de este reclamo antes de cualquier espera del pool. */
+  reserveActivityRunner(activityId: string, workerId: string, name: string): Runner {
+    return this.withRetry(() => {
+      const runner = this.getRunner(name);
+      if (!runner.enabled) return runner;
+      const res = this.db.query("UPDATE activities SET runner = ? WHERE id = ? AND worker_id = ? AND status = 'in_progress'")
+        .run(name, activityId, workerId);
+      if (res.changes !== 1) throw new StoreError('conflict', 'la activity ya no pertenece a este worker');
+      return runner;
+    });
   }
 
   getRunner(name: string): Runner {
@@ -968,16 +1031,19 @@ export class Store {
     });
   }
 
-  deleteRunner(name: string): void {
-    this.withRetry(() => this.db.transaction(() => {
-      this.getRunner(name);
-      const users = this.db.query('SELECT slug FROM workstreams WHERE runner = ?').all(name) as { slug: string }[];
-      if (users.length) throw new StoreError('conflict', `el runner ${name} lo usa ${users.map(u => u.slug).join(', ')}`);
+  deleteRunner(name: string, expected?: string): void {
+    this.withRetry(() => {
+      const current = this.getRunner(name);
+      if (expected !== undefined && runnerRevision(current) !== expected) {
+        throw new StoreError('conflict', 'el runner cambió desde que se mostró');
+      }
+      this.#checkRunnerUnused(name);
+      this.#checkRunnerLive(name);
       this.db.query('DELETE FROM runners WHERE name = ?').run(name);
-    }).immediate());
+    });
   }
 
-  setWorkstreamRunner(idOrSlug: string, name: string | null, selection?: { expected: string | null; confirmSsh: boolean; seen?: { kind: Runner['kind']; createdAt: string } }): Workstream {
+  setWorkstreamRunner(idOrSlug: string, name: string | null, selection?: { expected: string | null; confirmSsh: boolean; seen?: string }): Workstream {
     return this.withRetry(() => this.db.transaction(() => {
       const row = selection ? this.db.query('SELECT * FROM workstreams WHERE id = ?').get(idOrSlug) as Row | null : null;
       if (selection && !row) throw new StoreError('not_found', 'workstream no encontrado');
@@ -987,8 +1053,8 @@ export class Store {
       }
       const runner = name === null ? null : this.getRunner(name);
       if (selection) {
-        // La fila que vio el dueño: un runner borrado y recreado (otro destino u otro tipo) no se asigna.
-        if (runner && (runner.kind !== selection.seen?.kind || runner.createdAt !== selection.seen.createdAt)) {
+        // La configuración que vio el dueño puede haber cambiado por edición o recreación.
+        if (runner && runnerRevision(runner) !== selection.seen) {
           throw new StoreError('conflict', 'el runner cambió desde que se mostró');
         }
         if (runner && !runner.enabled) throw new StoreError('conflict', 'el runner está pausado');

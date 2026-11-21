@@ -106,7 +106,7 @@ const HELP = `fab — agente de código y fábrica de software local
   fab score add <activityId> --scorer <name> | list <slug> [--change <id>] [--json]
   fab score backfill <slug> [--since <iso>] [--scorer <name>] [--yes]   vista previa (nº y coste) y, con --yes, encola
   fab ws list
-  fab runner add <nombre> --ssh <alias> [--max-bundle-mb N] | --local [--confine]   runner remoto (el código sale de tu máquina) o local
+  fab runner add|update <nombre> --ssh <alias> [--max-bundle-mb N] | --local [--confine]   runner remoto (el código sale de tu máquina) o local
   fab runner list [--json] | enable <nombre> | disable <nombre> | rm <nombre> | check <nombre>
   fab runner serve --root <dir>   lado runner (lo arranca sshd por el comando forzado)
   fab ws runner <ws> <nombre> | --none   asigna o quita el runner del workstream

@@ -23,6 +23,7 @@ import type { WebAuth } from './web-auth.ts';
 import { PROFILE_BODY_LIMIT, ProfileInputError, checkProfileFields, profileAction } from './web-profile.ts';
 import { enqueueBackfill, enqueueManual, ensureSchema, previewBackfill } from './scorers.ts';
 import { archiveWorkstream, createWorkstream, workstreamSettings, workstreamState, wsFields } from './web-ws.ts';
+import { RUNNERS_PATH, runRunnerAdmin, runnerAdminFields, type RunnerAdminMode } from './web-runners.ts';
 import { result as inertPage, RUNNER_CHECK_PATH, type runnerCheckAction } from './web-runner-check.ts';
 
 import { scheduleExpr } from './cron.ts';
@@ -159,6 +160,23 @@ function automationInput(mode: NonNullable<Action['automationForm']>, raw: Raw):
   }
   return { ws: raw.ws, name: raw.name, title: lf(raw.title), body, cron, revision: raw.revision, schedule: raw.schedule };
 }
+
+function runnerAdmin(mode: RunnerAdminMode, path: RegExp): Action {
+  return {
+    api: false, path, input: raw => raw,
+    run: (store, id, input, out) => {
+      out.destination = RUNNERS_PATH;
+      try { runRunnerAdmin(store, mode, id, input); }
+      catch (error) {
+        if (!(error instanceof StoreError)) throw error;
+        const status = error.code === 'conflict' ? 409 : error.code === 'not_found' ? 404 : 400;
+        const message = status === 404 ? 'No se encontró el runner.' : redact(error.message);
+        throw new InputError(status, message);
+      }
+    },
+  };
+}
+const isRunnerAdmin = (mode: string): mode is RunnerAdminMode => Object.hasOwn(runnerAdminFields, mode);
 
 // Registro único de acciones: los formularios de la web y, después, la API pasan por aquí.
 export const ACTIONS: Record<string, Action | CheckAction | WebResponseAction> = {
@@ -438,21 +456,23 @@ export const ACTIONS: Record<string, Action | CheckAction | WebResponseAction> =
     path: route('workstreams', 'runner'),
     input: raw => {
       const { runner, expected, confirm, confirm_ssh } = raw;
-      // «tipo alta»: lo que mostró el formulario de ese runner; `created_at` es ISO y no lleva espacios.
+      // Revisión de la configuración que vio el dueño, sin enviar el alias al formulario.
       const seen = runner ? raw[`seen.${runner}`] ?? '' : '';
       if (runner === undefined || (runner !== '' && !isRunnerName(runner)) || expected === undefined || confirm !== 'yes'
-        || (runner !== '' && !/^(ssh|local) \S+$/.test(seen))) {
+        || (runner !== '' && !/^[0-9a-f]{64}$/.test(seen))) {
         throw new InputError(400, 'Elige un runner y confirma la selección.');
       }
       return { runner, expected, confirm_ssh, seen };
     },
     run: (store, id, { runner, expected, confirm_ssh, seen }, out) => {
       out.destination = '/workstreams';
-      const [kind, createdAt] = seen!.split(' ');
       store.setWorkstreamRunner(id, runner || null, { expected: expected || null, confirmSsh: confirm_ssh === 'yes',
-        seen: runner ? { kind: kind as 'ssh' | 'local', createdAt: createdAt! } : undefined });
+        seen: runner ? seen : undefined });
     },
   },
+  'runners/create': runnerAdmin('create', /^\/config\/runners\/alta$/),
+  'runners/update': runnerAdmin('update', route('config/runners', 'editar')),
+  'runners/delete': runnerAdmin('delete', route('config/runners', 'borrar')),
   'runners/check': { path: RUNNER_CHECK_PATH, api: false, check: true },
 };
 
@@ -614,6 +634,8 @@ export async function webAction(req: Request, stateDir: string, port: number, au
     if ('check' in action) return await runnerCheck(id, extendCheckTimeout);
     if (id && !/^[\w-]+$/.test(id)) return new Response('Identificador inválido.', { status: 400 });
     if (name === 'workstreams/adaptador') checkProfileFields(form, ['csrf', ...ADAPTER_FIELDS]);
+    const runnerMode = name.startsWith('runners/') ? name.slice('runners/'.length) : '';
+    if (isRunnerAdmin(runnerMode)) checkProfileFields(form, runnerAdminFields[runnerMode]);
     let repeated = false;
     // Las acciones anteriores conservan el primer valor. En los editores importa cada campo.
     for (const [k, v] of form) {

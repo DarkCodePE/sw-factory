@@ -297,7 +297,7 @@ export async function processActivity(
       return;
     }
     // T74f: runner del workstream. Sin runner todo sigue como antes; un runner desactivado bloquea, nunca cae a local (R9).
-    const runner = ws.runner ? store.getRunner(ws.runner) : null;
+    const runner = ws.runner ? store.reserveActivityRunner(a.id, workerId, ws.runner) : null;
     if (runner && !runner.enabled) {
       store.blockActivity(a.id, workerId, `RUNNER_DISABLED: ${runner.name}`);
       return;
