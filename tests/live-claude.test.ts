@@ -345,3 +345,14 @@ test('T99-H10: detecta una sesión perdida por texto de stdout sin result', asyn
   await expect(runClaudeFixture("echo 'No conversation found with session ID: perdida'; exit 1", 'perdida'))
     .rejects.toBeInstanceOf(SessionNotFoundError);
 });
+
+test('T99-H11: un turno parcial usa stderr como diagnóstico y deja los frames en stdout', async () => {
+  const frame = '{"type":"user","message":{"content":[{"type":"tool_result","content":"Lectura sintética: No conversation found"}]}}';
+  for (const stderr of ['', 'Interrupción del CLI']) {
+    const result = await runClaudeFixture("echo '" + frame + "'; printf '%s' '" + stderr + "' >&2; exit 1", 'vigente');
+    expect(result.exitCode).toBe(1);
+    expect(result.output).toBe(stderr);
+    expect(result.stdout).toContain(frame);
+    expect(result.stdoutForMonitor).toBe('');
+  }
+});

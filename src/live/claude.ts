@@ -63,6 +63,7 @@ export const claudeLive: LiveBackend = {
         ...base,
         command: (prompt, options) => liveClaudeArgv(base.command(prompt, { ...options, mcpConfig: undefined }), turn, sessionId, path),
         parse(stdout) {
+          let hasFrame = false;
           for (const line of stdout.trimEnd().split('\n').reverse()) {
             let frame: { type?: unknown } | null;
             try { frame = JSON.parse(line); }
@@ -70,12 +71,15 @@ export const claudeLive: LiveBackend = {
               if (!stdoutDiagnostic && !line.trimStart().startsWith('{') && NOT_FOUND.test(line)) stdoutDiagnostic = line.trim();
               continue;
             }
-            if (frame?.type !== 'result') continue;
+            if (typeof frame?.type !== 'string') continue;
+            hasFrame = true;
+            if (frame.type !== 'result') continue;
             // Conserva la entrada histórica del monitor: el objeto result de Claude.
             stdoutForMonitor = line;
             return parseClaudeJson(line);
           }
-          return null;
+          // Con frames parciales, deja que runAgent use stderr como diagnóstico.
+          return hasFrame ? { text: '' } : null;
         },
       };
       let run;
