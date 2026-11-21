@@ -112,7 +112,7 @@ const HELP = `fab — agente de código y fábrica de software local
   fab ws profile <ws> <digest>   asigna un perfil guardado
   fab ws runner <ws> <nombre> | --none   asigna o quita el runner del workstream
   fab profile export [--out f] | import <f> | inspect <digest> | list   perfiles de instrucciones inmutables por digest
-  fab definition export <slug> <dir> | import <dir> --repo <path> [--slug <slug>]   definición como árbol de ficheros (sin rutas ni valores de entorno)
+  fab definition export <slug> <dir> | import <dir|archivo.tar> --repo <path> [--slug <slug>]   definición como árbol de ficheros (sin rutas ni valores de entorno)
   fab api-key create --name <n> --scope read|decide | list | revoke <id|nombre>   claves de la API local (la clave se muestra una vez)
   fab ws state <slug> <active|paused|archived>
   fab ws agent <ws> <adaptador>   cambia el adaptador de un workstream existente; falla con trabajo vivo
@@ -365,7 +365,7 @@ async function main(argv: string[]): Promise<number> {
         } else if (sub === 'import' && rest[0] && values.repo) {
           const r = importDefinition(store, STATE_DIR, resolve(rest[0]), resolve(values.repo), values.slug);
           console.log(`workstream ${r.slug} creado en draft con perfil ${r.digest}${r.skills.length ? `; skills del árbol (no se escriben en el repo): ${r.skills.join(', ')}` : ''}`);
-        } else throw new StoreError('invalid_input', 'usage: fab definition export <slug> <dir> | import <dir> --repo <path> [--slug <slug>]');
+        } else throw new StoreError('invalid_input', 'usage: fab definition export <slug> <dir> | import <dir|archivo.tar> --repo <path> [--slug <slug>]');
         return 0;
       }
       case 'signal': {

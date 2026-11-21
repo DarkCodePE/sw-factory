@@ -30,6 +30,7 @@ import { RUNNERS_PATH, runRunnerAdmin, runnerAdminFields, type RunnerAdminMode }
 import { result as inertPage, RUNNER_CHECK_PATH, type runnerCheckAction } from './web-runner-check.ts';
 
 import { scheduleExpr } from './cron.ts';
+import { IMPORT_DEFINITION_PATH, IMPORT_FIELDS, IMPORT_FORM_LIMIT, IMPORT_PROFILE_PATH, IMPORT_UPLOAD_LIMIT, importConfirm, importInput, importPreview, type ImportKind } from './web-import.ts';
 import { automationEditor, automationEditorPath, automationErrorDocument } from './web-automations.ts';
 
 // Cancelar vale para todo change que no haya terminado bien o por decisión: igual que `fab reject`, también limpia failed, blocked y quarantined.
@@ -102,11 +103,11 @@ export class InputError extends Error {
 
 type Raw = Record<string, string | undefined>;
 type Outcome = { destination: string; result: string; repo?: string };
-type Action = { path: RegExp; automationForm?: 'create' | 'update' | 'delete'; /** false: solo la web con sesión; la API con clave no la expone (decisión del dueño sobre H1). */ api?: false; httpErrors?: true; input: (raw: Raw) => Raw; run: (store: Store, id: string, input: Raw, out: Outcome, actor: string, stateDir: string, attachment?: NoteAttachment) => void };
+type Action = { path: RegExp; /** T105: sube un paquete (multipart) y pasa por vista previa antes de escribir. */ importKind?: ImportKind; automationForm?: 'create' | 'update' | 'delete'; /** false: solo la web con sesión; la API con clave no la expone (decisión del dueño sobre H1). */ api?: false; httpErrors?: true; input: (raw: Raw) => Raw; run: (store: Store, id: string, input: Raw, out: Outcome, actor: string, stateDir: string, attachment?: NoteAttachment) => void };
 
-type CheckAction = { path: RegExp; automationForm?: undefined; api: false; check: true };
-type JiraAction = { path: RegExp; automationForm?: undefined; api: false; jira: true };
-type WebResponseAction = { path: RegExp; automationForm?: undefined; api: false; respond: (stateDir: string, id: string, form: URLSearchParams, usage: ApiKeyUsage) => Response };
+type CheckAction = { path: RegExp; importKind?: undefined; automationForm?: undefined; api: false; check: true };
+type JiraAction = { path: RegExp; importKind?: undefined; automationForm?: undefined; api: false; jira: true };
+type WebResponseAction = { path: RegExp; importKind?: undefined; automationForm?: undefined; api: false; respond: (stateDir: string, id: string, form: URLSearchParams, usage: ApiKeyUsage) => Response };
 
 const text = (raw: Raw, key: string) => raw[key] ?? '';
 const limit = (value: string, max = 8192) => { if (Buffer.byteLength(value) > max) throw new InputError(413, 'El texto supera 8 KiB.'); };
@@ -187,6 +188,22 @@ function runnerAdmin(mode: RunnerAdminMode, path: RegExp): Action {
   };
 }
 const isRunnerAdmin = (mode: string): mode is RunnerAdminMode => Object.hasOwn(runnerAdminFields, mode);
+function importAction(kind: ImportKind, path: RegExp, destination: string): Action {
+  return {
+    api: false, importKind: kind, path,
+    input: raw => { try { return importInput(kind, raw) as Raw; } catch (e) { throw importFailure(e); } },
+    run: (store, _id, input, out, _actor, stateDir) => {
+      out.destination = destination;
+      try { out.destination = importConfirm(kind, store, stateDir, input); } catch (e) { throw importFailure(e); }
+    },
+  };
+}
+// Un dato inválido es 400 (sin escribir); lo demás sigue la ruta normal. El mensaje se redacta y se limpia: viene del paquete.
+function importFailure(e: unknown): unknown {
+  if (e instanceof StoreError && e.code === 'invalid_input') return new InputError(400, redact(e.message).replace(/[\p{Cc}\p{Cf}]/gu, ' ').slice(0, 320));
+  if (e instanceof StoreError && e.code === 'not_found') return new InputError(404, 'Workstream no encontrado.');
+  return e;
+}
 
 // Registro único de acciones: los formularios de la web y, después, la API pasan por aquí.
 export const ACTIONS: Record<string, Action | CheckAction | WebResponseAction | JiraAction> = {
@@ -507,6 +524,9 @@ export const ACTIONS: Record<string, Action | CheckAction | WebResponseAction | 
   'runners/update': runnerAdmin('update', route('config/runners', 'editar')),
   'runners/delete': runnerAdmin('delete', route('config/runners', 'borrar')),
   'runners/check': { path: RUNNER_CHECK_PATH, api: false, check: true },
+  // T105: la subida con vista previa se resuelve en webAction; aquí solo la confirmación, con el mismo Store y actor.
+  'perfiles/importar': importAction('profile', IMPORT_PROFILE_PATH, '/perfiles'),
+  'definicion/importar': importAction('definition', IMPORT_DEFINITION_PATH, '/definicion'),
 };
 
 /** Abre el Store escritor, fija el actor y ejecuta una acción. Lanza InputError si la entrada no vale; el resto de fallos van en `result`. */
@@ -586,24 +606,27 @@ function attachmentPartNamed(body: Buffer, contentType: string): boolean {
 const NOTE_REQUEST_LIMIT = 80 * 1024;
 type RawFile = { name: string; bytes: Uint8Array };
 
-async function readForm(req: Request, limit = 16384, multipart = false): Promise<{ form: URLSearchParams; file?: RawFile }> {
+type Multipart = { limit: number; fields: string[]; file: string };
+const NOTE_MULTIPART: Multipart = { limit: NOTE_REQUEST_LIMIT, fields: ['csrf', 'body'], file: 'attachment' };
+
+async function readForm(req: Request, limit = 16384, multipart?: Multipart): Promise<{ form: URLSearchParams; file?: RawFile }> {
   const type = req.headers.get('content-type')?.split(';')[0]?.trim().toLowerCase();
   if (type === 'multipart/form-data' && multipart) {
-    const bytes = await readBody(req, NOTE_REQUEST_LIMIT);
+    const bytes = await readBody(req, multipart.limit);
     let data: FormData;
     try { data = await new Response(new Uint8Array(bytes), { headers: { 'content-type': req.headers.get('content-type')! } }).formData(); }
     catch { throw new InputError(400, 'Formulario multipart inválido.'); }
     const form = new URLSearchParams(); let file: RawFile | undefined; const seen = new Set<string>();
     for (const [key, value] of data.entries() as IterableIterator<[string, string | File]>) {
       // Una parte desconocida o repetida invalida todo el envío.
-      if (seen.has(key) || !['csrf', 'body', 'attachment'].includes(key)) throw new InputError(400, 'Formulario multipart inválido.');
+      if (seen.has(key) || ![...multipart.fields, multipart.file].includes(key)) throw new InputError(400, 'Formulario multipart inválido.');
       seen.add(key);
-      if (key === 'attachment') {
+      if (key === multipart.file) {
         if (typeof value === 'string') throw new InputError(400, 'El adjunto debe ser un archivo.');
         // El navegador manda una parte vacía sin nombre si no se eligió archivo. Bun pierde el nombre de un archivo vacío:
         // se mira la cabecera de la parte attachment (nunca el texto de otras partes).
         if (!value.name && value.size === 0) {
-          if (attachmentPartNamed(bytes, req.headers.get('content-type')!)) throw new InputError(400, 'El adjunto debe ocupar entre 1 y 65 536 bytes.');
+          if (multipart.file === 'attachment' && attachmentPartNamed(bytes, req.headers.get('content-type')!)) throw new InputError(400, 'El adjunto debe ocupar entre 1 y 65 536 bytes.');
           continue;
         }
         file = { name: value.name ?? '', bytes: new Uint8Array(await value.arrayBuffer()) };
@@ -646,9 +669,11 @@ export async function webAction(req: Request, stateDir: string, port: number, au
   const action = name ? ACTIONS[name] : undefined;
   const fields: Raw = Object.create(null);
   try {
-    const { form, file } = await readForm(req, profilePath ? PROFILE_BODY_LIMIT : action?.automationForm ? AUTOMATION_FORM_LIMIT : name === 'automejora/save' ? AUTOMEJORA_FORM_LIMIT : 16384, name === 'changes/note');
+    const multipart: Multipart | undefined = name === 'changes/note' ? NOTE_MULTIPART
+      : action?.importKind ? { limit: IMPORT_UPLOAD_LIMIT, fields: IMPORT_FIELDS[action.importKind], file: 'package' } : undefined;
+    const { form, file } = await readForm(req, profilePath ? PROFILE_BODY_LIMIT : action?.automationForm ? AUTOMATION_FORM_LIMIT : name === 'automejora/save' ? AUTOMEJORA_FORM_LIMIT : action?.importKind ? IMPORT_FORM_LIMIT : 16384, multipart);
     if (!auth.validCsrf(req, form.get('csrf') ?? '')) return new Response('CSRF rechazado.', { status: 403 });
-    const invalid = file && validateNoteAttachment(file);
+    const invalid = file && name === 'changes/note' && validateNoteAttachment(file);
     if (invalid) throw new InputError(400, invalid);
     if (profilePath) {
       ({ destination, result } = profileAction(stateDir, profilePath[1] as 'guardar' | 'asignar', form));
@@ -656,6 +681,11 @@ export async function webAction(req: Request, stateDir: string, port: number, au
       return new Response(null, { status: 303, headers: { Location: destination } });
     }
     if (!name || !action) return new Response('Acción no encontrada.', { status: 404 });
+    if (action.importKind && !form.has('payload')) {
+      // Paso 1: sin confirmación; renderiza la vista previa y no escribe.
+      if (!file?.bytes.byteLength) throw new InputError(400, 'Elige un fichero para importar.');
+      try { return importPreview(action.importKind, stateDir, form, file.bytes, csrf, escape); } catch (e) { throw importFailure(e); }
+    }
     const raw = action.path.exec(pathname)![1] ?? '';
     if ('respond' in action) {
       const response = action.respond(stateDir, raw, form, usage);
@@ -680,6 +710,7 @@ export async function webAction(req: Request, stateDir: string, port: number, au
       if (k in fields) repeated = true;
       else fields[k] = v;
     }
+    if (action.importKind && (repeated || file)) throw new InputError(400, 'El formulario contiene campos repetidos.');
     if (action.automationForm) {
       delete fields.csrf;
       if (repeated) throw new InputError(400, 'El formulario contiene campos repetidos.');

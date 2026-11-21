@@ -6,6 +6,7 @@ import { redact } from './manifest.ts';
 import { DEFAULT_DIGEST, ROLES, isProfileDigest, resolveProfile, resolveRole, roleRunner, saveProfile, type Profile, type Role } from './profile.ts';
 import { CONFINABLE_AGENTS } from './sandbox/confine.ts';
 import { Store, StoreError, WorkstreamBusyError, type Workstream } from './store.ts';
+import { importProfileForm } from './web-import.ts';
 
 type Escape = (value: unknown) => string;
 /** Siete plantillas de hasta 32 KiB y los campos de configuración, codificados como formulario. */
@@ -153,7 +154,7 @@ export function profilesPage(store: Store, stateDir: string, url: URL, escape: E
     <label><input type="checkbox" name="confirm" value="yes" required> Confirmo el cambio de adaptador de <b>${escape(selected.slug)}</b></label>
     <button>Cambiar adaptador</button></form>` : '';
   return { title: 'Perfiles', body: `${picker}${saved}<section><h2>Perfil vigente</h2><p><code>${current.digest}</code> · ${selected.profile ? 'Fijado' : 'Por defecto'}</p>
-    ${roleResolution(current.profile, selected, runners, escape)}</section>${edit}
+    ${roleResolution(current.profile, selected, runners, escape)}</section>${edit}${csrf ? importProfileForm(csrf, selected.slug) : ''}
     <section><h2>Adaptador del workstream</h2><p>Actual: <code>${escape(selected.agent)}</code></p>${adapterForm}</section>${restoreForm(current.digest)}` };
 }
 
