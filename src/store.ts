@@ -1,7 +1,8 @@
 // SQLite-backed store for workstreams, signals, changes, activities and events.
 // Every lifecycle transition goes through a compare-and-set UPDATE so concurrent workers
 // cannot double-claim or overwrite each other's results.
-import { DEFAULT_DIGEST, ROLES, isProfileDigest, resolveProfile, resolveRole, type Profile } from './profile.ts';
+import { DEFAULT_DIGEST, ROLES, isProfileDigest, resolveProfile, resolveRole, profileRunnerNames, roleOf, roleRunner, type Profile } from './profile.ts';
+import { isRunnerName } from './runners/name.ts';
 import { AGENT_NAMES } from './agents.ts';
 import { CONFINABLE_AGENTS } from './sandbox/confine.ts';
 import { isForbiddenEnvName } from './mcp-registry.ts';
@@ -405,8 +406,7 @@ function toWorkstream(r: Row): Workstream {
   };
 }
 
-const RUNNER_NAME = /^[a-z0-9][a-z0-9-]{0,40}$/;
-export const isRunnerName = (name: string): boolean => RUNNER_NAME.test(name);
+export { isRunnerName } from './runners/name.ts';
 const RUNNER_TARGET = /^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$/;
 
 function toRunner(r: Row): Runner {
@@ -431,6 +431,9 @@ function checkRunnerOptions(kind: Runner['kind'], options: Record<string, unknow
     throw bad('maxBundleMb', 'debe ser un entero entre 1 y 4096');
   }
 }
+
+/** Precondición presentada al dueño al confirmar un perfil con runners propios. */
+export type ProfileRunnerConsent = { revision?: string; confirmSsh: boolean };
 
 type RunnerConfig = { kind: Runner['kind']; target?: string | null; options?: Record<string, unknown> };
 
@@ -738,7 +741,7 @@ export class Store {
 
   // ---- workstreams -------------------------------------------------------
 
-  createWorkstream(input: CreateWorkstreamInput): Workstream {
+  createWorkstream(input: CreateWorkstreamInput, runnerConsent?: ProfileRunnerConsent): Workstream {
     if (!/^[a-z0-9][a-z0-9-]{0,62}$/.test(input.slug)) {
       throw new StoreError('invalid_input', `invalid slug "${input.slug}" (use a-z, 0-9, -)`);
     }
@@ -752,11 +755,14 @@ export class Store {
       throw new StoreError('invalid_input', 'vaciar protected_paths exige --protect-none');
     }
     const protectedPaths = input.protectNone ? additions : [...new Set([...DEFAULT_PROTECTED_PATHS, ...additions])];
-    if (input.profile) {
-      try { resolveProfile(this.stateDir, input.profile); } catch (e) { throw new StoreError('invalid_input', (e as Error).message); }
-    }
     const id = randomUUID();
     this.withRetry(() => {
+      if (input.profile) {
+        let profile: Profile;
+        try { ({ profile } = resolveProfile(this.stateDir, input.profile)); }
+        catch (error) { throw new StoreError('invalid_input', (error as Error).message); }
+        this.#checkProfileRunners(profile, runnerConsent);
+      }
       this.db
         .query(
           `INSERT INTO workstreams (id, slug, goal, repo, state, agent, worker_concurrency,
@@ -785,7 +791,7 @@ export class Store {
   }
 
   /** Asigna un perfil bajo el mismo lock que el claim y las transiciones de sesión. */
-  assignProfile(idOrSlug: string, digest: string, expected: string, expectedAgent?: string): void {
+  assignProfile(idOrSlug: string, digest: string, expected: string, expectedAgent?: string, runnerConsent?: ProfileRunnerConsent): void {
     if (!isProfileDigest(digest)) throw new StoreError('invalid_input', 'digest de perfil inválido');
     this.withRetry(() => {
       const ws = this.getWorkstream(idOrSlug);
@@ -801,6 +807,7 @@ export class Store {
         if (digest !== DEFAULT_DIGEST || !(e instanceof StoreError)) throw e;
         before = next;
       }
+      this.#checkProfileRunners(next, runnerConsent);
       this.#checkExecutionConfig(ws, before, next, ws.agent);
       this.db.query('UPDATE workstreams SET profile = ? WHERE id = ?').run(digest === DEFAULT_DIGEST ? null : digest, ws.id);
       this.event(ws.id, 'info', `perfil asignado: ${current} → ${digest}`);
@@ -830,18 +837,22 @@ export class Store {
     return this.db.query("SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = ?").get(name) !== null;
   }
 
-  #checkExecutionConfig(ws: Workstream, before: Profile, next: Profile, agent: string): void {
-    const claimed = this.db.query(`SELECT 1 FROM activities WHERE workstream_id = ?
-      AND status IN ('in_progress', 'waiting_reply') LIMIT 1`).get(ws.id);
+  #hasLiveExecution(scope: 'workstream_id' | 'runner', id: string): boolean {
+    const claimed = this.db.query(`SELECT 1 FROM activities WHERE ${scope} = ?
+      AND status IN ('in_progress', 'waiting_reply') LIMIT 1`).get(id);
     const resuming = !claimed && this.#hasTable('adm_sessions') && this.db.query(`
       SELECT 1 FROM activities a JOIN changes c ON c.id = a.change_id
       JOIN adm_sessions s ON s.change_id = a.change_id AND s.kind = a.kind
-      WHERE a.workstream_id = ? AND a.status = 'pending' AND a.validator IS NULL
+      WHERE a.${scope} = ? AND a.status = 'pending' AND a.validator IS NULL
         AND c.status NOT IN (${TERMINAL_CHANGE_STATUSES.map(() => '?').join(', ')})
         AND s.status = 'open' AND s.launched_at IS NOT NULL
         AND s.generation = (SELECT MAX(generation) FROM adm_sessions WHERE change_id = a.change_id AND kind = a.kind)
-      LIMIT 1`).get(ws.id, ...TERMINAL_CHANGE_STATUSES);
-    if (claimed || resuming) throw new WorkstreamBusyError();
+      LIMIT 1`).get(id, ...TERMINAL_CHANGE_STATUSES);
+    return !!(claimed || resuming);
+  }
+
+  #checkExecutionConfig(ws: Workstream, before: Profile, next: Profile, agent: string): void {
+    if (this.#hasLiveExecution('workstream_id', ws.id)) throw new WorkstreamBusyError();
 
     const channel = (this.#hasTable('adm_thread_changes') && this.db.query(`
       SELECT 1 FROM adm_thread_changes t JOIN changes c ON c.id = t.change_id WHERE c.workstream_id = ? LIMIT 1`).get(ws.id))
@@ -944,6 +955,7 @@ export class Store {
     const options = i.options ?? {};
     return this.withRetry(() => this.db.transaction(() => {
       if (this.db.query('SELECT 1 FROM runners WHERE name = ?').get(i.name)) throw new StoreError('conflict', `ya existe el runner ${i.name}`);
+      this.#checkRunnerUnused(i.name);
       const row = this.db.query(
         `INSERT INTO runners (name, kind, target, options, enabled, created_at, created_by) VALUES (?,?,?,?,1,?,?) RETURNING *`,
       ).get(i.name, i.kind, i.kind === 'ssh' ? i.target! : null, JSON.stringify(options), this.now(), process.env.FAB_ACTOR ?? userInfo().username) as Row;
@@ -962,26 +974,58 @@ export class Store {
     }));
   }
 
-  /** Configuración solo para el editor autenticado. Una base antigua puede carecer de inventario. */
-  runnerForEdit(name: string): Runner | null {
+  /** Una base de solo lectura anterior a T74 puede carecer de inventario. */
+  findRunner(name: string): Runner | null {
     if (!this.#hasTable('runners')) return null;
     const row = this.db.query('SELECT * FROM runners WHERE name = ?').get(name) as Row | null;
     return row ? toRunner(row) : null;
   }
 
-  #runnerAssignments(name: string): string[] {
-    return (this.db.query('SELECT slug FROM workstreams WHERE runner = ?').all(name) as { slug: string }[]).map(w => w.slug);
+  #runnerAssignments(name: string): { id: string; slug: string }[] {
+    const rows = this.db.query('SELECT id, slug, runner, profile FROM workstreams WHERE runner = ? OR profile IS NOT NULL')
+      .all(name) as Pick<Workstream, 'id' | 'slug' | 'runner' | 'profile'>[];
+    const matched = new Map<string, boolean>();
+    return rows.filter(w => {
+      if (w.runner === name) return true;
+      if (!w.profile) return false;
+      if (!matched.has(w.profile)) {
+        // Un perfil ilegible ya bloquea el turno; el dueño puede restaurar el perfil por defecto.
+        let uses = false;
+        try { uses = profileRunnerNames(resolveProfile(this.stateDir, w.profile).profile).includes(name); }
+        catch { /* el perfil no se puede ejecutar */ }
+        matched.set(w.profile, uses);
+      }
+      return matched.get(w.profile);
+    });
+  }
+
+  profileRunnerSelection(profile: Profile) {
+    const names = profileRunnerNames(profile);
+    const summaries = names.length ? this.listRunnerSummaries() : [];
+    const runners = names.map(name => summaries.find(r => r.name === name));
+    const revision = names.length && runners.every(r => r !== undefined)
+      ? createHash('sha256').update(JSON.stringify(runners.map(r => r!.revision))).digest('hex') : undefined;
+    return { revision, ssh: runners.flatMap(r => r?.kind === 'ssh' ? [r.name] : []), missing: names.filter((_, i) => !runners[i]) };
+  }
+
+  #checkProfileRunners(profile: Profile, consent?: ProfileRunnerConsent): void {
+    const { revision, ssh, missing } = this.profileRunnerSelection(profile);
+    if (missing.length) throw new StoreError('invalid_input', `Runners fuera del inventario: ${missing.join(', ')}.`);
+    if (consent && revision !== undefined) {
+      if (consent.revision !== revision) throw new StoreError('conflict', 'La configuración de los runners cambió. Revisa el perfil.');
+      if (ssh.length && !consent.confirmSsh) throw new StoreError('invalid_input', 'Confirma el envío de código a los runners SSH.');
+    }
   }
 
   #checkRunnerLive(name: string): void {
-    if (this.db.query("SELECT 1 FROM activities WHERE runner = ? AND status IN ('in_progress', 'waiting_reply') LIMIT 1").get(name)) {
+    if (this.#hasLiveExecution('runner', name)) {
       throw new StoreError('conflict', `el runner ${name} tiene trabajo vivo`);
     }
   }
 
   #checkRunnerUnused(name: string): void {
     const users = this.#runnerAssignments(name);
-    if (users.length) throw new StoreError('conflict', `el runner ${name} lo usa ${users.join(', ')}`);
+    if (users.length) throw new StoreError('conflict', `el runner ${name} lo usa ${users.map(w => w.slug).join(', ')}`);
   }
 
   updateRunner(name: string, input: Omit<RunnerConfig, 'kind'>, expected?: string): Runner {
@@ -990,7 +1034,7 @@ export class Store {
       if (expected !== undefined && runnerRevision(current) !== expected) {
         throw new StoreError('conflict', 'el runner cambió desde que se mostró');
       }
-      validateRunnerConfig({ kind: current.kind, ...input });
+      validateRunnerConfig({ ...input, kind: current.kind });
       const target = input.target ?? null;
       // Cambiar el alias de un runner asignado redirigiría los próximos envíos de código.
       if (target !== current.target) this.#checkRunnerUnused(name);
@@ -1014,9 +1058,9 @@ export class Store {
   }
 
   getRunner(name: string): Runner {
-    const row = this.db.query('SELECT * FROM runners WHERE name = ?').get(name) as Row | null;
-    if (!row) throw new StoreError('not_found', `runner ${name} no encontrado`);
-    return toRunner(row);
+    const runner = this.findRunner(name);
+    if (!runner) throw new StoreError('not_found', `runner ${name} no encontrado`);
+    return runner;
   }
 
   setRunnerEnabled(name: string, enabled: boolean): Runner {
@@ -1024,7 +1068,7 @@ export class Store {
       const row = this.db.query('UPDATE runners SET enabled = ? WHERE name = ? RETURNING *').get(Number(enabled), name) as Row | null;
       if (!row) throw new StoreError('not_found', `runner ${name} no encontrado`);
       // Un evento exige un workstream: alta y borrado (un runner en uso no se borra) no tienen dónde anotarse; pausa y activación, en cada workstream que lo usa.
-      for (const w of this.db.query('SELECT id FROM workstreams WHERE runner = ?').all(name) as { id: string }[]) {
+      for (const w of this.#runnerAssignments(name)) {
         this.event(w.id, 'warning', `runner ${name} ${enabled ? 'activado' : 'pausado'}`);
       }
       return toRunner(row);
@@ -1472,9 +1516,22 @@ export class Store {
 
   // ---- notas del dueño ---------------------------------------------------
 
-  noteRunnerIsRemote(workstreamId: string): boolean {
-    const runner = this.getWorkstream(workstreamId).runner;
-    return runner !== null && this.getRunner(runner).kind === 'ssh';
+  #noteRunnerIsRemote(ws: Workstream, activity?: Pick<Activity, 'kind' | 'validator'>): boolean {
+    let name = ws.runner;
+    if (ws.profile && activity) {
+      try { name = roleRunner(resolveProfile(this.stateDir, ws.profile).profile, roleOf(activity)) ?? name; }
+      catch { /* un perfil ilegible bloquea el turno antes de que se entreguen notas */ }
+    }
+    return name !== null && this.findRunner(name)?.kind === 'ssh';
+  }
+
+  noteRunnerIsRemote(changeId: string): boolean {
+    const change = this.getChange(changeId);
+    const next = this.db.query<Pick<Activity, 'kind' | 'validator'>, [string]>(`SELECT kind, validator FROM activities
+      WHERE change_id = ? AND validator IS NULL AND kind IN ('investigation', 'implementation')
+        AND status IN ('pending', 'in_progress', 'waiting_reply')
+      ORDER BY created_at, rowid LIMIT 1`).get(changeId);
+    return this.#noteRunnerIsRemote(this.getWorkstream(change.workstreamId), next ?? undefined);
   }
 
   /** Comprobación barata (sin Git) del estado para avisar en la página antes de guardar. */
@@ -1520,7 +1577,7 @@ export class Store {
       if (attachment !== undefined) {
         const invalid = validateNoteAttachment(attachment);
         if (invalid) throw new StoreError('invalid_input', invalid);
-        if (this.noteRunnerIsRemote(change.workstreamId)) {
+        if (this.noteRunnerIsRemote(change.id)) {
           throw new StoreError('invalid_input', NOTE_ATTACHMENT_REMOTE);
         }
         try { this.assertNoteAttachmentState(prepared); }
@@ -1593,9 +1650,10 @@ export class Store {
         }
         return reserve(PLAIN_NOTE).map(toChangeNote);
       };
-      if (this.noteRunnerIsRemote(workstreamId) || (delivery && 'blockedBy' in delivery && delivery.blockedBy === 'remote')) return reason('remote');
-      if (!delivery || 'blockedBy' in delivery) return reason('transport');
       const activity = this.getActivity(activityId);
+      if ((delivery && 'blockedBy' in delivery && delivery.blockedBy === 'remote') ||
+          this.#noteRunnerIsRemote(this.getWorkstream(workstreamId), activity)) return reason('remote');
+      if (!delivery || 'blockedBy' in delivery) return reason('transport');
       if (activity.changeId !== changeId || activity.validator ||
           (activity.kind !== 'investigation' && activity.kind !== 'implementation')) return reason('transport');
       try { this.assertNoteAttachmentState(delivery); }

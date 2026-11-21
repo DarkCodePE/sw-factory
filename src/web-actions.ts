@@ -77,7 +77,7 @@ export function actionForms(store: Store, url: URL, csrf?: string): string {
     if (waiting || ['failed', 'blocked', 'quarantined', 'implemented'].includes(c.status)) body += form(`/changes/${id}/retry`, `<input type="hidden" name="revision" value="${retryRevision(store, id)}"><button>Reintentar change</button><p class="muted">Reencola la última activity fallida; si espera una respuesta, abandona esa espera.</p>`);
     if (!store.isTerminalChange(c.status)) {
       const planned = activities.some(a => ['pending', 'in_progress', 'waiting_reply'].includes(a.status));
-      body += noteForm(id, hidden, planned, store.noteRunnerIsRemote(c.workstreamId), store.noteAttachmentStateProblem(), escape);
+      body += noteForm(id, hidden, planned, store.noteRunnerIsRemote(c.id), store.noteAttachmentStateProblem(), escape);
     }
     if (!FINAL_STATUSES.includes(c.status)) body += form(`/changes/${id}/cancel`, `<fieldset><legend>Cancelar change</legend><label><input type="checkbox" name="confirm" value="yes" required> Confirmo: cancela el change y borra su worktree (igual que fab reject)</label><button>Cancelar change</button></fieldset>`);
     return `<section aria-label="Decisiones">${body}${suiteTaskForm(c, store.stateDir, url, escape, csrf)}</section>`;
@@ -406,13 +406,14 @@ export const ACTIONS: Record<string, Action | CheckAction | WebResponseAction> =
   'workstreams/create': {
     api: false,
     path: /^\/(workstreams)\/nuevo$/,
-    input: wsFields,
+    input: raw => ({ ...wsFields(raw), runnerRevision: raw.runnerRevision, confirmRunnerSsh: raw.confirmRunnerSsh }),
     run: (store, _id, input, out, _actor, stateDir) => {
       out.destination = '/workstreams';
-      try { createWorkstream(store, stateDir, input as ReturnType<typeof wsFields>); }
+      const { runnerRevision, confirmRunnerSsh, ...fields } = input;
+      try { createWorkstream(store, stateDir, wsFields(fields), { revision: runnerRevision, confirmSsh: confirmRunnerSsh === 'yes' }); }
       catch (e) {
         // T60-H4: un dato inválido devuelve al asistente, que muestra el paso que falla con lo escrito.
-        if (e instanceof StoreError && e.code === 'invalid_input') out.destination = `/workstreams/nuevo?${new URLSearchParams({ ...(input as Record<string, string>), paso: '5' })}`;
+        if (e instanceof StoreError && e.code === 'invalid_input') out.destination = `/workstreams/nuevo?${new URLSearchParams({ ...wsFields(fields), paso: '5' })}`;
         throw e;
       }
     },

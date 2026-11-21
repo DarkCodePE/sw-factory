@@ -66,7 +66,7 @@ export function runnersPage(store: Store, csrf: string, edit?: string | null): {
       <td>${r.kind === 'ssh' ? 'Sin comprobar' : '—'}${check}</td><td>${isRunnerName(r.name)
       ? `<a href="${RUNNERS_PATH}?editar=${encodeURIComponent(r.name)}" aria-label="Editar ${escape(r.name)}">Editar</a>` : ''}</td></tr>`;
   });
-  const selected = edit && isRunnerName(edit) ? store.runnerForEdit(edit) : null;
+  const selected = edit && isRunnerName(edit) ? store.findRunner(edit) : null;
   return { title: 'Runners', body: `<p><a href="/config">Volver a configuración</a></p>
     ${rows.length ? `<div class="table-wrap" role="region" aria-label="Inventario de runners" tabindex="0">
       <table><thead><tr><th scope="col">Nombre</th><th scope="col">Tipo</th><th scope="col">Configuración</th><th scope="col">Comprobación</th><th scope="col">Acciones</th></tr></thead>

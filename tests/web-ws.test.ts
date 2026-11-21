@@ -1,6 +1,7 @@
 import { afterEach, beforeEach, expect, test } from 'bun:test';
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync, chmodSync } from 'node:fs';
 import { join } from 'node:path';
+import { defaultProfile, saveProfile } from '../src/profile.ts';
 import { Store } from '../src/store.ts';
 import { startWeb } from '../src/web.ts';
 
@@ -217,4 +218,18 @@ test('T60-H4: un dato inválido en el alta vuelve al asistente, al paso que fall
   const page = await (await req(loc, { headers: { cookie } })).text();
   expect(page).toContain('slug'); expect(page).toContain('>Mi objetivo</textarea>'); expect(page).toContain('Paso 2 de 5');
   expect(store.listWorkstreams()).toHaveLength(1);
+});
+
+test('T102: el alta desde la web también confirma los runners SSH del perfil', async () => {
+  store.createRunner({ name: 'torre', kind: 'ssh', target: 'alias' });
+  const profile = saveProfile(dir, { ...defaultProfile(), schemaVersion: 2, roles: { qa: { runner: 'torre' } } }).digest;
+  const fields = { ...base(), profile };
+  const preview = await wiz({ ...fields, paso: '5' });
+  const runnerRevision = /name="runnerRevision" value="([0-9a-f]{64})"/.exec(preview)![1]!;
+  expect(preview).toMatch(/confirmRunnerSsh[\s\S]*SSH torre/);
+  const rejected = await post('/workstreams/nuevo', { ...fields, runnerRevision });
+  expect(rejected.headers.get('location')).not.toContain(runnerRevision);
+  expect(store.listWorkstreams()).toHaveLength(1);
+  expect((await post('/workstreams/nuevo', { ...fields, runnerRevision, confirmRunnerSsh: 'yes' })).status).toBe(303);
+  expect(ws(fields.slug).profile).toBe(profile);
 });

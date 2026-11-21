@@ -46,7 +46,7 @@ import { protectedIntegrity, purgeRegenerableCaches } from './validators/integri
 import { mergeRecoverably } from './validators/publish.ts';
 import { ensureStateDir } from './state-dir.ts';
 import { NOTE_ATTACHMENT_MAX } from './note-attachments.ts';
-import { DEFAULT_DIGEST } from './profile.ts';
+import { DEFAULT_DIGEST, resolveProfile } from './profile.ts';
 
 // Bun's native console bypasses fd-backed Writable queues. For pipes/files,
 // proxies force console output through queues we can drain before exit.
@@ -109,6 +109,7 @@ const HELP = `fab — agente de código y fábrica de software local
   fab runner add|update <nombre> --ssh <alias> [--max-bundle-mb N] | --local [--confine]   runner remoto (el código sale de tu máquina) o local
   fab runner list [--json] | enable <nombre> | disable <nombre> | rm <nombre> | check <nombre>
   fab runner serve --root <dir>   lado runner (lo arranca sshd por el comando forzado)
+  fab ws profile <ws> <digest>   asigna un perfil guardado
   fab ws runner <ws> <nombre> | --none   asigna o quita el runner del workstream
   fab profile export [--out f] | import <f> | inspect <digest> | list   perfiles de instrucciones inmutables por digest
   fab definition export <slug> <dir> | import <dir> --repo <path> [--slug <slug>]   definición como árbol de ficheros (sin rutas ni valores de entorno)
@@ -340,13 +341,21 @@ async function main(argv: string[]): Promise<number> {
           const ws = store.getWorkstream(slug);
           store.setWorkstreamAgent(ws.id, agent, ws.agent, ws.profile ?? DEFAULT_DIGEST); // mismas guardas que la web: sin trabajo vivo y con la configuración que se acaba de leer
           console.log(`${ws.slug} agent: ${ws.agent} -> ${agent}`);
+        } else if (sub === 'profile') {
+          const [slug, digest] = rest;
+          if (!slug || !digest) throw new StoreError('invalid_input', 'usage: fab ws profile <ws> <digest>');
+          const ws = store.getWorkstream(slug);
+          store.assignProfile(ws.id, digest, ws.profile ?? DEFAULT_DIGEST, ws.agent);
+          console.log(`${ws.slug} profile: ${digest}`);
+          const { ssh } = store.profileRunnerSelection(resolveProfile(STATE_DIR, digest).profile);
+          if (ssh.length) console.log(`aviso: ${CODE_LEAVES_WARNING} ${ssh.join(', ')}.`);
         } else if (sub === 'runner') {
           const [slug, name] = rest;
           if (!slug || !!name === !!values.none) throw new StoreError('invalid_input', 'usage: fab ws runner <ws> <nombre> | --none');
           const upd = store.setWorkstreamRunner(slug, name ?? null);
           console.log(`${upd.slug} runner: ${upd.runner ?? 'ninguno'}`);
           if (name && store.getRunner(name).kind === 'ssh') console.log(`aviso: ${CODE_LEAVES_WARNING} ${store.getRunner(name).target}.`);
-        } else throw new StoreError('invalid_input', 'fab ws create|list|state|agent|env|mcp|runner');
+        } else throw new StoreError('invalid_input', 'fab ws create|list|state|agent|env|mcp|profile|runner');
         return 0;
       }
       case 'definition': {

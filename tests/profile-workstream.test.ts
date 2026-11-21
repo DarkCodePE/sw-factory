@@ -190,3 +190,22 @@ test('T84-H3: una sesión abierta de otro kind no cuenta como reanudación aunqu
   store.assignProfile(ws, digest, DEFAULT_DIGEST, 'claude');
   expect(store.getWorkstream(ws).profile).toBe(digest);
 });
+
+test('T102: reservar un runner en una sesión reencolada protege la fila aunque se desasigne el workstream', () => {
+  store.createRunner({ name: 'casa', kind: 'local' });
+  store.setWorkstreamRunner(ws, 'casa');
+  const change = activeChange();
+  const a = store.claimActivity(ws, 'worker')!;
+  store.reserveActivityRunner(a.id, 'worker', 'casa');
+  const sessions = new SessionStore(new AdmissionDb(store));
+  const { session } = sessions.begin(change.id, a.kind, { backend: 'claude', cwd: '/repo' });
+  sessions.markLaunched(session.sessionId);
+  store.awaitHuman(a.id, 'worker', { questionId: 'q', waitUntil: '2099-01-01T00:00:00Z' });
+  store.setWorkstreamRunner(ws, null);
+  expect(() => store.deleteRunner('casa')).toThrow(/trabajo vivo/);
+  expect(store.answerAwaiting(a.id, 'q')).toBe(true);
+  expect(() => store.deleteRunner('casa')).toThrow(/trabajo vivo/);
+  store.db.query("UPDATE adm_sessions SET status = 'closed' WHERE session_id = ?").run(session.sessionId);
+  store.deleteRunner('casa');
+  expect(store.findRunner('casa')).toBeNull();
+});

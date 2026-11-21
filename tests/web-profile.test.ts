@@ -301,3 +301,47 @@ test('un modelo enmascarado no se envía y el marcador conserva su valor origina
   expect(digestOf(r)).toBe(digest);
   expect(loadProfile(dir, digest)).toEqual(profile);
 });
+
+test('T102: runner propio en el perfil nuevo, herencia visible y confirmación SSH al asignar', async () => {
+  store.createRunner({ name: 'casa', kind: 'local' });
+  store.createRunner({ name: 'torre', kind: 'ssh', target: 'alias-uno' });
+  store.setWorkstreamRunner(wsId, 'casa');
+  await login();
+  const page = await html('/perfiles');
+  expect(page).toContain('name="roles.implement.runner"');
+  const saved = await post('/perfiles/guardar', roles({ 'roles.implement.runner': 'torre' }));
+  expect(saved.status).toBe(303);
+  const digest = digestOf(saved);
+  expect(loadProfile(dir, digest).roles?.implement).toEqual({ runner: 'torre' });
+  expect(store.getWorkstream(wsId).profile).toBeNull();
+  const preview = await html(`/perfiles?digest=${digest}`);
+  const row = (label: string) => preview.match(new RegExp(`<tr><th scope="row">${label}</th>.*?</tr>`))![0]!;
+  expect(row('Implementación')).toMatch(/torre.*Rol del perfil/);
+  expect(row('Investigación')).toMatch(/casa.*Workstream/);
+  const assignment = { digest, previous: DEFAULT_DIGEST, confirm: 'yes' };
+  const seen = (page: string) => /name="runnerRevision" value="([0-9a-f]{64})"/.exec(page)![1]!;
+  expect((await post('/perfiles/asignar', { ...assignment, runnerRevision: seen(preview) })).status).toBe(400);
+  store.updateRunner('torre', { target: 'alias-dos' });
+  await post('/perfiles/asignar', { ...assignment, runnerRevision: seen(preview), confirmRunnerSsh: 'yes' });
+  expect(store.getWorkstream(wsId).profile).toBeNull();
+  const current = await html(`/perfiles?digest=${digest}`);
+  expect((await post('/perfiles/asignar', { ...assignment, runnerRevision: seen(current), confirmRunnerSsh: 'yes' })).status).toBe(303);
+  expect(store.getWorkstream(wsId).profile).toBe(digest);
+  expect(() => store.deleteRunner('torre')).toThrow(/lo usa/);
+  expect(() => store.updateRunner('torre', { target: 'alias-tres' })).toThrow(/lo usa/);
+  store.setRunnerEnabled('torre', false);
+  expect(await html('/perfiles')).toMatch(/torre.*Pausado/);
+  store.db.query("DELETE FROM runners WHERE name = 'torre'").run();
+  expect(await html('/perfiles')).toMatch(/torre.*Fuera del inventario/);
+});
+
+test('T102: la CLI puede asignar el mismo perfil por digest y avisa del runner SSH', () => {
+  store.createRunner({ name: 'torre', kind: 'ssh', target: 'alias' });
+  const digest = saveProfile(dir, { ...defaultProfile(), schemaVersion: 2, roles: { qa: { runner: 'torre' } } }).digest;
+  const cli = Bun.spawnSync([process.execPath, 'src/cli.ts', 'ws', 'profile', 'prueba', digest], {
+    cwd: join(import.meta.dir, '..'), env: { ...process.env, FABRICA_HOME: dir },
+  });
+  expect(cli.exitCode).toBe(0);
+  expect(cli.stdout.toString()).toContain('sale de tu máquina hacia torre');
+  expect(store.getWorkstream(wsId).profile).toBe(digest);
+});
