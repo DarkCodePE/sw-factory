@@ -622,5 +622,15 @@ test('T106-H5: valida versión de native dinámicamente contra package.json en l
   expect(typeof pkg.version).toBe('string');
 });
 
+test('T106-H7: la hoja de estilo define reglas para .pin-mismatch y mark.alerta', async () => {
+  new Store(join(dir, 'fabrica.db')).close();
+  start();
+
+  const css = await page('/style.css');
+  expect(css).toContain('.pin-mismatch');
+  expect(css).toContain('mark.alerta');
+});
+
+
 
 
