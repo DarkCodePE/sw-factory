@@ -327,3 +327,21 @@ describe('T72f: servidores del rol en la configuración del turno', () => {
     } finally { f.restore(); }
   });
 });
+
+async function runClaudeFixture(script: string, sessionId?: string) {
+  const f = fakeClaude(script);
+  const dir = mcpDir();
+  try {
+    Bun.spawnSync(['git', 'init', '-q', f.dir]);
+    return await claudeLive.run({ sessionId, prompt: 'x', cwd: f.dir, attemptId: 'a', mcpConfigDir: dir });
+  } finally {
+    f.restore();
+    rmSync(f.dir, { recursive: true, force: true });
+    rmSync(join(dir, '..'), { recursive: true, force: true });
+  }
+}
+
+test('T99-H10: detecta una sesión perdida por texto de stdout sin result', async () => {
+  await expect(runClaudeFixture("echo 'No conversation found with session ID: perdida'; exit 1", 'perdida'))
+    .rejects.toBeInstanceOf(SessionNotFoundError);
+});

@@ -58,16 +58,22 @@ export const claudeLive: LiveBackend = {
       writeFileSync(configPath, JSON.stringify({ mcpServers: { ...turn.mcpServers, [SERVER]: mcp } }), { mode: 0o600 });
       const path = configPath, base = getAgent('claude');
       let stdoutForMonitor = '';
+      let stdoutDiagnostic = '';
       const adapter: AgentAdapter = {
         ...base,
         command: (prompt, options) => liveClaudeArgv(base.command(prompt, { ...options, mcpConfig: undefined }), turn, sessionId, path),
         parse(stdout) {
           for (const line of stdout.trimEnd().split('\n').reverse()) {
-            const result = parseClaudeJson(line);
-            if (!result) continue;
+            let frame: { type?: unknown } | null;
+            try { frame = JSON.parse(line); }
+            catch {
+              if (!stdoutDiagnostic && !line.trimStart().startsWith('{') && NOT_FOUND.test(line)) stdoutDiagnostic = line.trim();
+              continue;
+            }
+            if (frame?.type !== 'result') continue;
             // Conserva la entrada histórica del monitor: el objeto result de Claude.
             stdoutForMonitor = line;
-            return result;
+            return parseClaudeJson(line);
           }
           return null;
         },
@@ -81,7 +87,9 @@ export const claudeLive: LiveBackend = {
         if (turn.sessionId && NOT_FOUND.test((e as Error).message)) throw new SessionNotFoundError(sessionId, (e as Error).message);
         throw e;
       }
-      if (turn.sessionId && run.exitCode !== 0 && NOT_FOUND.test(`${run.stderr ?? ''}\n${stdoutForMonitor ?? ''}`)) throw new SessionNotFoundError(sessionId, run.stderr?.trim());
+      if (turn.sessionId && run.exitCode !== 0 && NOT_FOUND.test(`${run.stderr ?? ''}\n${stdoutForMonitor || stdoutDiagnostic}`)) {
+        throw new SessionNotFoundError(sessionId, run.stderr?.trim() || (!stdoutForMonitor ? stdoutDiagnostic : ''));
+      }
       return { ...run, stdoutForMonitor, sessionId, attemptId: turn.attemptId, reports };
     } finally {
       if (configPath) rmSync(configPath, { force: true });
