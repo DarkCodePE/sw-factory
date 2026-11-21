@@ -18,4 +18,9 @@ export const WEB_STYLE = `
 .transcript li{border-bottom:1px solid var(--line);padding:8px 0}
 .transcript summary{cursor:pointer;overflow-wrap:anywhere}
 .transcript summary:focus-visible{outline:3px solid var(--focus);outline-offset:3px}
+.minute-timeline:focus-visible{outline:3px solid var(--focus);outline-offset:3px}
+.minute-timeline th[scope=col]:not(:first-child){min-width:11rem}
+.minute-timeline td{overflow-wrap:anywhere}
+.minute-timeline ul{margin:0;padding-left:16px}
+.minute-timeline li+li{margin-top:4px}
 `;

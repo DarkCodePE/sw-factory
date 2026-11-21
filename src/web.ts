@@ -21,7 +21,7 @@ import { SIDEBAR_JS, SIDEBAR_STYLE, sidebarNav } from './web-sidebar.ts';
 import { activityScores } from './web-scorers.ts';
 import { metricsPage, METRICS_STYLE } from './web-metrics.ts';
 import { WebAuth, assertLoopback } from './web-auth.ts';
-import { turnsSection, notesSection, turnEvidenceRoute } from './web-turns.ts';
+import { changeTurnSections, notesSection, turnEvidenceRoute } from './web-turns.ts';
 import { activityLogSection, transcriptSection } from './web-transcript.ts';
 import { signalsView } from './web-signals.ts';
 import { AUTOMATION_EDIT_ROUTE, AUTOMATION_EDITOR_JS, AUTOMATION_EDITOR_STYLE, automationEditor, automationsView } from './web-automations.ts';
@@ -116,7 +116,7 @@ function page(store: Store, stateDir: string, url: URL, csrf?: string): { title:
     const attachmentWait = notes.some(note => note.attachment && !note.deliveredAt)
       ? (store.noteRunnerIsRemote(c.workstreamId) ? 'El runner asignado es remoto.' : store.noteAttachmentWait(id))
       : undefined;
-    return { title: c.title, body: `<p><a href="/changes?ws=${enc(store.getWorkstream(c.workstreamId).slug)}">Volver a changes</a></p><div class="summary">${badge(c.status)}<span>Coste total: <strong>${money(cost)}</strong></span><span>Rama: ${escape(c.branch ?? 'No asignada')}</span><span>PR: ${changePrLink(store, id)}</span>${copyButton(ui, c.id)}</div>${linksBlock(ui, { source: store.changeLinks(c.id).source })}<p class="description">${escape(c.description)}</p>${actionForms(store, url, csrf)}<h2>Activities</h2>${tree(activities, store.getWorkstream(c.workstreamId).slug)}${turnsSection(store.db, id, ui)}${notesSection(notes, c.status, ui, attachmentWait)}<h2>Timeline</h2>${omitted ? `<p class="notice">Se omiten ${omitted} eventos anteriores.</p>` : ''}${events.length ? `<ol class="timeline">${events.map(e => `<li><time>${escape(e.created_at)}</time><div><strong>${escape(e.severity)}</strong> · ${escape(e.actor ?? 'fab')}<p>${escape(e.message)}</p></div></li>`).join('')}</ol>` : empty('No hay eventos para este change.')}` };
+    return { title: c.title, body: `<p><a href="/changes?ws=${enc(store.getWorkstream(c.workstreamId).slug)}">Volver a changes</a></p><div class="summary">${badge(c.status)}<span>Coste total: <strong>${money(cost)}</strong></span><span>Rama: ${escape(c.branch ?? 'No asignada')}</span><span>PR: ${changePrLink(store, id)}</span>${copyButton(ui, c.id)}</div>${linksBlock(ui, { source: store.changeLinks(c.id).source })}<p class="description">${escape(c.description)}</p>${actionForms(store, url, csrf)}<h2>Activities</h2>${tree(activities, store.getWorkstream(c.workstreamId).slug)}${changeTurnSections(store.db, id, ui, activities, events)}${notesSection(notes, c.status, ui, attachmentWait)}<h2>Timeline</h2>${omitted ? `<p class="notice">Se omiten ${omitted} eventos anteriores.</p>` : ''}${events.length ? `<ol class="timeline">${events.map(e => `<li><time>${escape(e.created_at)}</time><div><strong>${escape(e.severity)}</strong> · ${escape(e.actor ?? 'fab')}<p>${escape(e.message)}</p></div></li>`).join('')}</ol>` : empty('No hay eventos para este change.')}` };
   }
   const a = store.getActivity(id);
   const c = store.getChange(a.changeId);

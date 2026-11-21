@@ -2,9 +2,10 @@
 // del Store y nunca construye `AdmissionDb`. Todo texto de agentes o terceros pasa por `ui.escape`.
 import type { Database } from 'bun:sqlite';
 import { evidencePath, readEvidence, type EvidenceText } from './evidence.ts';
-import { changeTimeline, type Segment, type TurnView } from './admission/timeline.ts';
+import { changeTimeline, type Segment, type Timeline, type TurnView } from './admission/timeline.ts';
 import type { Ui } from './web-changes.ts';
-import type { ChangeNote } from './store.ts';
+import type { Activity, ChangeNote } from './store.ts';
+import { minuteTimeline } from './web-minute-timeline.ts';
 
 const PLAN: Record<string, string> = { fresh: 'Primer turno', answer: 'Respuesta a una pregunta', retry: 'Reintento con motivo', orphan: 'Continuación tras una caída', reconstructed: 'Sesión reconstruida' };
 const SEGMENT: Record<Segment['kind'], string> = { trabajo: 'Trabajo', espera_persona: 'Espera de una persona', cola: 'En cola', bloqueo: 'Bloqueo', interrumpido: 'Interrumpido' };
@@ -14,8 +15,13 @@ const NOT_MEASURED = 'No medido';
 const finite = (x: number | null | undefined): x is number => typeof x === 'number' && Number.isFinite(x) && x >= 0;
 const span = (ms: number) => ms < 1000 ? `${ms} ms` : ms < 60000 ? `${(ms / 1000).toFixed(1)} s` : `${Math.round(ms / 60000)} min`;
 
-export function turnsSection(db: Database, changeId: string, ui: Ui): string {
-  const t = changeTimeline(db, changeId), e = ui.escape;
+export function changeTurnSections(db: Database, changeId: string, ui: Ui, activities: Activity[], events: Record<string, unknown>[]): string {
+  const timeline = changeTimeline(db, changeId);
+  return turnsSection(db, changeId, ui, timeline) + minuteTimeline(activities, events, timeline.turns, ui);
+}
+
+function turnsSection(db: Database, changeId: string, ui: Ui, t: Timeline): string {
+  const e = ui.escape;
   const head = '<h2>Turnos</h2>';
   if (t.state === 'sin_tablas') return `${head}<p class="empty">Sin turnos vivos</p>`;
   if (t.state === 'sin_turnos') {
