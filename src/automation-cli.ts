@@ -2,9 +2,10 @@
 import { readFileSync, statSync } from 'node:fs';
 import { parseArgs } from 'node:util';
 import { lastDue, parseCron, scheduleExpr } from './cron.ts';
-import { StoreError, type Automation, type Store } from './store.ts';
+import { automationRevision, StoreError, type Automation, type Store } from './store.ts';
 
 const USAGE = `fab automation add <ws> --name <n> (--cron "<e>" | --every hour|day|week [--at HH:MM] [--weekday N]) --title <t> --body-file <f>
+fab automation update <id> [--name <n>] [--cron "<e>" | --every …] [--title <t>] [--body-file <f>]
 fab automation list [<ws>] [--json] | enable <id> | disable <id> | rm <id> | run-now <id> | tick | run`;
 const MAX_BODY = 8192;
 const HOUR = 3_600_000;
@@ -14,6 +15,16 @@ export { scheduleExpr } from './cron.ts';
 export type AutomationOpts = { intervalMs?: number; signal?: AbortSignal };
 
 const fail = (m: string) => new StoreError('invalid_input', m);
+
+function readBody(file: string): string {
+  let size: number;
+  try { size = statSync(file).size; } catch { throw fail(`no se puede leer ${file}`); }
+  if (size > MAX_BODY) throw fail(`el fichero del cuerpo ocupa ${size} bytes; el máximo es ${MAX_BODY}`);
+  return readFileSync(file, 'utf8');
+}
+function scheduleOrFail(v: Parameters<typeof scheduleExpr>[0]): string {
+  try { return scheduleExpr(v); } catch (error) { throw fail((error as Error).message); }
+}
 
 /** Próximo instante programado tras `now`, o null si no hay en 366 días. */
 function nextDue(expr: string, now: Date): Date | null {
@@ -53,15 +64,18 @@ export async function automationMain(argv: string[], store: Store, opts: Automat
       case 'add': {
         if (!arg || !v.name || !v.title) throw fail(USAGE);
         if (!v['body-file']) throw fail('falta --body-file: el cuerpo se lee de un fichero');
-        let size: number;
-        try { size = statSync(v['body-file']).size; } catch { throw fail(`no se puede leer ${v['body-file']}`); }
-        if (size > MAX_BODY) throw fail(`el fichero del cuerpo ocupa ${size} bytes; el máximo es ${MAX_BODY}`);
-        let cron: string;
-        try { cron = scheduleExpr(v); } catch (error) { throw fail((error as Error).message); }
-        const a = store.createAutomation({
-          workstream: arg, name: v.name, cron, title: v.title, body: readFileSync(v['body-file'], 'utf8'),
-        });
+        const body = readBody(v['body-file']);
+        const a = store.createAutomation({ workstream: arg, name: v.name, cron: scheduleOrFail(v), title: v.title, body });
         console.log(`${a.id.slice(0, 8)} ${a.name} (${a.cron})`);
+        return 0;
+      }
+      case 'update': {
+        const a = resolve(store, arg);
+        const schedule = v.cron || v.every ? scheduleOrFail(v) : a.cron;
+        let body = a.body;
+        if (v['body-file']) body = readBody(v['body-file']);
+        const u = store.updateAutomation(a.id, automationRevision(a), { name: v.name ?? a.name, cron: schedule, title: v.title ?? a.title, body });
+        console.log(`${u.id.slice(0, 8)} ${u.name} (${u.cron})`);
         return 0;
       }
       case 'list': {

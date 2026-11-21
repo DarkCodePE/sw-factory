@@ -47,3 +47,20 @@ test('T79: la ayuda de fab web documenta --write y --port 0 y no dice «solo lec
   expect(line.length).toBe(1); expect(line[0]).toContain('--write'); expect(line[0]).toContain('--port 0');
   expect(line[0]).not.toMatch(/solo lectura/i);
 });
+
+// B de INT-O1: `fab note --file` adjunta con las mismas validaciones que la web (las hace el Store).
+import { writeFileSync } from 'node:fs';
+test('--file adjunta el fichero con su nombre y registra la nota', () => {
+  writeFileSync(join(dir, 'datos.txt'), 'contenido del adjunto');
+  const r = fab('note', id, 'mira', 'esto', '--file', join(dir, 'datos.txt'));
+  expect(r.exitCode).toBe(0);
+  expect(notes()).toMatchObject([{ body: 'mira esto', attachment: { name: 'datos.txt', size: 21 } }]);
+});
+test('--file rechaza un fichero ilegible, demasiado grande o con extensión no admitida, sin crear nota', () => {
+  writeFileSync(join(dir, 'grande.txt'), 'x'.repeat(64 * 1024 + 1)); writeFileSync(join(dir, 'malo.exe'), 'x');
+  for (const f of [join(dir, 'no-existe.txt'), join(dir, 'grande.txt'), join(dir, 'malo.exe')]) {
+    const r = fab('note', id, 'texto', '--file', f);
+    expect(r.exitCode).not.toBe(0); expect(r.stderr.toString()).toContain('invalid_input');
+  }
+  expect(notes()).toHaveLength(0);
+});

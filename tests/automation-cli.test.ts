@@ -175,3 +175,26 @@ test('run no acumula listeners de abort al vencer el temporizador', async () => 
   expect(added - removed).toBeLessThanOrEqual(1);
   store.close();
 });
+
+// B de INT-O1: `fab automation update` edita en sitio con la misma validación y auditoría que la web.
+test('update cambia nombre, horario, título y cuerpo; lo no indicado se conserva', async () => {
+  const { root, store } = fixture();
+  await run(store, ['add', 'ws', '--name', 'a', '--every', 'day', '--at', '07:30', '--title', 't', '--body-file', join(root, 'body.md')]);
+  const id = store.listAutomations()[0]!.id;
+  writeFileSync(join(root, 'nuevo.md'), 'cuerpo nuevo');
+  expect((await run(store, ['update', id.slice(0, 8), '--name', 'b', '--every', 'hour', '--at', ':15', '--title', 'u', '--body-file', join(root, 'nuevo.md')])).code).toBe(0);
+  expect(store.getAutomation(id)).toMatchObject({ name: 'b', cron: '15 * * * *', title: 'u', body: 'cuerpo nuevo' });
+  expect((await run(store, ['update', id, '--title', 'solo título'])).code).toBe(0);
+  expect(store.getAutomation(id)).toMatchObject({ name: 'b', cron: '15 * * * *', title: 'solo título', body: 'cuerpo nuevo' });
+  store.close();
+});
+test('update rechaza un cron inválido, un nombre ocupado y un id desconocido sin cambiar nada', async () => {
+  const { root, store } = fixture();
+  for (const n of ['a', 'b']) await run(store, ['add', 'ws', '--name', n, '--cron', '5 4 * * *', '--title', 't', '--body-file', join(root, 'body.md')]);
+  const [a] = store.listAutomations().filter(x => x.name === 'a');
+  const before = store.getAutomation(a!.id);
+  for (const args of [['--cron', 'no es cron'], ['--name', 'b'], ['--every', 'day']]) expect((await run(store, ['update', a!.id, ...args])).code).toBe(1);
+  expect((await run(store, ['update', 'inexistente', '--title', 'x'])).code).toBe(1);
+  expect(store.getAutomation(a!.id)).toEqual(before);
+  store.close();
+});

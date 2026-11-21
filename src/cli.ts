@@ -2,8 +2,8 @@
 // fab — local software factory CLI.
 import { Writable } from 'node:stream';
 import { Console } from 'node:console';
-import { readFileSync } from 'node:fs';
-import { resolve } from 'node:path';
+import { readFileSync, statSync } from 'node:fs';
+import { basename, resolve } from 'node:path';
 import { parseArgs } from 'node:util';
 
 import { captureMain } from './manifest-capture.ts';
@@ -45,6 +45,8 @@ import { resetSessionCap } from './admission/sessions.ts';
 import { protectedIntegrity, purgeRegenerableCaches } from './validators/integrity.ts';
 import { mergeRecoverably } from './validators/publish.ts';
 import { ensureStateDir } from './state-dir.ts';
+import { NOTE_ATTACHMENT_MAX } from './note-attachments.ts';
+import { DEFAULT_DIGEST } from './profile.ts';
 
 // Bun's native console bypasses fd-backed Writable queues. For pipes/files,
 // proxies force console output through queues we can drain before exit.
@@ -112,6 +114,7 @@ const HELP = `fab — agente de código y fábrica de software local
   fab definition export <slug> <dir> | import <dir> --repo <path> [--slug <slug>]   definición como árbol de ficheros (sin rutas ni valores de entorno)
   fab api-key create --name <n> --scope read|decide | list | revoke <id|nombre>   claves de la API local (la clave se muestra una vez)
   fab ws state <slug> <active|paused|archived>
+  fab ws agent <ws> <adaptador>   cambia el adaptador de un workstream existente; falla con trabajo vivo
   fab signal add <slug> <title> [--body <text>]
   fab signal list <slug>
   fab triage <signalId> | fab triage --all <slug>
@@ -123,7 +126,7 @@ const HELP = `fab — agente de código y fábrica de software local
   fab resident --repo owner/name [--mode off|observe|auto] [--workstream <slug>] [--once] [--since ISO] [--interval s] [--label fab] [--allow-author u] [--trust OWNER,MEMBER] [--hook-port N]
                                 residente en modo observe: registra would_admit de issues sin crear changes
   fab automation add <slug> --name <n> (--cron "<e>" | --every hour|day|week [--at HH:MM] [--weekday N]) --title <t> --body-file <f>
-  fab automation list [slug] [--json] | enable <id> | disable <id> | rm <id> | run-now <id> | tick | run   crean señales a horas fijas (UTC); no lanzan trabajo
+  fab automation list [slug] [--json] | update <id> [--name n] [--cron e | --every …] [--title t] [--body-file f] | enable <id> | disable <id> | rm <id> | run-now <id> | tick | run   crean señales a horas fijas (UTC); no lanzan trabajo
   fab inbox [slug]
   fab review <activityId> <approve|comment|decline> [--comment <text>]
   fab run <slug> [--once] [--agent <name>] [--accept-agent-binaries] [--live]
@@ -134,7 +137,7 @@ const HELP = `fab — agente de código y fábrica de software local
   fab worktree repair <changeId> [--discard]  repara preparación; conserva la rama
   fab retry <changeId>          re-encola un bloqueo, fallo o validador agotado
   fab reject <changeId>         cancela el change y borra su worktree
-  fab note <changeId> <texto>   nota del dueño: se entrega al empezar el siguiente turno de trabajo; no lanza ni interrumpe nada
+  fab note <changeId> <texto> [--file <fichero>]   nota del dueño: se entrega al empezar el siguiente turno de trabajo; no lanza ni interrumpe nada
   fab events <slug>
   fab exec [prompt]             agente propio; fab exec --help para opciones
   fab doctor                    estado del sandbox, del runtime de Script y de la búsqueda
@@ -244,6 +247,7 @@ async function main(argv: string[]): Promise<number> {
       'no-change-approval': { type: 'boolean' },
       'no-spec-approval': { type: 'boolean' },
       body: { type: 'string' },
+      file: { type: 'string' },
       comment: { type: 'string' },
       all: { type: 'boolean' },
       once: { type: 'boolean' },
@@ -330,13 +334,19 @@ async function main(argv: string[]): Promise<number> {
               if (!list.length) console.log('(vacía: modo declarado, sin nada permitido)');
             }
           }
+        } else if (sub === 'agent') {
+          const [slug, agent] = rest;
+          if (!slug || !agent) throw new StoreError('invalid_input', 'usage: fab ws agent <ws> <adaptador>');
+          const ws = store.getWorkstream(slug);
+          store.setWorkstreamAgent(ws.id, agent, ws.agent, ws.profile ?? DEFAULT_DIGEST); // mismas guardas que la web: sin trabajo vivo y con la configuración que se acaba de leer
+          console.log(`${ws.slug} agent: ${ws.agent} -> ${agent}`);
         } else if (sub === 'runner') {
           const [slug, name] = rest;
           if (!slug || !!name === !!values.none) throw new StoreError('invalid_input', 'usage: fab ws runner <ws> <nombre> | --none');
           const upd = store.setWorkstreamRunner(slug, name ?? null);
           console.log(`${upd.slug} runner: ${upd.runner ?? 'ninguno'}`);
           if (name && store.getRunner(name).kind === 'ssh') console.log(`aviso: ${CODE_LEAVES_WARNING} ${store.getRunner(name).target}.`);
-        } else throw new StoreError('invalid_input', 'fab ws create|list|state|env|mcp|runner');
+        } else throw new StoreError('invalid_input', 'fab ws create|list|state|agent|env|mcp|runner');
         return 0;
       }
       case 'definition': {
@@ -496,7 +506,14 @@ async function main(argv: string[]): Promise<number> {
           for (const n of notes) console.log(`${short(n.id)}  ${n.actor}  ${n.deliveredAt ? `entregada ${n.deliveredAt}` : 'pendiente'}  ${n.body.replace(/\s+/g, ' ').slice(0, 80)}`);
           return 0;
         }
-        const n = store.addChangeNote(c.id, rest.join(' '));
+        let attachment;
+        if (values.file) { // el Store valida nombre, extensión, tamaño y estado privado, igual que la web
+          let size: number;
+          try { size = statSync(values.file).size; } catch { throw new StoreError('invalid_input', `no se puede leer ${values.file}`); }
+          if (size > NOTE_ATTACHMENT_MAX) throw new StoreError('invalid_input', `el adjunto ocupa ${size} bytes; el máximo es ${NOTE_ATTACHMENT_MAX}`);
+          attachment = { name: basename(values.file), bytes: new Uint8Array(readFileSync(values.file)) };
+        }
+        const n = store.addChangeNote(c.id, rest.join(' '), attachment);
         console.log(`change ${short(c.id)}: nota ${short(n.id)} registrada; se entrega en el siguiente turno`);
         return 0;
       }
