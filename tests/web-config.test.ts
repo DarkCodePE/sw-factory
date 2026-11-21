@@ -345,6 +345,7 @@ test('T104: lista servidores del registro MCP con tipo, variables requeridas y d
   };
   const { digest } = saveProfile(dir, p);
   store.createWorkstream({ slug: 'ws-uno', goal: 'g', repo: '/repo', profile: digest });
+  store.setWorkstreamMcpAllow('ws-uno', ['local-tool']);
   store.createWorkstream({ slug: 'ws-dos', goal: 'g', repo: '/repo' });
   store.setWorkstreamMcpAllow('ws-dos', ['tracker']);
   // Slug con caracteres especiales en DB
@@ -437,6 +438,52 @@ test('T104-H4: precalcula el uso de servidores MCP una sola vez por petición en
     spy.mockRestore();
     store.close();
   }
+});
+
+test('T104-H1: calcula dónde se usa como resolveAccess (rol pide y workstream permite) y muestra permitido aparte', async () => {
+  const store = new Store(join(dir, 'fabrica.db'));
+
+  // Perfil que pide s1 en investigate
+  const pConS1 = defaultProfile();
+  pConS1.schemaVersion = 2;
+  pConS1.harness = 'claude';
+  pConS1.roles = { investigate: { harness: 'claude', mcp: ['s1'] } };
+  const { digest: dConS1 } = saveProfile(dir, pConS1);
+
+  // Perfil que no pide nada de MCP
+  const pVacio = defaultProfile();
+  const { digest: dVacio } = saveProfile(dir, pVacio);
+
+  // 1. ws-usado: pide s1 y lo permite en mcpAllow -> usado
+  store.createWorkstream({ slug: 'ws-usado', goal: 'g', repo: '/repo', profile: dConS1 });
+  store.setWorkstreamMcpAllow('ws-usado', ['s1']);
+
+  // 2. ws-solo-allow: permite s1 pero su perfil no pide mcp -> permitido: ws-solo-allow
+  store.createWorkstream({ slug: 'ws-solo-allow', goal: 'g', repo: '/repo', profile: dVacio });
+  store.setWorkstreamMcpAllow('ws-solo-allow', ['s1']);
+
+  // 3. ws-sin-allow: pide s1 en perfil pero mcpAllow es [] (o null) -> no se entrega en resolveAccess
+  store.createWorkstream({ slug: 'ws-sin-allow', goal: 'g', repo: '/repo', profile: dConS1 });
+  store.setWorkstreamMcpAllow('ws-sin-allow', []);
+
+  writeFileSync(join(dir, 'mcp-servers.json'), JSON.stringify({
+    servers: {
+      s1: { url: 'https://a.invalid/sse', headers: {} },
+      s2: { url: 'https://b.invalid/sse', headers: {} },
+    },
+  }));
+  store.close();
+  start();
+
+  const html = await page('/config');
+  const rowS1 = html.match(/<tr><td><code>s1<\/code><\/td>.*?<\/tr>/s)?.[0] ?? '';
+  const rowS2 = html.match(/<tr><td><code>s2<\/code><\/td>.*?<\/tr>/s)?.[0] ?? '';
+
+  expect(rowS1).toContain('ws-usado (investigate)');
+  expect(rowS1).not.toContain('permitido: ws-usado');
+  expect(rowS1).toContain('permitido: ws-solo-allow');
+  expect(rowS1).not.toContain('ws-sin-allow');
+  expect(rowS2).toContain('<td>—</td>');
 });
 
 test('T106: muestra binario, versión, pin guardado y marca binarios discrepantes', async () => {

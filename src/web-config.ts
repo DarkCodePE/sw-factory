@@ -224,23 +224,29 @@ function buildMcpUsageMap(workstreams: Workstream[], stateDir: string): Map<stri
     if (!list.includes(usage)) list.push(usage);
   };
   for (const ws of workstreams) {
-    if (ws.mcpAllow !== null) {
-      for (const name of ws.mcpAllow) {
-        add(name, ws.slug);
-      }
-    }
+    const allowed = ws.mcpAllow ?? [];
+    if (!allowed.length) continue;
+    const usedInRoles = new Set<string>();
     try {
       const { profile } = resolveProfile(stateDir, ws.profile);
       if (profile.roles) {
         for (const [role, cfg] of Object.entries(profile.roles)) {
           if (cfg?.mcp) {
             for (const name of cfg.mcp) {
-              add(name, `${ws.slug} (${role})`);
+              if (allowed.includes(name)) {
+                usedInRoles.add(name);
+                add(name, `${ws.slug} (${role})`);
+              }
             }
           }
         }
       }
     } catch {}
+    for (const name of allowed) {
+      if (!usedInRoles.has(name)) {
+        add(name, `permitido: ${ws.slug}`);
+      }
+    }
   }
   return map;
 }
