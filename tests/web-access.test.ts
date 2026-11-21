@@ -167,3 +167,16 @@ test('T103-H11: un nombre MCP por rol fuera del registro se pinta como «(nombre
   const next = /digest=([a-f0-9]{64})/.exec(r.headers.get('location')!)![1]!;
   expect(JSON.stringify(resolveProfile(dir, next).profile.roles)).not.toContain(hex);
 });
+
+test('T103-H13: guardar una lista vacía desde el modo anterior exige confirmar; con tope ya declarado no', async () => {
+  const empty = { kind: 'env', mode: 'declared', names: '' };
+  const r = await acceso(empty);
+  expect(r.status).toBe(400);
+  expect(await r.text()).toContain('lista vacía');
+  expect(store.getWorkstream('prueba').envAllow).toBeNull();
+  expect((await get('/config').then(x => x.text()))).toContain('name="confirm"');
+  expect((await acceso({ ...empty, confirm: 'yes' })).status).toBe(303);
+  expect(store.getWorkstream('prueba').envAllow).toEqual([]);
+  expect((await acceso(empty)).status).toBe(303); // ya hay tope declarado: vaciarlo no pide confirmación extra
+  expect((await acceso({ kind: 'env', mode: 'declared', names: 'A_B' })).status).toBe(303);
+});

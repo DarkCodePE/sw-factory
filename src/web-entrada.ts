@@ -57,7 +57,7 @@ export function entradaSection(stateDir: string, workstreams: Workstream[], esca
     <dl class="config-facts"><div><dt>Repositorio</dt><dd>${v(cfg.repo)}</dd></div><div><dt>Etiqueta de disparo</dt><dd>${v(cfg.label)}</dd></div>
     <div><dt>Intervalo</dt><dd>${v(cfg.intervalSec, ' s')}</dd></div><div><dt>Modo</dt><dd>${v(cfg.mode)}</dd></div>
     <div><dt>Última edición</dt><dd>${cfg.updatedAt ? `<time>${escape(cfg.updatedAt)}</time> · ${escape(cfg.updatedBy ?? '')}` : 'Sin editar'}</dd></div></dl>
-    <p class="muted">Se aplica al próximo arranque de <code>fab resident</code>; los flags de la línea de comandos mandan. El secreto del webhook y las credenciales de Jira solo viven en el entorno: la web no los pide ni los muestra.</p>
+    <p class="muted">Se aplica al próximo arranque de <code>fab resident</code>; los flags de la línea de comandos mandan. Cada cambio queda como evento en cada workstream (con el actor y el valor anterior y el nuevo); sin ningún workstream solo queda la última edición en el fichero. El secreto del webhook y las credenciales de Jira solo viven en el entorno: la web no los pide ni los muestra.</p>
     ${resident}${jira}</section>`;
 }
 

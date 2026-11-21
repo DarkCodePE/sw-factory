@@ -230,3 +230,7 @@ test('T107-H9: el formulario del residente rechaza campos desconocidos', async (
   expect((await post('/config/entrada', { repo: 'a/b', extra: 'x' })).status).toBe(400);
   expect(existsSync(join(dir, 'resident.json'))).toBe(false);
 });
+
+test('T107-H12: la página avisa de que el cambio queda como evento en cada workstream y sin workstreams no queda rastro', async () => {
+  expect(await notice()).toContain('Cada cambio queda como evento en cada workstream');
+});
