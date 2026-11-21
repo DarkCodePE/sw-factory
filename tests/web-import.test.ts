@@ -383,3 +383,9 @@ test('H6: lo mismo en la vista previa de una definición (skills y ajustes)', as
   const html = await (await upload('/definicion/importar', { repo, slug: '' }, bytes)).text();
   expect(html).not.toMatch(/[‪-‮⁦-⁩​-‏]/); expect(html).toContain('⟦U+202E⟧'); expect(html).toContain('⟦U+2066⟧');
 });
+
+test('H9: el goal se ve entero en la vista previa de la definición, también más allá del carácter 2000', async () => {
+  const goal = 'x'.repeat(2500) + 'COLA-DEL-GOAL';
+  const html = await (await upload('/definicion/importar', { repo, slug: '' }, tar(treeOf(withSettings({ goal }))))).text();
+  expect(html).toContain('COLA-DEL-GOAL');
+});

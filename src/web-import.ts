@@ -78,8 +78,6 @@ const doc = (title: string, body: string, back: string) => new Response(`<!docty
   <a class="brand" href="/">fab<span>Fábrica local</span></a><nav aria-label="Importar"><a href="${back}">Volver</a></nav></aside>
   <main class="config"><h1>${title}</h1>${body}</main></body></html>`, { status: 200, headers: { 'Content-Type': 'text/html; charset=utf-8', 'Cache-Control': 'no-store', 'Referrer-Policy': 'same-origin' } });
 
-const SHOWN = 2000;
-const clip = (s: string) => s.length > SHOWN ? `${s.slice(0, SHOWN)}\n… (${s.length - SHOWN} caracteres más)` : s;
 const flat = (p: Profile): Map<string, string> => {
   const out = new Map<string, string>();
   const { worker, validators, ...rest } = p;
@@ -130,7 +128,7 @@ export function importPreview(kind: ImportKind, stateDir: string, form: URLSearc
     if (!SLUG.test(slug)) throw bad('el slug usa a-z, 0-9 y guion (máximo 63)');
     const taken = store.listWorkstreams().some(w => w.slug === slug);
     const known = (() => { try { resolveProfile(stateDir, parsed.digest); return true; } catch { return false; } })();
-    const settings = Object.entries(parsed.settings).map(([k, v]) => `<tr><th scope="row"><code>${escape(k)}</code></th><td><pre><code>${escape(clip(typeof v === 'string' ? v : JSON.stringify(v)))}</code></pre></td></tr>`).join('');
+    const settings = Object.entries(parsed.settings).map(([k, v]) => `<tr><th scope="row"><code>${escape(k)}</code></th><td><pre><code>${escape(typeof v === 'string' ? v : JSON.stringify(v))}</code></pre></td></tr>`).join('');
     const names = [...parsed.files.keys()].sort().map(p => `<li><code>${escape(p)}</code> · ${Buffer.byteLength(parsed.files.get(p)!)} bytes</li>`).join('');
     const body = `<p>Se creará el workstream <code>${escape(slug)}</code> en borrador sobre <code>${escape(repo)}</code> con el perfil <code>${parsed.digest}</code> (${known ? 'ya existe' : 'nuevo'}).</p>
       ${taken ? `<p class="notice" role="alert">Ya existe un workstream con el slug ${escape(slug)}: importar no lo modifica. Elige otro slug y vuelve a subir.</p>` : ''}
