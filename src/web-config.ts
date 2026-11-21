@@ -37,35 +37,6 @@ function cachedSha256(path: string): string {
   return digest;
 }
 
-/** Resumen de versión por ruta, tamaño y mtime: GET /config no ejecuta binarios en cada petición (T106). */
-const versionCache = new Map<string, { size: number; mtimeMs: number; version: string }>();
-
-function runBinaryVersion(path: string): string {
-  try {
-    const proc = Bun.spawnSync([path, '--version'], {
-      stdout: 'pipe', stderr: 'pipe', stdin: 'ignore', timeout: 1000,
-    });
-    if (proc.exitCode === 0) {
-      const out = (proc.stdout.toString() || proc.stderr.toString()).trim();
-      const firstLine = out.split('\n')[0]?.trim();
-      if (firstLine) return firstLine.slice(0, 40);
-    }
-  } catch {}
-  return 'No medido';
-}
-
-function cachedAgentVersion(path: string): string {
-  try {
-    const { size, mtimeMs } = statSync(path);
-    const hit = versionCache.get(path);
-    if (hit && hit.size === size && hit.mtimeMs === mtimeMs) return hit.version;
-    const version = runBinaryVersion(path);
-    versionCache.set(path, { size, mtimeMs, version });
-    return version;
-  } catch {
-    return 'No medido';
-  }
-}
 
 /** La sonda de egress se busca solo entre las activities más recientes del workstream. */
 export const EGRESS_SCAN_LIMIT = 200;
@@ -165,12 +136,18 @@ function adapters(stateDir: string, escape: Escape): string {
       version = pkg.version;
     } else if (agent === 'fake') {
       version = '—';
-    } else if (!status?.path) {
+    } else if (!status?.path || status.verdict === 'no_instalado') {
       version = '—';
-    } else if (versionsFromRecord[agent]) {
-      version = versionsFromRecord[agent];
+    } else if (status.verdict === 'ok') {
+      const raw = versionsFromRecord[agent];
+      if (raw) {
+        const cleaned = raw.replace(/[\x00-\x1f\x7f]/g, '').trim();
+        version = cleaned ? cleaned.slice(0, 40) : 'No medido';
+      } else {
+        version = 'No medido';
+      }
     } else {
-      version = cachedAgentVersion(status.path);
+      version = 'No medido';
     }
 
     // Pin guardado

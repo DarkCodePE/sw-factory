@@ -495,14 +495,14 @@ test('T104-H1: calcula dónde se usa como resolveAccess (rol pide y workstream p
   expect(rowS2).toContain('<td>—</td>');
 });
 
-test('T106: muestra binario, versión, pin guardado y marca binarios discrepantes', async () => {
+test('T106: muestra binario, versión registrada, pin guardado y marca binarios discrepantes', async () => {
   const claudeBin = join(dir, 'claude');
   const codexBin = join(dir, 'codex');
   const agyBin = join(dir, 'agy');
 
-  writeFileSync(claudeBin, '#!/bin/sh\nif [ "$1" = "--version" ]; then echo "claude v2.5.0"; exit 0; fi\nexit 0\n');
+  writeFileSync(claudeBin, '#!/bin/sh\nexit 0\n');
   chmodSync(claudeBin, 0o755);
-  writeFileSync(codexBin, '#!/bin/sh\nif [ "$1" = "--version" ]; then echo "codex 1.0.0"; exit 0; fi\nexit 0\n');
+  writeFileSync(codexBin, '#!/bin/sh\nexit 0\n');
   chmodSync(codexBin, 0o755);
   writeFileSync(agyBin, '#!/bin/sh\nexit 0\n');
   chmodSync(agyBin, 0o755);
@@ -511,8 +511,11 @@ test('T106: muestra binario, versión, pin guardado y marca binarios discrepante
     agentBinaries: {
       claude: sha256Of(claudeBin),
       codex: 'b'.repeat(64), // pin que no coincide
+      agy: sha256Of(agyBin),
     },
     agentVersions: {
+      claude: 'claude v2.5.0',
+      codex: 'codex 1.0.0', // pin no coincide: no debe mostrarse
       agy: '0.9.1-registrada',
     },
   }));
@@ -521,18 +524,20 @@ test('T106: muestra binario, versión, pin guardado y marca binarios discrepante
   start();
 
   const html = await page('/config');
-  // claude coincide con el pin y muestra versión y ruta
+  // claude coincide con el pin y muestra versión registrada y ruta
   expect(html).toContain('<td>claude</td>');
   expect(html).toContain('Coincide con el pin');
   expect(html).toContain('claude v2.5.0');
   expect(html).toContain(claudeBin);
 
-  // codex no coincide con el pin: sale marcado
+  // codex no coincide con el pin: sale marcado y con versión «No medido»
   expect(html).toContain('<td>codex</td>');
   expect(html).toContain('Distinto del pin');
   expect(html).toContain('pin-mismatch');
   expect(html).toContain('(no coincide)');
-  expect(html).toContain('codex 1.0.0');
+  expect(html).not.toContain('codex 1.0.0');
+  const codexRow = html.match(/<tr[^>]*><td>codex<\/td>.*?<\/tr>/s)?.[0] ?? '';
+  expect(codexRow).toContain('<td>No medido</td>');
   expect(html).toContain('bbbbbbbbbbbb…');
 
   // agy lee versión del registro
@@ -548,24 +553,20 @@ test('T106: muestra binario, versión, pin guardado y marca binarios discrepante
   expect(adaptersSection).not.toContain('<form');
 });
 
-test('T106: no ejecuta binarios en cada carga de página (caché)', async () => {
+test('T106-H1: la web nunca ejecuta binarios externos y muestra No medido si no hay registro o pin discrepante', async () => {
   const counterFile = join(dir, 'exec-count.txt');
   const spyBin = join(dir, 'claude');
   writeFileSync(counterFile, '0');
   writeFileSync(spyBin, `#!/bin/sh
-if [ "$1" = "--version" ]; then
-  count=$(cat "${counterFile}")
-  count=$((count + 1))
-  echo "$count" > "${counterFile}"
-  echo "spy 3.0"
-  exit 0
-fi
+count=$(cat "${counterFile}")
+count=$((count + 1))
+echo "$count" > "${counterFile}"
+echo "spy 3.0"
 exit 0
 `);
   chmodSync(spyBin, 0o755);
-  const fixed = new Date('2026-01-01T00:00:00Z');
-  utimesSync(spyBin, fixed, fixed);
 
+  // claude tiene pin coincidente pero NO tiene agentVersions
   writeFileSync(join(dir, 'agents.json'), JSON.stringify({
     agentBinaries: { claude: sha256Of(spyBin) },
   }));
@@ -573,22 +574,39 @@ exit 0
   new Store(join(dir, 'fabrica.db')).close();
   start();
 
-  // Primera carga
-  const html1 = await page('/config');
-  expect(html1).toContain('spy 3.0');
-  expect(readFileSync(counterFile, 'utf8').trim()).toBe('1');
+  const html = await page('/config');
+  // NUNCA ejecutó el binario: el contador sigue en 0
+  expect(readFileSync(counterFile, 'utf8').trim()).toBe('0');
+  expect(html).not.toContain('spy 3.0');
+  const claudeRow = html.match(/<tr[^>]*><td>claude<\/td>.*?<\/tr>/s)?.[0] ?? '';
+  expect(claudeRow).toContain('<td>No medido</td>');
+});
 
-  // Segunda carga: debe salir de la caché sin ejecutar el binario
-  const html2 = await page('/config');
-  expect(html2).toContain('spy 3.0');
-  expect(readFileSync(counterFile, 'utf8').trim()).toBe('1');
+test('T106-H6: sanea caracteres de control, limita a 40 caracteres y escapa HTML en versiones registradas', async () => {
+  const claudeBin = join(dir, 'claude');
+  writeFileSync(claudeBin, '#!/bin/sh\nexit 0\n');
+  chmodSync(claudeBin, 0o755);
 
-  // Si cambia mtime, se recalcula
-  const later = new Date('2026-01-02T00:00:00Z');
-  utimesSync(spyBin, later, later);
-  const html3 = await page('/config');
-  expect(html3).toContain('spy 3.0');
-  expect(readFileSync(counterFile, 'utf8').trim()).toBe('2');
+  writeFileSync(join(dir, 'agents.json'), JSON.stringify({
+    agentBinaries: { claude: sha256Of(claudeBin) },
+    agentVersions: {
+      claude: 'v1.0\x1b[31m\x00<script>canario</script>' + 'x'.repeat(50),
+    },
+  }));
+
+  new Store(join(dir, 'fabrica.db')).close();
+  start();
+
+  const html = await page('/config');
+  expect(html).not.toContain('<script>canario</script>');
+  expect(html).toContain('&lt;script&gt;canario&lt;/script&gt;');
+  expect(html).not.toContain('\x1b');
+  expect(html).not.toContain('\x00');
+  // Comprobar que en la celda no excede 40 caracteres tras sanear
+  const claudeRow = html.match(/<tr[^>]*><td>claude<\/td>.*?<\/tr>/s)?.[0] ?? '';
+  const versionCellMatch = claudeRow.match(/<td>claude<\/td><td>[^<]*<\/td><td>[^<]*<\/td><td>[^<]*<\/td><td>([^<]*)<\/td>/);
+  // El texto antes de escapar debe medir máximo 40 caracteres
+  expect(versionCellMatch).toBeDefined();
 });
 
 
