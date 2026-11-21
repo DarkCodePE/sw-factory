@@ -66,7 +66,8 @@ export function jiraImportAction(stateDir: string, gateway?: TicketGateway) {
     const out = (result: string, slug?: string) => ({ destination: slug ? `/config?ws=${encodeURIComponent(slug)}` : '/config', result });
     const keys = [...form.keys()];
     const key = form.get('key') ?? '', slug = form.get('ws') ?? '';
-    try { validateJiraKey(key); } catch { return out('jira_invalid'); }
+    // T107-H7: la clave de Jira real cabe en 40 caracteres; más largo no debe llegar a la auditoría ni al tope.
+    try { if (key.length > 40) throw new Error(); validateJiraKey(key); } catch { return out('jira_invalid'); }
     if (new Set(keys).size !== keys.length || keys.some(k => !['csrf', 'ws', 'key', 'triage', 'confirm'].includes(k)) || form.get('confirm') !== 'yes'
       || !/^[a-z0-9][a-z0-9-]{0,62}$/.test(slug)) return out('jira_invalid');
     if (!gateway && !jiraConfiguredInEnv()) return out('jira_unconfigured', slug);

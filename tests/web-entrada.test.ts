@@ -207,3 +207,12 @@ test('T107-H6: un temporal previsible plantado como enlace no recibe la escritur
   saveResidentConfig(dir, { label: 'x' }, 'cli');
   expect(lstatSync(join(dir, 'resident.json')).mode & 0o777).toBe(0o600);
 });
+
+test('T107-H7: una clave de HU de más de 40 caracteres se rechaza antes de la auditoría y del tope', async () => {
+  const before = store.listEvents('prueba', 50).length;
+  await importar({ key: 'KAN-' + '1'.repeat(15000) });
+  await importar({ key: 'K'.repeat(39) + '-1' });
+  expect(calls).toEqual([]);
+  expect(store.listEvents('prueba', 50).length).toBe(before);
+  expect(await notice()).toContain('Revisa la clave');
+});
