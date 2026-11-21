@@ -144,3 +144,26 @@ test('perfiles: nombres por rol con las mismas validaciones; un valor pegado se 
   const { resolveProfile } = await import('../src/profile.ts');
   expect(resolveProfile(dir, digest).profile.roles?.qa).toMatchObject({ env: ['TRACKER_TOKEN', 'OTRA'], mcp: ['tracker'] });
 });
+
+test('T103-H11: un nombre MCP por rol fuera del registro se pinta como «(nombre fuera del registro)» sin repetirlo, en /config y en /perfiles', async () => {
+  const hex = '0123456789abcdef0123456789abcdef';
+  // Un perfil sembrado a mano (como el de un fab profile import antiguo): no pasa por la comprobación del editor web.
+  const digest = saveProfile(dir, { ...defaultProfile(), schemaVersion: 2, harness: 'claude', roles: { qa: { harness: 'claude', mcp: ['tracker', hex] } } }).digest;
+  store.assignProfile(wsId, digest, (await import('../src/profile.ts')).DEFAULT_DIGEST);
+  for (const path of ['/config', '/perfiles']) {
+    const page = await (await get(path)).text();
+    expect(page).not.toContain(hex);
+    if (path === '/config') expect(page).toContain('(nombre fuera del registro)');
+  }
+  const perfiles = await (await get('/perfiles')).text();
+  expect(perfiles).toContain('name="roles.qa.mcp" maxlength="512" value="tracker"');
+  expect(perfiles).toContain('(nombre fuera del registro)');
+  // Reenviar el formulario tal cual no vuelve a guardar el valor.
+  const { DEFAULT_DIGEST: _d, resolveProfile } = await import('../src/profile.ts');
+  const form = { mode: 'roles', model: '', ws: 'prueba', expectedAgent: store.getWorkstream('prueba').agent, base: digest,
+    ...Object.fromEntries(ROLES.flatMap(role => [[`roles.${role}.harness`, role === 'qa' ? 'claude' : ''], [`roles.${role}.model`, '']])), 'roles.qa.mcp': 'tracker' };
+  const r = await post('/perfiles/guardar', form);
+  expect(r.status).toBe(303);
+  const next = /digest=([a-f0-9]{64})/.exec(r.headers.get('location')!)![1]!;
+  expect(JSON.stringify(resolveProfile(dir, next).profile.roles)).not.toContain(hex);
+});

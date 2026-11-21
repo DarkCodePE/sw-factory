@@ -1,6 +1,6 @@
 // T103: secretos y MCP por nombre, nunca por valor (D-K). Muestra y edita el tope del workstream (env_allow / mcp_allow)
 // y lo que declara cada rol del perfil. El entorno del proceso no se lee en ningún punto de este módulo: ni valores ni «definida».
-import { McpRegistryError, loadMcpRegistry, unregisteredMcp } from './mcp-registry.ts';
+import { MCP_OUTSIDE, McpRegistryError, loadMcpRegistry, registeredMcpNames, unregisteredMcp } from './mcp-registry.ts';
 import { ROLES, resolveProfile, type Role } from './profile.ts';
 import { StoreError, type Store, type Workstream } from './store.ts';
 
@@ -46,10 +46,11 @@ function roleRows(stateDir: string, ws: Workstream, escape: Escape): string {
   let roles: Record<string, { env?: string[]; mcp?: string[] } | undefined>;
   try { roles = resolveProfile(stateDir, ws.profile).profile.roles ?? {}; }
   catch { return '<p class="notice">El perfil asignado no está disponible: no se pueden mostrar los nombres por rol.</p>'; }
-  const cell = (names: string[] | undefined, allow: string[] | null) => !names?.length ? '—'
-    : names.map(n => `<code>${escape(n)}</code>${allow?.includes(n) ? '' : ' <em>(fuera del tope: se bloquea)</em>'}`).join(', ');
+  const registered = registeredMcpNames(stateDir);
+  const cell = (names: string[] | undefined, allow: string[] | null, isMcp = false) => !names?.length ? '—'
+    : names.map(n => isMcp && !registered.has(n) ? `<em>${MCP_OUTSIDE}</em>` : `<code>${escape(n)}</code>${allow?.includes(n) ? '' : ' <em>(fuera del tope: se bloquea)</em>'}`).join(', ');
   return `<div class="table-wrap" role="region" aria-label="Nombres por rol" tabindex="0"><table><thead><tr><th scope="col">Rol</th><th scope="col">Variables</th><th scope="col">MCP</th></tr></thead><tbody>${
-    ROLES.map(r => `<tr><th scope="row">${ROLE_LABELS[r]}</th><td>${cell(roles[r]?.env, ws.envAllow)}</td><td>${cell(roles[r]?.mcp, ws.mcpAllow)}</td></tr>`).join('')}</tbody></table></div>
+    ROLES.map(r => `<tr><th scope="row">${ROLE_LABELS[r]}</th><td>${cell(roles[r]?.env, ws.envAllow)}</td><td>${cell(roles[r]?.mcp, ws.mcpAllow, true)}</td></tr>`).join('')}</tbody></table></div>
     <p class="muted">Los nombres por rol se editan en <a href="/perfiles?ws=${escape(ws.slug)}">Perfiles</a>; el tope del workstream manda sobre ellos.</p>`;
 }
 

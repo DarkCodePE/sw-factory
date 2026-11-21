@@ -1,7 +1,7 @@
 // Perfiles inmutables: la vista anticipa la resolución del pool y la asignación es una decisión aparte.
 import { join } from 'node:path';
 import { AGENT_NAMES } from './agents.ts';
-import { unregisteredMcp } from './mcp-registry.ts';
+import { MCP_OUTSIDE, registeredMcpNames, unregisteredMcp } from './mcp-registry.ts';
 import { redact } from './manifest.ts';
 import { DEFAULT_DIGEST, ROLES, isProfileDigest, resolveProfile, resolveRole, saveProfile, type Profile, type Role } from './profile.ts';
 import { CONFINABLE_AGENTS } from './sandbox/confine.ts';
@@ -60,7 +60,7 @@ function roleResolution(profile: Profile, agent: string, escape: Escape) {
     <div class="table-wrap"><table><thead><tr><th scope="col">Rol</th><th scope="col">Adaptador declarado</th><th scope="col">Adaptador efectivo y origen</th><th scope="col">Modelo declarado</th><th scope="col">Modelo efectivo y origen</th></tr></thead><tbody>${rows}</tbody></table></div>`;
 }
 
-function profileEditor(profile: Profile, hidden: string, escape: Escape) {
+function profileEditor(profile: Profile, hidden: string, escape: Escape, registered: Set<string>) {
   const modelInput = (name: string, label: string, value?: string) =>
     `<label>${label}<input type="text" name="${name}" maxlength="128" value="${value && masked(value) ? MASK : escape(value ?? '')}" placeholder="Heredar"></label>`;
   const roleInputs = ROLES.map(role => {
@@ -69,7 +69,7 @@ function profileEditor(profile: Profile, hidden: string, escape: Escape) {
       <label>Adaptador<select name="roles.${role}.harness"><option value="">Heredar del workstream</option>${adapterOptions(Array.from(new Set([...OFFERED, ...(cfg?.harness ? [cfg.harness] : [])])), cfg?.harness, escape)}</select></label>
       ${modelInput(`roles.${role}.model`, 'Modelo del rol', cfg?.model)}
       <label>Variables permitidas (nombres, separados por coma; nunca valores)<input type="text" name="roles.${role}.env" maxlength="1024" value="${escape((cfg?.env ?? []).join(', '))}" placeholder="Ninguna"></label>
-      <label>Servidores MCP (nombres del registro, separados por coma)<input type="text" name="roles.${role}.mcp" maxlength="512" value="${escape((cfg?.mcp ?? []).join(', '))}" placeholder="Ninguno"></label></fieldset>`;
+      <label>Servidores MCP (nombres del registro, separados por coma)<input type="text" name="roles.${role}.mcp" maxlength="512" value="${escape((cfg?.mcp ?? []).filter(n => registered.has(n)).join(', '))}" placeholder="Ninguno"></label>${(cfg?.mcp ?? []).some(n => !registered.has(n)) ? `<p class="notice"><em>${MCP_OUTSIDE}</em>: al guardar se descarta.</p>` : ''}</fieldset>`;
   }).join('');
   let hasMasked = false;
   const areas = TEMPLATES.map(([group, key, label]) => {
@@ -117,7 +117,7 @@ export function profilesPage(store: Store, stateDir: string, url: URL, escape: E
     } catch { saved = '<p class="notice">El perfil guardado no está disponible.</p>'; }
   }
   // Solo lectura: sin plantillas (T58), pero cada rol lleva el ancla a la que apunta el enlace de la activity (T94).
-  const edit = csrf ? `<section><h2>Editar perfil</h2>${profileEditor(current.profile, `${hidden}<input type="hidden" name="base" value="${current.digest}">`, escape)}</section>`
+  const edit = csrf ? `<section><h2>Editar perfil</h2>${profileEditor(current.profile, `${hidden}<input type="hidden" name="base" value="${current.digest}">`, escape, registeredMcpNames(stateDir))}</section>`
     : `<section><h2>Plantillas</h2><p class="muted">Escritura no habilitada: abre fab web con --write.</p><ul class="roles">${TEMPLATES.map(([group, key, label]) => `<li id="f-${group}.${key}">${label}</li>`).join('')}</ul></section>`;
   const agents = Array.from(new Set([selected.agent, ...OFFERED]));
   const adapterForm = csrf ? `<form action="/workstreams/${encodeURIComponent(selected.id)}/adaptador" method="post" class="web-action">
