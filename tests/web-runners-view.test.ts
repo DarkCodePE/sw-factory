@@ -71,3 +71,16 @@ test('las dos vistas escapan nombres de runners de filas antiguas o anómalas', 
   expect(html).toContain('fuera&quot;&lt;img&gt;&amp;');
   expect(html).not.toContain(name);
 });
+
+test('T101-H7: cada tipo de alta tiene solo sus campos y conserva la validación nativa', () => {
+  const html = runnersPage(store, 'csrf').body;
+  const forms = html.match(/<form action="\/config\/runners\/alta"[^>]*>[\s\S]*?<\/form>/g) ?? [];
+  expect(forms).toHaveLength(2);
+  const local = forms.find(form => form.includes('name="kind" value="local"'))!;
+  const ssh = forms.find(form => form.includes('name="kind" value="ssh"'))!;
+  expect(local).toContain('name="confine"');
+  expect(local).not.toMatch(/name="(?:target|maxBundleMb)"/);
+  expect(ssh).not.toContain('name="confine"');
+  expect(ssh).toMatch(/name="target"[^>]* required/);
+  expect(ssh).toContain('name="maxBundleMb"');
+});

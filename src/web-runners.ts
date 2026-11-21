@@ -35,14 +35,22 @@ export function runRunnerAdmin(store: Store, mode: RunnerAdminMode, id: string, 
   else store.updateRunner(name, config, fields.revision);
 }
 
-function runnerConfigFields(r?: Runner): string {
-  const local = r?.kind !== 'ssh';
-  const ssh = r?.kind !== 'local';
-  const target = r?.target ?? '';
+function runnerConfigFields(kind: Runner['kind'], r?: Runner): string {
+  if (kind === 'local') {
+    return `<label><input type="checkbox" name="confine" value="yes"${r?.options.confine === true ? ' checked' : ''}> Confinar el turno</label>`;
+  }
   const bundle = typeof r?.options.maxBundleMb === 'number' ? String(r.options.maxBundleMb) : '';
-  return `${local ? `<label><input type="checkbox" name="confine" value="yes"${r?.options.confine === true ? ' checked' : ''}> Confinar el turno (Local)</label>` : ''}
-    ${ssh ? `<label>Alias de SSH<input name="target" maxlength="64" value="${escape(target)}"${r ? ' required' : ''}></label>
-      <label>Límite de envío en MiB<input type="number" name="maxBundleMb" min="1" max="4096" value="${escape(bundle)}"></label>` : ''}`;
+  return `<label>Alias de SSH<input name="target" maxlength="64" value="${escape(r?.target ?? '')}" required></label>
+    <label>Límite de envío en MiB<input type="number" name="maxBundleMb" min="1" max="4096" value="${escape(bundle)}"></label>`;
+}
+
+function runnerCreateForm(kind: Runner['kind'], csrf: string): string {
+  const label = kindLabel(kind);
+  return `<details><summary>Dar de alta un runner ${label}</summary>
+    <form action="${RUNNERS_PATH}/alta" method="post" class="web-action"><fieldset><legend>Nuevo runner ${label}</legend>
+    ${hidden('csrf', csrf)}${hidden('kind', kind)}
+    <label>Nombre<input name="name" maxlength="41" pattern="[a-z0-9][a-z0-9-]{0,40}" required></label>
+    ${runnerConfigFields(kind)}<button>Crear runner</button></fieldset></form></details>`;
 }
 
 function runnerEditor(r: Runner, csrf: string): string {
@@ -50,7 +58,7 @@ function runnerEditor(r: Runner, csrf: string): string {
   const fields = hidden('csrf', csrf) + hidden('revision', runnerRevision(r));
   return `<section><h2>Editar ${escape(r.name)}</h2>
     <form action="${url}/editar" method="post" class="web-action"><fieldset><legend>${kindLabel(r.kind)}</legend>
-    ${fields}${runnerConfigFields(r)}<button>Guardar cambios</button></fieldset></form>
+    ${fields}${runnerConfigFields(r.kind, r)}<button>Guardar cambios</button></fieldset></form>
     <form action="${url}/borrar" method="post" class="web-action"><fieldset><legend>Dar de baja</legend>
     ${fields}<label><input type="checkbox" name="confirm" value="yes" required> Confirmo la baja de ${escape(r.name)}.</label>
     <button>Dar de baja</button></fieldset></form></section>`;
@@ -72,11 +80,8 @@ export function runnersPage(store: Store, csrf: string, edit?: string | null): {
       <table><thead><tr><th scope="col">Nombre</th><th scope="col">Tipo</th><th scope="col">Configuración</th><th scope="col">Comprobación</th><th scope="col">Acciones</th></tr></thead>
       <tbody>${rows.join('')}</tbody></table></div>` : '<p class="empty">No hay runners configurados.</p>'}
     ${selected ? runnerEditor(selected, csrf) : edit ? '<p class="notice">No se encontró el runner.</p>' : ''}
-    <details><summary>Dar de alta un runner</summary>
-    <form action="${RUNNERS_PATH}/alta" method="post" class="web-action"><fieldset><legend>Nuevo runner</legend>
-    ${hidden('csrf', csrf)}<label>Nombre<input name="name" maxlength="41" pattern="[a-z0-9][a-z0-9-]{0,40}" required></label>
-    <label>Tipo<select name="kind"><option value="local">Local</option><option value="ssh">SSH</option></select></label>
-    ${runnerConfigFields()}<button>Crear runner</button></fieldset></form></details>` };
+    ${runnerCreateForm('local', csrf)}
+    ${runnerCreateForm('ssh', csrf)}` };
 }
 
 export function workstreamRunner(w: Workstream, runners: Runners, csrf?: string): string {
