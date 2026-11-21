@@ -5,6 +5,7 @@ import { join } from 'node:path';
 
 import {
   agentBinStatus,
+  agentsMain,
   factoryHome,
   loadAgentVersions,
   loadPins,
@@ -150,5 +151,24 @@ test('T106-H4: savePins no conserva claves numéricas si el archivo previo no es
   const raw = JSON.parse(readFileSync(join(scope.home, 'agents.json'), 'utf8'));
   expect(raw).toEqual({ agentBinaries: { claude: 'a'.repeat(64) } });
   expect(Object.keys(raw)).toEqual(['agentBinaries']);
+});
+
+test('T106-H3: fab agents verify --pin escribe agentVersions en agents.json', async () => {
+  stubBin('claude', '#!/bin/sh\nif [ "$1" = "--version" ]; then echo "claude v2.5.0"; exit 0; fi\nexit 0\n');
+  stubBin('codex', '#!/bin/sh\nexit 1\n'); // no responde a --version
+
+  const log = console.log;
+  console.log = () => {};
+  try {
+    const code = await agentsMain(['--pin']);
+    expect(code).toBe(0);
+  } finally {
+    console.log = log;
+  }
+
+  const versions = loadAgentVersions(scope.home);
+  expect(versions.claude).toBe('claude v2.5.0');
+  expect(versions.codex).toBeUndefined();
+  expect(loadPins(scope.home).claude).toBe(sha256Of(join(scope.binDir, 'claude')));
 });
 
