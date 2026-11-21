@@ -183,3 +183,13 @@ test('T99-H5: un prefijo de frame no retira el texto de un log de otro agente', 
   const raw = await (await get(`/changes/${change}/turns/turno/log`)).text();
   expect(raw).toBe(plain);
 });
+
+test('T99-H6: el JSON de herramienta anidado no amplifica la página por sangría', async () => {
+  const input = '['.repeat(58) + '1,'.repeat(30_000) + '1' + ']'.repeat(58);
+  const log = '{"type":"assistant","message":{"content":[{"type":"tool_use","name":"X","input":' + input + '}]}}\n';
+  writeFileSync(join(run, `${activity}.log`), log);
+  const page = await (await activityPage('?herramientas=1')).text();
+  const transcript = onlyTranscript(page);
+  expect(transcript).toContain(input);
+  expect(Buffer.byteLength(transcript)).toBeLessThan(Buffer.byteLength(log) * 2);
+});

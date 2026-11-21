@@ -16,7 +16,7 @@ function stepFromBlock(value: unknown, title: string): Step | null | undefined {
       return typeof block.thinking === 'string' ? { kind: 'thinking', title: 'Pensamiento', text: block.thinking } : null;
     case 'tool_use':
       return typeof block.name === 'string'
-        ? { kind: 'call', title: `Llamada a herramienta · ${block.name}`, text: JSON.stringify(block.input ?? {}, null, 2) } : null;
+        ? { kind: 'call', title: `Llamada a herramienta · ${block.name}`, text: JSON.stringify(block.input ?? {}) } : null;
     case 'tool_result': {
       const text = typeof block.content === 'string' ? block.content : Array.isArray(block.content)
         ? block.content.flatMap(item => {
