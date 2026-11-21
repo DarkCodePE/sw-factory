@@ -1009,12 +1009,18 @@ export class Store {
     const runners = names.map(name => summaries.find(r => r.name === name));
     const revision = names.length && runners.every(r => r !== undefined)
       ? createHash('sha256').update(JSON.stringify(runners.map(r => r!.revision))).digest('hex') : undefined;
-    return { revision, ssh: runners.flatMap(r => r?.kind === 'ssh' ? [r.name] : []), missing: names.filter((_, i) => !runners[i]) };
+    return {
+      revision,
+      ssh: runners.flatMap(r => r?.kind === 'ssh' ? [r.name] : []),
+      missing: names.filter((_, i) => !runners[i]),
+      paused: runners.flatMap(r => r && !r.enabled ? [r.name] : []),
+    };
   }
 
   #checkProfileRunners(profile: Profile, consent?: ProfileRunnerConsent): void {
-    const { revision, ssh, missing } = this.profileRunnerSelection(profile);
+    const { revision, ssh, missing, paused } = this.profileRunnerSelection(profile);
     if (missing.length) throw new StoreError('invalid_input', `Runners fuera del inventario: ${missing.join(', ')}.`);
+    if (paused.length) throw new StoreError('conflict', `Runners pausados: ${paused.join(', ')}.`);
     if (consent && revision !== undefined) {
       if (consent.revision !== revision) throw new StoreError('conflict', 'La configuración de los runners cambió. Revisa el perfil.');
       if (ssh.length && !consent.confirmSsh) throw new StoreError('invalid_input', 'Confirma el envío de código a los runners SSH.');

@@ -43,8 +43,9 @@ function runnerLabel(name: string, runners: RunnerInventory, escape: Escape): st
 
 /** La misma revisión y confirmación protegen el alta del workstream y el cambio de perfil. */
 export function profileRunnerConfirmation(store: Store, profile: Profile, escape: Escape): string {
-  const { revision, ssh, missing } = store.profileRunnerSelection(profile);
+  const { revision, ssh, missing, paused } = store.profileRunnerSelection(profile);
   if (missing.length) return `<p class="notice">Runners fuera del inventario: ${missing.map(escape).join(', ')}.</p>`;
+  if (paused.length) return `<p class="notice">Runners pausados: ${paused.map(escape).join(', ')}.</p>`;
   if (!revision) return '';
   return `<input type="hidden" name="runnerRevision" value="${revision}">${ssh.length ? `
     <label><input type="checkbox" name="confirmRunnerSsh" value="yes" required>

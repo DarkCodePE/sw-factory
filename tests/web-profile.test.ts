@@ -363,3 +363,23 @@ test('T101-H3/V2: la celda efectiva usa el runner del rol, aunque el workstream 
   expect(page).toMatch(/<th scope="row">QA<\/th>[^\n]*<td><code>torre<\/code><\/td><td>torre \(SSH\) · Rol del perfil<\/td><\/tr>/);
   expect(page).toMatch(/<th scope="row">Investigación<\/th>[^\n]*<td>casa \(Local\) · Workstream<\/td><\/tr>/);
 });
+
+test('T102-H4: la CLI y la web rechazan asignar un runner de rol pausado', async () => {
+  store.createRunner({ name: 'torre', kind: 'ssh', target: 'alias' });
+  const profile: Profile = { ...defaultProfile(), schemaVersion: 2, roles: { qa: { runner: 'torre' } } };
+  const digest = saveProfile(dir, profile).digest;
+  store.setRunnerEnabled('torre', false);
+  await login();
+  const preview = await html(`/perfiles?digest=${digest}`);
+  expect(preview).toContain('Runners pausados: torre');
+  const { revision } = store.profileRunnerSelection(profile);
+  await post('/perfiles/asignar', {
+    digest, previous: DEFAULT_DIGEST, confirm: 'yes', runnerRevision: revision!, confirmRunnerSsh: 'yes',
+  });
+  expect(store.getWorkstream(wsId).profile).toBeNull();
+  expect(() => store.assignProfile(wsId, digest, DEFAULT_DIGEST)).toThrow(/pausado/i);
+  expect(() => store.createWorkstream({ slug: 'pausa', goal: 'g', repo: '/repo', profile: digest })).toThrow(/pausado/i);
+  store.setRunnerEnabled('torre', true);
+  store.assignProfile(wsId, digest, DEFAULT_DIGEST);
+  expect(store.getWorkstream(wsId).profile).toBe(digest);
+});
