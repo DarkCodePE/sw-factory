@@ -27,6 +27,8 @@ export interface AgentRun {
   status: AgentRunStatus;
   usage?: AgentUsage;
   stdout?: string;
+  /** Salida comparable al formato anterior cuando stdout incluye el transcript de un turno vivo. */
+  stdoutForMonitor?: string;
   stderr?: string;
 }
 
@@ -277,7 +279,12 @@ export async function runAgent(
     confined?.cleanup();
   }
 
-  if (options.capturePath) atomicEvidence(options.capturePath, (existsSync(options.capturePath) ? readFileSync(options.capturePath, 'utf8') : '') + stdout + (stderr ? '\n[stderr]\n' + stderr : ''));
+  if (options.capturePath) {
+    const previous = existsSync(options.capturePath) ? readFileSync(options.capturePath, 'utf8') : '';
+    const captured = stdout + (stderr ? '\n[stderr]\n' + stderr : '');
+    const separator = previous && captured && !previous.endsWith('\n') && !captured.startsWith('\n') ? '\n' : '';
+    atomicEvidence(options.capturePath, previous + separator + captured);
+  }
   if (options.confine && exitCode !== 0) throw new Error(`--confine: agente o montaje falló (exit ${exitCode}): ${stderr.trim()}`);
   const parsed = agent.parse?.(stdout) ?? null;
   const rawOutput = (parsed ? parsed.text : stdout).trim() || stderr.trim();

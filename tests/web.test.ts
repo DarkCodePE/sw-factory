@@ -101,7 +101,8 @@ test('árbol, timeline, veredicto, evidencia antigua y ficheros ausentes', async
   store.event(parent.workstreamId, 'info', '<script>evento</script>', change, activity);
   const html = await (await req(`/changes/${change}`)).text();
   expect(html).toContain('Timeline'); expect(html).toContain('&lt;script&gt;evento');
-  expect(html.match(new RegExp(`/activities/${activity}`, 'g'))?.length).toBe(1);
+  const activityTree = html.match(/<h2>Activities<\/h2>(.*?)<h2>Turnos<\/h2>/s)?.[1];
+  expect(activityTree?.match(new RegExp(`/activities/${activity}`, 'g'))?.length).toBe(1);
   const log = await (await req(`/activities/${activity}`)).text();
   expect(log).toContain('code_review'); expect(log).toContain('&lt;script&gt;veredicto');
   const path = join(dir, 'runs', change, `${activity}.json`);

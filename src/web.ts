@@ -21,7 +21,8 @@ import { SIDEBAR_JS, SIDEBAR_STYLE, sidebarNav } from './web-sidebar.ts';
 import { activityScores } from './web-scorers.ts';
 import { metricsPage, METRICS_STYLE } from './web-metrics.ts';
 import { WebAuth, assertLoopback } from './web-auth.ts';
-import { turnsSection, notesSection, turnLogRoute } from './web-turns.ts';
+import { changeTurnSections, notesSection, turnEvidenceRoute } from './web-turns.ts';
+import { activityLogSection, transcriptSection } from './web-transcript.ts';
 import { signalsView } from './web-signals.ts';
 import { AUTOMATION_EDIT_ROUTE, AUTOMATION_EDITOR_JS, AUTOMATION_EDITOR_STYLE, automationEditor, automationsView } from './web-automations.ts';
 import { workstreamsBody, wizardPage } from './web-ws.ts';
@@ -117,7 +118,7 @@ function page(store: Store, stateDir: string, url: URL, csrf?: string): { title:
     const attachmentWait = notes.some(note => note.attachment && !note.deliveredAt)
       ? (store.noteRunnerIsRemote(c.id) ? 'El runner asignado es remoto.' : store.noteAttachmentWait(id))
       : undefined;
-    return { title: c.title, body: `<p><a href="/changes?ws=${enc(store.getWorkstream(c.workstreamId).slug)}">Volver a changes</a></p><div class="summary">${badge(c.status)}<span>Coste total: <strong>${money(cost)}</strong></span><span>Rama: ${escape(c.branch ?? 'No asignada')}</span><span>PR: ${changePrLink(store, id)}</span>${copyButton(ui, c.id)}</div>${linksBlock(ui, { source: store.changeLinks(c.id).source })}<p class="description">${escape(c.description)}</p>${actionForms(store, url, csrf)}<h2>Activities</h2>${tree(activities, store.getWorkstream(c.workstreamId).slug)}${turnsSection(store.db, id, ui)}${notesSection(notes, c.status, ui, attachmentWait)}<h2>Timeline</h2>${omitted ? `<p class="notice">Se omiten ${omitted} eventos anteriores.</p>` : ''}${events.length ? `<ol class="timeline">${events.map(e => `<li><time>${escape(e.created_at)}</time><div><strong>${escape(e.severity)}</strong> · ${escape(e.actor ?? 'fab')}<p>${escape(e.message)}</p></div></li>`).join('')}</ol>` : empty('No hay eventos para este change.')}` };
+    return { title: c.title, body: `<p><a href="/changes?ws=${enc(store.getWorkstream(c.workstreamId).slug)}">Volver a changes</a></p><div class="summary">${badge(c.status)}<span>Coste total: <strong>${money(cost)}</strong></span><span>Rama: ${escape(c.branch ?? 'No asignada')}</span><span>PR: ${changePrLink(store, id)}</span>${copyButton(ui, c.id)}</div>${linksBlock(ui, { source: store.changeLinks(c.id).source })}<p class="description">${escape(c.description)}</p>${actionForms(store, url, csrf)}<h2>Activities</h2>${tree(activities, store.getWorkstream(c.workstreamId).slug)}${changeTurnSections(store.db, id, ui, activities, events)}${notesSection(notes, c.status, ui, attachmentWait)}<h2>Timeline</h2>${omitted ? `<p class="notice">Se omiten ${omitted} eventos anteriores.</p>` : ''}${events.length ? `<ol class="timeline">${events.map(e => `<li><time>${escape(e.created_at)}</time><div><strong>${escape(e.severity)}</strong> · ${escape(e.actor ?? 'fab')}<p>${escape(e.message)}</p></div></li>`).join('')}</ol>` : empty('No hay eventos para este change.')}` };
   }
   const a = store.getActivity(id);
   const c = store.getChange(a.changeId);
@@ -126,7 +127,7 @@ function page(store: Store, stateDir: string, url: URL, csrf?: string): { title:
   const costs = activityCosts(a, meta);
   const count = Math.max(costs?.length ?? 0, a.retryCount + (a.status === 'failed' ? 0 : 1), 1);
   const duration = typeof meta?.durationMs === 'number' && Number.isFinite(meta.durationMs) ? meta.durationMs : null;
-  return { title: `Activity · ${a.validator ?? a.kind}`, body: `<p><a href="/changes/${enc(c.id)}">${escape(c.title)}</a></p><div class="summary">${badge(a.status)} ${a.reviewStatus ? badge(a.reviewStatus) : ''}<span>${escape(a.id)}</span>${copyButton(ui, a.id)}${roleLink(ui, a, store.getWorkstream(c.workstreamId).slug, 'Ver el rol en Perfiles')}</div>${actionForms(store, url, csrf)}${activityScores(store, stateDir, a, csrf)}<h2>Intentos</h2><div class="table-wrap"><table><thead><tr><th>Intento</th><th>Coste</th><th>Duración</th></tr></thead><tbody>${Array.from({ length: count }, (_, i) => `<tr><td>${i + 1}</td><td>${money(costs?.[i] ?? null)}</td><td>${i === count - 1 && duration !== null ? `${duration} ms` : 'No medida'}</td></tr>`).join('')}</tbody></table></div><p class="muted">La evidencia histórica solo conserva la duración del último intento.</p><h2>Veredicto y resultado</h2><p>Validador: ${escape(a.validator ?? (a.kind === 'gates' ? 'gate' : 'No aplica'))} · Revisión: ${escape(labels[a.reviewStatus ?? ''] ?? a.reviewStatus ?? 'Sin veredicto')}</p><pre tabindex="0">${escape([a.reviewComment, a.result, a.error].filter(Boolean).join('\n') || 'Sin resultado registrado.')}</pre>${evidence(stateDir, c.id, `${a.id}.log`, 'Log')}${evidence(stateDir, c.id, `${a.id}.json`, 'Metadata de ejecución')}${evidence(stateDir, c.id, 'run.json', 'run.json')}${evidence(stateDir, c.id, 'diff.patch', 'Diff')}` };
+  return { title: `Activity · ${a.validator ?? a.kind}`, body: `<p><a href="/changes/${enc(c.id)}">${escape(c.title)}</a></p><div class="summary">${badge(a.status)} ${a.reviewStatus ? badge(a.reviewStatus) : ''}<span>${escape(a.id)}</span>${copyButton(ui, a.id)}${roleLink(ui, a, store.getWorkstream(c.workstreamId).slug, 'Ver el rol en Perfiles')}</div>${actionForms(store, url, csrf)}${activityScores(store, stateDir, a, csrf)}<h2>Intentos</h2><div class="table-wrap"><table><thead><tr><th>Intento</th><th>Coste</th><th>Duración</th></tr></thead><tbody>${Array.from({ length: count }, (_, i) => `<tr><td>${i + 1}</td><td>${money(costs?.[i] ?? null)}</td><td>${i === count - 1 && duration !== null ? `${duration} ms` : 'No medida'}</td></tr>`).join('')}</tbody></table></div><p class="muted">La evidencia histórica solo conserva la duración del último intento.</p><h2>Veredicto y resultado</h2><p>Validador: ${escape(a.validator ?? (a.kind === 'gates' ? 'gate' : 'No aplica'))} · Revisión: ${escape(labels[a.reviewStatus ?? ''] ?? a.reviewStatus ?? 'Sin veredicto')}</p><pre tabindex="0">${escape([a.reviewComment, a.result, a.error].filter(Boolean).join('\n') || 'Sin resultado registrado.')}</pre>${activityLogSection(stateDir, c.id, a.id, url, ui)}${evidence(stateDir, c.id, `${a.id}.json`, 'Metadata de ejecución')}${evidence(stateDir, c.id, 'run.json', 'run.json')}${evidence(stateDir, c.id, 'diff.patch', 'Diff')}` };
 }
 
 /** Un error de acción se muestra en la plantilla normal, con menú y enlace de vuelta a la página de origen (T78). */
@@ -220,8 +221,16 @@ export function startWeb(stateDir: string, port = 4310, options: { write?: boole
         const csrf = auth?.sessionCsrf(req);
         if (isAutomationEditor && !csrf) return respond('Se necesita una sesión local.', 401, 'text/plain; charset=utf-8');
         store = openStore();
-        const log = turnLogRoute(store.db, stateDir, url.pathname);
-        if (log) return respond(log.body, log.status, 'text/plain; charset=utf-8');
+        const turn = turnEvidenceRoute(store.db, stateDir, url.pathname);
+        if (turn?.kind === 'log') {
+          const log = turn.log;
+          return respond(log ? log.text + (log.truncated ? '\n[log recortado a 256 KiB]' : '') : 'Log no disponible', log ? 200 : 404, 'text/plain; charset=utf-8');
+        }
+        if (turn) {
+          if (!turn.found) return respond('Registro no encontrado', 404, 'text/plain; charset=utf-8');
+          const back = `<p><a href="/changes/${enc(turn.changeId)}">Volver al change</a></p>`;
+          return respond(shell(store, { title: 'Turno', body: back + transcriptSection(turn.log, url, ui) }));
+        }
         const content = isAutomationEditor ? automationEditor(store, csrf!, {
           automation: automationEdit ? store.getAutomation(automationEdit[1]!) : undefined,
           values: automationCreate ? { ws: url.searchParams.get('ws') ?? undefined } : undefined,
