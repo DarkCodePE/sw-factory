@@ -410,3 +410,14 @@ test('H12: un único verify válido se importa por la web como en el asistente; 
   expect(store.listWorkstreams().map(w => w.slug).sort()).toEqual(['con-verify', 'prueba']);
   expect(before).not.toBe(snapshot());
 });
+
+// T105-H10: ninguna secuencia de control del paquete llega a la terminal por la CLI.
+test('H10: fab definition import no imprime ESC ni C1 de un paquete hostil', () => {
+  const d = join(dir, 'hostil'); mkdirSync(d);
+  const files = goodFiles(); files.set('workstream.json', JSON.stringify({ slug: 'x', goal: 'g', ['\x1b]0;PWN\x07\x1b[2J']: 1 }));
+  for (const [p, t] of files) { mkdirSync(join(d, p, '..'), { recursive: true }); writeFileSync(join(d, p), t); }
+  const r = Bun.spawnSync(['bun', 'src/cli.ts', 'definition', 'import', d, '--repo', repo], { env: { ...process.env, FABRICA_HOME: dir } });
+  const err = r.stderr.toString();
+  expect(r.exitCode).not.toBe(0); expect(err).toContain('clave desconocida');
+  expect(err).not.toMatch(/[\x00-\x08\x0b-\x1f\x7f-\x9f]/);
+});

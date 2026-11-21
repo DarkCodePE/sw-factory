@@ -153,6 +153,8 @@ function openStore(): Store {
 }
 
 const short = (id: string): string => id.slice(0, 8);
+/** T105-H10: un mensaje de error puede traer texto de un paquete ajeno; los caracteres de control y de formato (ESC, OSC) no llegan a la terminal. */
+const printable = (text: string): string => text.replace(/[\p{Cc}\p{Cf}]/gu, c => /[\n\t]/.test(c) ? c : `\\u${c.codePointAt(0)!.toString(16).padStart(4, '0')}`);
 
 function findByPrefix<T extends { id: string }>(items: T[], prefix: string, what: string): T {
   const matches = items.filter((i) => i.id.startsWith(prefix));
@@ -554,7 +556,7 @@ async function main(argv: string[]): Promise<number> {
         return 1;
     }
   } catch (err) {
-    console.error(err instanceof StoreError ? `error (${err.code}): ${err.message}` : err);
+    console.error(err instanceof StoreError ? `error (${err.code}): ${printable(err.message)}` : err);
     return 1;
   } finally {
     store.close();
