@@ -71,6 +71,7 @@ export async function automationMain(argv: string[], store: Store, opts: Automat
       }
       case 'update': {
         const a = resolve(store, arg);
+        if ((v.at || v.weekday) && !v.cron && !v.every) throw fail('--at y --weekday necesitan --every (o --cron): sin él no cambian el horario'); // C90-H1
         const schedule = v.cron || v.every ? scheduleOrFail(v) : a.cron;
         let body = a.body;
         if (v['body-file']) body = readBody(v['body-file']);

@@ -198,3 +198,13 @@ test('update rechaza un cron inválido, un nombre ocupado y un id desconocido si
   expect(store.getAutomation(a!.id)).toEqual(before);
   store.close();
 });
+test('C90-H1: update con --at o --weekday sin --every ni --cron falla y no cambia nada', async () => {
+  const { root, store } = fixture();
+  await run(store, ['add', 'ws', '--name', 'a', '--every', 'day', '--at', '07:30', '--title', 't', '--body-file', join(root, 'body.md')]);
+  const id = store.listAutomations()[0]!.id;
+  const before = store.getAutomation(id);
+  for (const args of [['--at', '09:00'], ['--weekday', '3']]) expect((await run(store, ['update', id, ...args])).code).toBe(1);
+  expect(store.getAutomation(id)).toEqual(before);
+  expect((await run(store, ['update', id, '--every', 'day', '--at', '09:00'])).code).toBe(0);
+  store.close();
+});
