@@ -297,24 +297,31 @@ async function recorrido(login: string) {
 
   await flujo('perfil: guardar uno nuevo y asignarlo', async () => {
     const marca = ultimoEvento();
-    abrir('/perfiles?ws=plataforma');
-    const antes = leer(s => s.getWorkstream('plataforma').profile);
-    eq(antes, semilla.profiles.v2, 'perfil inicial (v2 con roles)');
+    // T84: asignar se rechaza con trabajo vivo; `archivo` (en pausa, sin changes) es el workstream que sí admite la asignación.
+    abrir('/perfiles?ws=archivo');
+    const antes = leer(s => s.getWorkstream('archivo').profile);
     click('form[action="/perfiles/guardar"] details summary'); // T84: las plantillas van en un desplegable
     const campo = '[id="f-worker.investigate"]'; // se añade una línea: sustituir la plantilla entera pierde líneas obligatorias
     rellenar(campo, `${ab('get', 'value', campo)}\nLínea añadida por el e2e.`);
     click('form[action="/perfiles/guardar"] button'); await esperarTexto('Perfil guardado');
     const digest = /([0-9a-f]{64}) · Nuevo/.exec(paginaTexto())?.[1];
     assert(digest, 'la página no muestra el digest nuevo');
-    eq(leer(s => s.getWorkstream('plataforma').profile), antes, 'guardar no asigna');
+    eq(leer(s => s.getWorkstream('archivo').profile), antes, 'guardar no asigna');
     foto('perfil-guardado');
     ab('check', 'form[action="/perfiles/asignar"] input[name=confirm]');
     click('form[action="/perfiles/asignar"] button');
-    ab('wait', '--url', '**ws=plataforma'); // la redirección de asignar
-    // T84: «plataforma» tiene trabajo vivo en la semilla, así que asignar se rechaza con su aviso y el perfil no cambia.
+    ab('wait', '--url', '**ws=archivo'); // la redirección de asignar
+    eq(leer(s => s.getWorkstream('archivo').profile), digest, 'el perfil quedó asignado');
+    eventosDe(marca); // asignar deja su evento con actor web
+    // Con trabajo vivo (`plataforma`) la misma acción se rechaza y no cambia nada.
+    abrir('/perfiles?ws=plataforma');
+    const vivo = leer(s => s.getWorkstream('plataforma').profile);
+    eq(vivo, semilla.profiles.v2, 'perfil inicial de plataforma (v2 con roles)');
+    ab('check', 'form[action="/perfiles/asignar"] input[name=confirm]');
+    click('form[action="/perfiles/asignar"] button');
+    ab('wait', '--url', '**ws=plataforma');
     await esperarTexto('El workstream tiene trabajo vivo');
-    eq(leer(s => s.getWorkstream('plataforma').profile), antes, 'asignar con trabajo vivo no cambia el perfil');
-    void marca; // guardar y la asignación rechazada no dejan eventos
+    eq(leer(s => s.getWorkstream('plataforma').profile), vivo, 'asignar con trabajo vivo no cambia el perfil');
   });
 
   await flujo('workstream: guardar ajustes', async () => {
