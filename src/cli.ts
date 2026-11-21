@@ -321,7 +321,7 @@ async function main(argv: string[]): Promise<number> {
             if (!isEnv && names?.length) {
               let unknown: string[];
               try { unknown = unregisteredMcp(STATE_DIR, names!); } catch (e) { if (e instanceof McpRegistryError) throw new StoreError('invalid_input', `fab ws mcp: ${e.message}`); throw e; }
-              if (unknown.length) throw new StoreError('invalid_input', `fab ws mcp: no está en el registro MCP (mcp-servers.json): ${unknown.join(', ')}`);
+              if (unknown.length) throw new StoreError('invalid_input', `fab ws mcp: ${unknown.length} nombre(s) no están en el registro MCP (mcp-servers.json)`); // se cuenta, no se nombra: un valor pegado no vuelve a la terminal (T103-H14)
             }
             const upd = isEnv ? store.setWorkstreamEnvAllow(ws.id, names) : store.setWorkstreamMcpAllow(ws.id, names);
             console.log(`${upd.slug} ${sub}: ${(isEnv ? upd.envAllow : upd.mcpAllow)?.join(', ') ?? 'modo anterior'}`);
