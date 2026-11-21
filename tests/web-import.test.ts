@@ -266,3 +266,22 @@ test('confirmar con un campo urlencoded repetido da 400', async () => {
   const r = await req('/definicion/importar', { method: 'POST', headers: { cookie, origin: base(), 'content-type': 'application/x-www-form-urlencoded' }, body });
   expect(r.status).toBe(400); expect(store.listWorkstreams().map(w => w.slug)).toEqual(['prueba']);
 });
+
+// ---- T105-H1 / H5: el tipo de cada ajuste se valida en parseDefinition; la web solo admite ausente o true -----------------
+import { parseDefinition } from '../src/definition.ts';
+const withSettings = (extra: Record<string, unknown>) => { const f = goodFiles(); f.set('workstream.json', JSON.stringify({ slug: 'x', goal: 'g', ...extra })); return f; };
+const BAD_TYPES: Record<string, unknown>[] = [
+  { requireApproval: 0 }, { requireApproval: '' }, { requireApproval: 'false' }, { requireApproval: null }, { requireChangeApproval: 0 }, { requireChangeApproval: 'no' },
+  { protectedPaths: {} }, { protectedPaths: 'x' }, { protectedPaths: [1] }, { workerConcurrency: '2' }, { taskLimit: 1.5 }, { verify: 'bun test' }, { verifySetup: [null] },
+];
+test.each(BAD_TYPES)('parseDefinition rechaza el tipo de %j (también la CLI)', extra => {
+  expect(() => parseDefinition(withSettings(extra))).toThrow(/workstream\.json/);
+});
+test.each(BAD_TYPES.slice(0, 6))('la web rechaza %j con 400 y no crea el workstream (T105-H1)', async extra => {
+  const before = snapshot();
+  const bytes = tar(treeOf(withSettings(extra)));
+  expect((await upload('/definicion/importar', { repo, slug: '' }, bytes)).status).toBe(400);
+  const good = await upload('/definicion/importar', { repo, slug: '' }, goodTar());
+  expect((await confirmFrom(good, '/definicion/importar', { payload: Buffer.from(bytes).toString('base64') })).status).toBe(400);
+  expect(snapshot()).toBe(before);
+});
