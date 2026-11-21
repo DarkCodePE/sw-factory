@@ -438,3 +438,12 @@ test('IE1-H1: un perfil con un MCP por rol fuera del registro da 400 en la vista
   expect((await confirmFrom(preview, '/perfiles/importar')).status).toBe(400);
   expect(snapshot()).toBe(before);
 });
+
+// IE1-H3: un [REDACTED] pegado al secreto no silencia el aviso (el patrón de redacción se lo traga y el recuento no sube).
+test('IE1-H3: el aviso de redacción sale aunque el literal [REDACTED] vaya pegado al secreto', async () => {
+  const ghp = 'ghp_' + 'a1B2'.repeat(9);
+  for (const goal of [`password=[REDACTED]SuperSecreto123456`, `token: [REDACTED]${ghp}`, `Bearer [REDACTED]${ghp}`, `api_key="[REDACTED]sk-ant-${'x9'.repeat(15)}"`]) {
+    const html = await (await upload('/definicion/importar', { repo, slug: '' }, tar(treeOf(withSettings({ goal }))))).text();
+    expect(html).toContain('texto con forma de secreto');
+  }
+});
