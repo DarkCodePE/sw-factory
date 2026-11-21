@@ -172,3 +172,14 @@ test('T99-H3: el log plegado conserva stderr y el transcript incluye los turnos 
   expect(onlyTranscript(page)).not.toContain('Transcript incompleto');
   expect(page).toMatch(/<h2>Log<\/h2><details><summary>Ver log de texto<\/summary>[\s\S]*Motivo en stderr/);
 });
+
+test('T99-H5: un prefijo de frame no retira el texto de un log de otro agente', async () => {
+  const plain = '{"type":"assistant"} y después salió el diagnóstico del otro agente\n';
+  writeFileSync(join(run, `${activity}.log`), plain);
+  writeFileSync(join(run, `${activity}.t-turno.log`), plain);
+  const page = await (await activityPage()).text();
+  expect(page).toMatch(/<h2>Transcript<\/h2><p[^>]*>No medido<\/p>/);
+  expect(page).toContain('salió el diagnóstico del otro agente');
+  const raw = await (await get(`/changes/${change}/turns/turno/log`)).text();
+  expect(raw).toBe(plain);
+});
