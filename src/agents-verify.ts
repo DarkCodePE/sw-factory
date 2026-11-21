@@ -66,7 +66,10 @@ export function savePins(pins: Record<string, string>, home: string = factoryHom
   mkdirSync(home, { recursive: true, mode: 0o700 });
   const file = pinsFile(home);
   let existing: Record<string, unknown> = {};
-  try { existing = JSON.parse(readFileSync(file, 'utf8')); } catch {}
+  try {
+    const raw = JSON.parse(readFileSync(file, 'utf8'));
+    if (raw && typeof raw === 'object' && !Array.isArray(raw)) existing = raw;
+  } catch {}
   const temp = join(home, `agents.json.${randomUUID()}.tmp`);
   writeFileSync(temp, JSON.stringify({ ...existing, agentBinaries: pins }, null, 2) + '\n', { mode: 0o600 });
   renameSync(temp, file);

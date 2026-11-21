@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, expect, test } from 'bun:test';
-import { chmodSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { chmodSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
@@ -141,5 +141,14 @@ test('loadAgentVersions lee versiones registradas de agents.json', () => {
     agentVersions: { claude: '2.5.0', codex: '1.0.0' },
   }));
   expect(loadAgentVersions(scope.home)).toEqual({ claude: '2.5.0', codex: '1.0.0' });
+});
+
+test('T106-H4: savePins no conserva claves numéricas si el archivo previo no es un objeto', () => {
+  mkdirSync(scope.home, { recursive: true });
+  writeFileSync(join(scope.home, 'agents.json'), '[1, 2, 3]');
+  savePins({ claude: 'a'.repeat(64) }, scope.home);
+  const raw = JSON.parse(readFileSync(join(scope.home, 'agents.json'), 'utf8'));
+  expect(raw).toEqual({ agentBinaries: { claude: 'a'.repeat(64) } });
+  expect(Object.keys(raw)).toEqual(['agentBinaries']);
 });
 
