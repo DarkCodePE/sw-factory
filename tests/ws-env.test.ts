@@ -113,7 +113,8 @@ test('CLI: ws mcp --allow comprueba que el nombre existe en el registro (T72b-H3
   registry('tracker');
   const bad = await cli(['ws', 'mcp', 'w', '--allow', 'tracker', '--allow', 'traker']);
   expect(bad.code).not.toBe(0);
-  expect(bad.err).toContain('traker');
+  expect(bad.err).not.toContain('traker'); // T103-H14: un valor pegado no vuelve a la terminal
+  expect(bad.err).toContain('1 nombre(s)');
   expect(new Store(db).getWorkstream('w').mcpAllow).toBeNull();
   expect((await cli(['ws', 'mcp', 'w', '--allow', 'tracker'])).code).toBe(0);
   expect((await cli(['ws', 'mcp', 'w', '--none'])).code).toBe(0); // vaciar no pide registro

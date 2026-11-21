@@ -105,6 +105,65 @@ describe('live claude run', () => {
       rmSync(join(dir, '..'), { recursive: true, force: true });
     }
   });
+  test('T99: captura stream-json y conserva el resultado final y su coste', async () => {
+    const f = fakeClaude(`cat <<'EOF'
+{"type":"system","subtype":"init"}
+{"type":"assistant","message":{"content":[{"type":"text","text":"paso"}]}}
+{"type":"result","result":"STATUS: done\\nTrabajo hecho","total_cost_usd":0.042,"usage":{"input_tokens":3,"output_tokens":2}}
+EOF`);
+    const dir = mcpDir();
+    try {
+      Bun.spawnSync(['git', 'init', '-q', f.dir]);
+      const r = await claudeLive.run({ prompt: 'x', cwd: f.dir, attemptId: 'a', mcpConfigDir: dir });
+      const argv = readFileSync(join(f.dir, 'argv'), 'utf8').trimEnd().split('\n');
+      expect(argv.filter(arg => arg === '--output-format')).toHaveLength(1);
+      expect(argv[argv.indexOf('--output-format') + 1]).toBe('stream-json');
+      expect(argv).toContain('--verbose');
+      expect(r.stdout).toContain('"type":"assistant"');
+      expect(r.stdoutForMonitor).toBe(r.stdout?.trimEnd().split('\n').at(-1));
+      expect(r.output).toBe('STATUS: done\nTrabajo hecho');
+      expect(r.status.kind).toBe('done');
+      expect(r.usage).toEqual({ costUsd: 0.042, inputTokens: 3, outputTokens: 2 });
+    } finally {
+      f.restore();
+      rmSync(f.dir, { recursive: true, force: true });
+      rmSync(join(dir, '..'), { recursive: true, force: true });
+    }
+  });
+  test('T99-H7: un fallo sin result conserva el diagnóstico por stdout y excluye el stream del monitor', async () => {
+    const f = fakeClaude("printf 'Diagnóstico del CLI sin result\\n'; exit 1");
+    const dir = mcpDir();
+    try {
+      Bun.spawnSync(['git', 'init', '-q', f.dir]);
+      const r = await claudeLive.run({ prompt: 'x', cwd: f.dir, attemptId: 'a', mcpConfigDir: dir });
+      expect(r.exitCode).toBe(1);
+      expect(r.output).toBe('Diagnóstico del CLI sin result');
+      expect(r.stdoutForMonitor).toBe('');
+    } finally {
+      f.restore();
+      rmSync(f.dir, { recursive: true, force: true });
+      rmSync(join(dir, '..'), { recursive: true, force: true });
+    }
+  });
+  test('T99-H4: una mención intermedia no pierde la sesión reanudada', async () => {
+    const f = fakeClaude(`cat <<'EOF'
+{"type":"assistant","message":{"content":[{"type":"text","text":"Documentación: No conversation found"}]}}
+{"type":"result","result":"Fallo de otra clase"}
+EOF
+exit 1`);
+    const dir = mcpDir();
+    try {
+      Bun.spawnSync(['git', 'init', '-q', f.dir]);
+      const r = await claudeLive.run({ prompt: 'x', cwd: f.dir, attemptId: 'a', mcpConfigDir: dir, sessionId: 'vigente' });
+      expect(r.exitCode).toBe(1);
+      expect(r.sessionId).toBe('vigente');
+      expect(r.output).toBe('Fallo de otra clase');
+    } finally {
+      f.restore();
+      rmSync(f.dir, { recursive: true, force: true });
+      rmSync(join(dir, '..'), { recursive: true, force: true });
+    }
+  });
   test('unknown session id raises SessionNotFoundError', async () => {
     const f = fakeClaude(`echo "No conversation found with session ID: $2" >&2; exit 1`);
     Bun.spawnSync(['git', 'init', '-q', f.dir]); // hostDir resuelve el git dir
@@ -267,4 +326,47 @@ describe('T72f: servidores del rol en la configuración del turno', () => {
       expect(readdirSync(victim)).toEqual([]);
     } finally { f.restore(); }
   });
+});
+
+async function runClaudeFixture(script: string, sessionId?: string) {
+  const f = fakeClaude(script);
+  const dir = mcpDir();
+  try {
+    Bun.spawnSync(['git', 'init', '-q', f.dir]);
+    return await claudeLive.run({ sessionId, prompt: 'x', cwd: f.dir, attemptId: 'a', mcpConfigDir: dir });
+  } finally {
+    f.restore();
+    rmSync(f.dir, { recursive: true, force: true });
+    rmSync(join(dir, '..'), { recursive: true, force: true });
+  }
+}
+
+test('T99-H10: detecta una sesión perdida por texto de stdout sin result', async () => {
+  await expect(runClaudeFixture("echo 'No conversation found with session ID: perdida'; exit 1", 'perdida'))
+    .rejects.toBeInstanceOf(SessionNotFoundError);
+});
+
+test('T99-H11: un turno parcial usa stderr como diagnóstico y deja los frames en stdout', async () => {
+  const frame = '{"type":"user","message":{"content":[{"type":"tool_result","content":"Lectura sintética: No conversation found"}]}}';
+  for (const stderr of ['', 'Interrupción del CLI']) {
+    const result = await runClaudeFixture("echo '" + frame + "'; printf '%s' '" + stderr + "' >&2; exit 1", 'vigente');
+    expect(result.exitCode).toBe(1);
+    expect(result.output).toBe(stderr);
+    expect(result.stdout).toContain(frame);
+    expect(result.stdoutForMonitor).toBe('');
+  }
+});
+
+test('T99-H13 R35: detecta una sesión perdida por el result sin stderr', async () => {
+  const frame = '{"type":"result","is_error":true,"errors":["No conversation found with session ID: perdida"]}';
+  await expect(runClaudeFixture("echo '" + frame + "'; exit 1", 'perdida')).rejects.toBeInstanceOf(SessionNotFoundError);
+});
+
+test('T99-H13 R38: el último result determina la salida, el coste y el monitor', async () => {
+  const first = '{"type":"result","result":"Primero","total_cost_usd":1}';
+  const last = '{"type":"result","result":"Último","total_cost_usd":2}';
+  const result = await runClaudeFixture("printf '%s\\n' '" + first + "' '" + last + "'");
+  expect(result.output).toBe('Último');
+  expect(result.usage?.costUsd).toBe(2);
+  expect(result.stdoutForMonitor).toBe(last);
 });

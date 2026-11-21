@@ -5,7 +5,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { processActivity } from '../src/pool.ts';
 import type { RemoteRunner } from '../src/runners/client.ts';
-import { Store } from '../src/store.ts';
+import { runnerRevision, Store } from '../src/store.ts';
 import type { RunnerCheckOptions } from '../src/web-runner-check.ts';
 import { startWeb } from '../src/web.ts';
 
@@ -45,14 +45,14 @@ async function login() {
 const get = (url: string, method = 'GET', headers: Record<string, string> = { cookie }) => fetch(origin + url, { method, headers, redirect: 'manual' });
 const post = (url: string, fields: Record<string, string> = {}, headers: Record<string, string> = {}) =>
   fetch(origin + url, { method: 'POST', redirect: 'manual', headers: { cookie, origin, ...headers }, body: new URLSearchParams({ csrf, ...fields }) });
-const seenOf = (name: string) => { const r = store.getRunner(name); return `${r.kind} ${r.createdAt}`; };
+const seenOf = (name: string) => runnerRevision(store.getRunner(name));
 const assign = (runner: string, expected = '', fields: Record<string, string> = {}) =>
   post(path(), { runner, expected, confirm: 'yes', ...(runner && store.listRunnerSummaries().some(r => r.name === runner) ? { [`seen.${runner}`]: seenOf(runner) } : {}), ...fields });
 
 beforeEach(() => {
   dir = mkdtempSync(join(tmpdir(), 'fab-web-runners-admin-'));
   store = new Store(join(dir, 'fabrica.db'));
-  workstream = store.createWorkstream({ slug: 'prueba', goal: 'g', repo: join(dir, 'repo') }).id;
+  workstream = store.createWorkstream({ slug: 'prueba', goal: 'g', repo: join(dir, 'repo'), requireChangeApproval: false }).id;
   store.createRunner({ name: 'torre', kind: 'ssh', target: 'alias-canario', options: { maxBundleMb: 987 } });
   store.createRunner({ name: 'torre2', kind: 'ssh', target: 'alias-dos' });
   store.createRunner({ name: 'casa', kind: 'local' });
@@ -77,7 +77,8 @@ test('GET y HEAD requieren sesión D11, no comprueban y el inventario protege su
   expect(r.status).toBe(200);
   const html = await r.text();
   expect(html).toContain('Sin comprobar');
-  expect(html).not.toMatch(/alias-canario|alias-dos|alias-pausado|987|poll\.js/);
+  const inventoryHtml = html.replaceAll(`name="csrf" value="${csrf}"`, 'name="csrf"');
+  expect(inventoryHtml).not.toMatch(/alias-canario|alias-dos|alias-pausado|987|poll\.js/);
   const head = await get(inventory, 'HEAD');
   expect(head.status).toBe(200);
   expect(await head.text()).toBe('');
@@ -316,7 +317,7 @@ test('la activity iniciada conserva procedencia y el turno siguiente usa la nuev
   expect(store.getActivity(next.id)).toMatchObject({ status: 'completed', runner: 'casa' });
 });
 
-test('T85-H2: el formulario envía tipo y alta vistos y un runner recreado se rechaza', async () => {
+test('T85-H2: el formulario envía la revisión vista y un runner recreado se rechaza', async () => {
   boot();
   await login();
   const html = await (await get('/workstreams')).text();
@@ -388,4 +389,158 @@ test('T85-H5: plazo HTTP de 35 s, runner ocupado y línea de hello desmesurada',
   const long = await post(check());
   expect(long.status).toBe(502);
   expect(await long.text()).toContain('Protocolo incompatible');
+});
+
+const createRunnerPath = `${inventory}/alta`;
+const editRunnerPath = (name: string) => `${inventory}/${name}/editar`;
+const deleteRunnerPath = (name: string) => `${inventory}/${name}/borrar`;
+const revisionFrom = async (name: string) => /name="revision" value="([0-9a-f]{64})"/
+  .exec(await (await get(`${inventory}?editar=${name}`)).text())?.[1] ?? '';
+
+test('T101: alta y edición usan las reglas del Store y no aceptan credenciales', async () => {
+  boot();
+  await login();
+  const invalid: Record<string, string>[] = [
+    { name: 'inválido', kind: 'local' },
+    { name: 'nuevo', kind: 'ssh', target: 'usuario:clave@host' },
+    { name: 'nuevo', kind: 'ssh', target: 'alias', maxBundleMb: '4097' },
+    { name: 'nuevo', kind: 'local', target: 'alias' },
+    { name: 'nuevo', kind: 'ssh', target: 'alias', token: 'canario' },
+  ];
+  for (const fields of invalid) {
+    expect((await post(createRunnerPath, fields)).status).toBe(400);
+  }
+  expect(store.listRunners()).toHaveLength(4);
+  expect((await post(createRunnerPath, { name: 'nuevo', kind: 'ssh', target: 'alias' })).status).toBe(303);
+  expect(store.getRunner('nuevo')).toMatchObject({ kind: 'ssh', target: 'alias', createdBy: 'web' });
+  const revision = await revisionFrom('nuevo');
+  expect(revision).toHaveLength(64);
+  const valid = { revision, target: 'alias-nuevo', maxBundleMb: '32' };
+  expect((await post(editRunnerPath('nuevo'), valid)).status).toBe(303);
+  expect(store.getRunner('nuevo')).toMatchObject({ target: 'alias-nuevo', options: { maxBundleMb: 32 } });
+  expect((await post(editRunnerPath('nuevo'), valid)).status).toBe(409);
+  expect(attempts).toEqual([]);
+});
+
+test('T101: baja confirma, respeta asignación y turno vivo y permite quitar un runner libre', async () => {
+  boot();
+  await login();
+  const revision = await revisionFrom('casa');
+  expect((await post(deleteRunnerPath('casa'), { revision })).status).toBe(400);
+  store.setWorkstreamRunner(workstream, 'casa');
+  expect((await post(deleteRunnerPath('casa'), { revision, confirm: 'yes' })).status).toBe(409);
+  store.setWorkstreamRunner(workstream, null);
+  store.setWorkstreamState(workstream, 'active');
+  store.createChange(workstream, 'change', 'descripción');
+  const a = store.claimActivity(workstream, 'worker')!;
+  store.setActivityProvenance(a.id, 'digest', null, { agent: 'fake', model: null, runner: 'casa' });
+  expect((await post(deleteRunnerPath('casa'), { revision, confirm: 'yes' })).status).toBe(409);
+  store.releaseActivity(a.id, 'worker');
+  expect((await post(deleteRunnerPath('casa'), { revision, confirm: 'yes' })).status).toBe(303);
+  expect(() => store.getRunner('casa')).toThrow(/no encontrado/);
+});
+
+test('T101: las tres mutaciones exigen escritura, Host, Origin, sesión y CSRF y quedan fuera de la API', async () => {
+  boot();
+  const paths = [createRunnerPath, editRunnerPath('casa'), deleteRunnerPath('casa')];
+  const key = store.createApiKey('dueno', 'decide').key;
+  for (const p of paths) {
+    expect((await post(p, {}, { Authorization: `Bearer ${key}` })).status).toBe(401);
+    expect((await fetch(`http://127.0.0.1:${server!.port}/api/v1${p}`, {
+      method: 'POST', headers: { Authorization: `Bearer ${key}`, 'content-type': 'application/json' }, body: '{}',
+    })).status).toBe(404);
+  }
+  await login();
+  for (const p of paths) {
+    expect((await post(p, {}, { host: `localhost:${server!.port}` })).status).toBe(403);
+    expect((await post(p, {}, { origin: 'http://origen.invalid' })).status).toBe(403);
+    expect((await post(p, { csrf: 'a'.repeat(64) })).status).toBe(403);
+  }
+  server!.stop(true);
+  server = startWeb(dir, 0);
+  origin = `http://127.0.0.1:${server.port}`;
+  for (const p of paths) expect((await post(p)).status).toBe(405);
+  expect(store.listRunners()).toHaveLength(4);
+});
+
+test('T101-H1: un runner asignado conserva confinamiento y límite, y los ajustes más estrictos dejan evento', async () => {
+  boot();
+  await login();
+  store.updateRunner('casa', { options: { confine: true } });
+  store.setWorkstreamRunner(workstream, 'casa');
+  const local = await revisionFrom('casa');
+  expect((await post(editRunnerPath('casa'), { revision: local })).status).toBe(409);
+  expect(store.getRunner('casa').options).toEqual({ confine: true });
+
+  store.updateRunner('torre', { target: 'alias-canario', options: { maxBundleMb: 64 } });
+  store.setWorkstreamRunner(workstream, 'torre');
+  const ssh = await revisionFrom('torre');
+  for (const maxBundleMb of ['65', '']) {
+    expect((await post(editRunnerPath('torre'), { revision: ssh, target: 'alias-canario', maxBundleMb })).status).toBe(409);
+    expect(store.getRunner('torre').options).toEqual({ maxBundleMb: 64 });
+  }
+  expect((await post(editRunnerPath('torre'), { revision: ssh, target: 'alias-canario', maxBundleMb: '32' })).status).toBe(303);
+  expect(store.getRunner('torre').options).toEqual({ maxBundleMb: 32 });
+  const edits = store.listEvents(workstream).filter(e => String(e.message).startsWith('runner torre actualizado'));
+  expect(edits.map(e => [e.actor, e.message])).toEqual([['web', 'runner torre actualizado: límite de envío 64 → 32 MiB']]);
+
+  store.setWorkstreamRunner(workstream, null);
+  expect((await post(editRunnerPath('casa'), { revision: local })).status).toBe(303);
+  expect(store.getRunner('casa').options).toEqual({});
+});
+
+test('T101-H3/W4: una revisión obsoleta no autoriza la baja', async () => {
+  boot();
+  await login();
+  const revision = await revisionFrom('torre2');
+  store.updateRunner('torre2', { target: 'alias-distinto' });
+  expect((await post(deleteRunnerPath('torre2'), { revision, confirm: 'yes' })).status).toBe(409);
+  expect(store.getRunner('torre2').target).toBe('alias-distinto');
+});
+
+test('T101-H3/S8: una edición no cambia la configuración de un turno vivo ya desasignado', async () => {
+  boot();
+  await login();
+  store.setWorkstreamRunner(workstream, 'casa');
+  store.setWorkstreamState(workstream, 'active');
+  store.createChange(workstream, 'change', 'descripción');
+  const a = store.claimActivity(workstream, 'worker')!;
+  store.reserveActivityRunner(a.id, 'worker', 'casa');
+  store.setWorkstreamRunner(workstream, null);
+  const revision = await revisionFrom('casa');
+  expect((await post(editRunnerPath('casa'), { revision, confine: 'yes' })).status).toBe(409);
+  expect(store.getRunner('casa').options).toEqual({});
+});
+
+test('T101-H3/S10: edición SSH valida alias y límite sin guardar campos de credencial', async () => {
+  boot();
+  await login();
+  const original = store.getRunner('torre2');
+  const revision = await revisionFrom('torre2');
+  const invalid: Record<string, string>[] = [
+    { target: 'usuario:clave@host' }, { target: 'alias', maxBundleMb: '1.5' },
+    { target: 'alias', confine: 'yes' }, { target: 'alias', password: 'valor-sintético' },
+  ];
+  for (const fields of invalid) {
+    expect((await post(editRunnerPath('torre2'), { revision, ...fields })).status).toBe(400);
+    expect(store.getRunner('torre2')).toEqual(original);
+  }
+});
+
+test('T101-H3/W2: edición y baja necesitan una revisión válida', async () => {
+  boot();
+  await login();
+  for (const revision of ['', 'incorrecta']) {
+    expect((await post(editRunnerPath('casa'), { revision, confine: 'yes' })).status).toBe(400);
+    expect((await post(deleteRunnerPath('casa'), { revision, confirm: 'yes' })).status).toBe(400);
+  }
+  expect(store.getRunner('casa').options).toEqual({});
+});
+
+test('T101-H3/W3: la web distingue nombre inválido de nombre válido ausente', async () => {
+  boot();
+  await login();
+  const revision = await revisionFrom('casa');
+  expect((await post(editRunnerPath('Casa'), { revision })).status).toBe(400);
+  expect((await post(editRunnerPath('ausente'), { revision })).status).toBe(404);
 });

@@ -5,7 +5,7 @@ Un **runner remoto** es otra máquina tuya donde corre el proceso del agente de 
 !!! warning "Qué sale de casa"
     - **Sale el código** del workstream (todo su historial la primera vez; después, solo lo nuevo). `fab runner add --ssh` y `fab ws runner` te lo recuerdan, y la asignación deja un evento.
     - **No sale ninguna credencial**: ni del proveedor del modelo, ni de git, ni de GitHub, ni variables declaradas (D-K). El mensaje que viaja no tiene campo para ellas.
-    - Un workstream con runner remoto corre solo **de un disparo**: `fab run --live` no arranca, y un rol con `env` o `mcp` declarados se bloquea (`ENV_NOT_REMOTE`, `MCP_NOT_REMOTE`).
+    - Un turno remoto corre **de un disparo**. El pool rechaza `fab run --live` al arrancar si algún rol efectivo usa SSH. Si la asignación cambia después del arranque, la activity que resuelva a SSH se bloquea antes de lanzar. Un turno remoto con `env` o `mcp` declarados se bloquea (`ENV_NOT_REMOTE`, `MCP_NOT_REMOTE`).
 
 ## Qué necesita cada máquina
 
@@ -103,10 +103,17 @@ fab ws runner <workstream> torre
 
 `check` muestra versión de protocolo, `fabSha`, sandbox y adaptadores **declarados por el runner, no verificados**. Compara `fabSha` con el de casa: dos versiones distintas de fab pueden construir argv distintos. Para quitarlo: `fab ws runner <ws> --none`, `fab runner disable torre` (los workstreams con él se bloquean con `RUNNER_DISABLED`) y `fab runner rm torre`.
 
+## Inventario web y runner por rol
+
+En `fab web --write`, abre **Configuración → Runners** para registrar, editar o dar de baja un runner. Nombre y tipo identifican la entrada. Los ajustes editables son el confinamiento local o el alias SSH y el límite de envío. En la CLI se editan con `fab runner update` y se pausan con `fab runner disable`. Para cambiar un alias, quitar el confinamiento, subir el límite de envío o borrar un runner, retira primero las asignaciones del workstream y de sus perfiles vigentes. Endurecer una opción de un runner asignado deja un evento por workstream. La edición y la baja esperan a que termine el trabajo vivo.
+
+Un perfil v2 admite, por ejemplo, `"roles": { "implement": { "runner": "torre" } }`. Los roles sin runner propio heredan el del workstream. Guarda una copia desde **Perfiles**, revisa la procedencia y confirma la asignación. En la CLI usa `fab profile import <archivo>` y `fab ws profile <ws> <digest>`. El pool resuelve cada activity al reclamarla y conserva el runner del intento. Los gates se ejecutan en casa. Un runner ausente o pausado bloquea la activity que lo eligió según las reglas del change. Los adjuntos esperan un turno local confinado.
+
 ## Qué verás cuando algo falla
 
 | Código | Qué pasó | Qué hace la fab |
 |---|---|---|
+| `RUNNER_NOT_FOUND` / `RUNNER_DISABLED` | Runner fuera del inventario o pausado | Bloquea la activity que lo seleccionó |
 | `RUNNER_UNREACHABLE` | No conecta, clave de host cambiada/desconocida, clave rechazada | Bloquea la activity; no reintenta sola |
 | `RUNNER_REFUSED: <código>` | `not_confinable`, `unknown_adapter`, `agent_missing`, versión de protocolo | Bloquea |
 | `RUNNER_BUSY` | El runner está en `maxJobs` | Reencola sin gastar reintento |

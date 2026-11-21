@@ -389,6 +389,26 @@ async function recorrido(login: string) {
     eq(selector, true, 'el formulario de nota ofrece el selector de adjunto (estado 0700)'); foto('adjunto-formulario');
   });
 
+  await flujo('páginas de la etapa 1 (T99–T107, solo lectura): transcript, timeline por minuto, alta de runners, secretos y MCP por nombre, entrada, importar, registro MCP y pines', async () => {
+    const visita = (ruta: string, textos: string[], nombre: string) => {
+      abrir(ruta); const t = paginaTexto();
+      for (const x of textos) assert(t.includes(x), `${nombre}: falta «${x}»`);
+      foto(nombre);
+    };
+    // T99–T100: una activity con log estructurado (stream-json) se pinta como transcript, no como texto crudo.
+    const marco = (o: unknown) => JSON.stringify(o);
+    writeFileSync(join(semilla.stateDir, 'runs', id('completado'), `${semilla.activities.completado}.log`), [
+      marco({ type: 'assistant', message: { content: [{ type: 'text', text: 'Paso estructurado del e2e' }, { type: 'tool_use', id: 't1', name: 'Read', input: { path: 'a.txt' } }] } }),
+      marco({ type: 'user', message: { content: [{ type: 'tool_result', tool_use_id: 't1', content: 'Resultado del e2e' }] } }),
+    ].join('\n') + '\n');
+    visita(`/activities/${semilla.activities.completado}?herramientas=1`, ['Transcript', 'Mostrar llamadas y resultados', 'Aplicar filtros'], 'etapa1-transcript');
+    visita(`/changes/${id('completado')}`, ['Timeline por minuto'], 'etapa1-timeline-minuto');
+    visita('/config/runners', ['Dar de alta un runner'], 'etapa1-runners-alta');
+    visita('/config?ws=plataforma', ['Secretos y MCP del workstream', 'Entrada: etiqueta de GitHub y Jira', 'Servidores MCP', 'Variables requeridas', 'E2E_TRACKER_TOKEN (no definida en fab web)', 'Adaptadores', 'Pin guardado'], 'etapa1-config-acceso-entrada-mcp');
+    visita('/perfiles?ws=plataforma', ['Importar perfil'], 'etapa1-importar-perfil');
+    visita('/definicion', ['Importar definición'], 'etapa1-importar-definicion');
+  });
+
   await flujo('pool fake: el change triado avanza y la web lo refleja', async () => {
     assert(cambioPool, 'depende del flujo de triaje');
     const s = new Store(join(semilla.stateDir, 'fabrica.db'));

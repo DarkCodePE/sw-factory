@@ -1,11 +1,11 @@
 // T74f: cableado de los runners en el pool. El transporte se inyecta hacia el runner falso (tests/helpers/fake-runner.ts).
-import { afterEach, beforeEach, expect, test } from 'bun:test';
+import { afterEach, beforeEach, expect, spyOn, test } from 'bun:test';
 import { randomBytes } from 'node:crypto';
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
 import { processActivity, runPool, type PoolOptions } from '../src/pool.ts';
-import { defaultProfile, saveProfile, validateProfile, type Profile } from '../src/profile.ts';
+import { defaultProfile, roleRunner, ROLES, saveProfile, validateProfile, type Profile } from '../src/profile.ts';
 import type { Transport } from '../src/runners/client.ts';
 import { Store } from '../src/store.ts';
 import { runDirectory } from '../src/manifest.ts';
@@ -193,10 +193,10 @@ test('--live con runner ssh no arranca', async () => {
   await expect(runPool(store, opts(ws.id, { live: true, runnerTransport: noSession() }))).rejects.toThrow('LIVE_NOT_REMOTE');
 });
 
-test('A14: el perfil no puede llevar runner en ningún nivel', () => {
+test('A14/T102: runner solo se admite como nombre en un rol v2', () => {
   const base = defaultProfile();
-  for (const bad of [{ ...base, schemaVersion: 2, runner: 'torre' }, { ...base, schemaVersion: 2, roles: { implement: { runner: 'torre' } } }, { ...base, runner: 'torre' }]) {
-    expect(() => validateProfile(bad)).toThrow(/runner/);
+  for (const bad of [{ ...base, schemaVersion: 2, runner: 'torre' }, { ...base, schemaVersion: 2, roles: { implement: { runner: 'user@host' } } }, { ...base, roles: { implement: { runner: 'torre' } } }, { ...base, runner: 'torre' }]) {
+    expect(() => validateProfile(bad)).toThrow(/runner|roles/);
   }
 });
 
@@ -279,4 +279,125 @@ test('H5: el maxBundleMb del runner llega al encargo: un bundle mayor no sale de
   expect(a).toMatchObject({ status: 'blocked' });
   expect(a!.error).toContain('RUNNER_REFUSED');
   expect(readFileSync(join(fakeDir, 'transcript'), 'latin1')).not.toContain('"type":"job"'); // el job no salió
+});
+
+test('T102: un rol abre el transporte remoto propio y el resto hereda el runner del workstream', async () => {
+  store.createRunner({ name: 'casa', kind: 'local' });
+  const profile = saveProfile(dir, { ...defaultProfile(), schemaVersion: 2, roles: { implement: { runner: 'torre' } } }).digest;
+  const ws = workstream({ profile });
+  store.setWorkstreamRunner(ws.id, 'casa');
+  const change = store.createChange(ws.id, 'x', 'd');
+  const targets: string[] = [];
+  await runPool(store, opts(ws.id, { runnerTransport: r => {
+    targets.push(r.target);
+    return fake('auto')(r);
+  } }));
+  expect(targets).toEqual(['torre']);
+  expect(store.listActivities({ changeId: change.id }).map(a => [a.kind, a.status, a.runner])).toEqual([
+    ['investigation', 'completed', 'casa'], ['implementation', 'completed', 'torre'],
+  ]);
+});
+
+for (const state of ['disabled', 'missing', 'live'] as const) {
+  test(`T102: runner ${state} bloquea solo la activity que lo selecciona y nunca abre transporte`, async () => {
+    store.createRunner({ name: 'casa', kind: 'local' });
+    const profile = saveProfile(dir, { ...defaultProfile(), schemaVersion: 2, roles: { implement: { runner: 'torre' } } }).digest;
+    const ws = workstream({ profile });
+    store.setWorkstreamRunner(ws.id, 'casa');
+    const change = store.createChange(ws.id, 'x', 'd');
+    if (state === 'disabled') store.setRunnerEnabled('torre', false);
+    if (state === 'missing') store.db.query("DELETE FROM runners WHERE name = 'torre'").run();
+    let sessions = 0;
+    const options = opts(ws.id, { live: state === 'live', runnerTransport: r => {
+      sessions++;
+      return fake('auto')(r);
+    } });
+    if (state === 'live') {
+      // El pool que ya arrancó mantiene la barrera por activity si después cambia la configuración.
+      await processActivity(store, store.claimActivity(ws.id, 'worker')!, 'worker', options);
+      await processActivity(store, store.claimActivity(ws.id, 'worker')!, 'worker', options);
+    } else await runPool(store, options);
+    expect(sessions).toBe(0);
+    const [first, second] = store.listActivities({ changeId: change.id });
+    expect(first).toMatchObject({ kind: 'investigation', status: 'completed', runner: 'casa' });
+    expect(second).toMatchObject({ kind: 'implementation', status: 'blocked',
+      error: expect.stringContaining(({ disabled: 'RUNNER_DISABLED', missing: 'RUNNER_NOT_FOUND', live: 'LIVE_NOT_REMOTE' })[state]) });
+  });
+}
+
+test('T102-H2: --live rechaza en el arranque si un rol efectivo usa SSH', async () => {
+  store.createRunner({ name: 'casa', kind: 'local' });
+  const base = { ...defaultProfile(), schemaVersion: 2 as const };
+  const inherited = saveProfile(dir, { ...base, roles: { investigate: { runner: 'casa' } } }).digest;
+  const explicit = saveProfile(dir, { ...base, roles: { qa: { runner: 'torre' } } }).digest;
+  for (const [slug, fallback, profile] of [['hereda', 'torre', inherited], ['explicito', 'casa', explicit]] as const) {
+    const ws = workstream({ slug, profile });
+    store.setWorkstreamRunner(ws.id, fallback);
+    const change = store.createChange(ws.id, 'x', 'd');
+    const before = store.listActivities({ changeId: change.id });
+    await expect(runPool(store, opts(ws.id, { live: true, runnerTransport: noSession() }))).rejects.toThrow('LIVE_NOT_REMOTE');
+    expect(store.listActivities({ changeId: change.id })).toEqual(before);
+    expect(store.getChange(change.id).status).toBe(change.status);
+  }
+});
+
+test('T102-H2/P7: --live permite SSH del workstream si todos los roles efectivos son locales', async () => {
+  store.createRunner({ name: 'casa', kind: 'local' });
+  const profile = saveProfile(dir, {
+    ...defaultProfile(), schemaVersion: 2,
+    roles: Object.fromEntries(ROLES.map(role => [role, { runner: 'casa' }])),
+  }).digest;
+  const ws = workstream({ profile });
+  store.setWorkstreamRunner(ws.id, 'torre');
+  const change = store.createChange(ws.id, 'x', 'd');
+  await runPool(store, opts(ws.id, { live: true, runnerTransport: noSession() }));
+  expect(store.listActivities({ changeId: change.id }).map(a => [a.status, a.runner])).toEqual([
+    ['completed', 'casa'], ['completed', 'casa'],
+  ]);
+});
+
+test('T101-H3/P9: un perfil ilegible se diagnostica al reclamar antes de comprobar el pin del fallback', async () => {
+  mkdirSync(join(dir, 'bin')); mkdirSync(join(dir, 'home'));
+  const binary = join(dir, 'bin', 'claude');
+  writeFileSync(binary, '#!/bin/sh\nexit 77\n');
+  chmodSync(binary, 0o755);
+  writeFileSync(join(dir, 'home', 'agents.json'), JSON.stringify({ agentBinaries: { claude: 'a'.repeat(64) } }));
+  const saved = { PATH: process.env.PATH, FABRICA_HOME: process.env.FABRICA_HOME };
+  process.env.PATH = `${join(dir, 'bin')}:${saved.PATH}`;
+  process.env.FABRICA_HOME = join(dir, 'home');
+  try {
+    const ws = workstream({ agent: 'claude' });
+    const change = store.createChange(ws.id, 'x', 'd');
+    store.db.query('UPDATE workstreams SET profile = ? WHERE id = ?').run('c'.repeat(64), ws.id);
+    await runPool(store, opts(ws.id, { runnerTransport: noSession() }));
+    expect(store.listActivities({ changeId: change.id })[0]?.error).toContain('perfil desconocido');
+  } finally { for (const [key, value] of Object.entries(saved)) if (value === undefined) delete process.env[key]; else process.env[key] = value; }
+});
+
+test('T101-H3/F2: el resolver ignora runners en un perfil histórico incluso en memoria', () => {
+  expect(roleRunner({ ...defaultProfile(), roles: { qa: { runner: 'casa' } } }, 'qa')).toBeUndefined();
+});
+
+test('T102-H5: una pausa después de la reserva y durante la preparación evita abrir SSH', async () => {
+  const ws = workstream();
+  store.setWorkstreamRunner(ws.id, 'torre');
+  const change = store.createChange(ws.id, 'x', 'd');
+  const a = store.claimActivity(ws.id, 'worker')!;
+  const other = new Store(store.dbPath);
+  const provenance = store.setActivityProvenance.bind(store);
+  const pause = spyOn(store, 'setActivityProvenance').mockImplementation((id, digest, sha, run) => {
+    provenance(id, digest, sha, run);
+    if (run?.runner === 'torre') other.setRunnerEnabled('torre', false);
+  });
+  let sessions = 0;
+  try {
+    await processActivity(store, a, 'worker', opts(ws.id, { runnerTransport: r => {
+      sessions++;
+      return fake('auto')(r);
+    } }));
+    expect(store.getRunner('torre').enabled).toBe(false);
+    expect(sessions).toBe(0);
+    expect(store.getActivity(a.id)).toMatchObject({ status: 'blocked', error: 'RUNNER_DISABLED: torre' });
+    expect(store.listEvents(ws.id, undefined, change.id).some(e => String(e.message).includes('encargo enviado'))).toBe(false);
+  } finally { pause.mockRestore(); other.close(); }
 });

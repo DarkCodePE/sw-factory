@@ -1,4 +1,7 @@
 import { expect, test } from 'bun:test';
+import { mkdtempSync, readFileSync, rmSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 import { boundedAgentOutput, getAgent, runAgent, type AgentAdapter } from '../src/agents.ts';
 
 // Literal pre-confinement allowlist: host runs must retain it byte for byte.
@@ -86,4 +89,16 @@ test('claude --output-format json: el informe sale de result y el coste de total
   expect(run.status.kind).toBe('done');
   expect(run.output).toBe('STATUS: done\n\nhecho');
   expect(run.usage).toEqual({ costUsd: 0.0421, inputTokens: 115, outputTokens: 7 });
+});
+
+test('T99-H3: captura separa turnos cuando stdout o stderr no acaban en salto', async () => {
+  const dir = mkdtempSync(join(tmpdir(), 'fab-captura-turnos-'));
+  const capturePath = join(dir, 'agent.log');
+  try {
+    for (const script of ["printf primero", "printf segundo; printf diagnóstico >&2", "printf tercero"]) {
+      const agent: AgentAdapter = { name: 'test-agent', command: () => ['sh', '-c', script] };
+      await runAgent(agent, 'prompt', dir, undefined, { capturePath });
+    }
+    expect(readFileSync(capturePath, 'utf8')).toBe('primero\nsegundo\n[stderr]\ndiagnóstico\ntercero');
+  } finally { rmSync(dir, { recursive: true, force: true }); }
 });

@@ -9,9 +9,10 @@ import { parseArgs } from 'node:util';
 import { captureMain } from './manifest-capture.ts';
 import { AGENT_NAMES } from './agents.ts';
 import { agentsMain } from './agents-verify.ts';
-import { loadMcpRegistry, mcpListMain, McpRegistryError } from './mcp-registry.ts';
+import { mcpListMain, McpRegistryError, unregisteredMcp } from './mcp-registry.ts';
 import { profileMain } from './profile-cli.ts';
 import { exportDefinition, importDefinition } from './definition.ts';
+import { printable } from './printable.ts';
 import { benchMain } from './bench-cli.ts';
 import { improveMain } from './improve-cli.ts';
 import { abortOnSigint, scoreMain } from './scorers-cli.ts';
@@ -46,7 +47,7 @@ import { protectedIntegrity, purgeRegenerableCaches } from './validators/integri
 import { mergeRecoverably } from './validators/publish.ts';
 import { ensureStateDir } from './state-dir.ts';
 import { NOTE_ATTACHMENT_MAX } from './note-attachments.ts';
-import { DEFAULT_DIGEST } from './profile.ts';
+import { DEFAULT_DIGEST, resolveProfile } from './profile.ts';
 
 // Bun's native console bypasses fd-backed Writable queues. For pipes/files,
 // proxies force console output through queues we can drain before exit.
@@ -80,7 +81,7 @@ const HELP = `fab — agente de código y fábrica de software local
   fab --cwd <path> [prompt]     conversación, --use-spec o --mission --auto high
   fab web [--port 4310] [--write]  web local en 127.0.0.1; con --write habilita las acciones (enlace de un solo uso); --port 0 elige un puerto libre
   fab --version
-  fab agents verify [--pin]         pines sha256 de los binarios claude, codex, agy, droid; --pin guarda los actuales
+  fab agents verify [--pin]         pines sha256 de los binarios claude, codex, agy, droid; --pin guarda pines y mide versión (--version con entorno mínimo)
   fab update [--channel stable|prerelease] [--check]
   fab jira show <KEY> | import <KEY> --ws <slug> [--triage] [--dry-run]
   fab jira comment <changeId> [--dry-run]
@@ -106,12 +107,13 @@ const HELP = `fab — agente de código y fábrica de software local
   fab score add <activityId> --scorer <name> | list <slug> [--change <id>] [--json]
   fab score backfill <slug> [--since <iso>] [--scorer <name>] [--yes]   vista previa (nº y coste) y, con --yes, encola
   fab ws list
-  fab runner add <nombre> --ssh <alias> [--max-bundle-mb N] | --local [--confine]   runner remoto (el código sale de tu máquina) o local
+  fab runner add|update <nombre> --ssh <alias> [--max-bundle-mb N] | --local [--confine]   runner remoto (el código sale de tu máquina) o local
   fab runner list [--json] | enable <nombre> | disable <nombre> | rm <nombre> | check <nombre>
   fab runner serve --root <dir>   lado runner (lo arranca sshd por el comando forzado)
+  fab ws profile <ws> <digest>   asigna un perfil guardado
   fab ws runner <ws> <nombre> | --none   asigna o quita el runner del workstream
   fab profile export [--out f] | import <f> | inspect <digest> | list   perfiles de instrucciones inmutables por digest
-  fab definition export <slug> <dir> | import <dir> --repo <path> [--slug <slug>]   definición como árbol de ficheros (sin rutas ni valores de entorno)
+  fab definition export <slug> <dir> | import <dir|archivo.tar> --repo <path> [--slug <slug>]   definición como árbol de ficheros (sin rutas ni valores de entorno)
   fab api-key create --name <n> --scope read|decide | list | revoke <id|nombre>   claves de la API local (la clave se muestra una vez)
   fab ws state <slug> <active|paused|archived>
   fab ws agent <ws> <adaptador>   cambia el adaptador de un workstream existente; falla con trabajo vivo
@@ -123,6 +125,7 @@ const HELP = `fab — agente de código y fábrica de software local
   --verify-setup <comando>  Fase previa al gate, repetible: con red, worktree solo lectura, escribe solo en $FAB_DEPS; el gate lo monta ro
                       (PYTHONPATH, PATH/bin, NODE_PATH). Se repite solo si cambia. Ej: --verify-setup 'python3 -m pip install --target $FAB_DEPS pytest' --verify 'pytest -q'
   fab resident report [--json]  informe de solo lectura de lo registrado (cursor, decisiones, label-not-verified, efectos con reintentos)
+  fab resident config [--repo owner/name] [--label fab] [--interval s] [--mode off|observe]  muestra o guarda resident.json (lo que edita la web); los flags de fab resident mandan sobre él
   fab resident --repo owner/name [--mode off|observe|auto] [--workstream <slug>] [--once] [--since ISO] [--interval s] [--label fab] [--allow-author u] [--trust OWNER,MEMBER] [--hook-port N]
                                 residente en modo observe: registra would_admit de issues sin crear changes
   fab automation add <slug> --name <n> (--cron "<e>" | --every hour|day|week [--at HH:MM] [--weekday N]) --title <t> --body-file <f>
@@ -186,7 +189,7 @@ async function main(argv: string[]): Promise<number> {
   if (argv[0] === 'runner') {
     const store = openStore();
     try { return await runnerMain(argv.slice(1), store); } catch (err) {
-      console.error(err instanceof StoreError ? `error (${err.code}): ${err.message}` : `error: ${(err as Error).message}`);
+      console.error(err instanceof StoreError ? `error (${err.code}): ${printable(err.message)}` : `error: ${printable((err as Error).message)}`);
       return 1;
     } finally { store.close(); }
   }
@@ -318,10 +321,9 @@ async function main(argv: string[]): Promise<number> {
           else if (values.import !== undefined) names = readNameList(values.import);
           if (names !== undefined) {
             if (!isEnv && names?.length) {
-              let reg;
-              try { reg = loadMcpRegistry(STATE_DIR); } catch (e) { if (e instanceof McpRegistryError) throw new StoreError('invalid_input', `fab ws mcp: ${e.message}`); throw e; }
-              const unknown = names!.filter(n => !(n in reg));
-              if (unknown.length) throw new StoreError('invalid_input', `fab ws mcp: no está en el registro MCP (mcp-servers.json): ${unknown.join(', ')}`);
+              let unknown: string[];
+              try { unknown = unregisteredMcp(STATE_DIR, names!); } catch (e) { if (e instanceof McpRegistryError) throw new StoreError('invalid_input', `fab ws mcp: ${e.message}`); throw e; }
+              if (unknown.length) throw new StoreError('invalid_input', `fab ws mcp: ${unknown.length} nombre(s) no están en el registro MCP (mcp-servers.json)`); // se cuenta, no se nombra: un valor pegado no vuelve a la terminal (T103-H14)
             }
             const upd = isEnv ? store.setWorkstreamEnvAllow(ws.id, names) : store.setWorkstreamMcpAllow(ws.id, names);
             console.log(`${upd.slug} ${sub}: ${(isEnv ? upd.envAllow : upd.mcpAllow)?.join(', ') ?? 'modo anterior'}`);
@@ -340,13 +342,21 @@ async function main(argv: string[]): Promise<number> {
           const ws = store.getWorkstream(slug);
           store.setWorkstreamAgent(ws.id, agent, ws.agent, ws.profile ?? DEFAULT_DIGEST); // mismas guardas que la web: sin trabajo vivo y con la configuración que se acaba de leer
           console.log(`${ws.slug} agent: ${ws.agent} -> ${agent}`);
+        } else if (sub === 'profile') {
+          const [slug, digest] = rest;
+          if (!slug || !digest) throw new StoreError('invalid_input', 'usage: fab ws profile <ws> <digest>');
+          const ws = store.getWorkstream(slug);
+          store.assignProfile(ws.id, digest, ws.profile ?? DEFAULT_DIGEST, ws.agent);
+          console.log(`${ws.slug} profile: ${digest}`);
+          const { ssh } = store.profileRunnerSelection(resolveProfile(STATE_DIR, digest).profile);
+          if (ssh.length) console.log(`aviso: ${CODE_LEAVES_WARNING} ${ssh.join(', ')}.`);
         } else if (sub === 'runner') {
           const [slug, name] = rest;
           if (!slug || !!name === !!values.none) throw new StoreError('invalid_input', 'usage: fab ws runner <ws> <nombre> | --none');
           const upd = store.setWorkstreamRunner(slug, name ?? null);
           console.log(`${upd.slug} runner: ${upd.runner ?? 'ninguno'}`);
           if (name && store.getRunner(name).kind === 'ssh') console.log(`aviso: ${CODE_LEAVES_WARNING} ${store.getRunner(name).target}.`);
-        } else throw new StoreError('invalid_input', 'fab ws create|list|state|agent|env|mcp|runner');
+        } else throw new StoreError('invalid_input', 'fab ws create|list|state|agent|env|mcp|profile|runner');
         return 0;
       }
       case 'definition': {
@@ -356,7 +366,7 @@ async function main(argv: string[]): Promise<number> {
         } else if (sub === 'import' && rest[0] && values.repo) {
           const r = importDefinition(store, STATE_DIR, resolve(rest[0]), resolve(values.repo), values.slug);
           console.log(`workstream ${r.slug} creado en draft con perfil ${r.digest}${r.skills.length ? `; skills del árbol (no se escriben en el repo): ${r.skills.join(', ')}` : ''}`);
-        } else throw new StoreError('invalid_input', 'usage: fab definition export <slug> <dir> | import <dir> --repo <path> [--slug <slug>]');
+        } else throw new StoreError('invalid_input', 'usage: fab definition export <slug> <dir> | import <dir|archivo.tar> --repo <path> [--slug <slug>]');
         return 0;
       }
       case 'signal': {
@@ -500,6 +510,7 @@ async function main(argv: string[]): Promise<number> {
       }
       case 'note': {
         const c = findByPrefix(allChanges(store), sub ?? '', 'change');
+        if (!rest.length && values.file) throw new StoreError('invalid_input', 'fab note --file necesita el texto de la nota'); // C90-H4
         if (!rest.length) { // sin texto: lista las notas con su estado de entrega
           const notes = store.listChangeNotes(c.id);
           if (!notes.length) console.log(`change ${short(c.id)}: sin notas`);
@@ -509,7 +520,7 @@ async function main(argv: string[]): Promise<number> {
         let attachment;
         if (values.file) { // el Store valida nombre, extensión, tamaño y estado privado, igual que la web
           let size: number;
-          try { size = statSync(values.file).size; } catch { throw new StoreError('invalid_input', `no se puede leer ${values.file}`); }
+          try { const st = statSync(values.file); if (!st.isFile()) throw 0; size = st.size; } catch { throw new StoreError('invalid_input', `no se puede leer ${values.file}: no es un fichero regular`); } // C90-H2
           if (size > NOTE_ATTACHMENT_MAX) throw new StoreError('invalid_input', `el adjunto ocupa ${size} bytes; el máximo es ${NOTE_ATTACHMENT_MAX}`);
           attachment = { name: basename(values.file), bytes: new Uint8Array(readFileSync(values.file)) };
         }
@@ -544,7 +555,7 @@ async function main(argv: string[]): Promise<number> {
         return 1;
     }
   } catch (err) {
-    console.error(err instanceof StoreError ? `error (${err.code}): ${err.message}` : err);
+    console.error(err instanceof StoreError ? `error (${err.code}): ${printable(err.message)}` : printable(String((err as Error)?.stack ?? err)));
     return 1;
   } finally {
     store.close();

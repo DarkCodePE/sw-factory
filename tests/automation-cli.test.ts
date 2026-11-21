@@ -198,3 +198,40 @@ test('update rechaza un cron inválido, un nombre ocupado y un id desconocido si
   expect(store.getAutomation(a!.id)).toEqual(before);
   store.close();
 });
+test('C90-H1: update con --at o --weekday sin --every ni --cron falla y no cambia nada', async () => {
+  const { root, store } = fixture();
+  await run(store, ['add', 'ws', '--name', 'a', '--every', 'day', '--at', '07:30', '--title', 't', '--body-file', join(root, 'body.md')]);
+  const id = store.listAutomations()[0]!.id;
+  const before = store.getAutomation(id);
+  for (const args of [['--at', '09:00'], ['--weekday', '3']]) expect((await run(store, ['update', id, ...args])).code).toBe(1);
+  expect(store.getAutomation(id)).toEqual(before);
+  expect((await run(store, ['update', id, '--every', 'day', '--at', '09:00'])).code).toBe(0);
+  store.close();
+});
+test('C90-H2: --body-file exige un fichero regular (directorio y /dev/zero fallan sin leer)', async () => {
+  const { root, store } = fixture();
+  await run(store, ['add', 'ws', '--name', 'a', '--cron', '5 4 * * *', '--title', 't', '--body-file', join(root, 'body.md')]);
+  const id = store.listAutomations()[0]!.id;
+  for (const f of [root, '/dev/zero']) {
+    for (const args of [['update', id], ['add', 'ws', '--name', 'z', '--cron', '5 4 * * *', '--title', 't']]) {
+      const r = await run(store, [...args, '--body-file', f]);
+      expect(r.code).toBe(1); expect(r.err).toContain('no es un fichero regular');
+    }
+  }
+  expect(store.listAutomations()).toHaveLength(1);
+  store.close();
+});
+test('C90-H3: update y rm dejan el evento de auditoría con el actor', async () => {
+  const { root, store } = fixture();
+  const prev = process.env.FAB_ACTOR; process.env.FAB_ACTOR = 'dueño-cli';
+  try {
+    await run(store, ['add', 'ws', '--name', 'a', '--cron', '5 4 * * *', '--title', 't', '--body-file', join(root, 'body.md')]);
+    const id = store.listAutomations()[0]!.id;
+    expect((await run(store, ['update', id, '--name', 'b'])).code).toBe(0);
+    expect((await run(store, ['rm', id])).code).toBe(0);
+  } finally { if (prev === undefined) delete process.env.FAB_ACTOR; else process.env.FAB_ACTOR = prev; }
+  const events = store.listEvents('ws', -1).filter(e => e.actor === 'dueño-cli').map(e => String(e.message));
+  expect(events.some(m => m.includes('editada') && m.includes('"name":"a"'))).toBe(true);
+  expect(events.some(m => m.includes('borrada'))).toBe(true);
+  store.close();
+});

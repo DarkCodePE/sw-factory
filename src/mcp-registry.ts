@@ -95,6 +95,19 @@ export function loadMcpRegistry(stateDir: string): McpRegistry {
   return Object.fromEntries(Object.entries(raw.servers).map(([n, s]) => [n, parseServer(n, s)]));
 }
 
+/** Lo que se pinta en lugar de un nombre MCP por rol que no está en el registro: un valor pegado nunca se repite (T103-H11). */
+export const MCP_OUTSIDE = '(nombre fuera del registro)';
+/** Nombres del registro; un registro ausente o roto cuenta como vacío (todo queda «fuera»). */
+export function registeredMcpNames(stateDir: string): Set<string> {
+  try { return new Set(Object.keys(loadMcpRegistry(stateDir))); } catch { return new Set(); }
+}
+
+/** Nombres que no están en el registro (CLI y web comparten la comprobación). Lanza McpRegistryError si el registro es defectuoso. */
+export function unregisteredMcp(stateDir: string, names: string[]): string[] {
+  const reg = loadMcpRegistry(stateDir);
+  return names.filter(n => !Object.hasOwn(reg, n));
+}
+
 /** fab mcp list (sin --settings): nombre, tipo y variables requeridas con «definida»/«no definida»; ningún valor. */
 export function mcpListMain(stateDir: string, env: NodeJS.ProcessEnv = process.env): number {
   try {

@@ -9,7 +9,7 @@ import { verifierArgv } from './agent/mission-evidence.ts';
 import { runDirectory } from './manifest.ts';
 import { runPool } from './pool.ts';
 import { DEFAULT_PROTECTED_PATHS, protectedIntegrity, purgeRegenerableCaches } from './validators/integrity.ts';
-import { canonicalJson, DEFAULT_DIGEST, loadProfile, resolveProfile, saveProfile } from './profile.ts';
+import { canonicalJson, DEFAULT_DIGEST, loadProfile, profileRunnerNames, resolveProfile, saveProfile } from './profile.ts';
 import { Store, StoreError } from './store.ts';
 
 export const SPLITS = ['development', 'validation', 'qualification'] as const;
@@ -228,6 +228,9 @@ export async function restoreProtected(worktree: string, base: string, paths: st
 export async function runArm(stateDir: string, root: string, task: SuiteTask, digest: string, agent: string, acceptBinaries: boolean, confine: boolean): Promise<ArmResult> {
   const started = Date.now();
   const fail = (error: string): ArmResult => ({ integrityOk: null, success: false, diffLines: 0, durationMs: Date.now() - started, costUsd: null, changeId: null, error, workerReport: null });
+  const profile = digest === DEFAULT_DIGEST ? undefined : loadProfile(stateDir, digest);
+  const runners = profile ? profileRunnerNames(profile) : [];
+  if (runners.length) return fail(`El inventario de los experimentos y benchmarks no admite runners por rol (${runners.join(', ')}).`);
   mkdirSync(root, { recursive: true });
   const clone = join(root, 'repo');
   const git = ['git', '-c', 'core.hooksPath=/dev/null'];
@@ -237,7 +240,7 @@ export async function runArm(stateDir: string, root: string, task: SuiteTask, di
   const base = (await sh(clone, [...git, 'rev-parse', 'HEAD'])).out.trim();
   const state = join(root, 'state');
   mkdirSync(state, { recursive: true });
-  if (digest !== DEFAULT_DIGEST) saveProfile(state, loadProfile(stateDir, digest));
+  if (profile) saveProfile(state, profile);
   const store = new Store(join(state, 'fabrica.db'));
   let changeId: string | null = null;
   let error: string | null = null;

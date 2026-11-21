@@ -18,7 +18,7 @@ const fail = (m: string) => new StoreError('invalid_input', m);
 
 function readBody(file: string): string {
   let size: number;
-  try { size = statSync(file).size; } catch { throw fail(`no se puede leer ${file}`); }
+  try { const st = statSync(file); if (!st.isFile()) throw 0; size = st.size; } catch { throw fail(`no se puede leer ${file}: no es un fichero regular`); } // C90-H2: /dev/zero no termina
   if (size > MAX_BODY) throw fail(`el fichero del cuerpo ocupa ${size} bytes; el máximo es ${MAX_BODY}`);
   return readFileSync(file, 'utf8');
 }
@@ -71,6 +71,7 @@ export async function automationMain(argv: string[], store: Store, opts: Automat
       }
       case 'update': {
         const a = resolve(store, arg);
+        if ((v.at || v.weekday) && !v.cron && !v.every) throw fail('--at y --weekday necesitan --every (o --cron): sin él no cambian el horario'); // C90-H1
         const schedule = v.cron || v.every ? scheduleOrFail(v) : a.cron;
         let body = a.body;
         if (v['body-file']) body = readBody(v['body-file']);

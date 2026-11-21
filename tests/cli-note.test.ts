@@ -64,3 +64,16 @@ test('--file rechaza un fichero ilegible, demasiado grande o con extensión no a
   }
   expect(notes()).toHaveLength(0);
 });
+test('C90-H2: --file exige un fichero regular (directorio y /dev/zero: invalid_input, ninguna nota)', () => {
+  for (const f of [dir, '/dev/zero']) {
+    const r = fab('note', id, 'texto', '--file', f);
+    expect(r.exitCode).not.toBe(0); expect(r.stderr.toString()).toContain('no es un fichero regular');
+  }
+  expect(notes()).toHaveLength(0);
+});
+test('C90-H4: --file sin texto falla en vez de listar las notas', () => {
+  const f = join(dir, 'a.txt'); writeFileSync(f, 'x');
+  const r = fab('note', id, '--file', f);
+  expect(r.exitCode).not.toBe(0); expect(r.stderr.toString()).toContain('necesita el texto');
+  expect(notes()).toHaveLength(0);
+});

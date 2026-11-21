@@ -4,7 +4,8 @@ import { isAbsolute, join, relative, resolve, sep } from 'node:path';
 import type { Activity, Store } from './store.ts';
 
 export const EVIDENCE_LIMIT = 256 * 1024;
-export interface EvidenceText { text: string; truncated: boolean }
+export type ClaudeFrame = Record<string, unknown>;
+export interface EvidenceText { text: string; truncated: boolean; claudeFrames?: ClaudeFrame[]; claudeIncomplete?: boolean }
 const inside = (root: string, path: string) => { const rel = relative(root, path); return rel !== '..' && !rel.startsWith(`..${sep}`) && !isAbsolute(rel); };
 
 /** Las rutas son relativas a stateDir. Se rechazan todos los symlinks, incluidos los internos. */
@@ -42,6 +43,9 @@ export function readEvidence(stateDir: string, path: string): EvidenceText | nul
       while (i > floor && text[i - 1]!.trim() !== '') i--;
       text = text.slice(0, i);
     }
+    if (path.endsWith('.log') && /^\s*\{\s*"type"\s*:\s*"(?:system|assistant|user|stream_event|rate_limit_event)"/.test(text)) {
+      return readClaudeEvidence(text, truncated);
+    }
     // JSON histórico puede contener PEM con saltos escapados; redactar los valores decodificados.
     if (!truncated && path.endsWith('.json')) {
       try {
@@ -49,13 +53,15 @@ export function readEvidence(stateDir: string, path: string): EvidenceText | nul
         return { text: textJson, truncated: false };
       } catch { /* Mostrar JSON roto como texto. */ }
     }
-    text = text.replace(new RegExp(`("[\\w-]*(?:${SECRET_WORDS})[\\w-]*"\\s*:\\s*)"(?:[^"\\\\]|\\\\.)*"`, 'gi'), '$1"[REDACTED]"');
-    text = redactForWeb(text);
-    return { text, truncated };
+    return { text: redactEvidenceText(text), truncated };
   } catch (error) {
     if ((error as NodeJS.ErrnoException).code === 'ENOENT') return null;
     throw error;
   } finally { if (fd !== undefined) closeSync(fd); }
+}
+
+function redactEvidenceText(text: string): string {
+  return redactForWeb(text.replace(new RegExp(`("[\\w-]*(?:${SECRET_WORDS})[\\w-]*"\\s*:\\s*)"(?:[^"\\\\]|\\\\.)*"`, 'gi'), '$1"[REDACTED]"'));
 }
 
 // Regla de presentación; no amplía redact ni cambia la lectura histórica de improve.
@@ -71,6 +77,71 @@ export function evidencePath(changeId: string, file: string): string {
 // Palabras que delatan un valor secreto en una clave; `pass` y las cabeceras van aparte y exactas, para no atrapar «bypass» o «Cookie banner».
 const SECRET_WORDS = 'api[_-]?key|token(?!izer)|secret|password|passwd|credential|private[_-]?key';
 const SECRET_KEY = new RegExp(`${SECRET_WORDS}|^(?:pass|pwd|authorization|proxy-authorization|cookie|set-cookie)$|[_-]pwd$`, 'i');
+
+// Redacta objetos y claves sensibles después de decodificar escapes JSON. Acota el anidamiento del log no confiable.
+function redactLogValue(value: unknown, depth = 0): unknown {
+  if (depth >= 64) return '[REDACTED]';
+  if (typeof value === 'string') return redactForWeb(value);
+  if (Array.isArray(value)) return value.map(item => redactLogValue(item, depth + 1));
+  if (!value || typeof value !== 'object') return value;
+  return Object.fromEntries(Object.entries(value).map(([key, item]) => [
+    redactForWeb(key),
+    typeof item === 'number' && /^(?:input|output|cache_creation_input|cache_read_input)_tokens$/.test(key) ? item
+      : SECRET_KEY.test(key) ? '[REDACTED]' : redactLogValue(item, depth + 1),
+  ]));
+}
+
+// Un fragmento puede acabar dentro de una cadena. Decodifica solo los escapes completos.
+function decodeLogFragment(line: string): string {
+  return line.replace(/\\(?:["\\/bfnrt]|u[0-9a-fA-F]{4})/g, escape => JSON.parse('"' + escape + '"') as string);
+}
+
+function readClaudeEvidence(text: string, truncated: boolean): EvidenceText {
+  const lines = text.split('\n');
+  const frames: ClaudeFrame[] = [];
+  const rendered: string[] = [];
+  let plain: { text: string; decoded?: string }[] = [];
+  let incomplete = truncated;
+  let stderr = false;
+  const flushPlain = () => {
+    if (!plain.length) return;
+    const decoded = plain.map(line => line.decoded ?? line.text).join('\n');
+    const redacted = redactEvidenceText(decoded);
+    rendered.push(redacted === decoded ? redactEvidenceText(plain.map(line => line.text).join('\n')) : redacted);
+    plain = [];
+  };
+  for (const [index, line] of lines.entries()) {
+    let fallback: (typeof plain)[number] = { text: line };
+    if (line.trimEnd() === '[stderr]') {
+      stderr = true;
+    } else if (line.trim()) {
+      if (truncated && index === lines.length - 1) {
+        fallback.decoded = decodeLogFragment(line);
+      } else {
+        try {
+          const value = JSON.parse(line) as ClaudeFrame | null;
+          const redacted = redactLogValue(value);
+          if (value && typeof value.type === 'string' && (!stderr || (value.type === 'system' && value.subtype === 'init'))) {
+            stderr = false;
+            flushPlain();
+            frames.push(redacted as ClaudeFrame);
+            rendered.push(JSON.stringify(redacted));
+            continue;
+          }
+          if (stderr && (value?.type === 'assistant' || value?.type === 'user' || value?.type === 'result')) incomplete = true;
+          fallback = { text: JSON.stringify(redacted) };
+        } catch {
+          fallback.decoded = decodeLogFragment(line);
+        }
+      }
+      if (!stderr) incomplete = true;
+    }
+    plain.push(fallback);
+  }
+  flushPlain();
+  return { text: rendered.join('\n'), truncated, claudeFrames: frames, claudeIncomplete: incomplete };
+}
+
 // Valor: entre comillas con escapes, comilla sin cierre (corte de evidencia o valor enorme: hasta fin de línea), o hasta el siguiente separador.
 const VALUE = String.raw`("(?:[^"\\\n]|\\.){0,4096}"|'(?:[^'\\\n]|\\.){0,4096}'|["'][^\r\n]*|[^\s"',}]+)`;
 const quoted = (v: string) => /^["']/.test(v) ? `${v[0]}[REDACTED]${v[0]}` : '[REDACTED]';
