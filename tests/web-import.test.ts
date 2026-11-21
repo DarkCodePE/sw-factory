@@ -238,3 +238,23 @@ test('definición: destino inválido (repo, slug) o slug ya existente no crea na
   expect((await confirmFrom(await upload('/definicion/importar', { repo, slug: 'otro' }, bytes), '/definicion/importar', { slug: 'prueba' })).status).toBe(400);
   expect(snapshot()).toBe(before);
 });
+
+// ---- lector de tar: cada regla por sí sola (la vista previa tiene una segunda línea de defensa en el esquema) ------------
+import { readTar } from '../src/definition-tar.ts';
+test.each([
+  ['ruta absoluta', [{ name: '/a.md', data: 'x' }]], ['barra invertida', [{ name: 'a\\b.md', data: 'x' }]], ['segmento vacío', [{ name: 'a//b.md', data: 'x' }]],
+  ['.. final', [{ name: 'a/..', data: 'x' }]], ['prefijo ustar', [{ name: 'a.md', prefix: 'p', data: 'x' }]], ['repetido', [{ name: 'a.md', data: 'x' }, { name: 'a.md', data: 'y' }]],
+  ['fichero grande', [{ name: 'a.md', data: 'x'.repeat(65_537) }]], ['UTF-8 roto', [{ name: 'a.md', data: new Uint8Array([0xff]) }]], ['NUL', [{ name: 'a.md', data: 'a\0b' }]],
+] as [string, Entry[]][])('readTar rechaza %s', (_n, entries) => { expect(() => readTar(tar(entries))).toThrow(/paquete|ruta|supera|repetido|UTF-8|texto|prefijo/); });
+test('readTar acepta ./ y directorios y devuelve ruta → texto', () => {
+  expect([...readTar(tar([{ name: './', type: '5' }, { name: './a/', type: '5' }, { name: './a/b.md', data: 'hola ñ' }]))]).toEqual([['a/b.md', 'hola ñ']]);
+});
+
+test('confirmar una definición distinta de la vista previa (digest) o con campos repetidos da 400', async () => {
+  const before = snapshot();
+  const other = goodTar(f => { const p = JSON.parse(f.get('profile/profile.json')!); p.model = undefined; f.set('profile/worker/rules.md', f.get('profile/worker/rules.md')! + '\nOtra regla.'); });
+  const preview = await upload('/definicion/importar', { repo, slug: '' }, goodTar());
+  expect((await confirmFrom(preview, '/definicion/importar', { payload: Buffer.from(other).toString('base64') })).status).toBe(400);
+  expect((await upload('/definicion/importar', { repo, slug: '' }, goodTar(), fd => fd.append('repo', repo))).status).toBe(400);
+  expect(snapshot()).toBe(before);
+});
