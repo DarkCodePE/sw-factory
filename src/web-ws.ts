@@ -25,13 +25,16 @@ type Values = Record<(typeof FIELDS)[number], string>;
 const STEP_OF = { repo: 0, slug: 1, goal: 1, agent: 2, profile: 2, verify: 3 } as const;
 const values = (get: (k: string) => string | null): Values => Object.fromEntries(FIELDS.map(k => [k, (get(k) ?? '').trim()])) as Values;
 
+/** Mismo criterio de repositorio para el asistente y para importar una definición (T105). */
+export function repoProblem(repo: string): string | null {
+  if (!isAbsolute(repo)) return 'Escribe una ruta absoluta.';
+  if (!existsSync(repo) || !statSync(repo).isDirectory()) return 'La ruta no existe o no es un directorio.';
+  return existsSync(join(repo, '.git')) ? null : 'La ruta no es un repositorio git (falta .git).';
+}
+
 /** Un validador por paso; devuelve el mensaje de error o null. */
 const STEPS: { title: string; check(v: Values, store: Store, stateDir: string): string | null }[] = [
-  { title: 'Repositorio local', check: v => {
-    if (!isAbsolute(v.repo)) return 'Escribe una ruta absoluta.';
-    if (!existsSync(v.repo) || !statSync(v.repo).isDirectory()) return 'La ruta no existe o no es un directorio.';
-    return existsSync(join(v.repo, '.git')) ? null : 'La ruta no es un repositorio git (falta .git).';
-  } },
+  { title: 'Repositorio local', check: v => repoProblem(v.repo) },
   { title: 'Objetivo', check: (v, store) => {
     if (!v.goal || v.goal.length > 2000) return 'El objetivo debe tener entre 1 y 2000 caracteres.';
     if (!SLUG.test(v.slug)) return 'El slug usa a-z, 0-9 y guion (máximo 63).';

@@ -1,13 +1,14 @@
 // Vista web del árbol de definición de un workstream (T89). Solo lectura.
 // Genera el árbol en memoria mediante buildDefinition() (src/definition.ts) y muestra el contenido de cada fichero.
 // Invariantes de diseño (catálogo §7.10):
-// - Sin edición ni subida en la web: cambiar es un PR.
+// - Sin edición en la web: cambiar es un PR. La única escritura es importar un paquete a un workstream nuevo en borrador (T105, web-import.ts).
 // - No escribe en disco: genera el árbol en memoria.
 // - Coincide exactamente con `fab definition export`.
 // - El árbol no contiene rutas absolutas ni valores de entorno (D-K).
 // - Un fichero grande se trunca con aviso visible.
 import { buildDefinition } from './definition.ts';
 import type { Store } from './store.ts';
+import { importDefinitionForm } from './web-import.ts';
 
 type Escape = (value: unknown) => string;
 
@@ -38,7 +39,13 @@ export function safeTruncateUtf8(buf: Buffer, maxBytes: number): string {
 
 const enc = encodeURIComponent;
 
-export function definitionPage(store: Store, stateDir: string | undefined, url: URL, escape: Escape): { title: string; body: string } {
+export function definitionPage(store: Store, stateDir: string | undefined, url: URL, escape: Escape, csrf?: string): { title: string; body: string } {
+  const page = viewDefinition(store, stateDir, url, escape);
+  // T105: con sesión de escritura se puede importar un paquete (con vista previa); el árbol visible sigue siendo solo lectura.
+  return csrf ? { ...page, body: page.body + importDefinitionForm(csrf) } : page;
+}
+
+function viewDefinition(store: Store, stateDir: string | undefined, url: URL, escape: Escape): { title: string; body: string } {
   const workstreams = store.listWorkstreams();
   if (!workstreams.length) {
     return {
@@ -131,7 +138,7 @@ export function definitionPage(store: Store, stateDir: string | undefined, url: 
       </div>
       <p class="muted">
         El árbol de definición se genera íntegramente en memoria y refleja el contenido de <code>fab definition export</code> (los secretos o credenciales detectados se muestran redactados por seguridad).
-        No contiene rutas absolutas ni valores de entorno. Para editar o añadir ficheros, crea un Pull Request (catálogo §7.10).
+        No contiene rutas absolutas ni valores de entorno. Para editar o añadir ficheros, crea un Pull Request (catálogo §7.10); importar un paquete crea un workstream nuevo en borrador.
       </p>
 
       <nav class="definition-nav" aria-label="Índice de ficheros de la definición">
