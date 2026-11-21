@@ -5,7 +5,7 @@ import { existsSync, lstatSync, mkdirSync, readFileSync, readdirSync, realpathSy
 import { homedir } from 'node:os';
 import { join } from 'node:path';
 import { AGENT_NAMES } from './agents.ts';
-import { readTar } from './definition-tar.ts';
+import { quoteName, readTar } from './definition-tar.ts';
 import { resolveProfile, saveProfile, validateProfile, type Profile } from './profile.ts';
 import { StoreError, type Store } from './store.ts';
 
@@ -121,7 +121,7 @@ export function parseDefinition(files: Map<string, string>): ParsedDefinition {
   for (const p of found) {
     const m = /^skills\/([^/]+)\/SKILL\.md$/.exec(p);
     if (m && SKILL_NAME_RE.test(m[1]!)) { skills.push(m[1]!); if (Buffer.byteLength(files.get(p)!) > MAX_SKILL) throw new StoreError('invalid_input', `${p} supera ${MAX_SKILL} bytes`); }
-    else if (!allowed.has(p)) throw new StoreError('invalid_input', `fichero desconocido en la definición: ${p}`);
+    else if (!allowed.has(p)) throw new StoreError('invalid_input', `fichero desconocido en la definición: ${quoteName(p)}`);
   }
   for (const p of allowed) if (!found.includes(p)) throw new StoreError('invalid_input', `falta ${p} en la definición`);
   const read = (p: string) => files.get(p)!;

@@ -7,6 +7,8 @@ const MAX_ENTRIES = 64;
 const MAX_FILE = 64 * 1024; // el tope de un SKILL.md; las plantillas del perfil son menores
 const BLOCK = 512;
 const bad = (m: string) => new StoreError('invalid_input', m);
+/** Un nombre del paquete es dato hostil: en un mensaje va entre comillas y sin controles ni bidi (T105-H4). */
+export const quoteName = (raw: string) => /[\p{Cc}\p{Cf}"\\]/u.test(raw) ? JSON.stringify(raw).replace(/[\p{Cc}\p{Cf}]/gu, c => `\\u${c.codePointAt(0)!.toString(16).padStart(4, '0')}`) : raw;
 const utf8 = new TextDecoder('utf-8', { fatal: true });
 
 const cstr = (h: Uint8Array, from: number, len: number) => {
@@ -23,8 +25,8 @@ const octal = (h: Uint8Array, from: number, len: number, what: string) => {
 /** Ruta relativa y limpia: sin absoluta, sin «..», sin segmentos vacíos ni caracteres de control. */
 export function safeRelativePath(raw: string): string {
   const path = raw.replace(/^\.\//, '').replace(/\/$/, '');
-  if (!path || path.startsWith('/') || path.includes('\\') || /[\u0000-\u001f\u007f]/.test(path)) throw bad(`ruta no admitida en el paquete: ${JSON.stringify(raw)}`);
-  if (path.split('/').some(s => s === '' || s === '.' || s === '..')) throw bad(`ruta no admitida en el paquete: ${JSON.stringify(raw)}`);
+  if (!path || path.startsWith('/') || path.includes('\\') || /[\p{Cc}\p{Cf}]/u.test(path)) throw bad(`ruta no admitida en el paquete: ${quoteName(raw)}`);
+  if (path.split('/').some(s => s === '' || s === '.' || s === '..')) throw bad(`ruta no admitida en el paquete: ${quoteName(raw)}`);
   return path;
 }
 
@@ -40,18 +42,18 @@ export function readTar(buf: Uint8Array): Map<string, string> {
     if (sum !== octal(h, 148, 8, 'checksum')) throw bad('el paquete no es un tar válido (checksum)');
     if (++entries > MAX_ENTRIES) throw bad(`el paquete supera ${MAX_ENTRIES} entradas`);
     const name = cstr(h, 0, 100);
-    if (cstr(h, 345, 155)) throw bad(`${name}: ruta con prefijo ustar no admitida`);
+    if (cstr(h, 345, 155)) throw bad(`${quoteName(name)}: ruta con prefijo ustar no admitida`);
     const type = h[156] === 0 ? '0' : String.fromCharCode(h[156]!);
     const size = octal(h, 124, 12, 'tamaño');
     off += BLOCK;
-    if (type === '5') { safeRelativePath(name === './' ? 'x' : name); if (size) throw bad(`${name}: un directorio no lleva datos`); continue; }
-    if (type !== '0') throw bad(`${name}: ${type === '2' ? 'enlace simbólico' : type === '1' ? 'enlace duro' : `entrada de tipo ${JSON.stringify(type)}`} no admitida; solo ficheros y directorios (tar --format=ustar)`);
+    if (type === '5') { safeRelativePath(name === './' ? 'x' : name); if (size) throw bad(`${quoteName(name)}: un directorio no lleva datos`); continue; }
+    if (type !== '0') throw bad(`${quoteName(name)}: ${type === '2' ? 'enlace simbólico' : type === '1' ? 'enlace duro' : `entrada de tipo ${JSON.stringify(type)}`} no admitida; solo ficheros y directorios (tar --format=ustar)`);
     const path = safeRelativePath(name);
-    if (files.has(path)) throw bad(`${path}: repetido en el paquete`);
-    if (size > MAX_FILE) throw bad(`${path} supera ${MAX_FILE} bytes`);
+    if (files.has(path)) throw bad(`${quoteName(path)}: repetido en el paquete`);
+    if (size > MAX_FILE) throw bad(`${quoteName(path)} supera ${MAX_FILE} bytes`);
     if (off + size > buf.length) throw bad('el paquete está truncado');
-    try { files.set(path, utf8.decode(buf.subarray(off, off + size))); } catch { throw bad(`${path} no es texto UTF-8`); }
-    if (files.get(path)!.includes('\0')) throw bad(`${path} no es texto`);
+    try { files.set(path, utf8.decode(buf.subarray(off, off + size))); } catch { throw bad(`${quoteName(path)} no es texto UTF-8`); }
+    if (files.get(path)!.includes('\0')) throw bad(`${quoteName(path)} no es texto`);
     off += Math.ceil(size / BLOCK) * BLOCK;
   }
   if (!buf.subarray(off).every(b => b === 0)) throw bad('el paquete trae datos tras el final del tar');

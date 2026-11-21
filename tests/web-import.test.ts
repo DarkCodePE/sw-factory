@@ -32,7 +32,7 @@ function tar(entries: Entry[], opts: { badSum?: boolean; trailing?: boolean } = 
   for (const e of entries) {
     const data = typeof e.data === 'string' ? Buffer.from(e.data) : Buffer.from(e.data ?? '');
     const h = Buffer.alloc(512);
-    h.write(e.name, 0, 'latin1'); h.write('0000644\0', 100); h.write('0000000\0', 108); h.write('0000000\0', 116);
+    h.write(e.name, 0, 'utf8'); h.write('0000644\0', 100); h.write('0000000\0', 108); h.write('0000000\0', 116);
     h.write(data.length.toString(8).padStart(11, '0') + '\0', 124); h.write('00000000000\0', 136);
     h.write(e.type ?? '0', 156); if (e.linkname) h.write(e.linkname, 157, 'latin1');
     h.write('ustar\0', 257); h.write('00', 263); if (e.prefix) h.write(e.prefix, 345, 'latin1');
@@ -342,4 +342,18 @@ test('H3: un cambio pasado el carácter 2000 de una plantilla se ve en la vista 
   const p = defaultProfile(); p.worker.rules = 'palabra '.repeat(400) + '\nFINAL-ESCONDIDO\n' + defaultProfile().worker.rules;
   const html = await (await upload('/perfiles/importar', { ws: 'prueba' }, new TextEncoder().encode(JSON.stringify(p)))).text();
   expect(html).toContain('FINAL-ESCONDIDO');
+});
+
+// ---- T105-H4: el texto del paquete no llega crudo a la terminal por la CLI ---------------------------------------------------
+test.each(['a\x1b]0;TITULO\x07\x1b[2J.md', 'c\u009b31m.md', 'd‮.md', 'e\x7f.md'])('H4: un nombre hostil %j no sale crudo en el error de readTar', name => {
+  for (const entry of [{ name, type: '2', linkname: 'x' }, { name, data: 'x' }, { name: 'a.md', prefix: name, data: 'x' }] as Entry[]) {
+    let msg = ''; try { readTar(tar([entry])); } catch (e) { msg = (e as Error).message; }
+    expect(msg).not.toBe(''); expect(msg).not.toMatch(/[\u0000-\u001f\u007f-\u009f‪-‮]/);
+  }
+});
+test('H4: un fichero desconocido con nombre hostil en un directorio tampoco sale crudo (CLI)', () => {
+  const d = join(dir, 'hostil'); mkdirSync(d); for (const [p, t] of goodFiles()) { mkdirSync(join(d, p, '..'), { recursive: true }); writeFileSync(join(d, p), t); }
+  writeFileSync(join(d, 'x\x1b[2J.md'), 'x');
+  let msg = ''; try { readDefinition(d); } catch (e) { msg = (e as Error).message; }
+  expect(msg).toContain('desconocido'); expect(msg).not.toMatch(/[\u0000-\u001f\u007f-\u009f]/);
 });
