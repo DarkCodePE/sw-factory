@@ -1,6 +1,7 @@
 // Perfiles inmutables: la vista anticipa la resolución del pool y la asignación es una decisión aparte.
 import { join } from 'node:path';
 import { AGENT_NAMES } from './agents.ts';
+import { unregisteredMcp } from './mcp-registry.ts';
 import { redact } from './manifest.ts';
 import { DEFAULT_DIGEST, ROLES, isProfileDigest, resolveProfile, resolveRole, saveProfile, type Profile, type Role } from './profile.ts';
 import { CONFINABLE_AGENTS } from './sandbox/confine.ts';
@@ -143,7 +144,7 @@ export function checkProfileFields(form: URLSearchParams, allowed: readonly stri
   }
 }
 
-function editProfile(profile: Profile, form: URLSearchParams, editRoles: boolean): Profile {
+function editProfile(profile: Profile, form: URLSearchParams, editRoles: boolean, stateDir: string): Profile {
   for (const [group, key] of TEMPLATES) {
     const input = form.get(`${group}.${key}`);
     if (input === null) continue;
@@ -179,6 +180,13 @@ function editProfile(profile: Profile, form: URLSearchParams, editRoles: boolean
       const names = input.split(/[\s,]+/).filter(Boolean);
       // Un `=` delata un valor pegado: se rechaza sin repetirlo.
       if (names.some(n => n.includes('='))) throw new ProfileInputError('Escribe solo nombres: un valor pegado se rechaza y no se guarda.');
+      // T103-H1: un valor en minúsculas cumple el formato de un nombre MCP; los nuevos deben estar en el registro (como en el workstream).
+      if (key === 'mcp') {
+        const added = names.filter(n => !cfg.mcp?.includes(n));
+        let unknown: string[];
+        try { unknown = added.length ? unregisteredMcp(stateDir, added) : []; } catch { throw new ProfileInputError('El registro MCP (mcp-servers.json) no es válido.'); }
+        if (unknown.length) throw new ProfileInputError(`${unknown.length} nombre(s) no están en el registro MCP (mcp-servers.json).`);
+      }
       if (names.length) cfg[key] = names; else delete cfg[key];
     }
     if (Object.keys(cfg).length) roles[role] = cfg;
@@ -214,7 +222,7 @@ export function profileAction(stateDir: string, kind: 'guardar' | 'asignar', for
           let snapshot: Profile;
           try { snapshot = resolveProfile(stateDir, current.profile).profile; }
           catch { throw new ProfileInputError('El perfil de origen no está disponible o es corrupto.'); }
-          const profile = editProfile(snapshot, form, editRoles);
+          const profile = editProfile(snapshot, form, editRoles, stateDir);
           try {
             const { digest, created } = saveProfile(stateDir, profile);
             return { destination: `${destination}&digest=${digest}&nuevo=${created ? 1 : 0}`, result: 'ok' };

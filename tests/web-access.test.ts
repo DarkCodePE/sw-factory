@@ -122,6 +122,12 @@ test('perfiles: nombres por rol con las mismas validaciones; un valor pegado se 
     expect(text).not.toContain(SECRET);
     if (bad.includes('=')) expect(text).toContain('un valor pegado se rechaza');
   }
+  // T103-H1: un valor en minúsculas o hexadecimal cumple el formato de un nombre MCP; debe estar en el registro, como en el workstream.
+  for (const hex of ['0123456789abcdef0123456789abcdef', 'hunter2']) {
+    const r = await send({ 'roles.qa.harness': 'claude', 'roles.qa.mcp': hex });
+    expect(r.status).toBe(400);
+    expect(await r.text()).not.toContain(hex);
+  }
   const ok = await send({ 'roles.qa.harness': 'claude', 'roles.qa.env': 'TRACKER_TOKEN, OTRA', 'roles.qa.mcp': 'tracker' });
   expect(ok.status).toBe(303);
   const digest = /digest=([a-f0-9]{64})/.exec(ok.headers.get('location')!)![1]!;
