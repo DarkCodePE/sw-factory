@@ -331,3 +331,58 @@ test('H4: un fichero de settings con esquema inválido no muestra servidores', a
     expect(html).not.toContain('canario-');
   }
 });
+
+test('T104: lista servidores del registro MCP con tipo, variables requeridas y dónde se usan, sin revelar secretos', async () => {
+  const store = new Store(join(dir, 'fabrica.db'));
+  const p = defaultProfile();
+  p.schemaVersion = 2;
+  p.harness = 'claude';
+  p.roles = {
+    investigate: { harness: 'claude', mcp: ['local-tool'] },
+  };
+  const { digest } = saveProfile(dir, p);
+  store.createWorkstream({ slug: 'ws-uno', goal: 'g', repo: '/repo', profile: digest });
+  store.createWorkstream({ slug: 'ws-dos', goal: 'g', repo: '/repo' });
+  store.setWorkstreamMcpAllow('ws-dos', ['tracker']);
+  // Slug con caracteres especiales en DB
+  store.db.query("UPDATE workstreams SET slug = 'ws<b>xss</b>' WHERE slug = 'ws-dos'").run();
+  store.close();
+
+  env('TRK_TOKEN', 'canario-secreto-trk-valor');
+  writeFileSync(join(dir, 'mcp-servers.json'), JSON.stringify({
+    servers: {
+      tracker: { url: 'https://api.tracker.invalid/sse', headers: { Authorization: 'Bearer ${TRK_TOKEN}' } },
+      'local-tool': { command: ['/usr/bin/tool', '--flag'], env: { TOOL_KEY: '${TOOL_KEY}' } },
+    },
+  }));
+  start();
+
+  const html = await page('/config');
+  expect(html).toContain('tracker');
+  expect(html).toContain('url');
+  expect(html).toContain('TRK_TOKEN (definida)');
+  expect(html).toContain('local-tool');
+  expect(html).toContain('command');
+  expect(html).toContain('TOOL_KEY (no definida)');
+  expect(html).toContain('ws&lt;b&gt;xss&lt;/b&gt;');
+  expect(html).not.toContain('<b>xss</b>');
+  expect(html).toContain('ws-uno (investigate)');
+  expect(html).not.toContain('canario-secreto-trk-valor');
+  const mcpSection = html.slice(html.indexOf('<h2>Servidores MCP</h2>'));
+  expect(mcpSection).not.toContain('<form');
+});
+
+test('T104: registro MCP vacío o inválido maneja estados sin 500 ni fugar errores', async () => {
+  new Store(join(dir, 'fabrica.db')).close();
+  start();
+  const htmlEmpty = await page('/config');
+  expect(htmlEmpty).toContain('Sin servidores en el registro MCP');
+
+  server!.stop(true);
+  writeFileSync(join(dir, 'mcp-servers.json'), '{"servers": {"roto": "canario-invalido"}}');
+  start();
+  const htmlBad = await page('/config');
+  expect(htmlBad).toContain('Registro MCP no disponible o inválido.');
+  expect(htmlBad).not.toContain('canario-invalido');
+});
+

@@ -6,6 +6,7 @@ import { AGENT_NAMES } from './agents.ts';
 import { agentBinStatus, PINNED_AGENTS, sha256Of, type AgentBinVerdict } from './agents-verify.ts';
 import { jiraConfiguredInEnv } from './connectors/jira.ts';
 import { activityMetadata, redact } from './evidence.ts';
+import { loadMcpRegistry, McpRegistryError } from './mcp-registry.ts';
 import { listProfiles, resolveProfile } from './profile.ts';
 import { detectSandbox } from './sandbox/detect.ts';
 import { API_KEYS_PATH } from './web-api-keys.ts';
@@ -130,6 +131,52 @@ function latestEgress(store: Store, stateDir: string, workstream: Workstream, es
     : 'No medido';
 }
 
+function findMcpUsage(serverName: string, store: Store, stateDir: string): string[] {
+  const usages: string[] = [];
+  const workstreams = store.listWorkstreams();
+  for (const ws of workstreams) {
+    if (ws.mcpAllow !== null && ws.mcpAllow.includes(serverName)) {
+      usages.push(ws.slug);
+    }
+    try {
+      const { profile } = resolveProfile(stateDir, ws.profile);
+      if (profile.roles) {
+        for (const [role, cfg] of Object.entries(profile.roles)) {
+          if (cfg?.mcp?.includes(serverName)) {
+            usages.push(`${ws.slug} (${role})`);
+          }
+        }
+      }
+    } catch {}
+  }
+  return usages;
+}
+
+function mcpRegistrySection(store: Store, stateDir: string, escape: Escape): string {
+  try {
+    const registry = loadMcpRegistry(stateDir);
+    const entries = Object.entries(registry);
+    if (!entries.length) {
+      return '<p class="muted">Sin servidores en el registro MCP.</p>';
+    }
+    const rows = entries.map(([name, s]) => {
+      const req = s.required.length
+        ? s.required.map(n => `${escape(n)} (${process.env[n] !== undefined ? 'definida' : 'no definida'})`).join(', ')
+        : '—';
+      const usages = findMcpUsage(name, store, stateDir);
+      const usageText = usages.length ? usages.map(u => escape(u)).join(', ') : '—';
+      return `<tr><td><code>${escape(name)}</code></td><td>${escape(s.kind)}</td><td>${req}</td><td>${usageText}</td></tr>`;
+    }).join('');
+    return `<div class="table-wrap" role="region" aria-label="Registro MCP" tabindex="0"><table class="config-mcp">
+      <thead><tr><th scope="col">Servidor</th><th scope="col">Tipo</th><th scope="col">Variables requeridas</th><th scope="col">Dónde se usa</th></tr></thead>
+      <tbody>${rows}</tbody>
+    </table></div>`;
+  } catch (e) {
+    if (e instanceof McpRegistryError) return '<p class="notice">Registro MCP no disponible o inválido.</p>';
+    return '<p class="notice">Registro MCP no disponible o inválido.</p>';
+  }
+}
+
 async function mcpInventory(escape: Escape): Promise<string> {
   try {
     const names = await configuredMcpNames(process.env.FABRICA_AGENT_SETTINGS);
@@ -179,6 +226,6 @@ export async function configPage(store: Store, stateDir: string, url: URL, escap
       ['Jira (entorno)', configured(jiraConfiguredInEnv())],
       ['GitHub (entorno)', configured(!!(process.env.GH_TOKEN?.trim() || process.env.GITHUB_TOKEN?.trim()))],
     ])}</section>
-    <section><h2>Servidores MCP</h2>${mcp}</section>
+    <section><h2>Servidores MCP</h2>${mcpRegistrySection(store, stateDir, escape)}${mcp}</section>
   </div>` };
 }
