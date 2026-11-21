@@ -473,3 +473,12 @@ test('IE1-H4: fab profile import rechaza /dev/zero y un FIFO sin leerlos', () =>
     expect(r.stderr.toString()).toContain('no es un fichero regular');
   }
 });
+
+// IE1-H6 (m17): los caracteres de formato (Cf) tampoco llegan a la terminal.
+test('IE1-H6: fab profile import no imprime U+202E ni U+200B (categoría Cf)', () => {
+  const f = join(dir, 'cf.json'); writeFileSync(f, JSON.stringify({ ...defaultProfile(), ['a‮b​c']: 1 }));
+  const r = fab(['profile', 'import', f]);
+  expect(r.exitCode).toBe(1);
+  expect(r.stderr.toString()).toContain('clave desconocida');
+  expect(r.stderr.toString()).not.toMatch(/[‪-‮⁦-⁩​-‏]/);
+});

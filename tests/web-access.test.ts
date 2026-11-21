@@ -182,3 +182,21 @@ test('T103-H13: guardar una lista vacía desde el modo anterior exige confirmar;
   expect((await acceso(empty)).status).toBe(303); // ya hay tope declarado: vaciarlo no pide confirmación extra
   expect((await acceso({ kind: 'env', mode: 'declared', names: 'A_B' })).status).toBe(303);
 });
+
+// IE1-H6 (n11): editar solo env o mcp de un rol en un perfil v1 no cuenta como «sin cambios».
+test('IE1-H6: guardar solo roles.<rol>.env (o mcp) sobre un perfil v1 crea un perfil nuevo con ese valor', async () => {
+  const { resolveProfile } = await import('../src/profile.ts');
+  const v1 = saveProfile(dir, { ...defaultProfile(), harness: 'claude' }).digest; // v1 con harness claude: admite MCP por rol
+  store.assignProfile(wsId, v1, (await import('../src/profile.ts')).DEFAULT_DIGEST);
+  const form = (over: Record<string, string>) => post('/perfiles/guardar', {
+    mode: 'roles', model: '', ws: 'prueba', expectedAgent: 'native', base: v1,
+    ...Object.fromEntries(ROLES.flatMap(role => [[`roles.${role}.harness`, ''], [`roles.${role}.model`, '']])), ...over,
+  });
+  for (const [field, key, value] of [['roles.qa.env', 'env', 'TRACKER_TOKEN'], ['roles.qa.mcp', 'mcp', 'tracker']] as const) {
+    const r = await form({ [field]: value });
+    expect(r.status).toBe(303);
+    const digest = /digest=([a-f0-9]{64})/.exec(r.headers.get('location')!)![1]!;
+    expect(digest).not.toBe(v1);
+    expect(resolveProfile(dir, digest).profile.roles?.qa?.[key]).toEqual([value]);
+  }
+});
