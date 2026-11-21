@@ -111,3 +111,23 @@ test('T100-H1: el renderizador acota los eventos y turnos aunque crezcan las con
   expect(html).toContain('Evento 200 fin');
   expect(html).toContain('Activity · t-200</th>');
 });
+
+test('T100-H2: un turno abierto registra inicio sin aviso de hora sin medir', async () => {
+  new AdmissionDb(store);
+  store.db.query(`INSERT INTO adm_sessions(change_id, kind, generation, session_id, backend, cwd, status, created_at)
+    VALUES (?, 'implementation', 1, 's1', 'claude', '/r', 'open', ?)`).run(change, time('09:00:00'));
+  turn('abierto', primary, time('10:00:01'), null);
+  store.db.query("UPDATE adm_turns SET outcome = NULL WHERE attempt_id = 'abierto'").run();
+  const html = section(await (await target()).text());
+  expect(html).toContain('Inicio de turno');
+  expect(html).not.toContain('Fin de turno');
+  expect(html).not.toContain('No medido');
+});
+
+test('T100-H2: se escapa la etiqueta de una activity en la cabecera de su columna', async () => {
+  store.db.query('UPDATE activities SET validator = ? WHERE id = ?').run('<img src=x>', primary);
+  event(change, primary, time('10:01:00'), 'Evento medido');
+  const html = section(await (await target()).text());
+  expect(html).toContain('&lt;img src=x&gt; · ' + primary.slice(0, 8));
+  expect(html).not.toContain('<img src=x>');
+});
