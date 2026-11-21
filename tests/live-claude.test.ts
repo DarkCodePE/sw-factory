@@ -130,6 +130,25 @@ EOF`);
       rmSync(join(dir, '..'), { recursive: true, force: true });
     }
   });
+  test('T99-H4: una mención intermedia no pierde la sesión reanudada', async () => {
+    const f = fakeClaude(`cat <<'EOF'
+{"type":"assistant","message":{"content":[{"type":"text","text":"Documentación: No conversation found"}]}}
+{"type":"result","result":"Fallo de otra clase"}
+EOF
+exit 1`);
+    const dir = mcpDir();
+    try {
+      Bun.spawnSync(['git', 'init', '-q', f.dir]);
+      const r = await claudeLive.run({ prompt: 'x', cwd: f.dir, attemptId: 'a', mcpConfigDir: dir, sessionId: 'vigente' });
+      expect(r.exitCode).toBe(1);
+      expect(r.sessionId).toBe('vigente');
+      expect(r.output).toBe('Fallo de otra clase');
+    } finally {
+      f.restore();
+      rmSync(f.dir, { recursive: true, force: true });
+      rmSync(join(dir, '..'), { recursive: true, force: true });
+    }
+  });
   test('unknown session id raises SessionNotFoundError', async () => {
     const f = fakeClaude(`echo "No conversation found with session ID: $2" >&2; exit 1`);
     Bun.spawnSync(['git', 'init', '-q', f.dir]); // hostDir resuelve el git dir

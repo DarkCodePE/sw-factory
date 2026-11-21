@@ -81,7 +81,7 @@ export const claudeLive: LiveBackend = {
         if (turn.sessionId && NOT_FOUND.test((e as Error).message)) throw new SessionNotFoundError(sessionId, (e as Error).message);
         throw e;
       }
-      if (turn.sessionId && run.exitCode !== 0 && NOT_FOUND.test(`${run.stderr}${run.stdout}`)) throw new SessionNotFoundError(sessionId, run.stderr?.trim());
+      if (turn.sessionId && run.exitCode !== 0 && NOT_FOUND.test(`${run.stderr ?? ''}\n${stdoutForMonitor ?? ''}`)) throw new SessionNotFoundError(sessionId, run.stderr?.trim());
       return { ...run, stdoutForMonitor, sessionId, attemptId: turn.attemptId, reports };
     } finally {
       if (configPath) rmSync(configPath, { force: true });
