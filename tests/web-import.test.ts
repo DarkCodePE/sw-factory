@@ -327,3 +327,19 @@ test('H2: un repo con comillas no rompe el atributo oculto y se importa', async 
   expect((await confirmFrom(preview, '/definicion/importar', { repo: odd })).status).toBe(303);
   expect(store.getWorkstream('importado').repo).toBe(odd);
 });
+
+// ---- T105-H3: la vista previa enseña lo que se importa (prompts del perfil y skills), completo y escapado ------------------
+test('H3: la vista previa de una definición muestra los cambios del perfil y el texto de las skills', async () => {
+  const bytes = goodTar(f => {
+    f.set('profile/worker/rules.md', f.get('profile/worker/rules.md')! + '\nINSTRUCCION-NUEVA <b>x</b>');
+    f.set('skills/util/SKILL.md', 'CUERPO-DE-SKILL <i>y</i>');
+  });
+  const html = await (await upload('/definicion/importar', { repo, slug: '' }, bytes)).text();
+  expect(html).toContain('INSTRUCCION-NUEVA &lt;b&gt;x&lt;/b&gt;'); expect(html).toContain('CUERPO-DE-SKILL &lt;i&gt;y&lt;/i&gt;');
+  expect(html).not.toContain('<b>x</b>'); expect(html).not.toContain('<i>y</i>');
+});
+test('H3: un cambio pasado el carácter 2000 de una plantilla se ve en la vista previa del perfil', async () => {
+  const p = defaultProfile(); p.worker.rules = 'palabra '.repeat(400) + '\nFINAL-ESCONDIDO';
+  const html = await (await upload('/perfiles/importar', { ws: 'prueba' }, new TextEncoder().encode(JSON.stringify(p)))).text();
+  expect(html).toContain('FINAL-ESCONDIDO');
+});

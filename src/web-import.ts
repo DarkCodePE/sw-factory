@@ -7,7 +7,7 @@ import { join } from 'node:path';
 import { applyDefinition, parseDefinition, type ParsedDefinition } from './definition.ts';
 import { readTar, TAR_MAX_BYTES } from './definition-tar.ts';
 import { redact } from './manifest.ts';
-import { DEFAULT_DIGEST, isProfileDigest, profileDigest, resolveProfile, saveProfile, validateProfile, type Profile } from './profile.ts';
+import { defaultProfile, DEFAULT_DIGEST, isProfileDigest, profileDigest, resolveProfile, saveProfile, validateProfile, type Profile } from './profile.ts';
 import { Store, StoreError } from './store.ts';
 import { DEFAULT_PROTECTED_PATHS } from './validators/integrity.ts';
 import { repoProblem } from './web-ws.ts';
@@ -89,11 +89,11 @@ const flat = (p: Profile): Map<string, string> => {
   return out;
 };
 
-function diff(before: Profile, after: Profile, escape: Escape): string {
+function diff(before: Profile, after: Profile, escape: Escape, title = 'Cambios respecto al perfil vigente'): string {
   const a = flat(before), b = flat(after);
   const rows = [...new Set([...a.keys(), ...b.keys()])].filter(k => a.get(k) !== b.get(k)).map(k =>
-    `<details open><summary><code>${escape(k)}</code></summary><p class="muted">Vigente</p><pre><code>${a.has(k) ? escape(clip(a.get(k)!)) : '(sin valor)'}</code></pre><p class="muted">Importado</p><pre><code>${b.has(k) ? escape(clip(b.get(k)!)) : '(sin valor)'}</code></pre></details>`);
-  return rows.length ? `<h2>Cambios respecto al perfil vigente (${rows.length})</h2>${rows.join('')}` : '<p>Sin diferencias con el perfil vigente.</p>';
+    `<details open><summary><code>${escape(k)}</code></summary><p class="muted">Vigente</p><pre><code>${a.has(k) ? escape(a.get(k)!) : '(sin valor)'}</code></pre><p class="muted">Importado</p><pre><code>${b.has(k) ? escape(b.get(k)!) : '(sin valor)'}</code></pre></details>`);
+  return rows.length ? `<h2>${title} (${rows.length})</h2>${rows.join('')}` : '<p>Sin diferencias con el perfil de referencia.</p>';
 }
 
 const confirmForm = (action: string, csrf: string, hidden: Record<string, string>, label: string) =>
@@ -125,7 +125,8 @@ export function importPreview(kind: ImportKind, stateDir: string, form: URLSearc
       ${taken ? `<p class="notice" role="alert">Ya existe un workstream con el slug ${escape(slug)}: importar no lo modifica. Elige otro slug y vuelve a subir.</p>` : ''}
       <h2>Ajustes</h2><div class="table-wrap"><table><tbody>${settings}</tbody></table></div>
       <h2>Ficheros (${parsed.files.size})</h2><ul>${names}</ul>
-      ${parsed.skills.length ? `<p class="muted">Skills del paquete (no se escriben en el repo): ${parsed.skills.map(s => escape(s)).join(', ')}.</p>` : ''}
+      ${diff(defaultProfile(), parsed.profile, escape, 'Cambios del perfil respecto al perfil por defecto')}
+      ${parsed.skills.length ? `<h2>Skills del paquete</h2><p class="muted">(no se escriben en el repo)</p>${parsed.skills.map(n => `<details open><summary><code>${escape(n)}</code></summary><pre><code>${escape(parsed.files.get(`skills/${n}/SKILL.md`)!)}</code></pre></details>`).join('')}` : ''}
       <p>Nada del paquete se ejecuta. Activar el workstream es un paso explícito aparte.</p>
       ${taken ? '' : confirmForm('/definicion/importar', csrf, { repo, slug: slugField, payload, digest: seal('definition', file, repo, slugField) }, 'Confirmo crear el workstream en borrador')}`, '/definicion');
   } finally { store.close(); }
