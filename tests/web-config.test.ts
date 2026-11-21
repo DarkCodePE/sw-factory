@@ -362,15 +362,17 @@ test('T104: lista servidores del registro MCP con tipo, variables requeridas y d
   start();
 
   const html = await page('/config');
-  expect(html).toContain('tracker');
-  expect(html).toContain('url');
-  expect(html).toContain('TRK_TOKEN (definida)');
-  expect(html).toContain('local-tool');
-  expect(html).toContain('command');
-  expect(html).toContain('TOOL_KEY (no definida)');
-  expect(html).toContain('ws&lt;b&gt;xss&lt;/b&gt;');
-  expect(html).not.toContain('<b>xss</b>');
-  expect(html).toContain('ws-uno (investigate)');
+  const rowTracker = html.match(/<tr><td><code>tracker<\/code><\/td>.*?<\/tr>/s)?.[0] ?? '';
+  expect(rowTracker).toContain('<td>url</td>');
+  expect(rowTracker).toContain('<td>TRK_TOKEN (definida)</td>');
+  expect(rowTracker).toContain('<td>permitido: ws&lt;b&gt;xss&lt;/b&gt;</td>');
+  expect(rowTracker).not.toContain('<b>xss</b>');
+
+  const rowLocalTool = html.match(/<tr><td><code>local-tool<\/code><\/td>.*?<\/tr>/s)?.[0] ?? '';
+  expect(rowLocalTool).toContain('<td>command</td>');
+  expect(rowLocalTool).toContain('<td>TOOL_KEY (no definida)</td>');
+  expect(rowLocalTool).toContain('<td>ws-uno (investigate)</td>');
+
   expect(html).not.toContain('canario-secreto-trk-valor');
   const mcpSection = html.slice(html.indexOf('<h2>Servidores MCP</h2>'));
   expect(mcpSection).not.toContain('<form');
@@ -383,11 +385,14 @@ test('T104: registro MCP vacío o inválido maneja estados sin 500 ni fugar erro
   expect(htmlEmpty).toContain('Sin servidores en el registro MCP');
 
   server!.stop(true);
-  writeFileSync(join(dir, 'mcp-servers.json'), '{"servers": {"roto": "canario-invalido"}}');
+  writeFileSync(join(dir, 'mcp-servers.json'), JSON.stringify({
+    servers: {},
+    canario_campo_prohibido: 'invalido',
+  }));
   start();
   const htmlBad = await page('/config');
   expect(htmlBad).toContain('Registro MCP no disponible o inválido.');
-  expect(htmlBad).not.toContain('canario-invalido');
+  expect(htmlBad).not.toContain('canario_campo_prohibido');
 });
 
 test('T104-H3: relanza errores que no sean McpRegistryError en lugar de enmascararlos', async () => {
