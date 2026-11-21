@@ -258,3 +258,11 @@ test('confirmar una definición distinta de la vista previa (digest) o con campo
   expect((await upload('/definicion/importar', { repo, slug: '' }, goodTar(), fd => fd.append('repo', repo))).status).toBe(400);
   expect(snapshot()).toBe(before);
 });
+
+test('confirmar con un campo urlencoded repetido da 400', async () => {
+  const preview = await (await upload('/definicion/importar', { repo, slug: '' }, goodTar())).text();
+  const hidden = Object.fromEntries([...preview.matchAll(/<input type="hidden" name="(\w+)" value="([^"]*)">/g)].map(m => [m[1]!, m[2]!]));
+  const body = new URLSearchParams({ ...hidden, confirm: 'yes' }); body.append('repo', join(dir, 'otro'));
+  const r = await req('/definicion/importar', { method: 'POST', headers: { cookie, origin: base(), 'content-type': 'application/x-www-form-urlencoded' }, body });
+  expect(r.status).toBe(400); expect(store.listWorkstreams().map(w => w.slug)).toEqual(['prueba']);
+});
