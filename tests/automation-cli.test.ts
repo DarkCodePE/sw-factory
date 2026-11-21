@@ -221,3 +221,17 @@ test('C90-H2: --body-file exige un fichero regular (directorio y /dev/zero falla
   expect(store.listAutomations()).toHaveLength(1);
   store.close();
 });
+test('C90-H3: update y rm dejan el evento de auditoría con el actor', async () => {
+  const { root, store } = fixture();
+  const prev = process.env.FAB_ACTOR; process.env.FAB_ACTOR = 'dueño-cli';
+  try {
+    await run(store, ['add', 'ws', '--name', 'a', '--cron', '5 4 * * *', '--title', 't', '--body-file', join(root, 'body.md')]);
+    const id = store.listAutomations()[0]!.id;
+    expect((await run(store, ['update', id, '--name', 'b'])).code).toBe(0);
+    expect((await run(store, ['rm', id])).code).toBe(0);
+  } finally { if (prev === undefined) delete process.env.FAB_ACTOR; else process.env.FAB_ACTOR = prev; }
+  const events = store.listEvents('ws', -1).filter(e => e.actor === 'dueño-cli').map(e => String(e.message));
+  expect(events.some(m => m.includes('editada') && m.includes('"name":"a"'))).toBe(true);
+  expect(events.some(m => m.includes('borrada'))).toBe(true);
+  store.close();
+});
