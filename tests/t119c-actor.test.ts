@@ -42,7 +42,7 @@ test('una nota de member lleva ID de usuario y rol verificados; el nombre visibl
   try {
     const [n] = r.listChangeNotes(changeId);
     expect(n).toMatchObject({ actor: `user:${p.userId}`, actorUserId: p.userId, actorRole: 'member' });
-    const ev = r.db.query("SELECT actor, actor_user_id, actor_source FROM events WHERE message LIKE 'nota del dueño%'").get() as Record<string, string>;
+    const ev = r.db.query("SELECT actor, actor_user_id, actor_source FROM events WHERE message LIKE 'nota registrada%'").get() as Record<string, string>;
     expect(ev).toEqual({ actor: `user:${p.userId}`, actor_user_id: p.userId, actor_source: 'web' });
     expect(JSON.stringify([n, ev])).not.toContain('u-member');
   } finally { r.close(); }

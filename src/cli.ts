@@ -143,7 +143,7 @@ const HELP = `fab — agente de código y fábrica de software local
   fab worktree repair <changeId> [--discard]  repara preparación; conserva la rama
   fab retry <changeId>          re-encola un bloqueo, fallo o validador agotado
   fab reject <changeId>         cancela el change y borra su worktree
-  fab note <changeId> <texto> [--file <fichero>]   nota del dueño: se entrega al empezar el siguiente turno de trabajo; no lanza ni interrumpe nada
+  fab note <changeId> <texto> [--file <fichero>]   nota para el siguiente turno: se entrega al empezar el siguiente turno de trabajo; no lanza ni interrumpe nada
   fab events <slug>
   fab exec [prompt]             agente propio; fab exec --help para opciones
   fab doctor                    estado del sandbox, del runtime de Script y de la búsqueda

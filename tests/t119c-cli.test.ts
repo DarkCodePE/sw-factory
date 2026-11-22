@@ -211,7 +211,7 @@ test('una acción por CLI deja el actor del usuario (fuente cli) y el rol de la 
   expect(res.status).toBe(200);
   const [n] = c.store.listChangeNotes(changeId);
   expect(n).toMatchObject({ actorUserId: c.cli.member.userId, actorRole: 'member' });
-  const ev = c.store.db.query("SELECT actor_source FROM events WHERE message LIKE 'nota del dueño%'").get() as { actor_source: string };
+  const ev = c.store.db.query("SELECT actor_source FROM events WHERE message LIKE 'nota registrada%'").get() as { actor_source: string };
   expect(ev.actor_source).toBe('cli');
 });
 

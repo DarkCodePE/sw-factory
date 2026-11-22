@@ -1639,7 +1639,7 @@ export class Store {
       this.db.query(`INSERT INTO change_notes (id, change_id, body, actor, created_at, attachment_name, attachment_bytes, actor_user_id, actor_role)
         VALUES (?,?,?,?,?,?,?,?,?)`).run(id, changeId, body, actor, createdAt, attachment?.name ?? null, attachment?.bytes ?? null,
         this.#actor?.userId ?? null, this.#actor?.userId ? this.#actor.role ?? null : null);
-      this.event(change.workstreamId, 'info', `nota del dueño registrada (${id.slice(0, 8)}, ${bytes} bytes${meta ? `, adjunto de ${meta.size} bytes` : ''})`, changeId);
+      this.event(change.workstreamId, 'info', `nota registrada (${id.slice(0, 8)}, ${bytes} bytes${meta ? `, adjunto de ${meta.size} bytes` : ''})`, changeId);
       return { id, changeId, body, actor, createdAt, activityId: null, attemptId: null, deliveredAt: null, ...(meta && { attachment: meta }) };
     });
   }
