@@ -290,3 +290,24 @@ test('auditoría de identidad: una fila por mutación, sin tokens ni nombres vis
   const actions = (store.db.query('SELECT action FROM identity_audit ORDER BY seq').all() as { action: string }[]).map((r) => r.action);
   expect(actions).toEqual(expect.arrayContaining(['user.bootstrap', 'session.issue', 'invitation.create', 'invitation.accept', 'key.create', 'user.role']));
 });
+
+test('T119a-H5: una invitación pendiente no sobrevive a la degradación ni a la baja de quien la emitió', () => {
+  const o = owner();
+  const b = member(o, '200', 'admin');
+  const inv = inviteUser(store, b, { expectedIssuer: 'github', expectedSubject: '201', role: 'member' });
+  changeUserRole(store, o, b.userId, 'member');
+  throwsCode(() => acceptInvitation(store, { code: inv.code, issuer: 'github', subject: '201', displayName: 'x' }), 'forbidden');
+  // Otro caso: un owner con una invitación a admin, degradado a viewer.
+  const c = member(o, '202', 'admin');
+  changeUserRole(store, o, c.userId, 'owner');
+  const co = login(c.userId);
+  const adm = inviteUser(store, co, { expectedIssuer: 'github', expectedSubject: '203', role: 'admin' });
+  changeUserRole(store, o, c.userId, 'viewer');
+  throwsCode(() => acceptInvitation(store, { code: adm.code, issuer: 'github', subject: '203', displayName: 'x' }), 'forbidden');
+  // La baja también.
+  const d = member(o, '204', 'admin');
+  const inv2 = inviteUser(store, d, { expectedIssuer: 'github', expectedSubject: '205', role: 'viewer' });
+  disableUser(store, o, d.userId);
+  throwsCode(() => acceptInvitation(store, { code: inv2.code, issuer: 'github', subject: '205', displayName: 'x' }), 'forbidden');
+  expect(findUserByIdentity(store, 'github', '203')).toBeNull();
+});

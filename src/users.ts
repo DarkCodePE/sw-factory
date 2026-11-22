@@ -193,8 +193,10 @@ export function listSessions(store: Store, p: Principal): { id: string; class: s
       id: r.id as string, class: r.class as string, createdAt: r.created_at as string, expiresAt: r.expires_at as string, current: r.id === me.sessionId })));
 }
 
-/** Corta todas las sesiones y claves del usuario, en la transacción del cambio que lo exige. */
+/** Corta sesiones, claves e invitaciones pendientes del usuario, en la transacción del cambio que lo exige. */
 function cutCredentials(store: Store, userId: string): void {
+  // Una invitación emitida con el rol anterior no puede canjearse después de degradar o dar de baja a quien la emitió.
+  store.db.query('UPDATE user_invitations SET revoked_at = COALESCE(revoked_at, ?) WHERE inviter_id = ? AND consumed_at IS NULL').run(store.now(), userId);
   store.db.query('UPDATE user_sessions SET revoked_at = COALESCE(revoked_at, ?) WHERE user_id = ?').run(store.now(), userId);
   store.db.query('UPDATE api_keys SET revoked_at = COALESCE(revoked_at, ?) WHERE user_id = ?').run(store.now(), userId);
 }
