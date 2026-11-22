@@ -175,6 +175,21 @@ describe('T118b: Copia de seguridad y recuperación básica (Ola 1, §3.3)', () 
     execSync(`bash "${restoreScript}" --no-checksum "${noShaBackup}" "${noShaTarget}"`, { stdio: 'pipe' });
     expect(existsSync(join(noShaTarget, 'fabrica.db'))).toBe(true);
 
+    // 2b. SHA256 alterado (fichero modificado tras generar el checksum) -> falla
+    const alteredBackup = join(workDir, 'altered.db');
+    execSync(`cp "${backupFile}" "${alteredBackup}"`);
+    execSync(`cp "${backupFile}.sha256" "${alteredBackup}.sha256"`);
+    execSync(`echo "modificacion-maliciosa" >> "${alteredBackup}"`);
+    const alteredTarget = join(workDir, 'h6-altered-target');
+    let failedAltered = false;
+    try {
+      execSync(`bash "${restoreScript}" "${alteredBackup}" "${alteredTarget}"`, { stdio: 'pipe' });
+    } catch {
+      failedAltered = true;
+    }
+    expect(failedAltered).toBe(true);
+    expect(existsSync(join(alteredTarget, 'fabrica.db'))).toBe(false);
+
     // 3. Respaldo truncado / corrupto -> falla y no deja fabrica.db en el destino
     const corruptBackup = join(workDir, 'corrupt.db');
     execSync(`head -c 200 "${backupFile}" > "${corruptBackup}"`);
