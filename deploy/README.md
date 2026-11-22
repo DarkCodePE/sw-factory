@@ -106,6 +106,8 @@ El script `deploy/scripts/backup.sh` realiza un checkpoint pasivo del WAL de SQL
 ```bash
 sudo -u fab /opt/fab/deploy/scripts/backup.sh /var/lib/fab/fabrica.db /var/backups/fab
 ```
+> [!NOTE]
+> **Alcance T118 vs T120 (§3.2):** T118b entrega la copia local atómica en WAL, integridad SHA256 y simulacro automatizado de restauración. El cifrado en reposo de las copias, la replicación continua fuera de la VM y las políticas de retención histórica corresponden a la tarea T120.
 
 ### 4.3 Restauración y reapertura básica (§3.3)
 1. Detener el servicio fab:

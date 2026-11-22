@@ -1,5 +1,5 @@
 import { describe, expect, test, beforeEach, afterEach } from 'bun:test';
-import { existsSync, mkdirSync, rmSync } from 'node:fs';
+import { existsSync, mkdirSync, rmSync, statSync, chmodSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { execSync } from 'node:child_process';
@@ -189,5 +189,41 @@ describe('T118b: Copia de seguridad y recuperación básica (Ola 1, §3.3)', () 
     }
     expect(failedCorrupt).toBe(true);
     expect(existsSync(join(corruptTarget, 'fabrica.db'))).toBe(false);
+  });
+
+  test('T118-H14: backup.sh soporta rutas con comillas simples, evita colisiones y respeta permisos', () => {
+    const backupScript = join(__dirname, '../deploy/scripts/backup.sh');
+
+    const sourceState = join(workDir, 'h14-source');
+    mkdirSync(sourceState, { recursive: true });
+    const sourceDb = join(sourceState, 'fabrica.db');
+    execSync(`bun -e '
+      import { Store } from "./src/store.ts";
+      const s = new Store("${sourceDb}");
+      s.createWorkstream({ slug: "ws-h14", goal: "H14 test", repo: "test/repo" });
+      s.close();
+    '`);
+
+    // 1. Ruta con comilla simple en el directorio de destino
+    const quoteDir = join(workDir, "o'brien-backups");
+    execSync(`bash "${backupScript}" "${sourceDb}" "${quoteDir}"`, { stdio: 'pipe' });
+    const quoteFiles = execSync(`ls -1 "${quoteDir}"/*.db`).toString().trim().split('\n');
+    expect(quoteFiles.length).toBe(1);
+
+    // 2. Dos copias consecutivas en el mismo segundo dejan dos ficheros distintos
+    const multiDir = join(workDir, 'multi-backups');
+    execSync(`bash "${backupScript}" "${sourceDb}" "${multiDir}"`, { stdio: 'pipe' });
+    execSync(`bash "${backupScript}" "${sourceDb}" "${multiDir}"`, { stdio: 'pipe' });
+    const multiFiles = execSync(`ls -1 "${multiDir}"/*.db`).toString().trim().split('\n').filter(Boolean);
+    expect(multiFiles.length).toBe(2);
+    expect(multiFiles[0]).not.toBe(multiFiles[1]);
+
+    // 3. Directorio existente con permisos 0755 no se muta a 0700
+    const existingDir = join(workDir, 'existing-755');
+    mkdirSync(existingDir);
+    chmodSync(existingDir, 0o755);
+    execSync(`bash "${backupScript}" "${sourceDb}" "${existingDir}"`, { stdio: 'pipe' });
+    const mode = statSync(existingDir).mode & 0o777;
+    expect(mode.toString(8)).toBe('755');
   });
 });

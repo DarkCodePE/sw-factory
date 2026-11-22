@@ -10,11 +10,14 @@ if [ ! -f "$DB_FILE" ]; then
   exit 1
 fi
 
-mkdir -p "$BACKUP_DIR"
-chmod 0700 "$BACKUP_DIR"
+if [ ! -d "$BACKUP_DIR" ]; then
+  mkdir -p "$BACKUP_DIR"
+  chmod 0700 "$BACKUP_DIR"
+fi
 
 TIMESTAMP=$(date -u +"%Y%m%dT%H%M%SZ")
-BACKUP_FILE="$BACKUP_DIR/fabrica-backup-$TIMESTAMP.db"
+SUFFIX="$$-$RANDOM-$(date +%N)"
+BACKUP_FILE="$BACKUP_DIR/fabrica-backup-${TIMESTAMP}-${SUFFIX}.db"
 TMP_BACKUP="$BACKUP_FILE.tmp"
 rm -f "$TMP_BACKUP" "$BACKUP_FILE"
 
@@ -22,6 +25,7 @@ echo "[fab-backup] Iniciando copia de seguridad: $DB_FILE -> $BACKUP_FILE"
 START_TIME=$(date +%s%N)
 
 # Usamos bun y Database para realizar un checkpoint y backup atómico consistente (VACUUM INTO)
+# Escapamos comillas simples duplicándolas según el estándar de literales SQL
 bun -e '
 import { Database } from "bun:sqlite";
 const dbPath = process.argv[1];
@@ -29,7 +33,8 @@ const tmpPath = process.argv[2];
 const db = new Database(dbPath, { strict: true });
 db.exec("PRAGMA busy_timeout = 5000;");
 db.exec("PRAGMA wal_checkpoint(PASSIVE);");
-db.exec(`VACUUM INTO \x27${tmpPath}\x27;`);
+const safePath = tmpPath.replaceAll("\x27", "\x27\x27");
+db.exec(`VACUUM INTO \x27${safePath}\x27;`);
 db.close();
 ' "$DB_FILE" "$TMP_BACKUP"
 
