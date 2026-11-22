@@ -2,7 +2,7 @@
 import { afterEach, beforeEach, expect, test } from 'bun:test';
 import { existsSync, mkdirSync, readdirSync, readFileSync, statSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
-import { cliRoutes, REMOTE_ACTION_OPS, REMOTE_IDENTITY_OPS } from '../src/web-cli.ts';
+import { cliRoutes, REMOTE_ACTION_OPS, REMOTE_IDENTITY_OPS, REMOTE_VERB_OPS } from '../src/web-cli.ts';
 import { parseVerb, remoteMain, VERBS } from '../src/remote.ts';
 import { csrfToken, SESSION_COOKIE } from '../src/web-auth.ts';
 import { cloud, ORIGIN, SECRET, type Cloud } from './helpers/cloud.ts';
@@ -176,8 +176,8 @@ test('el pareo sin aprobar agota el tiempo y no guarda sesión', async () => {
 
 test('inventario: cada operación remota (acciones e identidad) tiene un verbo, y cada verbo apunta a una operación del servidor', () => {
   const ops = new Set(Object.values(VERBS).map(v => v.op));
-  for (const op of [...REMOTE_ACTION_OPS(), ...REMOTE_IDENTITY_OPS.filter(o => o !== 'session/logout')]) expect(ops.has(op), op).toBe(true);
-  const known = new Set<string>([...REMOTE_ACTION_OPS(), ...REMOTE_IDENTITY_OPS]);
+  for (const op of [...REMOTE_ACTION_OPS(), ...REMOTE_IDENTITY_OPS.filter(o => o !== 'session/logout'), ...REMOTE_VERB_OPS]) expect(ops.has(op), op).toBe(true);
+  const known = new Set<string>([...REMOTE_ACTION_OPS(), ...REMOTE_IDENTITY_OPS, ...REMOTE_VERB_OPS]);
   for (const [verb, v] of Object.entries(VERBS)) expect(known.has(v.op), verb).toBe(true);
 });
 

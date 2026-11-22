@@ -11,11 +11,17 @@ import { join } from 'node:path';
 import { Store, StoreError } from './store.ts';
 import {
   createUserKey, inviteUser, issueSession, listInvitations, listSessions, listUserKeys, listUsers, resolvePrincipal, revokeInvitation, revokeSession,
-  revokeUserKey, changeUserRole, disableUser, type Principal, type Role,
+  revokeUserKey, changeUserRole, disableUser, actorOf, runAs, type Principal, type Role,
 } from './users.ts';
+import { AdmissionDb, hasAdmission } from './admission/db.ts';
+import { linkTriagedSignal } from './admission/apply.ts';
+import { dismissCandidate } from './improve-auto.ts';
+import { listProfiles } from './profile.ts';
+import { VALIDATOR_KINDS, type ValidatorKind } from './connectors/types.ts';
 import { authorize } from './policy.ts';
 import { ACTIONS, InputError, performAction } from './web-actions.ts';
 import { route } from './web-api.ts';
+import { extraRoute } from './web-reads.ts';
 import { constantEqual, cookieValue, csrfToken, originOk, RateLimiter, SESSION_COOKIE } from './web-auth.ts';
 import { jiraImportAction } from './web-entrada.ts';
 import { runnerCheckAction } from './web-runner-check.ts';
@@ -146,6 +152,7 @@ function parseCommand(body: Record<string, unknown>): Command | string {
 export const IMPORT_OPS = { 'perfiles/importar': 'profile', 'definicion/importar': 'definition' } as const;
 /** Operaciones remotas: las acciones de la tabla ACTIONS (menos las claves, que van por `api-key/*`) y las de identidad, lectura y cuenta. */
 export const REMOTE_ACTION_OPS = (): string[] => [...Object.keys(ACTIONS).filter(n => !n.startsWith('api-keys/')), 'perfiles/guardar', 'perfiles/asignar'];
+export const REMOTE_VERB_OPS = ['triage/all', 'validate/run', 'improve/dismiss', 'runner/enable', 'runner/disable', 'config/read'] as const;
 export const REMOTE_IDENTITY_OPS = ['api-key/create', 'api-key/list', 'api-key/revoke', 'session/list', 'session/revoke', 'session/logout', 'user/list', 'user/invite', 'user/revoke-invite', 'user/role', 'user/disable', 'user/resolve-work', 'ops/read'] as const;
 
 export function cliRoutes(opts: CliRoutesOptions) {
@@ -293,9 +300,34 @@ export function cliRoutes(opts: CliRoutesOptions) {
         const path = fields.path ?? '';
         if (!/^\/[\w/?=&.-]{0,200}$/.test(path)) throw new StoreError('invalid_input', 'ruta de lectura inválida');
         const url = new URL(`http://x${path}`);
-        const data = route(store, url, url.pathname);
+        const data = route(store, url, url.pathname) ?? extraRoute(store, url, url.pathname);
         if (data === undefined) throw new StoreError('not_found', 'ruta no encontrada');
         return p.role === 'viewer' ? viewerProjection(data) : data;
+      }
+      case 'triage/all': return verb(store, p, 'triage/all', () => {
+        const done = store.listSignals(fields.ws ?? '', 'new').map(sig => {
+          const c = store.triageSignal(sig.id);
+          if (hasAdmission(store)) linkTriagedSignal(new AdmissionDb(store), sig.id, c.id);
+          return { signal: sig.id, change: c.id };
+        });
+        return { triaged: done };
+      });
+      case 'validate/run': return verb(store, p, 'validate/run', () => {
+        const only = fields.only ? fields.only.split(',').map(x => x.trim()) : [...VALIDATOR_KINDS];
+        const bad = only.find(k => !VALIDATOR_KINDS.includes(k as ValidatorKind));
+        if (bad) throw new StoreError('invalid_input', `validador desconocido «${bad}»`);
+        return { queued: store.requestValidation(id, only as ValidatorKind[]).map(a => a.id) };
+      });
+      case 'improve/dismiss': return verb(store, p, 'improve/dismiss', () => { dismissCandidate(store, id); return {}; });
+      case 'runner/enable': case 'runner/disable': return verb(store, p, op, () => { const r = store.setRunnerEnabled(id, op === 'runner/enable'); return { name: r.name, enabled: r.enabled }; });
+      case 'config/read': {
+        gate(p, 'config/read');
+        // Nombres, no destinos ni secretos: el destino SSH del runner es del operador.
+        const what = fields.what ?? '';
+        if (what === 'runner list') return store.listRunners().map(r => ({ name: r.name, kind: r.kind, enabled: r.enabled }));
+        if (what === 'profile list') return listProfiles(opts.stateDir);
+        if (what === 'ws access') { const w = store.getWorkstream(id); return { slug: w.slug, env: w.envAllow, mcp: w.mcpAllow }; }
+        throw new StoreError('invalid_input', 'lectura de configuración desconocida');
       }
       case 'api-key/list': gate(p, 'api-key/list', { target: fields.all === 'yes' ? 'other' : 'own' }); return listUserKeys(store, p, { all: fields.all === 'yes' });
       case 'api-key/create': gate(p, 'api-key/create'); return createUserKey(store, p, fields.name ?? '', fields.scope as 'read' | 'decide', { write: opts.write });
@@ -312,6 +344,12 @@ export function cliRoutes(opts: CliRoutesOptions) {
       default: throw new StoreError('not_found', 'operación desconocida');
     }
   }
+
+  /** Verbos de §4.2 sin acción web: política y revalidación en la transacción, con el usuario de la sesión como actor de los eventos. */
+  const verb = <T>(store: Store, p: Principal, capability: string, fn: () => T): T => runAs(store, p, capability, { write: opts.write }, me => {
+    store.asActor({ ...actorOf(me), role: me.role });
+    try { return fn(); } finally { store.asActor(undefined); }
+  });
 
   const CONFLICTS = ['conflict', 'invalid_transition', 'limit_reached', 'workstream_busy'];
   const result = (out: { destination: string; result: string }) => {

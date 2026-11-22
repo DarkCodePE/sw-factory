@@ -27,6 +27,26 @@ export const VERBS: Record<string, Verb> = {
   'changes': { op: 'ops/read', read: '/changes' },
   'show': { op: 'ops/read', args: ['id'], read: '/changes/:id' },
   'activity': { op: 'ops/read', args: ['id'], read: '/activities/:id' },
+  // Lecturas de §4.2 (capacidad `ops/read`, todos los roles): el servidor proyecta y redacta.
+  'signal list': { op: 'ops/read', args: ['ws'], read: '/signals' },
+  'status': { op: 'ops/read', args: ['ws'], read: '/status' },
+  'events': { op: 'ops/read', args: ['ws'], read: '/events' },
+  'automation list': { op: 'ops/read', args: ['ws'], read: '/automations' },
+  'score list': { op: 'ops/read', args: ['ws'], read: '/scores' },
+  'validate status': { op: 'ops/read', args: ['id'], read: '/validate/:id' },
+  'bench report': { op: 'ops/read', args: ['id'], read: '/bench/:id' },
+  'improve report': { op: 'ops/read', args: ['id'], read: '/improve/:id' },
+  'improve candidates': { op: 'ops/read', args: ['ws'], read: '/improve' },
+  // Lecturas de configuración (`config/read`: owner y admin).
+  'runner list': { op: 'config/read', fixed: { what: 'runner list' } },
+  'profile list': { op: 'config/read', fixed: { what: 'profile list' } },
+  'ws access': { op: 'config/read', args: ['id'], fixed: { what: 'ws access' } },
+  // Verbos de §4.2 sin acción web (`triage/all`, `validate/run`, `improve/dismiss`, `runner/enable|disable`).
+  'triage all': { op: 'triage/all', args: ['ws'] },
+  'validate': { op: 'validate/run', args: ['id'] },
+  'improve dismiss': { op: 'improve/dismiss', args: ['id'] },
+  'runner enable': { op: 'runner/enable', args: ['id'] },
+  'runner disable': { op: 'runner/disable', args: ['id'] },
   'review approve': { op: 'activities/review', args: ['id'], fixed: { decision: 'approve' } },
   'review comment': { op: 'activities/review', args: ['id', 'comment'], fixed: { decision: 'comment' } },
   'review decline': { op: 'activities/review', args: ['id', 'comment'], fixed: { decision: 'decline' } },
@@ -166,7 +186,7 @@ export function parseVerb(argv: string[]): Parsed {
   if (!word) throw new Error(`verbo remoto desconocido: ${argv.slice(0, 2).join(' ') || '(vacío)'}`);
   const verb = VERBS[word]!, rest = argv.slice(word.split(' ').length);
   const pos: string[] = [], fields: Record<string, string> = { ...verb.fixed };
-  let confirm: string | undefined, opId: string | undefined, file: string | undefined;
+  let confirm: string | undefined, opId: string | undefined, file: string | undefined, all = false;
   for (let i = 0; i < rest.length; i++) {
     const a = rest[i]!;
     if (!a.startsWith('--')) { pos.push(a); continue; }
@@ -174,6 +194,7 @@ export function parseVerb(argv: string[]): Parsed {
     // `--yes` y `--cancel` son booleanos: no consumen el valor siguiente.
     if (k === 'yes') { fields.confirm = 'yes'; continue; }
     if (k === 'cancel') { fields.cancel = 'yes'; continue; }
+    if (k === 'all') { all = true; continue; }
     const value = inline ?? rest[++i];
     if (value === undefined) throw new Error(`falta el valor de --${k}`);
     if (k === 'confirm') confirm = value;
@@ -183,11 +204,14 @@ export function parseVerb(argv: string[]): Parsed {
     else if (/^[A-Za-z][\w.]{0,60}$/.test(k)) fields[k] = value;
     else throw new Error(`flag desconocido: --${k}`);
   }
-  const names = verb.args ?? [];
+  // `triage --all <ws>` triá todas las señales nuevas de un workstream.
+  if (all && word !== 'triage') throw new Error('--all solo vale para triage');
+  const v = all ? VERBS['triage all']! : verb;
+  const names = v.args ?? [];
   if (pos.length > names.length) throw new Error(`sobran argumentos para «${word}»`);
   let id = '';
   names.forEach((n, i) => { if (pos[i] === undefined) return; if (n === 'id') id = pos[i]!; else fields[n] = pos[i]!; });
-  return { verb, id, fields, confirm, opId, file };
+  return { verb: v, id, fields, confirm, opId, file };
 }
 
 function print(deps: RemoteDeps, data: unknown): void {
