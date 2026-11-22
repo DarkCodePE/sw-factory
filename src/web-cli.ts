@@ -126,7 +126,12 @@ async function readJson(req: Request, max: number): Promise<Record<string, unkno
 }
 
 /** Texto sin metadatos de otros: los viewers no reciben texto libre generado por workers (§4.2). */
-const FREE_TEXT = new Set(['result', 'error', 'reviewComment']);
+const FREE_TEXT = new Set(['result', 'error', 'reviewComment', 'summary']);
+/** Proyección por ruta: el mensaje de un evento lleva texto libre tras el primer «: » (motivo, comentario, título), que un viewer no recibe. */
+export function viewerRead(path: string, v: unknown): unknown {
+  const data = viewerProjection(v);
+  return path === '/events' && Array.isArray(data) ? data.map(e => ({ ...e, message: String(e.message).split(': ')[0] })) : data;
+}
 export function viewerProjection(v: unknown): unknown {
   if (Array.isArray(v)) return v.map(viewerProjection);
   if (v && typeof v === 'object') return Object.fromEntries(Object.entries(v).map(([k, x]) => [k, FREE_TEXT.has(k) ? null : viewerProjection(x)]));
@@ -302,7 +307,7 @@ export function cliRoutes(opts: CliRoutesOptions) {
         const url = new URL(`http://x${path}`);
         const data = route(store, url, url.pathname) ?? extraRoute(store, url, url.pathname);
         if (data === undefined) throw new StoreError('not_found', 'ruta no encontrada');
-        return p.role === 'viewer' ? viewerProjection(data) : data;
+        return p.role === 'viewer' ? viewerRead(url.pathname, data) : data;
       }
       case 'triage/all': return verb(store, p, 'triage/all', () => {
         const done = store.listSignals(fields.ws ?? '', 'new').map(sig => {

@@ -207,3 +207,20 @@ test('T119c-H10: un change con el turno esperando respuesta queda fuera de la co
   expect(plan.affected.map(a => a.id)).toEqual([idle]);
   expect(plan.excluded).toEqual([{ id: waiting, reason: 'active_attempt' }]);
 });
+
+// ---- H13: un viewer no lee texto libre de workers ni revisores por events ni validate status ----------------
+
+test('T119c-H13: events y validate status no dan a un viewer el motivo de un bloqueo, el comentario de una revisión ni el resumen de un validador', async () => {
+  const send = (role: 'owner' | 'viewer', path: string) => cli(c.tokens.cli[role], { op: 'ops/read', fields: { path } }).then(async r => JSON.stringify(await r.json()));
+  const act = c.store.listActivities({ changeId })[0]!.id;
+  c.store.event(ws.id, 'warning', 'blocked: MARCA-BLOQUEO no encuentro /srv/secreto', changeId, act);
+  c.store.event(ws.id, 'info', 'investigation commented: MARCA-REVISION', changeId, act);
+  c.store.event(ws.id, 'warning', 'gate allow: ["x"]: MARCA-GATE', changeId, act);
+  c.store.db.query("UPDATE activities SET validator = 'tests', status = 'completed', review_status = 'commented', review_comment = 'MARCA-VALIDADOR' WHERE id = ?").run(act);
+  const rutas = [`/events?ws=${ws.slug}&limit=50`, `/events?ws=${ws.slug}&change=${changeId}`, `/validate/${changeId}`, `/status?ws=${ws.slug}`, `/activities/${act}`, `/changes/${changeId}`];
+  for (const path of rutas) expect(await send('viewer', path)).not.toContain('MARCA-');
+  // El owner sí las lee (la proyección es solo de viewer) y el viewer conserva lo útil del evento.
+  expect(await send('owner', `/events?ws=${ws.slug}`)).toContain('MARCA-BLOQUEO');
+  expect(await send('owner', `/validate/${changeId}`)).toContain('MARCA-VALIDADOR');
+  expect(await send('viewer', `/events?ws=${ws.slug}`)).toContain('"message":"blocked"');
+});
