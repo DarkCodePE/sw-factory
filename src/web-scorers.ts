@@ -97,7 +97,7 @@ function addScorerCard(store: Store, r: RangeSel, csrf: string): string {
 <label>Adaptador del juez<select name="harness"><option value="">Hereda el del perfil</option>${CONFINABLE_AGENTS.map(a => `<option>${esc(a)}</option>`).join('')}</select></label>
 <label>Aprobado desde<input name="passing" type="number" min="0" max="1" step="any" value="0.5" required></label>
 <label>Muestreo (0 a 1)<input name="sampling" type="number" min="0" max="1" step="any" value="0.1" required></label>
-<button>Guardar como perfil nuevo</button><p class="muted">Crea una copia del perfil con el juez; para usarlo, asígnala en Perfiles. Es un aviso: no bloquea nada.</p></form></details></section>`;
+<button>Guardar como perfil nuevo</button><p class="muted">Crea una copia del perfil con el juez; para usarlo, asígnala en Perfiles. Cada juez nuevo parte del perfil vigente: para tener varios en un perfil, asigna la copia antes de añadir el siguiente. Es un aviso: no bloquea nada.</p></form></details></section>`;
 }
 
 /** Campos del formulario «Añadir juez» → definición. Un dato inválido es un StoreError invalid_input con texto fijo (sin eco de lo escrito). */
@@ -115,17 +115,18 @@ export function scorerFromForm(raw: Record<string, string | undefined>): { ws: s
 }
 
 /** Guarda una copia del perfil vigente del workstream con el juez nuevo y devuelve su digest. No la asigna (D-H) y deja un evento con el actor. */
-export function createScorer(store: Store, stateDir: string, input: ReturnType<typeof scorerFromForm>): { slug: string; digest: string } {
+export function createScorer(store: Store, stateDir: string, input: ReturnType<typeof scorerFromForm>): { slug: string; digest: string; created: boolean } {
   const ws = store.getWorkstream(input.ws);
   const profile = structuredClone(resolveProfile(stateDir, ws.profile).profile);
   if (profile.scorers?.[input.name]) throw new StoreError('conflict', 'ya existe un juez con ese nombre');
   profile.schemaVersion = 2; // los jueces solo existen en perfiles v2
   profile.scorers = { ...profile.scorers, [input.name]: input.def };
-  let digest: string;
-  try { digest = saveProfile(stateDir, profile).digest; }
+  let saved: ReturnType<typeof saveProfile>;
+  try { saved = saveProfile(stateDir, profile); }
   catch (e) { throw new StoreError('invalid_input', redact((e as Error).message).slice(0, 300)); }
-  store.event(ws.id, 'info', `juez creado: ${input.name} (ámbito ${input.def.scope}) en el perfil ${digest.slice(0, 8)}, sin asignar`);
-  return { slug: ws.slug, digest };
+  // Reenviar el mismo formulario reutiliza el perfil ya guardado: no hay nada creado y no se emite un segundo evento.
+  if (saved.created) store.event(ws.id, 'info', `juez creado: ${input.name} (ámbito ${input.def.scope}) en el perfil ${saved.digest.slice(0, 8)}, sin asignar`);
+  return { slug: ws.slug, digest: saved.digest, created: saved.created };
 }
 
 /** Una tarjeta por juez (definido o con puntuaciones): tasa de aprobado por día. Sin puntuaciones hechas es «No medido», nunca 0 %. */

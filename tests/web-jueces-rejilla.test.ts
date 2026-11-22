@@ -132,3 +132,13 @@ test('«Puesta en marcha» completa: perfil asignado, juez definido y primer cha
   const h = await html('/metricas?tab=jueces');
   expect(h).toContain('Puesta en marcha · 5 de 5'); expect(h).toContain('Hecho');
 });
+
+test('T114-H4: reenviar el mismo juez no deja un segundo evento y redirige con nuevo=0', async () => {
+  seed();
+  server = startWeb(dir, 0, { write: true }); await login();
+  const first = await post('/scorers/nuevo', form()), second = await post('/scorers/nuevo', form());
+  const q = (r: Response) => new URL(r.headers.get('location')!, base()).searchParams;
+  expect(q(first).get('nuevo')).toBe('1'); expect(q(second).get('nuevo')).toBe('0');
+  expect(q(second).get('digest')).toBe(q(first).get('digest'));
+  expect(events()).toHaveLength(1);
+});

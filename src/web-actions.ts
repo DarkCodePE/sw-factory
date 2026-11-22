@@ -337,8 +337,8 @@ export const ACTIONS: Record<string, Action | CheckAction | WebResponseAction | 
     input: raw => { for (const k of ['rubric', 'classes']) limit(text(raw, k), 4096); return Object.fromEntries(['ws', 'name', 'scope', 'rubric', 'classes', 'passing', 'sampling', 'harness'].map(k => [k, text(raw, k)])); },
     run: (store, _id, input, out, _actor, stateDir) => {
       out.destination = '/metricas?tab=jueces';
-      const { slug, digest } = asInput(() => createScorer(store, stateDir, scorerFromForm(input)));
-      out.destination = `/perfiles?${new URLSearchParams({ ws: slug, digest, nuevo: '1' })}`;
+      const { slug, digest, created } = asInput(() => createScorer(store, stateDir, scorerFromForm(input)));
+      out.destination = `/perfiles?${new URLSearchParams({ ws: slug, digest, nuevo: created ? '1' : '0' })}`;
     },
   },
   'questions/answer': {
