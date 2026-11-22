@@ -324,3 +324,18 @@ test('T119a-H7: la caducidad de una clave se normaliza a UTC y no admite fechas 
   now = Date.parse('2026-11-22T13:00:01.000Z');
   expect(verifyUserKey(store, k.key)).toBeNull();
 });
+
+test('T119a-H11: las claves de usuario llevan prefijo propio y no valen como claves locales ni al revés', () => {
+  const o = owner();
+  const k = createUserKey(store, o, 'prefijo', 'decide');
+  expect(k.key).toMatch(/^fabu_[a-f0-9]{12}_[A-Za-z0-9_-]{43}$/);
+  expect(verifyUserKey(store, k.key)).not.toBeNull();
+  // Con el prefijo de las claves locales, el mismo secreto no autentica por ninguna vía.
+  const asLocal = k.key.replace('fabu_', 'fabk_');
+  expect(verifyUserKey(store, asLocal)).toBeNull();
+  expect(store.verifyApiKey(asLocal)).toBeNull();
+  expect(store.verifyApiKey(k.key)).toBeNull();
+  const local = store.createApiKey('local', 'read');
+  expect(local.key.startsWith('fabk_')).toBe(true);
+  expect(verifyUserKey(store, local.key.replace('fabk_', 'fabu_'))).toBeNull();
+});

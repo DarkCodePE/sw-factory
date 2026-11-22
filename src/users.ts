@@ -319,7 +319,7 @@ export function createUserKey(store: Store, p: Principal, name: string, scope: '
     store.db.query(`INSERT INTO api_keys (id, name, scope, hash, created_at, created_by, user_id, expires_at) VALUES (?,?,?,?,?,?,?,?)`)
       .run(id, name, scope, sha(secret), store.now(), `user:${me.userId}`, me.userId, expires?.toISOString() ?? null);
     audit(store, actorOf(me), 'key.create', id, { scope });
-    return { id, key: `fabk_${id}_${secret}` };
+    return { id, key: `fabu_${id}_${secret}` }; // prefijo propio: un binario anterior (`fabk_`) no la reconoce como clave local
   });
 }
 
@@ -347,7 +347,7 @@ export function revokeUserKey(store: Store, p: Principal, keyId: string): void {
 
 /** Autentica una clave de usuario. Las claves locales (sin usuario) no entran por aquí. */
 export function verifyUserKey(store: Store, key: string): Principal | null {
-  const m = /^fabk_([a-f0-9]{12})_([A-Za-z0-9_-]{43})$/.exec(key);
+  const m = /^fabu_([a-f0-9]{12})_([A-Za-z0-9_-]{43})$/.exec(key);
   if (!m) return null;
   const k = store.db.query('SELECT * FROM api_keys WHERE id = ? AND user_id IS NOT NULL AND revoked_at IS NULL').get(m[1]!) as Row | null;
   if (!k || (k.expires_at && (k.expires_at as string) <= store.now()) || !sameDigest(k.hash as string, sha(m[2]!))) return null;
