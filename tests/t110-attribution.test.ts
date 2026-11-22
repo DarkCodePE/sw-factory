@@ -66,6 +66,7 @@ test('T110: origen desatendido, automatización normalizada y señales anteriore
       const c = store.triageSignal(store.addSignal(ws.id, 'web', 'cli', { source }).id);
       expect(store.getChangeOrigin(c.id)).toEqual({ source, actorId: null });
     }
+    expect(() => store.addSignal(ws.id, 'w', 'b', { source: 'webhook' as never })).toThrow('origen de señal inválido'); // N6: nada asigna webhook
     const prior = store.triageSignal(store.addSignal(ws.id, 'fuente=web', 'usuario=a').id);
     expect(store.getChangeOrigin(prior.id)).toBeNull();
   } finally { store.close(); }
