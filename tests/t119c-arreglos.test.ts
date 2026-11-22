@@ -238,3 +238,25 @@ test('T119c-H16: la misma revisión de importación no se acepta dos veces', asy
   expect((await send(cmd(revision))).status).toBe(200);
   expect((await send(cmd(revision))).status).toBe(409);
 });
+
+// ---- H17: los canjes ajenos no gastan los intentos de la página de aprobación ni los de los canjes con 429 ----
+
+test('T119c-H17: 30 canjes con un verificador ajeno no tumban el pareo: la persona aprueba y la terminal legítima canjea', async () => {
+  const { json, form, code, exchange } = await startPair();
+  for (let i = 0; i < 30; i++) await json('/cli/v1/pair/exchange', { code, verifier: 'w'.repeat(43) });
+  expect(await (await form('member', { code })).text()).not.toContain('no es válido');
+  await form('member', { code, confirm: 'yes' });
+  expect((await exchange()).status).toBe(200);
+});
+
+test('T119c-H17 (tope): 20 canjes ajenos que no reciben 429 descartan el pareo; el canje legítimo ya no entra', async () => {
+  let now = Date.now();
+  const routes = cliRoutes({ stateDir: c.stateDir, publicOrigin: ORIGIN, write: true, secret: SECRET, clock: () => now });
+  const json = (path: string, body: unknown) => routes.handle(new Request(`${ORIGIN}${path}`, { method: 'POST', body: JSON.stringify(body), headers: { host: HOST, 'content-type': 'application/json' } }), '203.0.113.7').then(r => r!);
+  const { createHash } = await import('node:crypto'), verifier = 'v'.repeat(43);
+  const code = ((await (await json('/cli/v1/pair/start', { challenge: createHash('sha256').update(verifier).digest('hex') })).json()) as { data: { code: string } }).data.code.replace('-', '');
+  const statuses: number[] = [];
+  for (let i = 0; i < 21; i++) { statuses.push((await json('/cli/v1/pair/exchange', { code, verifier: 'w'.repeat(43) })).status); now += 13_000; }
+  expect(new Set(statuses)).toEqual(new Set([403]));
+  const p = routes.pairings as any; expect(p.pending.has(code)).toBe(false); // descartado por el tope, no por caducidad
+});

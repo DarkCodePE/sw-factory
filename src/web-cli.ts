@@ -43,7 +43,7 @@ const COMMAND_LIMIT = 128 * 1024;
 const CODE_ALPHABET = 'ABCDEFGHJKMNPQRSTUVWXYZ23456789';
 const sha = (s: string) => createHash('sha256').update(s).digest('hex');
 
-interface Pairing { code: string; challenge: string; ip: string; startedAt: number; expiresAt: number; approvedBy?: { userId: string; role: Role }; shownTo?: string; attempts: number }
+interface Pairing { code: string; challenge: string; ip: string; startedAt: number; expiresAt: number; approvedBy?: { userId: string; role: Role }; shownTo?: string; attempts: number; badExchanges: number }
 
 /** Pareos pendientes: el código visible no es el comprobante secreto (el verificador no sale de la terminal). */
 export class CliPairings {
@@ -55,7 +55,7 @@ export class CliPairings {
     if (this.pending.size >= PAIR_PENDING_MAX) return null;
     let code = '';
     do { const b = randomBytes(8); code = [...b].map(x => CODE_ALPHABET[x % CODE_ALPHABET.length]).join(''); } while (this.pending.has(code));
-    const now = this.clock(), p: Pairing = { code, challenge, ip, startedAt: now, expiresAt: now + PAIR_TTL_MS, attempts: 0 };
+    const now = this.clock(), p: Pairing = { code, challenge, ip, startedAt: now, expiresAt: now + PAIR_TTL_MS, attempts: 0, badExchanges: 0 };
     this.pending.set(code, p);
     return p;
   }
@@ -67,19 +67,21 @@ export class CliPairings {
     if (++p.attempts > PAIR_ATTEMPTS_PER_CODE) { this.pending.delete(p.code); return null; }
     return p;
   }
-  /** Canje: exige aprobación y el verificador original; un verificador ajeno cuenta como intento y no consume el pareo ajeno.
-   *  Los sondeos «pendiente» con el verificador correcto no gastan intentos: la persona tarda en aprobar. */
-  exchange(code: string, verifier: string): Pairing | 'pending' | null {
+  /** Canje: exige aprobación y el verificador original. Un verificador ajeno da `'bad'` sin gastar nada: quien llama lo cuenta con `fail`
+   *  (solo si no fue un 429). Los intentos de la página de aprobación (`lookup`) y los canjes ajenos tienen contadores separados. */
+  exchange(code: string, verifier: string): Pairing | 'pending' | 'bad' | null {
     this.sweep();
     const p = this.pending.get(code);
     if (!p) return null;
-    if (!constantEqual(sha(verifier), p.challenge)) {
-      if (++p.attempts > PAIR_ATTEMPTS_PER_CODE * 4) this.pending.delete(code);
-      return null;
-    }
+    if (!constantEqual(sha(verifier), p.challenge)) return 'bad';
     if (!p.approvedBy) return 'pending';
     this.pending.delete(code);
     return p;
+  }
+  /** Cuenta un canje fallido; pasado el tope el pareo se descarta. */
+  fail(code: string) {
+    const p = this.pending.get(code);
+    if (p && ++p.badExchanges > PAIR_ATTEMPTS_PER_CODE * 4) this.pending.delete(code);
   }
 }
 
@@ -188,9 +190,10 @@ export function cliRoutes(opts: CliRoutesOptions) {
     if (!/^[A-Z0-9]{8}$/.test(code) || typeof verifier !== 'string' || verifier.length < 32 || verifier.length > 200) return fail(400, 'invalid_input', 'petición inválida');
     const r = pairings.exchange(code, verifier);
     if (r === 'pending') return fail(409, 'conflict', 'el pareo aún no está aprobado');
-    if (!r?.approvedBy) {
-      // El tope protege contra verificadores ajenos: solo los canjes fallidos lo gastan.
+    if (!r || r === 'bad' || !r.approvedBy) {
+      // El tope protege contra verificadores ajenos: solo los canjes fallidos lo gastan, y un 429 no cuenta.
       const retry = limiter.hit(`pair-ip:${ip}`, LIMITS.ipPerMin) || limiter.hit(`pair-code:${code}`, PAIR_PER_FLOW_PER_MIN);
+      if (r === 'bad' && !retry) pairings.fail(code);
       return retry ? fail(429, 'rate_limited', 'demasiados intentos', { 'retry-after': String(retry) }) : fail(403, 'forbidden', 'pareo no válido');
     }
     try {
