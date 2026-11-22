@@ -190,3 +190,11 @@ test('T111-H4: cambiar el rango en Jueces conserva el juez elegido', async () =>
   expect(await html('/metricas?tab=jueces&range=all')).not.toContain('name="scorer" value=');
   expect(await html('/metricas?tab=jueces&scorer=%22%3E%3Cb%3E')).not.toContain('<b>');
 });
+test('T111-H7: el tope de 366 días vale también en Jueces (borde exacto 366 pasa, 367 da 400)', async () => {
+  seed(1); server = startWeb(dir, 0);
+  for (const tab of ['productividad', 'gasto', 'jueces']) {
+    expect((await fetch(url(`/metricas?tab=${tab}&from=2025-01-01&to=2025-12-31`))).status).toBe(200); // 365
+    expect((await fetch(url(`/metricas?tab=${tab}&from=2024-01-01&to=2024-12-31`))).status).toBe(200); // 366 (bisiesto)
+    expect((await fetch(url(`/metricas?tab=${tab}&from=2024-01-01&to=2025-01-01`))).status).toBe(400); // 367
+  }
+});

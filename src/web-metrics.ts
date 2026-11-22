@@ -22,6 +22,7 @@ function selection(url: URL): RangeSel {
   if (from) validateDay(from);
   if (to) validateDay(to);
   if (from && to && from > to) throw new URIError('Rango inválido');
+  if (from && to && (Date.parse(to) - Date.parse(from)) / 86_400_000 + 1 > 366) throw new URIError('Rango demasiado amplio');
   return { ws, range, from, to, since: from ? `${from}T00:00:00.000Z` : range === 'custom' || range === 'all' ? undefined : sinceOf(range), until: to ? `${to}T23:59:59.999Z` : undefined };
 }
 const query = (r: RangeSel, tab: string) => `?${new URLSearchParams({ tab, ...(r.ws && { ws: r.ws }), range: r.range, ...(r.from && { from: r.from }), ...(r.to && { to: r.to }) })}`;
