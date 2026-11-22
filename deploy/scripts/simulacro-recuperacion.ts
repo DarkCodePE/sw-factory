@@ -1,6 +1,8 @@
-import { existsSync, mkdirSync, rmSync, copyFileSync } from 'node:fs';
+import { existsSync, mkdirSync, rmSync, copyFileSync, statSync, readdirSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
+import { execSync } from 'node:child_process';
+import { Database } from 'bun:sqlite';
 import { Store } from '../../src/store.ts';
 
 export interface SimulacroResult {
@@ -10,6 +12,8 @@ export interface SimulacroResult {
   seededChanges: number;
   seededActivities: number;
   walExistedAtBackup: boolean;
+  naiveMissedWalRow: boolean;
+  walRowRestored: boolean;
   integrityCheckOk: boolean;
   foreignKeyCheckOk: boolean;
   restoredRowsMatched: boolean;
@@ -19,11 +23,13 @@ export interface SimulacroResult {
 /**
  * Ejecuta el simulacro básico de copia y restauración según T118b ola 1 (§3.3):
  * 1. Siembra una base con el esquema disponible (sin usuarios ni libro).
- * 2. Realiza transacciones confirmadas dejando cambios en WAL.
- * 3. Ejecuta la copia de seguridad.
- * 4. Simula caída / parada de servicios y restaura en un directorio nuevo.
- * 5. Verifica integrity_check, foreign_key_check, recuentos y apertura en Store readonly.
- * 6. Registra tiempos de recuperación (RTO).
+ * 2. Mantiene una transacción de lectura abierta para bloquear el checkpoint del WAL.
+ * 3. Realiza transacciones confirmadas dejando cambios pendientes exclusivamente en WAL.
+ * 4. Comprueba que un 'cp' ingenuo no captura la fila del WAL.
+ * 5. Ejecuta backup.sh y restore.sh.
+ * 6. Verifica que la base restaurada recupera íntegramente la fila de WAL.
+ * 7. Verifica integrity_check, foreign_key_check, recuentos y apertura en Store readonly.
+ * 8. Registra tiempos de recuperación (RTO).
  */
 export async function ejecutarSimulacro(workDir: string): Promise<SimulacroResult> {
   const sourceDir = join(workDir, 'source-state');
@@ -44,34 +50,64 @@ export async function ejecutarSimulacro(workDir: string): Promise<SimulacroResul
   const c1 = store.createChange(ws1.id, 'Optimizar consultas', 'Mejora de índices');
   const c2 = store.createChange(ws2.id, 'Guía de inicio', 'Nuevo tutorial');
 
-  // Mutación en WAL
+  // Mutación inicial consolidada
   store.setWorkstreamState(ws1.id, 'active');
   store.addChangeNote(c1.id, 'Nota de revisión inicial');
+  store.db.exec('PRAGMA wal_checkpoint(PASSIVE);');
+
+  // 2. Lector abierto que bloquea el truncado del WAL
+  const reader = new Database(sourceDb, { readonly: true });
+  reader.exec('BEGIN');
+  reader.query('SELECT count(*) FROM workstreams').get();
+
+  // Fila confirmada que reside en WAL
+  const cWal = store.createChange(ws1.id, 'FILA-SOLO-EN-WAL', 'Transacción confirmada en WAL');
+
+  const walPath = `${sourceDb}-wal`;
+  const walExistedAtBackup = existsSync(walPath) && statSync(walPath).size > 0;
+
+  // 3. Demostración de falla de 'cp' simple frente a backup atómico
+  const naiveDb = join(workDir, 'naive-cp.db');
+  copyFileSync(sourceDb, naiveDb);
+  let naiveMissedWalRow = false;
+  try {
+    const naiveConn = new Database(naiveDb, { readonly: true });
+    const naiveRow = naiveConn.query("SELECT count(*) as n FROM changes WHERE title = 'FILA-SOLO-EN-WAL'").get() as { n: number };
+    naiveMissedWalRow = (naiveRow?.n ?? 0) === 0;
+    naiveConn.close();
+  } catch {
+    naiveMissedWalRow = true;
+  }
 
   const seededWorkstreams = store.listWorkstreams().length;
   const seededChanges = store.changeIndex().length;
   const seededActivities = store.listActivities({ changeId: c1.id }).length;
 
-  const walExistedAtBackup = existsSync(`${sourceDb}-wal`);
+  // 4. Copia de seguridad mediante deploy/scripts/backup.sh
+  const backupScript = join(__dirname, 'backup.sh');
+  const restoreScript = join(__dirname, 'restore.sh');
 
-  // 2. Copia de seguridad (simulando parada controlada o checkpoint atómico)
   const t0Backup = performance.now();
-  store.db.exec('PRAGMA busy_timeout = 5000;');
-  store.db.exec('PRAGMA wal_checkpoint(TRUNCATE);');
-  const backupFile = join(backupDir, 'fabrica-backup.db');
-  rmSync(backupFile, { force: true });
-  store.db.exec(`VACUUM INTO '${backupFile}';`);
+  execSync(`bash "${backupScript}" "${sourceDb}" "${backupDir}"`, { stdio: 'pipe' });
   const durationBackupMs = performance.now() - t0Backup;
 
-  // Cerramos el servicio original para simular parada de negocio
+  // Liberamos transacciones y cerramos origen
+  reader.exec('COMMIT');
+  reader.close();
   store.close();
 
-  // 3. Restauración en un nuevo directorio
-  const t0Restore = performance.now();
-  const restoreDb = join(restoreDir, 'fabrica.db');
-  copyFileSync(backupFile, restoreDb);
+  // 5. Restauración en un nuevo directorio mediante deploy/scripts/restore.sh
+  const backupFiles = readdirSync(backupDir).filter(f => f.endsWith('.db') && !f.endsWith('.tmp'));
+  if (backupFiles.length === 0) throw new Error('No se generó archivo de respaldo');
+  const backupFile = join(backupDir, backupFiles[0]!);
 
-  // 4. Verificación de integridad SQLite
+  const t0Restore = performance.now();
+  execSync(`bash "${restoreScript}" "${backupFile}" "${restoreDir}"`, { stdio: 'pipe' });
+  const durationRestoreMs = performance.now() - t0Restore;
+
+  const restoreDb = join(restoreDir, 'fabrica.db');
+
+  // 6. Verificación de integridad SQLite
   const restoredStore = new Store(restoreDb, { readonly: true });
   const integrity = restoredStore.db.query('PRAGMA integrity_check;').get() as { integrity_check?: string };
   const integrityCheckOk = integrity?.integrity_check === 'ok';
@@ -79,14 +115,16 @@ export async function ejecutarSimulacro(workDir: string): Promise<SimulacroResul
   const fk = restoredStore.db.query('PRAGMA foreign_key_check;').all();
   const foreignKeyCheckOk = fk.length === 0;
 
-  // 5. Verificación de recuento y contenido
+  // 7. Verificación de recuento y contenido (incluyendo la fila de WAL)
   const restoredWorkstreams = restoredStore.listWorkstreams();
   const restoredChanges = restoredStore.changeIndex();
   const restoredNotes = restoredStore.listChangeNotes(c1.id);
+  const walRowRestored = restoredChanges.some(c => c.title === 'FILA-SOLO-EN-WAL');
 
   const restoredRowsMatched =
     restoredWorkstreams.length === seededWorkstreams &&
     restoredChanges.length === seededChanges &&
+    walRowRestored &&
     restoredWorkstreams.some(w => w.slug === 'ws-core') &&
     restoredWorkstreams.some(w => w.slug === 'ws-docs') &&
     restoredChanges.some(c => c.title === 'Optimizar consultas') &&
@@ -95,8 +133,6 @@ export async function ejecutarSimulacro(workDir: string): Promise<SimulacroResul
   const readonlyStoreOpened = true;
   restoredStore.close();
 
-  const durationRestoreMs = performance.now() - t0Restore;
-
   return {
     durationBackupMs,
     durationRestoreMs,
@@ -104,6 +140,8 @@ export async function ejecutarSimulacro(workDir: string): Promise<SimulacroResul
     seededChanges,
     seededActivities,
     walExistedAtBackup,
+    naiveMissedWalRow,
+    walRowRestored,
     integrityCheckOk,
     foreignKeyCheckOk,
     restoredRowsMatched,

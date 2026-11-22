@@ -28,7 +28,7 @@ const dbPath = process.argv[1];
 const tmpPath = process.argv[2];
 const db = new Database(dbPath, { strict: true });
 db.exec("PRAGMA busy_timeout = 5000;");
-db.exec("PRAGMA wal_checkpoint(TRUNCATE);");
+db.exec("PRAGMA wal_checkpoint(PASSIVE);");
 db.exec(`VACUUM INTO \x27${tmpPath}\x27;`);
 db.close();
 ' "$DB_FILE" "$TMP_BACKUP"

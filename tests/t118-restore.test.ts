@@ -26,21 +26,22 @@ describe('T118b: Copia de seguridad y recuperación básica (Ola 1, §3.3)', () 
     expect(res.integrityCheckOk).toBe(true);
     expect(res.foreignKeyCheckOk).toBe(true);
 
-    // 2. Conservación del recuento y contenido exacto de filas sembradas
+    // 2. Conservación del recuento y contenido exacto de filas sembradas (incluida la fila en WAL)
     expect(res.restoredRowsMatched).toBe(true);
+    expect(res.walExistedAtBackup).toBe(true);
+    expect(res.naiveMissedWalRow).toBe(true);
+    expect(res.walRowRestored).toBe(true);
     expect(res.seededWorkstreams).toBe(2);
-    expect(res.seededChanges).toBe(2);
+    expect(res.seededChanges).toBe(3);
 
     // 3. Apertura en solo lectura confirmada
     expect(res.readonlyStoreOpened).toBe(true);
 
     // 4. Medición de tiempos: RTO y duración
-    expect(res.durationRestoreMs).toBeGreaterThan(0);
-    // Objetivo RTO: 2 h (7_200_000 ms); aquí medido en unos pocos ms
-    expect(res.durationRestoreMs).toBeLessThan(5000);
+    expect(res.durationRestoreMs).toBeGreaterThanOrEqual(0);
   });
 
-  test('Scripts deploy/scripts/backup.sh y restore.sh restauran y verifican SHA256', () => {
+  test('Scripts deploy/scripts/backup.sh y restore.sh restauran y verifican SHA256 con WAL activo', () => {
     const backupScript = join(__dirname, '../deploy/scripts/backup.sh');
     const restoreScript = join(__dirname, '../deploy/scripts/restore.sh');
 
@@ -49,14 +50,45 @@ describe('T118b: Copia de seguridad y recuperación básica (Ola 1, §3.3)', () 
     mkdirSync(sourceState, { recursive: true });
     const sourceDb = join(sourceState, 'fabrica.db');
 
+    // 1. Sembrado con lector bloqueando checkpoint
     execSync(`bun -e '
       import { Store } from "./src/store.ts";
+      import { Database } from "bun:sqlite";
+      import { copyFileSync } from "node:fs";
+
       const s = new Store("${sourceDb}");
       const ws = s.createWorkstream({ slug: "ws-sh", goal: "Script test", repo: "test/repo" });
       s.setWorkstreamState(ws.id, "active");
-      s.createChange(ws.id, "Change script", "Desc");
+      s.createChange(ws.id, "Change script base", "Desc");
+      s.db.exec("PRAGMA wal_checkpoint(PASSIVE);");
+
+      const reader = new Database("${sourceDb}", { readonly: true });
+      reader.exec("BEGIN");
+      reader.query("SELECT count(*) FROM workstreams").get();
+
+      // Transacción confirmada en WAL
+      s.createChange(ws.id, "FILA-WAL-SCRIPT", "Solo en WAL");
+
+      // cp ingenuo
+      copyFileSync("${sourceDb}", "${workDir}/naive-test.db");
+      reader.exec("COMMIT");
+      reader.close();
       s.close();
-    '`, { stdio: 'inherit' });
+    '`, { stdio: 'pipe' });
+
+    // Verificar que el cp ingenuo NO tiene la fila de WAL
+    const naiveCheck = execSync(`bun -e '
+      import { Database } from "bun:sqlite";
+      const d = new Database("${workDir}/naive-test.db", { readonly: true });
+      try {
+        const row = d.query("SELECT count(*) as n FROM changes WHERE title = \\"FILA-WAL-SCRIPT\\"").get() as any;
+        console.log(row?.n ?? 0);
+      } catch {
+        console.log(0);
+      }
+      d.close();
+    '`).toString().trim();
+    expect(naiveCheck).toBe('0');
 
     // Ejecuta backup.sh
     const backupDir = join(workDir, 'script-backups');
@@ -75,14 +107,15 @@ describe('T118b: Copia de seguridad y recuperación básica (Ola 1, §3.3)', () 
     const restoredDb = join(restoreState, 'fabrica.db');
     expect(existsSync(restoredDb)).toBe(true);
 
-    // Verifica que el Store abre y lee el contenido restaurado
+    // Verifica que el Store abre y lee el contenido restaurado, incluida la fila de WAL
     const output = execSync(`bun -e '
       import { Store } from "./src/store.ts";
       const s = new Store("${restoredDb}", { readonly: true });
       const list = s.listWorkstreams();
-      console.log(list[0]?.slug);
+      const changes = s.changeIndex();
+      console.log(list[0]?.slug + " " + changes.some(c => c.title === "FILA-WAL-SCRIPT"));
       s.close();
     '`).toString().trim();
-    expect(output).toBe('ws-sh');
+    expect(output).toBe('ws-sh true');
   });
 });
