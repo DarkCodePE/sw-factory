@@ -276,76 +276,49 @@ test('T82: coste por fuente y por actor del primer evento', () => {
   expect(m.cost.actors.find(a => a.name === 'No medido')).toEqual({ name: 'No medido', measured: null, unknown: 1, total: null });
 });
 
-test('T82: gráficos SVG de series temporales, números coinciden con la tabla y días sin datos son huecos', () => {
+const svgOf = (html: string, label: string) => html.match(new RegExp(`<svg[^>]*aria-label="${label}[^>]*>[\\s\\S]*?</svg>`))?.[0] ?? '';
+test('T82/T111: tarjetas con área SVG, números iguales a la tabla plegada y días sin datos como hueco, nunca cero', () => {
   seed(1, 5, 'uno', '2026-11-17T10:00:00Z');
   seed(1, null, 'uno', '2026-11-18T10:00:00Z');
-
-  const { body: html } = metricsPage(store, dir, new URL('http://127.0.0.1:4310/metricas?from=2026-11-17&to=2026-11-19'));
+  const q = 'http://127.0.0.1:4310/metricas?from=2026-11-17&to=2026-11-19';
+  const { body: html } = metricsPage(store, dir, new URL(q));
+  const { body: gasto } = metricsPage(store, dir, new URL(q + '&tab=gasto'));
   expect(html).toContain('Series temporales');
   expect(html).toContain('Changes creados por día');
-  expect(html).toContain('Coste por día');
   expect(html).toContain('Intervenciones humanas por día');
-  expect(html).toContain('Coste por fuente del change');
-  expect(html).toContain('Coste por actor del primer evento');
-
-  // En el día sin datos (2026-11-19 para changes), la tabla tiene "Sin datos" y el SVG tiene hueco, nunca cero
-  expect(html).toContain('<tr><th scope="row">2026-11-19</th><td>Sin datos</td></tr>');
-  expect(html).not.toContain('<tr><th scope="row">2026-11-19</th><td>0</td></tr>');
-  expect(html).toContain('>hueco<');
+  expect(gasto).toContain('Coste por día');
+  expect(gasto).toContain('Coste por fuente del change');
+  expect(gasto).toContain('Coste por actor del primer evento');
   const m = calculateMetrics(store, dir, { from: '2026-11-17', to: '2026-11-19' });
   expect(m.daily.changes).toEqual([1, 1, null]);
   expect(m.daily.costs).toEqual([5, null, null]);
   expect(m.daily.interventions).toEqual([3, 3, null]);
 
-  // Tablas: valores por fila y día
+  // La tabla va plegada bajo cada gráfico y distingue «Sin datos» de «No medido».
+  expect(html).toContain('<details class="data"><summary>Tabla de datos · Changes creados por día</summary>');
   expect(html).toContain('<tr><th scope="row">2026-11-17</th><td>1</td></tr>');
-  expect(html).toContain('<tr><th scope="row">2026-11-18</th><td>1</td></tr>');
-  expect(html).toContain('<tr><th scope="row">2026-11-17</th><td>5.00 USD</td></tr>');
-  expect(html).toContain('<tr><th scope="row">2026-11-18</th><td>No medido</td></tr>');
+  expect(html).toContain('<tr><th scope="row">2026-11-19</th><td>Sin datos</td></tr>');
+  expect(html).not.toContain('<tr><th scope="row">2026-11-19</th><td>0</td></tr>');
   expect(html).toContain('<tr><th scope="row">2026-11-17</th><td>3</td></tr>');
-  expect(html).toContain('<tr><th scope="row">2026-11-18</th><td>3</td></tr>');
-
-  // SVG: valores exactos y huecos por gráfico
-  // Changes SVG
-  expect(html).toContain('<text x="58" y="20" text-anchor="middle" font-size="11" fill="currentColor">1</text>');
-  expect(html).toContain('<text x="114" y="20" text-anchor="middle" font-size="11" fill="currentColor">1</text>');
-  // Coste SVG
-  expect(html).toContain('<text x="58" y="20" text-anchor="middle" font-size="11" fill="currentColor">5.00</text>');
-  // Intervenciones SVG
-  expect(html).toContain('<text x="58" y="20" text-anchor="middle" font-size="11" fill="currentColor">3</text>');
-  expect(html).toContain('<text x="114" y="20" text-anchor="middle" font-size="11" fill="currentColor">3</text>');
-  // Hueco presente en día 19 (y día 18 en coste)
-  expect(html).toContain('<text x="170" y="103" text-anchor="middle" font-size="11" fill="var(--muted, #888)">hueco</text>');
-  expect(html).toContain('<text x="114" y="103" text-anchor="middle" font-size="11" fill="var(--muted, #888)">hueco</text>');
-
-  // Aserciones específicas por gráfico (M33, M34)
-  const changesSvg = html.match(/<svg[^>]*aria-label="Changes creados por día[^>]*>[\s\S]*?<\/svg>/)?.[0] ?? '';
-  expect(changesSvg).toContain('<text x="170" y="103" text-anchor="middle" font-size="11" fill="var(--muted, #888)">hueco</text>');
-  expect(changesSvg).not.toContain('>0<');
-
-  const costeSvg = html.match(/<svg[^>]*aria-label="Coste por día[^>]*>[\s\S]*?<\/svg>/)?.[0] ?? '';
-  expect(costeSvg).toContain('<text x="114" y="103" text-anchor="middle" font-size="11" fill="var(--muted, #888)">hueco</text>');
-  expect(costeSvg).toContain('<text x="170" y="103" text-anchor="middle" font-size="11" fill="var(--muted, #888)">hueco</text>');
-  expect(costeSvg).not.toContain('>0<');
-  expect(costeSvg).not.toContain('>0.00<');
-
-  const intervencionesSvg = html.match(/<svg[^>]*aria-label="Intervenciones humanas por día[^>]*>[\s\S]*?<\/svg>/)?.[0] ?? '';
-  expect(intervencionesSvg).toContain('<text x="170" y="103" text-anchor="middle" font-size="11" fill="var(--muted, #888)">hueco</text>');
-  expect(intervencionesSvg).not.toContain('>0<');
-
-  const prSvg = html.match(/<svg[^>]*aria-label="PRs abiertos y fusionados por día[^>]*>[\s\S]*?<\/svg>/)?.[0] ?? '';
-  expect(prSvg).toContain('<text x="170" y="103" text-anchor="middle" font-size="11" fill="var(--muted, #888)">hueco</text>');
-  expect(prSvg).not.toContain('>0<');
-
-  // Aserción específica por tabla de coste (N15)
-  const costeTable = html.match(/<div class="table-wrap"><table><caption>Coste por día<\/caption>[\s\S]*?<\/table><\/div>/)?.[0] ?? '';
+  const costeTable = gasto.match(/<div class="table-wrap"><table><caption>Coste por día<\/caption>[\s\S]*?<\/table><\/div>/)?.[0] ?? '';
+  expect(costeTable).toContain('<tr><th scope="row">2026-11-17</th><td>5.00 USD</td></tr>');
   expect(costeTable).toContain('<tr><th scope="row">2026-11-18</th><td>No medido</td></tr>');
   expect(costeTable).toContain('<tr><th scope="row">2026-11-19</th><td>Sin datos</td></tr>');
-  expect(costeTable).not.toContain('<tr><th scope="row">2026-11-19</th><td>No medido</td></tr>');
 
-  expect(html).toContain('2026-11-17');
-  expect(html).toContain('2026-11-18');
-  expect(html).toContain('2026-11-19');
+  // SVG: un punto con su valor por día con dato; el día sin dato no tiene punto ni cero.
+  const changesSvg = svgOf(html, 'Changes creados');
+  expect(changesSvg).toContain('<title>2026-11-17 · Changes: 1</title>');
+  expect(changesSvg).toContain('<title>2026-11-18 · Changes: 1</title>');
+  expect(changesSvg).not.toContain('2026-11-19 ·');
+  expect(changesSvg).not.toContain('Changes: 0');
+  const costeSvg = svgOf(gasto, 'Coste por día');
+  expect(costeSvg).toContain('<title>2026-11-17 · Coste: 5.00 USD</title>');
+  expect(costeSvg).not.toContain('2026-11-18 ·'); // día no medido: sin punto
+  expect(costeSvg).not.toContain('0.00 USD</title>');
+  const ivSvg = svgOf(html, 'Intervenciones humanas');
+  expect(ivSvg).toContain('<title>2026-11-18 · Intervenciones: 3</title>');
+  expect(ivSvg).not.toContain('2026-11-19 ·');
+  expect(gasto).toContain('<p class="fig">No medido</p>'); // un intento sin coste deja la cifra del total en «No medido»
 });
 
 test('T82 HTTP: rango libre vía HTTP y rechazo de rangos inválidos', async () => {
@@ -385,13 +358,16 @@ test('T82-H1: el rango libre rechaza más de 366 días con 400', async () => {
   }
 });
 
-test('T82-H2: calculateMetrics rechaza range=custom sin fechas y jueces rechaza custom', async () => {
+test('T82-H2/T111: calculateMetrics rechaza range=custom sin fechas; en la web las tres pestañas lo tratan como el rango por defecto', async () => {
   expect(() => calculateMetrics(store, dir, { range: 'custom' })).toThrow(URIError);
   const server = startWeb(dir, 0);
   try {
     const base = `http://127.0.0.1:${server.port}/metricas`;
-    const resJuecesCustom = await fetch(`${base}?tab=jueces&range=custom`);
-    expect(resJuecesCustom.status).toBe(400);
+    for (const tab of ['productividad', 'gasto', 'jueces']) {
+      expect((await fetch(`${base}?tab=${tab}&range=custom`)).status).toBe(200);
+      expect((await fetch(`${base}?tab=${tab}&range=9`)).status).toBe(400);
+      expect((await fetch(`${base}?tab=${tab}&from=2026-11-19&to=2026-11-18`)).status).toBe(400);
+    }
   } finally {
     server.stop(true);
     store = new Store(join(dir, 'fabrica.db'));
@@ -419,8 +395,10 @@ test('T82-H5: elegir rango preset con fechas en la URL vacía fechas y respeta e
   expect(html).toContain('<input name="to" type="date" value="">');
 
   const { body: htmlCustom } = metricsPage(store, dir, new URL('http://127.0.0.1:4310/metricas?from=2026-11-17&to=2026-11-19'));
-  expect(htmlCustom).toContain('<tr><th scope="row">2026-11-18</th><td>No medido</td></tr>');
-  expect(htmlCustom).toContain('<tr><th scope="row">2026-11-19</th><td>Sin datos</td></tr>');
+  const { body: gastoCustom } = metricsPage(store, dir, new URL('http://127.0.0.1:4310/metricas?tab=gasto&from=2026-11-17&to=2026-11-19'));
+  expect(gastoCustom).toContain('<tr><th scope="row">2026-11-18</th><td>No medido</td></tr>');
+  expect(gastoCustom).toContain('<tr><th scope="row">2026-11-19</th><td>Sin datos</td></tr>');
+  expect(htmlCustom).toContain('<option value="custom" selected>Rango personalizado</option>');
 });
 
 test('T82-H6: change a las 23:00 del día to entra en la cohorte y Todo el historial avisa del tope de 90 días', () => {
@@ -433,7 +411,7 @@ test('T82-H6: change a las 23:00 del día to entra en la cohorte y Todo el histo
   expect(dayIndex).toBeGreaterThanOrEqual(0);
   expect(m.daily.changes[dayIndex]).toBe(1);
 
-  const { body: htmlAll } = metricsPage(store, dir, new URL('http://127.0.0.1:4310/metricas?range=all'));
+  const { body: htmlAll } = metricsPage(store, dir, new URL('http://127.0.0.1:4310/metricas?range=all&tab=gasto'));
   expect(htmlAll).toContain('Las series temporales diarias de «Todo el historial» muestran como máximo los últimos 90 días');
 });
 
@@ -619,6 +597,7 @@ test('T83: serie de PRs abiertos y fusionados en el tiempo', () => {
   const { body: html } = metricsPage(store, dir, new URL('http://127.0.0.1:4310/metricas?from=2026-11-17&to=2026-11-19'));
   expect(html).toContain('PRs abiertos y fusionados por día');
   expect(html).toContain('Tramos del ciclo con PR');
+  expect(html).toContain('Tiempo de ciclo con PR (mediana)');
   expect(html).toContain('Kickoff → PR');
   expect(html).toContain('PR → merge');
   expect(html).toContain('PR → primera revisión humana');
@@ -629,10 +608,13 @@ test('T83: serie de PRs abiertos y fusionados en el tiempo', () => {
   expect(html).toContain('<tr><th scope="row">2026-11-19</th><td>Sin datos</td><td>Sin datos</td></tr>');
   expect(html).not.toContain('<tr><th scope="row">2026-11-19</th><td>0</td>');
 
-  // Afirma SVG: barras, valores y hueco
-  expect(html).toContain('<text x="46" y="20" text-anchor="middle" font-size="10" fill="currentColor">1</text>');
-  expect(html).toContain('<text x="126" y="20" text-anchor="middle" font-size="10" fill="currentColor">1</text>');
-  expect(html).toContain('<text x="170" y="103" text-anchor="middle" font-size="11" fill="var(--muted, #888)">hueco</text>');
+  // SVG: un punto con valor por serie y día con dato; el día 19 no tiene ninguno.
+  const prSvg = svgOf(html, 'Pull requests');
+  expect(prSvg).toContain('<title>2026-11-17 · Abiertos: 1</title>');
+  expect(prSvg).toContain('<title>2026-11-18 · Fusionados: 1</title>');
+  expect(prSvg).not.toContain('2026-11-19 ·');
+  expect(prSvg).not.toContain(': 0</title>');
+  expect(html).toContain('<p class="sub">1 fusionados</p>');
 });
 
 test('T83: detalle del change muestra enlace al PR, escapa URL, solo admite https, y sin PR es No medido', async () => {

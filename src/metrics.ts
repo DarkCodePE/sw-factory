@@ -2,7 +2,7 @@
 import type { Store } from './store.ts';
 import { activityCosts, activityMetadata, changeCost } from './evidence.ts';
 export const METRICS_LIMIT = 1000;
-export type MetricsRange = '7' | '30' | 'all' | 'custom';
+export type MetricsRange = '7' | '30' | '90' | 'all' | 'custom';
 export function distribution(values: number[]) {
   const sorted = [...values].sort((a, b) => a - b), n = sorted.length;
   return { median: n ? (sorted[Math.floor((n - 1) / 2)]! + sorted[Math.floor(n / 2)]!) / 2 : null,
@@ -19,7 +19,7 @@ const textField = (v: unknown) => typeof v === 'string' && v.trim() ? v : 'No me
 const DAY = /^\d{4}-\d{2}-\d{2}$/;
 const SOURCES_LABELS: Record<string, string> = { cli: 'CLI', channel: 'Canal', jira: 'Jira' };
 
-function validateDay(d: string): void {
+export function validateDay(d: string): void {
   if (!DAY.test(d) || isNaN(Date.parse(`${d}T00:00:00.000Z`))) throw new URIError('Rango inválido');
   const [y, m, day] = d.split('-').map(Number);
   const dt = new Date(Date.UTC(y!, m! - 1, day!));
@@ -45,7 +45,7 @@ export function calculateMetrics(store: Store, stateDir: string, options: { ws?:
     const diffDays = Math.round((toMs - fromMs) / 86400000) + 1;
     if (diffDays > 366) throw new URIError('Rango demasiado amplio');
   }
-  if (range !== undefined && !['7', '30', 'all', 'custom'].includes(range)) throw new URIError('Rango inválido');
+  if (range !== undefined && !['7', '30', '90', 'all', 'custom'].includes(range)) throw new URIError('Rango inválido');
 
   let since: string | null = null;
   let until: string;
@@ -126,7 +126,7 @@ export function calculateMetrics(store: Store, stateDir: string, options: { ws?:
       days.push(cur.toISOString().slice(0, 10));
       cur = new Date(cur.getTime() + 86400000);
     }
-  } else if ((range === '7' || range === '30') && since) {
+  } else if ((range === '7' || range === '30' || range === '90') && since) {
     let cur = new Date(`${since.slice(0, 10)}T00:00:00.000Z`);
     const end = new Date(`${until.slice(0, 10)}T00:00:00.000Z`);
     while (cur <= end) {

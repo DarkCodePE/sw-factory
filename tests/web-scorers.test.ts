@@ -170,3 +170,16 @@ test('T65-H3: tasa «No medido» sin ejecuciones hechas, aprobada nula, rango en
   expect(p).toContain('name="ws" value="ws"');
   expect(p).toMatch(/name="since" value="\d{4}-\d{2}-\d{2}T/);
 });
+test('T111: una tarjeta por juez con la tasa de aprobado por día; el día sin puntuaciones es hueco y el rango personalizado filtra', async () => {
+  const { digest, impls } = seed(3);
+  insertScore(digest, impls[0]!, { passed: 1, at: '2026-11-17T10:00:00.000Z' }); insertScore(digest, impls[1]!, { passed: 0, label: 'mal', at: '2026-11-17T11:00:00.000Z' });
+  insertScore(digest, impls[2]!, { passed: 1, at: '2026-11-19T10:00:00.000Z' });
+  server = startWeb(dir, 0);
+  const h = await html('/metricas?tab=jueces&from=2026-11-17&to=2026-11-19');
+  expect(h).toContain('<section class="card"'); expect(h).toContain('<p class="fig">67 %</p>'); expect(h).toContain('<p class="sub">67 % (2/3)</p>');
+  expect(h).toContain('<title>2026-11-17 · Aprobadas: 50 %</title>'); expect(h).toContain('<title>2026-11-19 · Aprobadas: 100 %</title>');
+  expect(h).not.toContain('2026-11-18 · Aprobadas'); expect(h).toContain('<td>Sin datos</td>');
+  const only = await html('/metricas?tab=jueces&from=2026-11-18&to=2026-11-19');
+  expect(only).toContain('<p class="fig">100 %</p>'); expect(only).toContain('<p class="sub">100 % (1/1)</p>');
+  expect(await html('/metricas?tab=jueces&from=2026-11-20&to=2026-11-21')).toContain('No hay puntuaciones en este rango.');
+});
