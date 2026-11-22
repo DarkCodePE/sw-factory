@@ -355,6 +355,21 @@ describe('T118a: Modo servidor, frontera HTTP y arranque', () => {
       });
     }).toThrow('Socket Unix en uso: ya existe una instancia activa');
 
+    // T118-P2-2: Propietario no confiable del directorio de socket es rechazado
+    const origGetuid = process.getuid;
+    try {
+      (process as any).getuid = () => 99999;
+      expect(() => {
+        startWeb(stateDir, 0, {
+          server: true,
+          publicOrigin: 'https://fab.ejemplo.com',
+          socketPath: join(liveDir, 'other.sock'),
+        });
+      }).toThrow('Directorio de socket con propietario no confiable');
+    } finally {
+      process.getuid = origGetuid;
+    }
+
     // La primera instancia sigue funcionando
     const resLive = await fetch('http://localhost/healthz', {
       unix: liveSock,

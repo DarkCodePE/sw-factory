@@ -202,6 +202,9 @@ export function startWeb(stateDir: string, port = 4310, options: {
     }
     const dirStat = statSync(socketDir);
     const dirMode = dirStat.mode & 0o777;
+    if (typeof process.getuid === 'function' && dirStat.uid !== process.getuid() && dirStat.uid !== 0) {
+      throw new Error(`Directorio de socket con propietario no confiable (${socketDir}): UID ${dirStat.uid} no coincide con el proceso actual (${process.getuid()}) ni con root.`);
+    }
     if ((dirMode & 0o002) !== 0) {
       throw new Error(`Directorio de socket inseguro (${socketDir}): permisos 0${dirMode.toString(8)} (escribible por otros). Debe ser 0770 o 0750.`);
     }
@@ -211,9 +214,16 @@ export function startWeb(stateDir: string, port = 4310, options: {
       if (!sockStat.isSocket()) {
         throw new Error(`Ruta de socket inválida (${options.socketPath}): ya existe un archivo regular o directorio.`);
       }
-      const probe = spawnSync('ss', ['-xl', 'src', options.socketPath], { encoding: 'utf8' });
-      if (probe.status === 0 && probe.stdout && probe.stdout.includes('LISTEN')) {
+      const probe = spawnSync(process.execPath, [
+        '-e',
+        'import net from "node:net"; const s = net.connect(process.argv[1]); s.on("connect", () => { s.destroy(); process.exit(0); }); s.on("error", () => process.exit(1)); setTimeout(() => process.exit(1), 300);',
+        options.socketPath,
+      ], { encoding: 'utf8' });
+      if (probe.status === 0) {
         throw new Error(`Socket Unix en uso: ya existe una instancia activa escuchando en ${options.socketPath}`);
+      }
+      if (probe.status === null || (probe.status !== 1 && probe.error)) {
+        throw new Error(`No se pudo verificar el estado del socket en ${options.socketPath}: ${probe.error?.message ?? 'error desconocido'}`);
       }
       try { unlinkSync(options.socketPath); } catch { /* ignore */ }
     }
