@@ -91,6 +91,9 @@ Si se opta por contenedores:
 > **Enlace de interfaces en Docker (T118-H13):** En la variante Docker, el backend enlaza el puerto interno 8443 en la interfaz del contenedor para escuchar peticiones mTLS. Dicho puerto no se publica en la red del host (`expose: 8443` en `docker-compose.yml`), siendo accesible únicamente a través de la red interna privada `fab-internal` por Caddy.
 
 > [!IMPORTANT]
+> **Aislamiento de claves mTLS y CA de cliente única (T118-P2-1):** En Docker Compose no se monta el directorio `./certs` al completo. Cada contenedor recibe únicamente los certificados y claves indispensables para su rol. Las claves privadas de las CA (`client-ca.key`, `server-ca.key`) permanecen fuera de los contenedores en el host. Asimismo, `client-ca.crt` debe firmar exclusiva y unívocamente el certificado de Caddy (`CN=caddy`), evitando emitir certificados adicionales bajo esa CA para garantizar que ningún otro proceso o worker acceda al backend.
+
+> [!IMPORTANT]
 > **Restricción de SQLite en Docker (D2N-H14):** La variante web en contenedor más pool en host compartirá SQLite únicamente mediante montaje de disco local bajo el mismo kernel, host coordinador y UID escritor. Quedan excluidos volúmenes remotos (NFS, SMB), escritores en otra VM, contenedores privilegiados y sockets Docker expuestos. Si el entorno no cumple estas condiciones, use systemd.
 
 ---

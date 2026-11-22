@@ -10,7 +10,10 @@ services:
       - ./Caddyfile:/etc/caddy/Caddyfile:ro
       - caddy_data:/data
       - caddy_config:/config
-      - ./certs:/etc/caddy/certs:ro
+      # T118-P2-1: Montaje granular exclusivo de certificados públicos y clave de cliente (sin claves de CA)
+      - ./certs/client.crt:/etc/caddy/certs/client.crt:ro
+      - ./certs/client.key:/etc/caddy/certs/client.key:ro
+      - ./certs/server-ca.crt:/etc/caddy/certs/server-ca.crt:ro
     networks:
       - fab-public
       - fab-internal
@@ -28,7 +31,10 @@ services:
       # IMPORTANTE (D2N-H14): SQLite compartido con Docker exige montaje de disco local
       # bajo el mismo kernel, host coordinador y UID escritor (1000). Excluir volúmenes remotos.
       - fab_data:/var/lib/fab
-      - ./certs:/etc/fab/certs:ro
+      # T118-P2-1: Montaje granular exclusivo de certificado de servidor y CA de cliente (sin claves de CA)
+      - ./certs/server.crt:/etc/fab/certs/server.crt:ro
+      - ./certs/server.key:/etc/fab/certs/server.key:ro
+      - ./certs/client-ca.crt:/etc/fab/certs/client-ca.crt:ro
     # NO expone puertos en la red del host; solo accesible vía red interna con mTLS
     expose:
       - "8443"

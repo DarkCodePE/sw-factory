@@ -668,6 +668,13 @@ uQAwb1guU1AUR6nVZtdFNQM9kVZ98hOcE9GUPLNEWYbELrBmbFfLChpyQQU=
     expect(compose).toContain('fab-internal');
     expect(compose).toContain('internal: true');
 
+    // T118-P2-1: Aislamiento de montajes de certificados en compose (sin claves de CA compartidas)
+    expect(compose).not.toContain('- ./certs:/');
+    expect(compose).toContain('./certs/client.crt:/etc/caddy/certs/client.crt:ro');
+    expect(compose).toContain('./certs/server.crt:/etc/fab/certs/server.crt:ro');
+    expect(compose).not.toContain('client-ca.key');
+    expect(compose).not.toContain('server-ca.key');
+
     // 3. Verificación real de docker build (T118-P2-3) si el demonio Docker está activo
     const hasDocker = spawnSync('docker', ['info'], { stdio: 'pipe' }).status === 0;
     if (hasDocker) {
