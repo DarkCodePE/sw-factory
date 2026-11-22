@@ -3,7 +3,7 @@ import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { randomUUID } from 'node:crypto';
-import { DEFAULT_MILLI_CREDITS_PER_USD, costRateAt, usdToMicro, microToCents } from '../src/attempt-cost.ts';
+import { DEFAULT_MILLI_CREDITS_PER_USD, computeMicroUsd, costRateAt, usdToMicro, microToCents } from '../src/attempt-cost.ts';
 import { Store } from '../src/store.ts';
 
 test('C2 conserva los importes de 0,1, 0,9 y 1,1 céntimos antes de presentar en céntimos', () => {
@@ -100,5 +100,27 @@ test('T109-H7: editar en sitio una versión de tarifa cambia su referencia; el d
     expect(costRateAt(dir, at, null).version).not.toBe(first);
     const withRunner = (hourly: number) => { write(200, { a: hourly, b: 2 }); return costRateAt(dir, at, null).version; };
     expect(withRunner(1)).not.toBe(withRunner(3));
+  } finally { rmSync(dir, { recursive: true, force: true }); }
+});
+
+test('T109-H8 (M06): el cómputo redondea al micro-USD más cercano, con la mitad hacia arriba', () => {
+  expect(computeMicroUsd(1, 1_800_000)).toBe(1);   // 0,5
+  expect(computeMicroUsd(1, 1_799_999)).toBe(0);   // justo bajo la mitad
+  expect(computeMicroUsd(1, 5_400_000)).toBe(2);   // 1,5
+  expect(computeMicroUsd(1, 5_399_999)).toBe(1);
+  expect(computeMicroUsd(3_600_000, 1)).toBe(1);
+  expect(computeMicroUsd(null, 10)).toBeNull();
+  expect(computeMicroUsd(1, undefined)).toBeNull();
+});
+
+test('T109-H8 (M08): una versión o una vigencia repetidas invalidan el fichero de tarifas', () => {
+  const dir = mkdtempSync(join(tmpdir(), 'fab-rate-dup-'));
+  try {
+    const rate = (version: string, effectiveFrom: string) => ({ version, effectiveFrom, localHourlyMicroUsd: 0, platformMicroUsd: 0, runnerHourlyMicroUsd: {} });
+    const attempt = (...rates: object[]) => { writeFileSync(join(dir, 'cost-rates.json'), JSON.stringify(rates)); return () => costRateAt(dir, '2027-01-01T00:00:00.000Z', null); };
+    expect(attempt(rate('v1', '2026-01-01T00:00:00.000Z'), rate('v2', '2026-02-01T00:00:00.000Z'))).not.toThrow();
+    expect(attempt(rate('v1', '2026-01-01T00:00:00.000Z'), rate('v1', '2026-02-01T00:00:00.000Z'))).toThrow('duplicada');
+    expect(attempt(rate('v1', '2026-01-01T00:00:00.000Z'), rate('v2', '2026-01-01T00:00:00.000Z'))).toThrow('duplicada');
+    expect(attempt(rate('c2-v1', '2026-01-01T00:00:00.000Z'))).toThrow('duplicada');
   } finally { rmSync(dir, { recursive: true, force: true }); }
 });
