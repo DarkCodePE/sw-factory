@@ -199,3 +199,38 @@ test('T119a-H3: la lista de confirmación no admite IDs repetidos y el único ow
   expect(recoveryStatus(store)).toEqual({ restricted: true });
   expect(getUser(store, o.id)!.disabledAt).toBeNull();
 });
+
+test('T119a-H4: el diario solo reaplica reducciones, no ascensos, y no deja al equipo sin owner', () => {
+  const j = join(dir, 'identity.jsonl');
+  const backup = join(dir, 'backup.db');
+  const a = bootstrapOwner(store, { issuer: 'github', subject: '1', displayName: 'A', operator: 'op' });
+  const ownerA = login(store, a.id);
+  const m = add(store, ownerA, 'member');
+  store.db.exec('PRAGMA wal_checkpoint(FULL)');
+  copyFileSync(store.dbPath, backup); // corte: A owner, m member
+  changeUserRole(store, ownerA, m, 'owner'); // ascenso posterior al corte
+  exportIdentityJournal(store, j);
+  const restored = new Store(backup);
+  try {
+    enterRecovery(restored, 'op', 'x', a.id);
+    expect(applyJournalToRestored(restored, 'op', j).applied).toBe(0);
+    expect(getUser(restored, m)!.role).toBe('member');
+  } finally { restored.close(); }
+
+  // Otro caso: un owner creado tras el corte degrada al único owner de la copia; aplicar lo dejaría sin owner.
+  const j2 = join(dir, 'identity2.jsonl'), backup2 = join(dir, 'backup2.db');
+  store.db.exec('PRAGMA wal_checkpoint(FULL)');
+  copyFileSync(store.dbPath, backup2); // corte: A y m owners
+  const c = add(store, ownerA, 'viewer');
+  changeUserRole(store, ownerA, c, 'owner');
+  changeUserRole(store, login(store, c), a.id, 'viewer');
+  changeUserRole(store, login(store, c), m, 'viewer');
+  exportIdentityJournal(store, j2);
+  const restored2 = new Store(backup2);
+  try {
+    enterRecovery(restored2, 'op', 'x', a.id);
+    expect(code(() => applyJournalToRestored(restored2, 'op', j2))).toBe('conflict');
+    expect(getUser(restored2, a.id)!.role).toBe('owner'); // rollback completo
+    expect(getUser(restored2, m)!.role).toBe('owner');
+  } finally { restored2.close(); }
+});

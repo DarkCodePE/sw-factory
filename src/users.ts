@@ -427,7 +427,11 @@ export function enterRecovery(store: Store, operator: string, reason: string, ow
   });
 }
 
-/** Reaplica bajas y cambios de rol del diario externo posteriores al corte. Rechaza un diario con la cadena rota. */
+const RANK: Record<Role, number> = { viewer: 0, member: 1, admin: 2, owner: 3 };
+
+/**
+ * Reaplica bajas y reducciones de rol del diario externo posteriores al corte. Rechaza un diario con la cadena rota.
+ * La cadena de hashes da integridad frente a errores, no autenticidad: SHA-256 sin clave lo recalcula quien edite el fichero. */
 export function applyJournalToRestored(store: Store, operator: string, journalPath: string): { applied: number; gaps: number[] } {
   const v = verifyIdentityJournal(journalPath);
   if (v.brokenAt !== null) throw new StoreError('conflict', 'el diario de identidad tiene la cadena rota');
@@ -441,10 +445,11 @@ export function applyJournalToRestored(store: Store, operator: string, journalPa
       const d = (l.detail ?? {}) as { to?: Role };
       if (l.action === 'user.disable' && !u.disabledAt) {
         store.db.query('UPDATE users SET disabled_at = ? WHERE id = ?').run(store.now(), u.id); applied++;
-      } else if (l.action === 'user.role' && d.to && d.to !== u.role) {
+      } else if (l.action === 'user.role' && d.to && RANK[d.to] < RANK[u.role]) { // solo reducciones: un ascenso no se reaplica
         store.db.query('UPDATE users SET role = ? WHERE id = ?').run(d.to, u.id); applied++;
       }
     }
+    if (activeOwners(store) < 1) throw new StoreError('conflict', 'el diario dejaría al equipo sin owner: decide el operador');
     audit(store, consoleActor(operator), 'recovery.apply-journal', null, { applied, gaps: v.gaps.length });
     return { applied, gaps: v.gaps };
   });
