@@ -51,19 +51,31 @@ test('la proyección es full para O A M y structured para V', () => {
   expect(ROLES.map(proj)).toEqual(['full', 'full', 'full', 'structured']);
 });
 
-test('D-F: web y CLI deciden igual cada lectura y cada rol; toda capacidad de ruta existe en la política', () => {
-  const caps = new Set(MATRIX.map(([p]) => readCapability(get(p))!));
-  for (const cap of caps) {
-    expect(cap).toBeTruthy();
+// Capacidad esperada por ruta (T119d-H5): sin esto, cambiar `/metricas` a `ops/read` no hacía fallar nada.
+const CAPS: Record<string, string> = {
+  '/': 'ops/read', '/changes': 'ops/read', '/signals': 'ops/read', '/automations': 'ops/read', '/workstreams': 'ops/read', '/flujo': 'ops/read',
+  '/benchmarks': 'ops/read', '/benchmarks/x': 'ops/read', '/experimentos/x': 'ops/read', '/changes/c1': 'ops/read', '/activities/a1': 'ops/read',
+  '/metricas': 'ops/metrics', '/metricas?tab=jueces&ws=uno&preview=1': 'scorers/backfill',
+  '/changes/c1/turns/t1/log': 'evidence/read', '/changes/c1/turns/t1/transcript': 'evidence/read',
+  '/config': 'config/read', '/config/runners': 'config/read', '/perfiles': 'config/read', '/definicion': 'config/read', '/automejora': 'config/read', '/webhooks': 'config/read',
+  '/config/runners?editar=r1': 'runners/update', '/workstreams/nuevo': 'workstreams/create', '/automations/nueva': 'automations/create',
+  '/automations/a1/editar': 'automations/update', '/config/claves-api': 'api-key/list',
+};
+
+test('D-F: cada ruta de la matriz exige la capacidad prevista y la decisión es la de la política para cada rol', () => {
+  expect(Object.keys(CAPS).sort()).toEqual(MATRIX.map(([p]) => p).sort());
+  for (const [path, cap] of Object.entries(CAPS)) {
+    expect(readCapability(get(path)), path).toBe(cap);
     for (const r of ROLES) {
-      const web = authorize({ role: r }, cap, { via: 'web', write: false });
-      expect(web.ok || web.reason !== 'unknown_capability').toBe(true);
-      const cli = authorize({ role: r }, cap, { via: 'cli', write: false });
-      expect(web.ok).toBe(cli.ok); // la web nunca da más que la CLI
+      const pol = authorize({ role: r }, cap, { via: 'web', write: true });
+      expect(pol.ok || pol.reason !== 'unknown_capability', `${path} ${r}`).toBe(true);
+      const d = authorizeRead(who(r), get(path));
+      if (!pol.ok) expect(d.ok, `${path} ${r}`).toBe(false); // la web nunca da más que la política
     }
   }
   // El viewer nunca recibe lo que la política reserva a la evidencia ni a la configuración.
   for (const cap of ['evidence/read', 'config/read', 'config/credentials']) expect(READ_CAPABILITIES[cap]!.roles.includes('V')).toBe(false);
+  // La comparación con la CLI remota necesita el despacho de T119c/T119e: es un test de integración de T119e.
 });
 
 test('inventario: todo GET literal de web.ts y su lista de activos tiene correspondencia o es un activo público', () => {
