@@ -1,18 +1,22 @@
 // API local de lectura (/api/v1). Solo habla con el Store, abierto en readonly; la autenticación es la clave `fabk_…`.
+import { join } from 'node:path';
 import { Store, StoreError } from './store.ts';
+import { runAs, verifyUserKey } from './users.ts';
+import type { Who } from './web-who.ts';
 import type { ApiKeyUsage } from './web-api-keys.ts';
 import { redact } from './evidence.ts';
 import { ACTIONS, InputError, performAction, retryRevision } from './web-actions.ts';
 
 const HEADERS = { 'Content-Type': 'application/json; charset=utf-8', 'X-Content-Type-Options': 'nosniff', 'Cache-Control': 'no-store' };
-const STATUS: Record<string, number> = { not_found: 404, invalid_input: 400, conflict: 409, invalid_transition: 409, limit_reached: 409 };
+const STATUS: Record<string, number> = { not_found: 404, invalid_input: 400, conflict: 409, invalid_transition: 409, limit_reached: 409, forbidden: 403, unauthorized: 401 };
 const json = (status: number, body: unknown) => new Response(JSON.stringify(body), { status, headers: HEADERS });
 const fail = (status: number, code: string, message: string) => json(status, { ok: false, error: { code, message } });
 const rd = <T extends string | null>(s: T): T => (s === null ? s : redact(s)) as T;
 
 export const isApiPath = (pathname: string) => /^\/api\/v1(\/|$)/.test(pathname);
 
-function route(store: Store, url: URL, path: string): unknown {
+/** Lecturas de `/api/v1` (también las de la CLI remota): una sola proyección para todas las vías. */
+export function route(store: Store, url: URL, path: string): unknown {
   if (path === '/workstreams') return store.listWorkstreams().map(({ repo: _repo, protectedPaths: _p, verify: _v, verifySetup: _s, ...w }) => ({ ...w, goal: rd(w.goal) }));
   if (path === '/inbox') return store.inbox(url.searchParams.get('ws') || undefined).map(redactActivity);
   if (path === '/changes') {
@@ -39,7 +43,7 @@ const BODY_MAX = 16384;
 const tooBig = () => fail(413, 'payload_too_large', 'el cuerpo supera 16 KiB');
 
 /** Mutación: las rutas salen de ACTIONS (K2), no hay lista aparte. Devuelve undefined si la ruta no es de mutación. */
-async function mutate(req: Request, path: string, stateDir: string, actor: string): Promise<Response> {
+async function mutate(req: Request, path: string, stateDir: string, actor: Who): Promise<Response> {
   if (req.headers.get('content-type')?.split(';')[0]?.trim().toLowerCase() !== 'application/json') return fail(415, 'unsupported_media_type', 'se exige application/json');
   if (Number(req.headers.get('content-length')) > BODY_MAX) return tooBig();
   let buf: ArrayBuffer;
@@ -89,4 +93,35 @@ export async function handleApi(req: Request, url: URL, openStore: () => Store, 
   } finally { store?.close(); }
   const apply = () => mutate(req, url.pathname.slice('/api/v1'.length), write!.stateDir, `api:${key.name}`);
   return usage ? usage.observeMutation(key.id, apply) : apply();
+}
+
+/**
+ * `/api/v1` en modo servidor (§3.1): solo claves de usuario (`fabu_…`, `verifyUserKey`). El rol vigente, el ámbito de la clave, `--write`
+ * y `api` de la capacidad se aplican con `runAs` en cada petición; un viewer no tiene API (D-2). Las claves locales (`fabk_…`) no valen aquí.
+ */
+export async function handleServerApi(req: Request, url: URL, stateDir: string, write: boolean, usage?: ApiKeyUsage): Promise<Response> {
+  if (req.method === 'OPTIONS') return fail(405, 'method_not_allowed', 'método no permitido');
+  const bearer = /^Bearer (fabu_\S+)$/.exec(req.headers.get('authorization') ?? '');
+  const store = new Store(join(stateDir, 'fabrica.db'));
+  let principal: NonNullable<ReturnType<typeof verifyUserKey>>;
+  try {
+    const p = bearer ? verifyUserKey(store, bearer[1]!) : null;
+    if (!p) return fail(401, 'unauthorized', 'clave ausente o inválida');
+    principal = p;
+    const path = url.pathname.slice('/api/v1'.length);
+    if (req.method !== 'POST') {
+      // La política va antes que la ruta: un rol sin permiso no distingue rutas.
+      const data = runAs(store, p, 'ops/read', { write: false }, () => req.method === 'GET' ? route(store, url, path) : undefined);
+      if (data === undefined) return fail(req.method === 'GET' ? 404 : 405, req.method === 'GET' ? 'not_found' : 'method_not_allowed', req.method === 'GET' ? 'ruta no encontrada' : 'método no permitido');
+      const response = json(200, { ok: true, data });
+      return usage?.observe(principal.keyId!, response) ?? response;
+    }
+    if (!apiAction(path)) return fail(404, 'not_found', 'ruta no encontrada');
+    if (!write) return fail(405, 'method_not_allowed', 'el servidor está en solo lectura');
+  } catch (e) {
+    if (e instanceof StoreError) return fail(STATUS[e.code] ?? 500, e.code, e.code === 'forbidden' || e.code === 'unauthorized' ? 'no autorizado' : e.message);
+    return fail(500, 'error', 'error interno');
+  } finally { store.close(); }
+  const apply = () => mutate(req, url.pathname.slice('/api/v1'.length), stateDir, { principal, write });
+  return usage ? usage.observeMutation(principal.keyId!, apply) : apply();
 }
