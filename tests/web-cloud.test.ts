@@ -27,7 +27,8 @@ test('todas las respuestas del servidor llevan anti-marco y HSTS, también las d
     expect(r.headers.get('content-security-policy')).toContain("frame-ancestors 'none'");
     expect(r.headers.get('strict-transport-security')).toContain('max-age=31536000');
   }
-  const big = await s.call('/signals', { method: 'POST', as: 'owner', body: 'x'.repeat(1024 * 1024 + 1), headers: { origin: ORIGIN, 'content-type': 'application/x-www-form-urlencoded' } });
+  // Sin sesión: si el 413 no lo da el servidor antes del despacho, la respuesta sería 401.
+  const big = await s.call('/signals', { method: 'POST', body: 'x'.repeat(1024 * 1024 + 1), headers: { origin: ORIGIN, 'content-type': 'application/x-www-form-urlencoded' } });
   expect(big.status).toBe(413);
 });
 
@@ -179,4 +180,13 @@ test('la IP del límite sale solo de X-Fab-Client-IP del proxy: X-Forwarded-For 
   const noIp: number[] = [];
   for (let i = 0; i < 12; i++) noIp.push((await start({ 'x-fab-client-ip': 'no-es-una-ip', 'x-forwarded-for': `10.1.0.${i}` })).status);
   expect(noIp.slice(10)).toEqual([429, 429]);
+});
+
+test('la página local de claves (por nombre) no se sirve en servidor: las claves de usuario se gestionan en /cuenta', async () => {
+  const path = (await import('../src/web-api-keys.ts')).API_KEYS_PATH;
+  for (const role of ['owner', 'admin', 'member'] as const) {
+    const r = await s.call(path, { as: role });
+    expect([role, r.status, r.headers.get('location')]).toEqual([role, 303, '/cuenta']);
+  }
+  expect((await s.call(path, { as: 'viewer' })).status).toBe(403);
 });
