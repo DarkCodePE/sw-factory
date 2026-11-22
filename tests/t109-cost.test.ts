@@ -1,5 +1,5 @@
 import { expect, test } from 'bun:test';
-import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { randomUUID } from 'node:crypto';
@@ -122,5 +122,22 @@ test('T109-H8 (M08): una versión o una vigencia repetidas invalidan el fichero 
     expect(attempt(rate('v1', '2026-01-01T00:00:00.000Z'), rate('v1', '2026-02-01T00:00:00.000Z'))).toThrow('duplicada');
     expect(attempt(rate('v1', '2026-01-01T00:00:00.000Z'), rate('v2', '2026-01-01T00:00:00.000Z'))).toThrow('duplicada');
     expect(attempt(rate('c2-v1', '2026-01-01T00:00:00.000Z'))).toThrow('duplicada');
+  } finally { rmSync(dir, { recursive: true, force: true }); }
+});
+
+test('T109-N3: todo fallo de lectura o de validación nombra cost-rates.json', () => {
+  const dir = mkdtempSync(join(tmpdir(), 'fab-rate-name-'));
+  const file = join(dir, 'cost-rates.json');
+  const read = () => costRateAt(dir, '2027-01-01T00:00:00.000Z', null);
+  try {
+    for (const content of ['{ roto', '', '{}', '[{"version":"x"}]']) {
+      writeFileSync(file, content);
+      expect(read).toThrow(/^cost-rates\.json: /);
+    }
+    rmSync(file); mkdirSync(file); // un directorio: EISDIR
+    expect(read).toThrow(/^cost-rates\.json: /);
+    expect(read).toThrow('EISDIR');
+    rmSync(file, { recursive: true });
+    expect(read).not.toThrow(); // sin fichero, la tarifa por defecto
   } finally { rmSync(dir, { recursive: true, force: true }); }
 });

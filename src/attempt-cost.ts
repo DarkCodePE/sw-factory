@@ -47,6 +47,11 @@ function readRate(value: unknown) {
 
 /** Configuración del coordinador. Cada versión es una instantánea completa, seleccionada al lanzar. */
 export function costRateAt(stateDir: string | undefined, at: string, sshRunner: string | null): CostRate {
+  try { return selectRate(stateDir, at, sshRunner); }
+  catch (error) { throw new Error(`cost-rates.json: ${(error as Error).message}`, { cause: error }); } // N3: el dueño ve qué fichero mirar
+}
+
+function selectRate(stateDir: string | undefined, at: string, sshRunner: string | null): CostRate {
   let raw: string | undefined;
   if (stateDir) {
     try { raw = readFileSync(join(stateDir, 'cost-rates.json'), 'utf8'); }
@@ -55,7 +60,7 @@ export function costRateAt(stateDir: string | undefined, at: string, sshRunner: 
   let chosen: ReturnType<typeof readRate> = defaultRate;
   if (raw !== undefined) {
     const parsed: unknown = JSON.parse(raw);
-    if (!Array.isArray(parsed)) throw new Error('cost-rates.json debe contener un array de versiones');
+    if (!Array.isArray(parsed)) throw new Error('debe contener un array de versiones');
     const versions = new Set([chosen.version]), dates = new Set([chosen.effectiveFrom]);
     for (const item of parsed) {
       const rate = readRate(item);
