@@ -688,3 +688,12 @@ test('T82-H11: huecos de test (COUNT DISTINCT en merge/abiertos, fallback change
   expect(changePrLink(store, c3.id)).toBe('No medido');
 });
 
+test('T111-H1: fusiones sin ningún pr_opened en el rango no pintan «null» en la cifra de PRs abiertos', () => {
+  const c = store.createChange('uno', 'Solo fusión', '');
+  store.db.query("UPDATE changes SET created_at=? WHERE id=?").run('2026-11-17T00:00:00Z', c.id);
+  store.event(c.workstreamId, 'info', 'merge_completed', c.id);
+  store.db.query("UPDATE events SET created_at=? WHERE change_id=? AND message='merge_completed'").run('2026-11-18T12:00:00Z', c.id);
+  const { body } = metricsPage(store, dir, new URL('http://127.0.0.1:4310/metricas?from=2026-11-17&to=2026-11-19'));
+  expect(body).not.toContain('>null<'); expect(body).not.toContain('NaN');
+  expect(body).toMatch(/<h2 id="t-prs">Pull requests<\/h2>.*?<p class="fig">No medido<\/p><p class="sub">1 fusionados<\/p>/s);
+});

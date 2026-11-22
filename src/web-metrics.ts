@@ -38,6 +38,7 @@ export function metricsPage(store: Store, stateDir: string, url: URL, csrf?: str
   return gasto ? { title: 'Métricas · Gasto', body: head + spending(m) } : { title: 'Métricas', body: head + productivity(m) };
 }
 type M = ReturnType<typeof calculateMetrics>;
+const num = (v: number | null) => v === null ? 'No medido' : String(v);
 const sum = (v: Array<number | null>) => v.some(x => x !== null) ? v.reduce<number>((a, x) => a + (x ?? 0), 0) : null;
 const link = (c: { id: string; title: string }) => `<a href="/changes/${encodeURIComponent(c.id)}">${esc(c.title)}</a>`;
 
@@ -50,10 +51,10 @@ function productivity(m: M): string {
   const cards = [
     statCard({ id: 'pr-cycles', title: 'Tiempo de ciclo con PR (mediana)', help: 'Mediana del tiempo entre hitos de un change con PR. «No medido» si ningún change llegó al segundo hito; nunca se sustituye por 0.', cells,
       tableCaption: 'Tramos del ciclo con PR', tableHtml: table('Tramos del ciclo con PR', cycleHead.map((h, i) => i === 0 ? 'Tramo' : h), m.prCycles.map(cycleRow)) }),
-    card({ id: 'prs', title: 'Pull requests', help: 'PRs abiertos y fusionados por día, según los eventos pr_opened y merge_completed. Un día sin eventos es un hueco, no un cero.', figure: String(op), sub: `${mg ?? 0} fusionados`, days: d.days,
+    card({ id: 'prs', title: 'Pull requests', help: 'PRs abiertos y fusionados por día, según los eventos pr_opened y merge_completed. Un día sin eventos es un hueco, no un cero.', figure: num(op), sub: `${mg ?? 0} fusionados`, days: d.days,
       series: [{ label: 'Abiertos', values: d.prs.map(p => p.opened) }, { label: 'Fusionados', values: d.prs.map(p => p.merged) }], fmt: int, integer: true, tableCaption: 'PRs abiertos y fusionados por día' }),
-    card({ id: 'changes', title: 'Changes creados', help: 'Changes creados por día dentro del rango. Un día sin changes es un hueco.', figure: String(ch), sub: 'en el rango', days: d.days, series: [{ label: 'Changes', values: d.changes }], fmt: int, integer: true, tableCaption: 'Changes creados por día' }),
-    card({ id: 'humans', title: 'Intervenciones humanas', help: 'Decisiones de revisión, respuestas y reintentos explícitos observados en events, por día. Cero no garantiza que el registro histórico esté completo.', figure: String(iv), sub: 'en el rango', days: d.days, series: [{ label: 'Intervenciones', values: d.interventions }], fmt: int, integer: true, tableCaption: 'Intervenciones humanas por día' }),
+    card({ id: 'changes', title: 'Changes creados', help: 'Changes creados por día dentro del rango. Un día sin changes es un hueco.', figure: num(ch), sub: 'en el rango', days: d.days, series: [{ label: 'Changes', values: d.changes }], fmt: int, integer: true, tableCaption: 'Changes creados por día' }),
+    card({ id: 'humans', title: 'Intervenciones humanas', help: 'Decisiones de revisión, respuestas y reintentos explícitos observados en events, por día. Cero no garantiza que el registro histórico esté completo.', figure: num(iv), sub: 'en el rango', days: d.days, series: [{ label: 'Intervenciones', values: d.interventions }], fmt: int, integer: true, tableCaption: 'Intervenciones humanas por día' }),
   ];
   return `<section aria-labelledby="series"><h2 id="series">Series temporales</h2><div class="cards">${cards.join('')}</div></section>
   <section aria-labelledby="ciclo"><h2 id="ciclo">Tiempo de ciclo</h2><p>Tiempo desde la creación del change hasta cada hito. Solo se incluyen fechas válidas registradas. p90: rango más próximo.</p>${table('Duraciones acumuladas desde la creación', cycleHead, m.cycles.map(cycleRow))}<details><summary>Fuentes y límites de los tramos</summary><p>Primera activity: activities.created_at (incluye change_review, que puede nacer junto al change). Revisión pedida: creación de change_review o evento investigation awaiting spec review. Decisión humana: eventos de revisión approved, commented o declined de change_review e investigation; excluye validadores. Estado terminal: primer evento explícito de cierre, rechazo, bloqueo, cuarentena o fallo permanente. Kickoff a PR: creación a evento pr_opened. PR a merge: evento pr_opened a merge_completed. Primera revisión humana queda no medida hasta conexión de solo lectura con la API SDLC. No se sustituye una fecha ausente por updated_at.</p></details></section>
