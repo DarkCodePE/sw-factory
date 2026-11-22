@@ -1158,10 +1158,10 @@ export class Store {
   }
 
   #insertSignal(workstreamId: string, title: string, body: string, source: string | null): Signal {
-    const row = this.db.query<Row, [string, string, string, string, string, string | null]>(
-      `INSERT INTO signals (id, workstream_id, title, body, status, change_id, created_at, source)
-       VALUES (?,?,?,?,'new',NULL,?,?) RETURNING *`,
-    ).get(randomUUID(), workstreamId, title, body, this.now(), source)!;
+    const row = this.db.query<Row, [string, string, string, string, string, string | null, string | null]>(
+      `INSERT INTO signals (id, workstream_id, title, body, status, change_id, created_at, source, origin_user_id)
+       VALUES (?,?,?,?,'new',NULL,?,?,?) RETURNING *`,
+    ).get(randomUUID(), workstreamId, title, body, this.now(), source, this.#actor?.userId ?? null)!;
     return toSignal(row);
   }
 
@@ -1184,6 +1184,8 @@ export class Store {
           throw new StoreError('invalid_transition', `signal ${signalId} is ${signal.status}, not new`);
         }
         const change = this.createChange(signal.workstreamId, opts.title ?? signal.title, opts.description ?? signal.body);
+        // El responsable es quien originó la señal, no quien la tria (T119c-H3).
+        if (s.origin_user_id) this.db.query('UPDATE changes SET responsible_user_id = ? WHERE id = ?').run(s.origin_user_id, change.id);
         this.db
           .query(`UPDATE signals SET status = 'triaged', change_id = ? WHERE id = ? AND status = 'new'`)
           .run(change.id, signalId);

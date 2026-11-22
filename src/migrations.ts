@@ -128,6 +128,14 @@ CREATE TRIGGER identity_audit_sin_reemplazo BEFORE INSERT ON identity_audit
       if (!has('changes', 'responsible_user_id')) db.exec('ALTER TABLE changes ADD COLUMN responsible_user_id TEXT');
     },
   },
+  {
+    // T119c-H3: quien crea la señal (usuario de sesión) es el originador; se hereda en `changes.responsible_user_id` al triar.
+    // T110 (`signalOrigin`) no está en esta base: cuando llegue, este campo es el que debe enlazar.
+    id: 't119c-002-originador-de-senal',
+    up(db) {
+      if (!(db.query('PRAGMA table_info(signals)').all() as { name: string }[]).some((c) => c.name === 'origin_user_id')) db.exec('ALTER TABLE signals ADD COLUMN origin_user_id TEXT');
+    },
+  },
 ];
 
 /** Aplica los pasos pendientes. Cada uno: BEGIN IMMEDIATE, revalida el registro bajo lock, ejecuta y registra; si falla, rollback. */

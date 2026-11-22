@@ -11,7 +11,8 @@ import { csrfToken } from '../src/web-auth.ts';
 import { runnerCheckAction } from '../src/web-runner-check.ts';
 import { jiraImportAction } from '../src/web-entrada.ts';
 import { cloud, ORIGIN, SECRET, type Cloud } from './helpers/cloud.ts';
-import type { Principal } from '../src/users.ts';
+import { disableUser, type Principal } from '../src/users.ts';
+import { previewResolveWork } from '../src/users-work.ts';
 import { Store } from '../src/store.ts';
 
 let c: Cloud;
@@ -74,4 +75,17 @@ test('T119c-H6: las columnas de T119c entran por un paso con ID en schema_migrat
   try {
     expect([cols(s, 'change_notes').includes('actor_role'), cols(s, 'change_notes').includes('actor_user_id'), cols(s, 'changes').includes('responsible_user_id'), registered(s)]).toEqual([true, true, true, true]);
   } finally { s.close(); }
+});
+
+// ---- H3: el responsable es el originador, no quien tria ------------------------
+
+test('T119c-H3: señal de un member triada por un admin; al suspender al member su change aparece, y el del admin no', async () => {
+  expect((await web(c.web.member, '/signals', { title: 'idea', workstream: ws.slug })).status).toBe(303);
+  const sig = c.store.listSignals(ws.id)[0]!;
+  expect((await web(c.web.admin, `/signals/${sig.id}/triage`)).status).toBe(303);
+  const changeOf = c.store.db.query('SELECT change_id FROM signals WHERE id = ?').get(sig.id) as { change_id: string };
+  disableUser(c.store, c.web.owner, c.web.member.userId);
+  expect(previewResolveWork(c.store, c.web.owner, c.web.member.userId).affected.map(a => a.id)).toEqual([changeOf.change_id]);
+  disableUser(c.store, c.web.owner, c.web.admin.userId);
+  expect(previewResolveWork(c.store, c.web.owner, c.web.admin.userId).affected).toEqual([]);
 });
