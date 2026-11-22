@@ -183,6 +183,14 @@ export function startWeb(stateDir: string, port = 4310, options: {
   const validated = options.server ? validateServerConfig(options) : undefined;
   const canonicalHost = validated?.canonicalHost;
 
+  if (options.server) {
+    const hasSocket = Boolean(options.socketPath);
+    const hasTls = Boolean(options.tls?.cert && options.tls?.key && options.tls?.ca);
+    if (!hasSocket && !hasTls) {
+      throw new Error('El modo servidor requiere socket Unix (socketPath) o mTLS completo (cert, key, ca). No se permite TCP en claro.');
+    }
+  }
+
   let serveOptions: Record<string, unknown>;
   if (options.server && options.socketPath) {
     mkdirSync(dirname(options.socketPath), { recursive: true });
@@ -381,11 +389,24 @@ export async function webMain(args: string[], stateDir: string, resolve?: Parame
         console.error('fab web: el modo servidor requiere publicOrigin con HTTPS (ej. https://fab.ejemplo.com).');
         return 1;
       }
-      const socketPath = values.socket ?? process.env.FAB_SOCKET ?? (!values['tls-cert'] ? '/run/fab/fab.sock' : undefined);
       const tlsCert = values['tls-cert'] ?? process.env.FAB_TLS_CERT;
       const tlsKey = values['tls-key'] ?? process.env.FAB_TLS_KEY;
       const tlsCa = values['tls-ca'] ?? process.env.FAB_TLS_CA;
-      const tls = tlsCert && tlsKey ? { cert: tlsCert, key: tlsKey, ca: tlsCa } : undefined;
+
+      if (tlsCert || tlsKey || tlsCa) {
+        if (!tlsCert || !tlsKey || !tlsCa) {
+          console.error('fab web: mTLS requiere --tls-cert, --tls-key y --tls-ca completos.');
+          return 1;
+        }
+      }
+
+      const socketPath = values.socket ?? process.env.FAB_SOCKET ?? (!tlsCert ? '/run/fab/fab.sock' : undefined);
+      const tls = tlsCert && tlsKey && tlsCa ? { cert: tlsCert, key: tlsKey, ca: tlsCa } : undefined;
+
+      if (!socketPath && !tls) {
+        console.error('fab web: el modo servidor requiere socket Unix (--socket) o mTLS completo (--tls-cert, --tls-key, --tls-ca).');
+        return 1;
+      }
 
       const server = startWeb(stateDir, port, {
         write: values.write,

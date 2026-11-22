@@ -46,38 +46,48 @@ describe('T118a: Modo servidor, frontera HTTP y arranque', () => {
       startWeb(stateDir, 0, { server: true, publicOrigin: 'no-es-una-url' });
     }).toThrow('publicOrigin inválido');
 
-    // 4. Con HTTPS válido arranca correctamente
-    const server = startWeb(stateDir, 0, { server: true, publicOrigin: 'https://fab.ejemplo.com' });
+    // 4. Sin socket ni mTLS se niega a arrancar
+    expect(() => {
+      startWeb(stateDir, 0, { server: true, publicOrigin: 'https://fab.ejemplo.com' });
+    }).toThrow('requiere socket Unix');
+
+    // 5. Con socket Unix arranca correctamente
+    const socketPath = join(tempDir, 'init.sock');
+    const server = startWeb(stateDir, 0, { server: true, publicOrigin: 'https://fab.ejemplo.com', socketPath });
     expect(server.canonicalHost).toBe('fab.ejemplo.com');
     expect(server.publicOrigin).toBe('https://fab.ejemplo.com');
     server.stop(true);
   });
 
   test('Host ajeno da 403', async () => {
+    const socketPath = join(tempDir, 'fab-host.sock');
     const server = startWeb(stateDir, 0, {
       server: true,
       publicOrigin: 'https://fab.ejemplo.com',
+      socketPath,
     });
-    const port = server.port;
 
     // 1. Petición con Host ajeno atacante.com -> 403
-    const resEvil = await fetch(`http://127.0.0.1:${port}/healthz`, {
+    const resEvil = await fetch('http://localhost/healthz', {
+      unix: socketPath,
       headers: { Host: 'atacante.com' },
-    });
+    } as any);
     expect(resEvil.status).toBe(403);
     const textEvil = await resEvil.text();
     expect(textEvil).toContain('Acceso denegado');
 
     // 2. Petición con Host loopback en modo servidor -> 403
-    const resLoopback = await fetch(`http://127.0.0.1:${port}/healthz`, {
-      headers: { Host: `127.0.0.1:${port}` },
-    });
+    const resLoopback = await fetch('http://localhost/healthz', {
+      unix: socketPath,
+      headers: { Host: '127.0.0.1:4310' },
+    } as any);
     expect(resLoopback.status).toBe(403);
 
     // 3. Petición con Host canónico exacto -> 200
-    const resOk = await fetch(`http://127.0.0.1:${port}/healthz`, {
+    const resOk = await fetch('http://localhost/healthz', {
+      unix: socketPath,
       headers: { Host: 'fab.ejemplo.com' },
-    });
+    } as any);
     expect(resOk.status).toBe(200);
     expect(await resOk.text()).toBe('ok');
 
@@ -85,16 +95,18 @@ describe('T118a: Modo servidor, frontera HTTP y arranque', () => {
   });
 
   test('Ruta /healthz devuelve 200 OK y cabeceras de seguridad HSTS', async () => {
+    const socketPath = join(tempDir, 'fab-health.sock');
     const server = startWeb(stateDir, 0, {
       server: true,
       publicOrigin: 'https://fab.ejemplo.com',
+      socketPath,
     });
-    const port = server.port;
 
     // GET /healthz
-    const resGet = await fetch(`http://127.0.0.1:${port}/healthz`, {
+    const resGet = await fetch('http://localhost/healthz', {
+      unix: socketPath,
       headers: { Host: 'fab.ejemplo.com' },
-    });
+    } as any);
     expect(resGet.status).toBe(200);
     expect(await resGet.text()).toBe('ok');
     // Cabeceras estrictas
@@ -104,103 +116,115 @@ describe('T118a: Modo servidor, frontera HTTP y arranque', () => {
     expect(resGet.headers.get('Referrer-Policy')).toBe('no-referrer');
 
     // HEAD /healthz
-    const resHead = await fetch(`http://127.0.0.1:${port}/healthz`, {
+    const resHead = await fetch('http://localhost/healthz', {
       method: 'HEAD',
+      unix: socketPath,
       headers: { Host: 'fab.ejemplo.com' },
-    });
+    } as any);
     expect(resHead.status).toBe(200);
     expect(resHead.headers.get('Strict-Transport-Security')).toBe('max-age=31536000; includeSubDomains');
 
     // POST /healthz -> 405 Method Not Allowed
-    const resPost = await fetch(`http://127.0.0.1:${port}/healthz`, {
+    const resPost = await fetch('http://localhost/healthz', {
       method: 'POST',
+      unix: socketPath,
       headers: { Host: 'fab.ejemplo.com', Origin: 'https://fab.ejemplo.com' },
-    });
+    } as any);
     expect(resPost.status).toBe(405);
 
     server.stop(true);
   });
 
   test('Fixture inerte /_test/origin comprueba Origin exacto, ausente y ajeno (T118a)', async () => {
+    const socketPath = join(tempDir, 'fab-origin.sock');
     const server = startWeb(stateDir, 0, {
       server: true,
       publicOrigin: 'https://fab.ejemplo.com',
+      socketPath,
       fixtureTestOrigin: true,
     });
-    const port = server.port;
 
     // 1. Origin exacto -> 204 No Content
-    const resExact = await fetch(`http://127.0.0.1:${port}/_test/origin`, {
+    const resExact = await fetch('http://localhost/_test/origin', {
       method: 'POST',
+      unix: socketPath,
       headers: {
         Host: 'fab.ejemplo.com',
         Origin: 'https://fab.ejemplo.com',
       },
-    });
+    } as any);
     expect(resExact.status).toBe(204);
     expect(resExact.headers.get('Strict-Transport-Security')).toBe('max-age=31536000; includeSubDomains');
 
     // 2. Origin ausente -> 403
-    const resMissing = await fetch(`http://127.0.0.1:${port}/_test/origin`, {
+    const resMissing = await fetch('http://localhost/_test/origin', {
       method: 'POST',
+      unix: socketPath,
       headers: {
         Host: 'fab.ejemplo.com',
       },
-    });
+    } as any);
     expect(resMissing.status).toBe(403);
     expect(await resMissing.text()).toContain('Origin ausente o ajeno');
 
     // 3. Origin ajeno -> 403
-    const resEvil = await fetch(`http://127.0.0.1:${port}/_test/origin`, {
+    const resEvil = await fetch('http://localhost/_test/origin', {
       method: 'POST',
+      unix: socketPath,
       headers: {
         Host: 'fab.ejemplo.com',
         Origin: 'https://evil-phishing.com',
       },
-    });
+    } as any);
     expect(resEvil.status).toBe(403);
     expect(await resEvil.text()).toContain('Origin ausente o ajeno');
 
     // 4. Método GET -> 405
-    const resGet = await fetch(`http://127.0.0.1:${port}/_test/origin`, {
+    const resGet = await fetch('http://localhost/_test/origin', {
       method: 'GET',
+      unix: socketPath,
       headers: { Host: 'fab.ejemplo.com' },
-    });
+    } as any);
     expect(resGet.status).toBe(405);
 
     server.stop(true);
 
     // 5. En servidor de producción (fixtureTestOrigin = false), la ruta no está abierta
+    const prodSocket = join(tempDir, 'fab-prod.sock');
     const prodServer = startWeb(stateDir, 0, {
       server: true,
       publicOrigin: 'https://fab.ejemplo.com',
+      socketPath: prodSocket,
       fixtureTestOrigin: false,
     });
-    const resProd = await fetch(`http://127.0.0.1:${prodServer.port}/_test/origin`, {
+    const resProd = await fetch('http://localhost/_test/origin', {
       method: 'POST',
+      unix: prodSocket,
       headers: {
         Host: 'fab.ejemplo.com',
         Origin: 'https://fab.ejemplo.com',
       },
-    });
+    } as any);
     // Debe requerir sesión o no encontrarse
     expect(resProd.status).toBe(401);
     prodServer.stop(true);
   });
 
   test('GET/HEAD sin credencial no obtienen datos de negocio en modo servidor', async () => {
+    const socketPath = join(tempDir, 'fab-biz.sock');
     const server = startWeb(stateDir, 0, {
       server: true,
       publicOrigin: 'https://fab.ejemplo.com',
+      socketPath,
     });
-    const port = server.port;
 
     // Rutas de negocio: exigen sesión
     const rutas = ['/', '/changes', '/workstreams', '/signals', '/automations', '/metricas', '/config'];
     for (const r of rutas) {
-      const res = await fetch(`http://127.0.0.1:${port}${r}`, {
+      const res = await fetch(`http://localhost${r}`, {
+        unix: socketPath,
         headers: { Host: 'fab.ejemplo.com' },
-      });
+      } as any);
       expect(res.status).toBe(401);
       const text = await res.text();
       expect(text).toContain('Se requiere sesión autenticada en modo servidor');
@@ -210,9 +234,10 @@ describe('T118a: Modo servidor, frontera HTTP y arranque', () => {
     }
 
     // Archivos estáticos públicos (CSS/JS) responden 200 sin filtrar datos
-    const resCss = await fetch(`http://127.0.0.1:${port}/style.css`, {
+    const resCss = await fetch('http://localhost/style.css', {
+      unix: socketPath,
       headers: { Host: 'fab.ejemplo.com' },
-    });
+    } as any);
     expect(resCss.status).toBe(200);
 
     server.stop(true);
@@ -472,5 +497,19 @@ uQAwb1guU1AUR6nVZtdFNQM9kVZ98hOcE9GUPLNEWYbELrBmbFfLChpyQQU=
     // 3. --server con publicOrigin sin HTTPS retorna 1
     const codeHttp = await webMain(['--server', '--public-origin', 'http://insecure.example.com'], stateDir);
     expect(codeHttp).toBe(1);
+  });
+
+  test('T118-H2: Modo servidor sin socket ni mTLS se niega a arrancar (falla cerrado)', async () => {
+    // 1. startWeb sin socket ni TLS lanza excepción
+    expect(() => {
+      startWeb(stateDir, 0, { server: true, publicOrigin: 'https://fab.ejemplo.com' });
+    }).toThrow('El modo servidor requiere socket Unix (socketPath) o mTLS completo');
+
+    // 2. CLI webMain con --server y --tls-cert sin --tls-key ni --tls-ca termina con código 1
+    const codeIncomplete = await webMain(
+      ['--server', '--public-origin', 'https://fab.ejemplo.com', '--tls-cert', '/tmp/falsa.crt'],
+      stateDir
+    );
+    expect(codeIncomplete).toBe(1);
   });
 });
