@@ -20,7 +20,7 @@ function addCost(groups: Map<string, CostGroup>, name: string, value: number | n
 type SpendAmounts = Record<'inferenceMicroUsd' | 'computeMicroUsd' | 'platformMicroUsd' | 'totalMicroUsd', number | null>;
 export type SpendAttempt = SpendAmounts & Pick<CostAttempt,
   'changeId' | 'startedAt' | 'effectiveModel' | 'worker' | 'originActorId' | 'originSource' | 'prUrl' | 'attributed'
-> & { id: string | null };
+> & { id: string | null; adapter: string | null; rateVersion?: string | null };
 
 const SPEND_FIELDS = ['inferenceMicroUsd', 'computeMicroUsd', 'platformMicroUsd', 'totalMicroUsd'] as const;
 
@@ -38,7 +38,22 @@ export function summarizeSpending(attempts: readonly SpendAttempt[]) {
   return { inference: totals[0]!, compute: totals[1]!, platform: totals[2]!, total: totals[3]! };
 }
 
-function groupSpending(attempts: SpendAttempt[], key: (attempt: SpendAttempt) => string | null) {
+export interface SpendGroup {
+  key: string | null;
+  name: string;
+  inference: { measured: number | null; unknown: number; total: number | null };
+  compute: { measured: number | null; unknown: number; total: number | null };
+  platform: { measured: number | null; unknown: number; total: number | null };
+  total: { measured: number | null; unknown: number; total: number | null };
+  daily?: Array<number | null>;
+}
+
+function groupSpending(
+  attempts: SpendAttempt[],
+  key: (attempt: SpendAttempt) => string | null,
+  days?: string[],
+  amountField: 'totalMicroUsd' | 'inferenceMicroUsd' = 'totalMicroUsd',
+): SpendGroup[] {
   const groups = new Map<string | null, SpendAttempt[]>();
   for (const attempt of attempts) {
     const name = key(attempt);
@@ -46,13 +61,27 @@ function groupSpending(attempts: SpendAttempt[], key: (attempt: SpendAttempt) =>
     if (group) group.push(attempt);
     else groups.set(name, [attempt]);
   }
-  return [...groups].map(([key, group]) => ({ key, name: key ?? 'Sin dato', ...summarizeSpending(group) }));
+  return [...groups].map(([groupKey, groupAttempts]) => {
+    const summary = summarizeSpending(groupAttempts);
+    const daily = days ? days.map(day => {
+      const dayAttempts = groupAttempts.filter(a => a.startedAt?.slice(0, 10) === day);
+      if (!dayAttempts.length) return null;
+      if (dayAttempts.some(a => a[amountField] === null)) return null;
+      return dayAttempts.reduce((sum, a) => sum + (a[amountField] ?? 0), 0) / 1_000_000;
+    }) : undefined;
+    return {
+      key: groupKey,
+      name: groupKey ?? 'Sin dato',
+      ...summary,
+      daily,
+    };
+  });
 }
 
 const counts = (values: string[]): [string, number][] => [...values.reduce((m, v) => m.set(v, (m.get(v) ?? 0) + 1), new Map<string, number>())].sort(([a], [b]) => a.localeCompare(b));
 const textField = (v: unknown) => typeof v === 'string' && v.trim() ? v : 'No medido';
 const DAY = /^\d{4}-\d{2}-\d{2}$/;
-const SOURCES_LABELS: Record<string, string> = { cli: 'CLI', channel: 'Canal', jira: 'Jira' };
+export const SOURCES_LABELS: Record<string, string> = { cli: 'CLI', channel: 'Canal', jira: 'Jira' };
 
 export function validateDay(d: string): void {
   if (!DAY.test(d) || isNaN(Date.parse(`${d}T00:00:00.000Z`))) throw new URIError('Rango inválido');
@@ -105,6 +134,7 @@ export function calculateMetrics(store: Store, stateDir: string, options: { ws?:
     id: attempt.id, changeId: attempt.changeId, startedAt: attempt.startedAt, effectiveModel: attempt.effectiveModel,
     attributed: attempt.attributed, worker: attempt.worker, originActorId: attempt.originActorId,
     originSource: attempt.originSource, prUrl: attempt.prUrl,
+    adapter: attempt.adapter ?? null, rateVersion: attempt.rateVersion ?? null,
     inferenceMicroUsd: attempt.inferenceBasis === 'runner_declared' ? null : attempt.inferenceMicroUsd,
     computeMicroUsd: attempt.computeMicroUsd, platformMicroUsd: attempt.platformMicroUsd, totalMicroUsd: attempt.totalMicroUsd,
   }));
@@ -112,7 +142,7 @@ export function calculateMetrics(store: Store, stateDir: string, options: { ws?:
   const values: number[][] = [[], [], [], []];
   const kickoffPr: number[] = [], prMerge: number[] = [], kickoffMerge: number[] = [];
   const prInteractions: Array<{ day: string; total: number }> = [];
-  // Runs de la cohorte; el rol es el de la activity (validador o tipo). T110 lo sustituirá por el rol atribuido al intento.
+  // Runs de la cohorte; el rol es el de la activity (validador o tipo). La partición por rol atribuido al intento o subagente queda para una tarea posterior.
   const runList: Array<{ day: string; role: string }> = [];
   const kinds: string[] = [], adapters = new Map<string, CostGroup>(), models = new Map<string, CostGroup>();
   const sources = new Map<string, CostGroup>(), actors = new Map<string, CostGroup>();
@@ -162,6 +192,7 @@ export function calculateMetrics(store: Store, stateDir: string, options: { ws?:
           for (const [index, attempt] of legacy.entries()) spendAttempts.push({
             id: null, changeId: a.changeId, startedAt: a.createdAt, effectiveModel: attempt.usage?.effectiveModel ?? null,
             attributed: false, worker: null, originActorId: null, originSource: null, prUrl: null,
+            adapter: attempt.adapter ?? null, rateVersion: null,
             inferenceMicroUsd: attempt.remoteDeclared ? null : usdToMicro(index in historicalCosts ? historicalCosts[index] : attempt.costUsd),
             computeMicroUsd: null, platformMicroUsd: null, totalMicroUsd: null,
           });
@@ -169,8 +200,9 @@ export function calculateMetrics(store: Store, stateDir: string, options: { ws?:
       }
       if (Array.isArray(meta?.inferenceAttempts)) {
         for (const attempt of activityInference(a, meta)) {
-          addCost(adapters, textField(attempt.adapter), attempt.costUsd);
-          addCost(models, textField(attempt.usage?.effectiveModel), attempt.costUsd);
+          const attemptCost = attempt.remoteDeclared ? null : attempt.costUsd;
+          addCost(adapters, textField(attempt.adapter), attemptCost);
+          addCost(models, textField(attempt.usage?.effectiveModel), attemptCost);
         }
         continue;
       }
@@ -269,8 +301,99 @@ export function calculateMetrics(store: Store, stateDir: string, options: { ws?:
   const perDay = (pick: (r: typeof runList[number]) => boolean) => days.map(day => { const n = inWindow.filter(r => r.day === day && pick(r)).length; return n || null; });
   const runRoles = [...inWindow.reduce((m, r) => m.set(r.role, (m.get(r.role) ?? 0) + 1), new Map<string, number>())]
     .sort(([a, x], [b, y]) => y - x || a.localeCompare(b)).map(([name, total]) => ({ name, total, daily: perDay(r => r.role === name) }));
-  // Raíz frente a subagentes queda fuera hasta T110: parent_activity_id encadena pasos del flujo, no subagentes (verif T112-H1).
+  // Raíz frente a subagentes queda fuera (T112 partial): parent_activity_id encadena pasos del flujo, no subagentes.
   const runs = { total: inWindow.length, roles: runRoles };
+
+  // Series diarias de spending desglosadas por componente
+  const dailySpendInference: Array<number | null> = [];
+  const dailySpendCompute: Array<number | null> = [];
+  const dailySpendPlatform: Array<number | null> = [];
+  const dailySpendTotal: Array<number | null> = [];
+  const dailyHasAttempts: boolean[] = [];
+
+  for (const day of days) {
+    const dayAttempts = spendAttempts.filter(a => a.startedAt?.slice(0, 10) === day);
+    dailyHasAttempts.push(dayAttempts.length > 0);
+    if (!dayAttempts.length) {
+      dailySpendInference.push(null);
+      dailySpendCompute.push(null);
+      dailySpendPlatform.push(null);
+      dailySpendTotal.push(null);
+    } else {
+      dailySpendInference.push(dayAttempts.some(a => a.inferenceMicroUsd === null) ? null : dayAttempts.reduce((s, a) => s + (a.inferenceMicroUsd ?? 0), 0) / 1_000_000);
+      dailySpendCompute.push(dayAttempts.some(a => a.computeMicroUsd === null) ? null : dayAttempts.reduce((s, a) => s + (a.computeMicroUsd ?? 0), 0) / 1_000_000);
+      dailySpendPlatform.push(dayAttempts.some(a => a.platformMicroUsd === null) ? null : dayAttempts.reduce((s, a) => s + (a.platformMicroUsd ?? 0), 0) / 1_000_000);
+      dailySpendTotal.push(dayAttempts.some(a => a.totalMicroUsd === null) ? null : dayAttempts.reduce((s, a) => s + (a.totalMicroUsd ?? 0), 0) / 1_000_000);
+    }
+  }
+
+  // Los 20 PR más caros con coste completo medido
+  const changeAttempts = new Map<string, SpendAttempt[]>();
+  for (const a of spendAttempts) {
+    if (a.changeId) {
+      const list = changeAttempts.get(a.changeId);
+      if (list) list.push(a);
+      else changeAttempts.set(a.changeId, [a]);
+    }
+  }
+
+  interface TopPrItem {
+    changeId: string;
+    title: string;
+    prUrl: string | null;
+    cost: number;
+    inference: number | null;
+    compute: number | null;
+    platform: number | null;
+  }
+
+  const topPrItems: TopPrItem[] = [];
+  for (const c of cohort.changes) {
+    const attempts = changeAttempts.get(c.id) ?? [];
+    const prUrl = attempts.find(a => a.prUrl)?.prUrl ?? store.getChangePrUrl(c.id);
+    if (!attempts.length) {
+      const cCost = costs.find(x => x.id === c.id)?.cost ?? null;
+      if (cCost !== null) {
+        topPrItems.push({
+          changeId: c.id,
+          title: c.title,
+          prUrl,
+          cost: cCost,
+          inference: cCost,
+          compute: 0,
+          platform: 0,
+        });
+      }
+      continue;
+    }
+    const cCost = costs.find(x => x.id === c.id)?.cost ?? null;
+    const hasTotal = attempts.length > 0 && attempts.every(a => a.totalMicroUsd !== null);
+    if (!hasTotal && cCost === null) continue;
+    const tot = hasTotal
+      ? attempts.reduce((s, a) => s + (a.totalMicroUsd ?? 0), 0) / 1_000_000
+      : cCost!;
+    const inf = attempts.every(a => a.inferenceMicroUsd !== null)
+      ? attempts.reduce((s, a) => s + (a.inferenceMicroUsd ?? 0), 0) / 1_000_000
+      : (cCost !== null ? cCost : null);
+    const comp = attempts.every(a => a.computeMicroUsd !== null)
+      ? attempts.reduce((s, a) => s + (a.computeMicroUsd ?? 0), 0) / 1_000_000
+      : (hasTotal ? null : 0);
+    const plat = attempts.every(a => a.platformMicroUsd !== null)
+      ? attempts.reduce((s, a) => s + (a.platformMicroUsd ?? 0), 0) / 1_000_000
+      : (hasTotal ? null : 0);
+    topPrItems.push({
+      changeId: c.id,
+      title: c.title,
+      prUrl,
+      cost: tot,
+      inference: inf,
+      compute: comp,
+      platform: plat,
+    });
+  }
+  const top20 = topPrItems
+    .sort((a, b) => b.cost - a.cost || a.changeId.localeCompare(b.changeId))
+    .slice(0, 20);
 
   return { count: cohort.changes.length, omitted: cohort.total - cohort.changes.length, since, until,
     cycles: ['Primera activity', 'Primera revisión pedida', 'Primera decisión humana', 'Primer estado terminal registrado'].map((name, i) => ({ name, ...distribution(values[i]!) })),
@@ -279,12 +402,24 @@ export function calculateMetrics(store: Store, stateDir: string, options: { ws?:
     daily: { days, changes: dailyChanges, costs: dailyCosts, interventions: dailyInterventions, prs: dailyPrs },
     spending: {
       attempts: spendAttempts, ...summarizeSpending(spendAttempts),
-      by: {
-        worker: groupSpending(spendAttempts, a => a.worker),
-        user: groupSpending(spendAttempts, a => a.originActorId),
-        source: groupSpending(spendAttempts, a => a.originSource),
-        pr: groupSpending(spendAttempts, a => a.attributed ? a.prUrl ?? 'Sin PR' : null),
+      daily: {
+        days,
+        inference: dailySpendInference,
+        compute: dailySpendCompute,
+        platform: dailySpendPlatform,
+        total: dailySpendTotal,
+        hasAttempts: dailyHasAttempts,
       },
+      by: {
+        worker: groupSpending(spendAttempts, a => a.worker, days, 'totalMicroUsd'),
+        user: groupSpending(spendAttempts, a => a.originActorId, days, 'totalMicroUsd'),
+        source: groupSpending(spendAttempts, a => a.originSource, days, 'totalMicroUsd'),
+        pr: groupSpending(spendAttempts, a => a.attributed ? a.prUrl ?? 'Sin PR' : null, days, 'totalMicroUsd'),
+      },
+      models: groupSpending(spendAttempts, a => a.effectiveModel, days, 'inferenceMicroUsd'),
+      adapters: groupSpending(spendAttempts, a => a.adapter, days, 'totalMicroUsd'),
+      top: top20,
+      topPrs: top20,
     },
     cost: { total: unknownChanges ? null : measured, measured, unknownChanges,
       top: measuredCosts.sort((a, b) => b.cost - a.cost || a.id.localeCompare(b.id)).slice(0, 10),
