@@ -70,9 +70,9 @@ test('resolveBinary encuentra el binario ejecutable más a la izquierda del PATH
 test('sin pines todos están sin_pin o no_instalado; --pin fija el sha256 actual', () => {
   const claude = stubBin('claude', 'claude-1.0');
   stubBin('codex', 'codex-1.0');
-  // agy y droid no existen → no_instalado
+  // agy, droid y gemini no existen → no_instalado
   const estados = Object.fromEntries(verifyAgents(scope.home).map((s) => [s.agent, s.verdict]));
-  expect(estados).toEqual({ claude: 'sin_pin', codex: 'sin_pin', agy: 'no_instalado', droid: 'no_instalado' });
+  expect(estados).toEqual({ claude: 'sin_pin', codex: 'sin_pin', agy: 'no_instalado', droid: 'no_instalado', gemini: 'no_instalado' });
 
   savePins({ claude: sha256Of(claude), codex: 'a'.repeat(64) }, scope.home);
   expect(Object.keys(loadPins(scope.home)).sort()).toEqual(['claude', 'codex']);
