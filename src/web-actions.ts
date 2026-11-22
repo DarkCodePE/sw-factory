@@ -1,7 +1,8 @@
 // Adaptación HTTP: las transiciones, el cercado y los eventos siguen en los comandos existentes.
 import { createHash } from 'node:crypto';
 import { join } from 'node:path';
-import { AutomationNameTakenError, isRunnerName, Store, StoreError, WorkstreamBusyError } from './store.ts';
+import { userInfo } from 'node:os';
+import { AutomationNameTakenError, isRunnerName, Store, StoreError, WorkstreamBusyError, type ChangeOrigin } from './store.ts';
 import { AGENT_NAMES } from './agents.ts';
 import { AUTO_INSTRUCTIONS_MAX, isProfileDigest } from './profile.ts';
 import { ANCESTOR_PATH_PREFIX, assertPrivateNoteDatabase, NOTE_ATTACHMENT_REMOTE, NOTE_ATTACHMENT_STATE, validateNoteAttachment, type NoteAttachment } from './note-attachments.ts';
@@ -103,7 +104,7 @@ export class InputError extends Error {
 
 type Raw = Record<string, string | undefined>;
 type Outcome = { destination: string; result: string; repo?: string };
-export type ActionOptions = { server?: boolean };
+export type ActionOptions = { server?: boolean; signalOrigin?: ChangeOrigin };
 type Action = { path: RegExp; /** T105: sube un paquete (multipart) y pasa por vista previa antes de escribir. */ importKind?: ImportKind; automationForm?: 'create' | 'update' | 'delete'; /** false: solo la web con sesión; la API con clave no la expone (decisión del dueño sobre H1). */ api?: false; httpErrors?: true; input: (raw: Raw, options?: ActionOptions) => Raw; run: (store: Store, id: string, input: Raw, out: Outcome, actor: string, stateDir: string, attachment?: NoteAttachment, options?: ActionOptions) => void };
 
 type CheckAction = { path: RegExp; importKind?: undefined; automationForm?: undefined; api: false; check: true };
@@ -348,9 +349,9 @@ export const ACTIONS: Record<string, Action | CheckAction | WebResponseAction | 
   'signals/create': {
     path: /^\/(signals)$/,
     input: raw => { limit(text(raw, 'body'), SIGNAL_BODY_MAX); return { title: titleOf(raw), body: text(raw, 'body'), workstream: text(raw, 'workstream') }; },
-    run: (store, _id, input, out) => {
+    run: (store, _id, input, out, _actor, _stateDir, _attachment, options) => {
       out.destination = '/signals';
-      const s = store.addSignal(input.workstream!, input.title!, input.body || input.title!);
+      const s = store.addSignal(input.workstream!, input.title!, input.body || input.title!, options?.signalOrigin);
       store.event(s.workstreamId, 'info', `signal creada desde la web: ${input.title}`);
     },
   },
@@ -717,7 +718,9 @@ export async function webAction(req: Request, stateDir: string, port: number, au
       delete fields.csrf;
       if (repeated) throw new InputError(400, 'El formulario contiene campos repetidos.');
     }
-    ({ destination, result } = await performAction(stateDir, name, id, fields, 'web', file, options));
+    ({ destination, result } = await performAction(stateDir, name, id, fields, 'web', file, {
+      ...options, signalOrigin: options?.signalOrigin ?? { source: 'web', actorId: userInfo().username },
+    }));
     if (action.httpErrors && result !== 'ok') {
       const status = result === 'conflict' ? 409 : result === 'not_found' ? 404 : result === 'invalid_input' ? 400 : 500;
       return inertPage(runnerErrors[result] ?? 'No se pudo guardar el runner', status, '', { href: '/workstreams', text: 'Volver a workstreams' });

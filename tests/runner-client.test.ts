@@ -222,3 +222,10 @@ test('H5: el tope de ida del runner (maxBundleMb) se aplica en casa y el encargo
   expect(Bun.file(join(dir, 'transcript')).size).toBeLessThan(200); // solo el hello
   untouched();
 });
+
+test('T109-H5 (M35): una marca de fin repetida deja la duración sin medir, no la del segundo aviso', async () => {
+  let tick = 0;
+  const ends: Array<number | undefined> = [];
+  await runRemoteAgent(runner, job({ onExecutionEnd: ms => ends.push(ms) }), fake('double-end'), { monotonicNow: () => tick++ * 1000 });
+  expect(ends).toEqual([1000, undefined]);
+});

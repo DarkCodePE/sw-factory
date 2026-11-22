@@ -30,6 +30,7 @@ test('change: triageSignal crea el change y une el hilo (ExternalRef github); re
   expect(a).toEqual(b);
   expect(t.n()).toBe(before + 1);
   expect(a.scope === 'change' && t.store.getChange(a.changeId).title).toBe('Título admitido');
+  expect(a.scope === 'change' && t.store.getChangeOrigin(a.changeId)).toEqual({ source: 'resident', actorId: null });
 });
 
 test('none o would_admit=false no crean nada', () => {

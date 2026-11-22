@@ -21,6 +21,7 @@ export interface AgentRun {
   output: string;
   exitCode: number;
   durationMs: number;
+  executionMs?: number;
   status: AgentRunStatus;
   usage?: AgentUsage;
   stdout?: string;
@@ -184,14 +185,17 @@ export async function runAgent(
   prompt: string,
   cwd: string,
   timeoutMs = 20 * 60_000,
-  options: { readOnly?: boolean; confine?: boolean; capturePath?: string; signal?: AbortSignal; onSpawn?: (pgid: number) => void; model?: string; claudeProjects?: string; mcpConfig?: string; envDecl?: EnvDecl; scrub?: Record<string, string> } = {}
+  options: { readOnly?: boolean; confine?: boolean; capturePath?: string; signal?: AbortSignal; beforeSpawn?: () => void; onExecutionEnd?: (durationMs: number) => void; onSpawn?: (pgid: number) => void; model?: string; claudeProjects?: string; mcpConfig?: string; envDecl?: EnvDecl; scrub?: Record<string, string> } = {}
 ): Promise<AgentRun> {
   const start = Date.now();
   const argv = agent.command(prompt, { ...options, promptStdin: agent.promptStdin === true });
   const input = agent.promptStdin ? new TextEncoder().encode(prompt) : 'ignore';
   const confined = options.confine ? confineAgent(agent.name, argv, cwd, agent.env?.(), options.claudeProjects, options.mcpConfig, options.model, options.envDecl) : undefined;
   let proc;
+  let started: number;
   try {
+    options.beforeSpawn?.();
+    started = performance.now();
     proc = confined ? confined.spawn(input) : Bun.spawn(argv, {
       cwd,
       env: agentEnv({ adapter: agent.name, confined: false, channel: false, wsAllow: null, roleEnv: [], mcpRequired: [], ...options.envDecl, host: { ...process.env, ...(agent.env?.() ?? {}) }, model: options.model }).env,
@@ -201,6 +205,13 @@ export async function runAgent(
     confined?.cleanup();
     throw e;
   }
+
+  let executionMs: number | undefined;
+  const exited = proc.exited.then(code => {
+    executionMs = Math.round(performance.now() - started);
+    options.onExecutionEnd?.(executionMs);
+    return code;
+  });
 
   if (options.onSpawn) {
     try {
@@ -252,7 +263,7 @@ export async function runAgent(
     [stdout, stderr, exitCode] = await Promise.all([
       new Response(proc.stdout).text().then(clean),
       new Response(proc.stderr).text().then(clean),
-      proc.exited,
+      exited,
     ]);
   } catch (e) {
     killGroup('SIGKILL');
@@ -284,6 +295,7 @@ export async function runAgent(
     output,
     exitCode,
     durationMs: Date.now() - start,
+    executionMs,
     status: { kind: status.kind, reason: status.reason },
     ...(parsed?.usage ? { usage: parsed.usage } : {}),
     stdout,

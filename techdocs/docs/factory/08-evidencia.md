@@ -96,6 +96,28 @@ Dos escrituras en `processActivity` (`src/pool.ts:214`, `:223-226`):
 
 `usage` es la fuente del coste por corrida ([05](05-adaptadores-de-agentes.md)): solo `claude` lo aporta. `improve.ts` lo lee con `armCost` ([09](09-perfiles-e-improve.md)). Un reintento conserva el id de la activity y actualiza su JSON: `usage` e informe corresponden al último intento, mientras `attemptCosts` conserva los costes de todos los intentos. El pool añade un `0` antes del setup (un fallo previo al lanzamiento no consume), lo cambia a `null` justo antes de llamar al agente y lo sustituye por el coste reportado al terminar; `armCost` suma todos los valores y devuelve `null` si falta alguno. La evidencia antigua sin reintentos sigue usando `usage.costUsd`; con reintentos cuyo coste anterior se perdió no se puede calcular el total. El pool también borra la sonda de egress previa para no reutilizarla (`src/pool.ts`).
 
+### Coste de lanzamientos del pool
+
+Cada lanzamiento de agente tiene un UUID en `cost_attempts`, compartido con el turno vivo o el job SSH cuando corresponde. Se guardan los tres componentes en micro-USD enteros. La inferencia local toma el importe de T108 y distingue la cifra del proveedor de la estimación de catálogo. La duración local usa el reloj monotónico del host entre el spawn y la salida. Para SSH el coordinador mide desde `accepted` hasta el aviso de fin del runner, antes del sellado y de la transferencia del bundle. El intervalo incluye latencia de señalización. Un runner v1 anterior puede completar el trabajo aunque carezca del aviso y de la medida de cómputo. La inferencia declarada por SSH queda separada del total medido.
+
+El dueño puede añadir versiones en un array JSON en `cost-rates.json` del directorio de estado. Al lanzar se elige la vigencia UTC más reciente que ya haya empezado. Las versiones son instantáneas completas y los intentos guardan sus valores para que las ediciones futuras conserven el historial. Añade una versión y fecha nuevas al cambiar precios. La referencia guardada en el intento es `<versión>#<hash de 12 hex del contenido>`: editar una versión en sitio cambia su referencia, y quien compare `rate_version` con el campo `version` del fichero debe cortar por `#`. Las filas anteriores guardan la versión sin hash, y la tarifa por defecto conserva `c2-v1`. Si el fichero es inválido, `fab run` no reclama trabajo y lo dice con el prefijo `cost-rates.json:`, sin gastar reintentos; una errata a mitad de ejecución puede costar todavía un reintento por worker (ventana conocida, anotada como followup).
+
+```json
+[
+  {
+    "version": "piloto-v1",
+    "effectiveFrom": "2026-12-01T00:00:00.000Z",
+    "localHourlyMicroUsd": 0,
+    "platformMicroUsd": 0,
+    "runnerHourlyMicroUsd": { "torre": 360000 }
+  }
+]
+```
+
+Por defecto, la tarifa local y la de plataforma son cero. El mapa SSH contiene tarifas horarias por nombre de runner. Una entrada ausente o un intervalo ausente deja el cómputo sin medir. Un componente desconocido deja el total sin medir. El redondeo a céntimos ocurre al presentar el importe. La unidad de C2 equivale a 100 000 milésimas de crédito por USD.
+
+El intento conserva el rol que ejecutó y el origen de la señal que se convirtió en change. El usuario que hace triage, revisa o reintenta puede ser otro. Las fuentes desatendidas y las claves de API sin usuario asociado conservan un actor ausente. El PR se consulta desde el vínculo del change, por lo que también agrupa gastos de antes de la publicación. Los intentos nuevos sin enlace van a «Sin PR». Los intentos históricos sin atribución van a «Sin dato». Las métricas de gasto agrupan el mismo conjunto de intentos por worker, usuario, fuente y PR.
+
 ## Lectura de la evidencia
 
 | Necesito saber… | Dónde |

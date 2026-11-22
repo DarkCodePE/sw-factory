@@ -12,7 +12,7 @@ import { assertConfinement, confineAgent, CONFINABLE_AGENTS } from '../sandbox/c
 import { GIT_SAFE_FLAGS } from '../worktrees.ts';
 import { receiveJob, sealResult } from './bundle.ts';
 import { Reader } from './client.ts';
-import { LIMITS, ProtocolError, decodeLine, encode, logBudget, type ErrorCode, type Message } from './protocol.ts';
+import { EXECUTION_ENDED_LOG, LIMITS, ProtocolError, decodeLine, encode, logBudget, type ErrorCode, type Message } from './protocol.ts';
 
 const DAY_MS = 24 * 3_600_000;
 const KILL_MS = 2_000;
@@ -240,6 +240,8 @@ export async function serveSession(rootArg: string, stdin: ReadableStream<Uint8A
     const run = await runAgentJob(agent, job, prompt, repo, send, deps, () => closed, k => { stopAgent = k; });
     if (closed) return 0;
     if (run.error !== undefined) return fail('internal', run.error);
+
+    send({ v: 1, type: 'log', data: EXECUTION_ENDED_LOG });
 
     // 6. Sellado: git sobre la caché y un índice propio, nunca sobre el `.git` del clon.
     let sealed = null;
