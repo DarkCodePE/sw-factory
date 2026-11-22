@@ -341,7 +341,7 @@ export function calculateMetrics(store: Store, stateDir: string, options: { ws?:
     changeId: string;
     title: string;
     prUrl: string | null;
-    cost: number;
+    cost: number | null;
     inference: number | null;
     compute: number | null;
     platform: number | null;
@@ -360,27 +360,30 @@ export function calculateMetrics(store: Store, stateDir: string, options: { ws?:
           prUrl,
           cost: cCost,
           inference: cCost,
-          compute: 0,
-          platform: 0,
+          compute: null,
+          platform: null,
         });
       }
       continue;
     }
     const cCost = costs.find(x => x.id === c.id)?.cost ?? null;
-    const hasTotal = attempts.length > 0 && attempts.every(a => a.totalMicroUsd !== null);
-    if (!hasTotal && cCost === null) continue;
-    const tot = hasTotal
+    const isModern = attempts.some(a => a.id !== null);
+    const hasTotal = isModern
+      ? attempts.every(a => a.totalMicroUsd !== null)
+      : cCost !== null;
+    if (!hasTotal) continue;
+    const tot = isModern
       ? attempts.reduce((s, a) => s + (a.totalMicroUsd ?? 0), 0) / 1_000_000
       : cCost!;
     const inf = attempts.every(a => a.inferenceMicroUsd !== null)
       ? attempts.reduce((s, a) => s + (a.inferenceMicroUsd ?? 0), 0) / 1_000_000
       : (cCost !== null ? cCost : null);
-    const comp = attempts.every(a => a.computeMicroUsd !== null)
+    const comp = isModern && attempts.every(a => a.computeMicroUsd !== null)
       ? attempts.reduce((s, a) => s + (a.computeMicroUsd ?? 0), 0) / 1_000_000
-      : (hasTotal ? null : 0);
-    const plat = attempts.every(a => a.platformMicroUsd !== null)
+      : null;
+    const plat = isModern && attempts.every(a => a.platformMicroUsd !== null)
       ? attempts.reduce((s, a) => s + (a.platformMicroUsd ?? 0), 0) / 1_000_000
-      : (hasTotal ? null : 0);
+      : null;
     topPrItems.push({
       changeId: c.id,
       title: c.title,
@@ -392,7 +395,7 @@ export function calculateMetrics(store: Store, stateDir: string, options: { ws?:
     });
   }
   const top20 = topPrItems
-    .sort((a, b) => b.cost - a.cost || a.changeId.localeCompare(b.changeId))
+    .sort((a, b) => (b.cost ?? -1) - (a.cost ?? -1) || a.changeId.localeCompare(b.changeId))
     .slice(0, 20);
 
   return { count: cohort.changes.length, omitted: cohort.total - cohort.changes.length, since, until,

@@ -240,4 +240,20 @@ describe('Pestaña Gasto en la web (T113)', () => {
     expect(body).toContain(`<th scope="row">${today}</th><td>No medido</td>`);
     expect(body).not.toContain(`<th scope="row">${today}</th><td>0.50 USD</td>`);
   });
+
+  test('T113-H2: nada no medido sale como 0.00 en desglose ni en ranking de PRs', () => {
+    // Change histórico sin intentos de cómputo ni plataforma
+    seedItem({
+      title: 'Change histórico sin cómputo',
+      attemptCosts: [0.30],
+    });
+
+    const url = new URL(`http://127.0.0.1:4310/metricas?tab=gasto&range=7`);
+    const { body } = metricsPage(store, dir, url);
+
+    // En la tabla de los 20 PR debe salir «No medido» para cómputo y plataforma, nunca 0.00 USD
+    expect(body).toContain('0.30 USD · No medido · No medido');
+    expect(body).not.toContain('0.30 USD · 0.00 USD · 0.00 USD');
+    expect(body).not.toContain('· 0.00 USD ·');
+  });
 });
