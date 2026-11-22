@@ -87,3 +87,14 @@ test('T119a-H6: un lector abre una base de release sin migrar y lista y verifica
     expect(ro.verifyApiKey(`fabk_a1a1a1a1a1a1_${'A'.repeat(43)}`)).toBeNull(); // no lanza «no such column»
   } finally { ro.close(); }
 });
+
+test('T119a-H15: identity_audit solo admite añadir y marcar exported_at', () => {
+  const s = new Store(join(dir, 'a.db'));
+  s.db.query(`INSERT INTO identity_audit (op_id, at, actor, actor_source, action, result) VALUES ('o1','t','a','cli','x','ok')`).run();
+  expect(() => s.db.query(`UPDATE identity_audit SET action = 'otra'`).run()).toThrow(/solo añadir/);
+  expect(() => s.db.query(`UPDATE identity_audit SET result = 'fail'`).run()).toThrow(/solo añadir/);
+  expect(() => s.db.query(`DELETE FROM identity_audit`).run()).toThrow(/solo añadir/);
+  s.db.query(`UPDATE identity_audit SET exported_at = 't2'`).run();
+  expect(s.db.query('SELECT exported_at FROM identity_audit').get()).toEqual({ exported_at: 't2' });
+  s.close();
+});

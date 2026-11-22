@@ -95,6 +95,18 @@ CREATE UNIQUE INDEX idx_api_keys_local_nombre ON api_keys(name) WHERE user_id IS
       db.exec(`ALTER TABLE events ADD COLUMN actor_user_id TEXT; ALTER TABLE events ADD COLUMN actor_source TEXT;`);
     },
   },
+  {
+    // Solo añadir: salvo `exported_at`, un asiento no se edita ni se borra por SQL. Sin un ancla externa (la réplica del diario),
+    // quien tenga el fichero puede recortar la cola; esto cierra la edición, no la truncación.
+    id: 't119a-004-auditoria-solo-anadir',
+    up(db) {
+      db.exec(`
+CREATE TRIGGER identity_audit_inmutable BEFORE UPDATE OF seq, op_id, at, actor, actor_user_id, actor_source, action, object, detail, result ON identity_audit
+  BEGIN SELECT RAISE(ABORT, 'identity_audit es de solo añadir'); END;
+CREATE TRIGGER identity_audit_sin_borrado BEFORE DELETE ON identity_audit
+  BEGIN SELECT RAISE(ABORT, 'identity_audit es de solo añadir'); END;`);
+    },
+  },
 ];
 
 /** Aplica los pasos pendientes. Cada uno: BEGIN IMMEDIATE, revalida el registro bajo lock, ejecuta y registra; si falla, rollback. */
