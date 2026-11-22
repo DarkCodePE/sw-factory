@@ -206,3 +206,11 @@ test('fab --remote: el binario enruta al cliente remoto y un verbo o alias desco
   expect(b.exitCode).toBe(1);
   expect(b.stderr.toString()).toMatch(/sin sesión|desconocido/);
 });
+
+test('T119c-H12: el mensaje de error del servidor se imprime sin caracteres de control', async () => {
+  await login();
+  const hostile = (async () => new Response(JSON.stringify({ ok: false, error: { code: 'conflict\u001b[2J', message: 'falla\u001b]0;titulo\u0007\r\nlinea falsa' } }), { status: 409 })) as unknown as typeof fetch;
+  expect(await remoteMain(['prod', 'ws', 'list'], deps({ fetch: hostile }))).toBe(1);
+  expect(errs.at(-1)).not.toMatch(/[\u0000-\u001f\u007f]/);
+  expect(errs.at(-1)).toContain('linea falsa');
+});

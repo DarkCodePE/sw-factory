@@ -242,7 +242,8 @@ export async function remoteMain(argv: string[], deps: RemoteDeps): Promise<numb
     return 0;
   } catch (e) {
     // Sin la sesión ni el cuerpo de la petición: solo código y mensaje del servidor o del cliente.
-    err(e instanceof RemoteError ? `error (${e.code}): ${e.message}` : `error: ${(e as Error).message}`);
+    // Lo que dice el servidor se imprime sin caracteres de control: no puede mover el cursor ni pintar la terminal.
+    err((e instanceof RemoteError ? `error (${e.code}): ${e.message}` : `error: ${(e as Error).message}`).replace(/[\p{Cc}\p{Cf}]/gu, ' '));
     return 1;
   }
 }
