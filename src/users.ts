@@ -10,7 +10,7 @@
  *    y dejan ese filtro al despacho HTTP/CLI.
  */
 import { createHash, randomBytes, randomUUID, timingSafeEqual } from 'node:crypto';
-import { appendFileSync, existsSync, readFileSync, truncateSync } from 'node:fs';
+import { appendFileSync, closeSync, existsSync, fsyncSync, openSync, readFileSync, truncateSync } from 'node:fs';
 import { authorize, type PolicyContext, type Role, type Via } from './policy.ts';
 import { API_KEY_ACTIVE_LIMIT, StoreError, type Store } from './store.ts';
 
@@ -375,13 +375,26 @@ const ZERO = '0'.repeat(64);
 interface JournalLine { seq: number; opId: string; at: string; actor: string; actorUserId: string | null; actorSource: string; action: string; object: string | null; detail: unknown; result: string; prev: string; hash: string }
 const lineHash = (l: Omit<JournalLine, 'hash'>) => sha(JSON.stringify(l));
 
-/** Una última línea sin `\n` es una escritura cortada por una caída: no cuenta, y exportar la descarta antes de añadir. */
-function readJournal(path: string): { lines: JournalLine[]; truncated: boolean; completeBytes: number } {
-  if (!existsSync(path)) return { lines: [], truncated: false, completeBytes: 0 };
+/**
+ * Una última línea sin `\n` es una escritura cortada por una caída y no cuenta, salvo que sea JSON íntegro y encadene con la anterior
+ * (alguien quitó solo el salto final): entonces se conserva y exportar solo le añade el `\n`.
+ */
+function readJournal(path: string): { lines: JournalLine[]; truncated: boolean; completeBytes: number; missingNewline: boolean } {
+  if (!existsSync(path)) return { lines: [], truncated: false, completeBytes: 0, missingNewline: false };
   const raw = readFileSync(path, 'utf8');
   const complete = raw.slice(0, raw.lastIndexOf('\n') + 1);
-  return { lines: complete.split('\n').filter(Boolean).map((l) => JSON.parse(l) as JournalLine), truncated: complete.length !== raw.length,
-    completeBytes: Buffer.byteLength(complete) };
+  const lines = complete.split('\n').filter(Boolean).map((l) => JSON.parse(l) as JournalLine);
+  const tail = raw.slice(complete.length);
+  let missingNewline = false;
+  if (tail) {
+    try {
+      const l = JSON.parse(tail) as JournalLine;
+      const { hash, ...body } = l;
+      missingNewline = typeof hash === 'string' && l.prev === (lines.at(-1)?.hash ?? ZERO) && lineHash(body) === hash;
+      if (missingNewline) lines.push(l);
+    } catch { /* cortada: se descarta */ }
+  }
+  return { lines, truncated: !!tail && !missingNewline, completeBytes: Buffer.byteLength(complete), missingNewline };
 }
 
 /**
@@ -393,8 +406,9 @@ export function exportIdentityJournal(store: Store, path: string): { exported: n
   // La transacción inmediata serializa exportadores de la misma base. shortcut: dos bases distintas sobre un mismo fichero no se
   // coordinan; el diario tiene un único productor por equipo.
   return store.withRetry(() => {
-    const { lines, truncated, completeBytes } = readJournal(path);
+    const { lines, truncated, completeBytes, missingNewline } = readJournal(path);
     if (truncated) truncateSync(path, completeBytes); // los asientos de esa línea siguen sin marcar y se vuelven a escribir
+    if (missingNewline) appendFileSync(path, '\n');
     let last = lines.at(-1)?.seq ?? 0, prev = lines.at(-1)?.hash ?? ZERO, exported = 0;
     const known = new Set(lines.map((l) => l.opId));
     const mark = store.db.query('UPDATE identity_audit SET exported_at = ? WHERE op_id = ? AND exported_at IS NULL');
@@ -410,6 +424,7 @@ export function exportIdentityJournal(store: Store, path: string): { exported: n
       }
       mark.run(store.now(), opId);
     }
+    if (exported || missingNewline) { const fd = openSync(path, 'r+'); try { fsyncSync(fd); } finally { closeSync(fd); } } // las marcas no se confirman antes que las líneas
     return { exported, lastSeq: last };
   });
 }

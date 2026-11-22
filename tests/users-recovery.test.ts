@@ -266,6 +266,27 @@ test('T119a-H14: aplicar el diario y confirmar cortan las sesiones de quien camb
   } finally { r2.close(); }
 });
 
+test('T119a-H19: una última línea íntegra sin salto final se conserva; una línea encadenada falsa o cortada se descarta', () => {
+  const j = join(dir, 'identity.jsonl');
+  const o = bootstrapOwner(store, { issuer: 'github', subject: '1', displayName: 'A', operator: 'op' });
+  const owner = login(store, o.id);
+  for (let i = 0; i < 5; i++) add(store, owner, 'viewer');
+  const { exported } = exportIdentityJournal(store, j);
+  const full = readFileSync(j, 'utf8');
+  writeFileSync(j, full.slice(0, -1)); // solo se quita el salto final
+  expect(verifyIdentityJournal(j)).toMatchObject({ ok: true, lastSeq: exported, truncated: false });
+  add(store, owner, 'viewer');
+  const r = exportIdentityJournal(store, j);
+  expect(r.exported).toBeGreaterThan(0);
+  const lines = readFileSync(j, 'utf8').split('\n');
+  expect(lines.length).toBe(exported + r.exported + 1); // todas las líneas y el vacío final: la última conservada no se perdió
+  expect(verifyIdentityJournal(j)).toMatchObject({ ok: true, lastSeq: exported + r.exported, gaps: [], brokenAt: null, truncated: false });
+  // Una última línea íntegra pero que no encadena no se acepta.
+  const forged = JSON.stringify({ ...JSON.parse(lines[exported - 1]!), prev: 'x'.repeat(64) });
+  writeFileSync(j, lines.slice(0, exported - 1).join('\n') + '\n' + forged);
+  expect(verifyIdentityJournal(j)).toMatchObject({ truncated: true });
+});
+
 test('T119a-H10: una última línea cortada no rompe el diario y se reescribe; tres exportadores a la vez no duplican ni rompen la cadena', async () => {
   const j = join(dir, 'identity.jsonl');
   const o = bootstrapOwner(store, { issuer: 'github', subject: '1', displayName: 'A', operator: 'op' });
