@@ -198,3 +198,12 @@ test('T111-H7: el tope de 366 días vale también en Jueces (borde exacto 366 pa
     expect((await fetch(url(`/metricas?tab=${tab}&from=2024-01-01&to=2025-01-01`))).status).toBe(400); // 367
   }
 });
+test('T111-H8: la tasa por día agrupa por la fecha con la que se filtra (creada), no por la de fin', async () => {
+  const { digest, impls } = seed(1);
+  insertScore(digest, impls[0]!, { at: '2026-11-19T23:30:00.000Z' });
+  store.db.query("UPDATE scores SET finished_at='2026-11-20T00:30:00.000Z'").run();
+  server = startWeb(dir, 0);
+  const h = await html('/metricas?tab=jueces&from=2026-11-18&to=2026-11-19');
+  expect(h).toContain('<title>2026-11-19 · Aprobadas: 100 %</title>');
+  expect(h).not.toContain('2026-11-20');
+});

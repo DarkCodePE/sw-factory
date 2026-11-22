@@ -210,7 +210,7 @@ export function scorerSummary(db: Database, f: ScoreFilter = {}): ScorerSummary[
 export function passByDay(db: Database, f: ScoreFilter = {}): { day: string; scorer: string; done: number; passed: number }[] {
   if (!hasScores(db)) return [];
   const w = where(f, "status = 'done' AND passed IS NOT NULL");
-  return db.query(`SELECT substr(COALESCE(finished_at, created_at), 1, 10) AS day, scorer, COUNT(*) AS done, SUM(passed) AS passed
+  return db.query(`SELECT substr(created_at, 1, 10) AS day, scorer, COUNT(*) AS done, SUM(passed) AS passed
     FROM scores ${w.sql} GROUP BY day, scorer ORDER BY day DESC, scorer`).all(w.p as never) as never;
 }
 
