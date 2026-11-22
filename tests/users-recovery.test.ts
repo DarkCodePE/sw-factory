@@ -33,7 +33,7 @@ test('diario: export idempotente, cadena válida y reanuda tras añadir asientos
   add(store, owner, 'member');
   const second = exportIdentityJournal(store, j);
   expect(second.exported).toBeGreaterThan(1);
-  expect(verifyIdentityJournal(j)).toEqual({ ok: true, lastSeq: second.lastSeq, gaps: [], brokenAt: null });
+  expect(verifyIdentityJournal(j)).toEqual({ ok: true, lastSeq: second.lastSeq, gaps: [], brokenAt: null, truncated: false });
   expect(store.db.query('SELECT COUNT(*) n FROM identity_audit WHERE exported_at IS NULL').get()).toEqual({ n: 0 });
 });
 
@@ -143,7 +143,7 @@ test('T119a-H1: tras restaurar, los asientos nuevos de la base restaurada llegan
     const r = exportIdentityJournal(restored, j);
     expect(r.exported).toBe(1);
     expect(r.lastSeq).toBe(before + 1);
-    expect(verifyIdentityJournal(j)).toEqual({ ok: true, lastSeq: before + 1, gaps: [], brokenAt: null });
+    expect(verifyIdentityJournal(j)).toEqual({ ok: true, lastSeq: before + 1, gaps: [], brokenAt: null, truncated: false });
     expect(readFileSync(j, 'utf8')).toContain('recovery.enter');
     expect(exportIdentityJournal(restored, j).exported).toBe(0);
   } finally { restored.close(); }
@@ -264,4 +264,33 @@ test('T119a-H14: aplicar el diario y confirmar cortan las sesiones de quien camb
     confirmRecovery(r2, login(r2, a.id), [{ userId: a.id, role: 'owner' }]); // B queda suspendido
     expect(r2.db.query(`SELECT revoked_at FROM user_sessions WHERE id = 'raw'`).get()).not.toEqual({ revoked_at: null });
   } finally { r2.close(); }
+});
+
+test('T119a-H10: una última línea cortada no rompe el diario y se reescribe; tres exportadores a la vez no duplican ni rompen la cadena', async () => {
+  const j = join(dir, 'identity.jsonl');
+  const o = bootstrapOwner(store, { issuer: 'github', subject: '1', displayName: 'A', operator: 'op' });
+  const owner = login(store, o.id);
+  for (let i = 0; i < 6; i++) add(store, owner, 'viewer');
+  exportIdentityJournal(store, j);
+  const intact = readFileSync(j, 'utf8');
+  add(store, owner, 'viewer');
+  // Caída a mitad de una línea: el fichero acaba sin salto de línea.
+  writeFileSync(j, intact + '{"seq":99,"opId":"a medias');
+  expect(verifyIdentityJournal(j)).toMatchObject({ ok: true, truncated: true });
+  const r = exportIdentityJournal(store, j);
+  expect(r.exported).toBeGreaterThan(0);
+  expect(verifyIdentityJournal(j)).toMatchObject({ ok: true, truncated: false, gaps: [], brokenAt: null });
+  expect(readFileSync(j, 'utf8')).not.toContain('a medias');
+
+  // Exportadores simultáneos sobre la misma base (procesos reales).
+  for (let i = 0; i < 12; i++) add(store, owner, 'viewer');
+  store.db.exec('PRAGMA wal_checkpoint(FULL)');
+  const go = String(Date.now() + 800);
+  const procs = [1, 2, 3].map(() => Bun.spawn(['bun', join(import.meta.dir, 'helpers', 'identity-exporter.ts'), store.dbPath, j, go], { stdout: 'pipe', stderr: 'pipe' }));
+  for (const p of procs) expect(await p.exited, await new Response(p.stderr).text()).toBe(0);
+  const v = verifyIdentityJournal(j);
+  expect(v).toMatchObject({ ok: true, gaps: [], brokenAt: null });
+  const ops = readFileSync(j, 'utf8').trim().split('\n').map((l) => (JSON.parse(l) as { opId: string }).opId);
+  expect(new Set(ops).size).toBe(ops.length);
+  expect(ops.length).toBe((store.db.query('SELECT COUNT(*) n FROM identity_audit').get() as { n: number }).n);
 });

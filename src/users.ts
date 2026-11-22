@@ -10,7 +10,7 @@
  *    y dejan ese filtro al despacho HTTP/CLI.
  */
 import { createHash, randomBytes, randomUUID, timingSafeEqual } from 'node:crypto';
-import { appendFileSync, existsSync, readFileSync } from 'node:fs';
+import { appendFileSync, existsSync, readFileSync, truncateSync } from 'node:fs';
 import { authorize, type PolicyContext, type Role, type Via } from './policy.ts';
 import { API_KEY_ACTIVE_LIMIT, StoreError, type Store } from './store.ts';
 
@@ -365,9 +365,13 @@ const ZERO = '0'.repeat(64);
 interface JournalLine { seq: number; opId: string; at: string; actor: string; actorUserId: string | null; actorSource: string; action: string; object: string | null; detail: unknown; result: string; prev: string; hash: string }
 const lineHash = (l: Omit<JournalLine, 'hash'>) => sha(JSON.stringify(l));
 
-function readJournal(path: string): JournalLine[] {
-  if (!existsSync(path)) return [];
-  return readFileSync(path, 'utf8').split('\n').filter(Boolean).map((l) => JSON.parse(l) as JournalLine);
+/** Una última línea sin `\n` es una escritura cortada por una caída: no cuenta, y exportar la descarta antes de añadir. */
+function readJournal(path: string): { lines: JournalLine[]; truncated: boolean; completeBytes: number } {
+  if (!existsSync(path)) return { lines: [], truncated: false, completeBytes: 0 };
+  const raw = readFileSync(path, 'utf8');
+  const complete = raw.slice(0, raw.lastIndexOf('\n') + 1);
+  return { lines: complete.split('\n').filter(Boolean).map((l) => JSON.parse(l) as JournalLine), truncated: complete.length !== raw.length,
+    completeBytes: Buffer.byteLength(complete) };
 }
 
 /**
@@ -376,8 +380,11 @@ function readJournal(path: string): JournalLine[] {
  * escribir y marcar.
  */
 export function exportIdentityJournal(store: Store, path: string): { exported: number; lastSeq: number } {
+  // La transacción inmediata serializa exportadores de la misma base. shortcut: dos bases distintas sobre un mismo fichero no se
+  // coordinan; el diario tiene un único productor por equipo.
   return store.withRetry(() => {
-    const lines = readJournal(path);
+    const { lines, truncated, completeBytes } = readJournal(path);
+    if (truncated) truncateSync(path, completeBytes); // los asientos de esa línea siguen sin marcar y se vuelven a escribir
     let last = lines.at(-1)?.seq ?? 0, prev = lines.at(-1)?.hash ?? ZERO, exported = 0;
     const known = new Set(lines.map((l) => l.opId));
     const mark = store.db.query('UPDATE identity_audit SET exported_at = ? WHERE op_id = ? AND exported_at IS NULL');
@@ -398,16 +405,17 @@ export function exportIdentityJournal(store: Store, path: string): { exported: n
 }
 
 /** Comprueba la cadena y la secuencia. Un hueco o un hash roto no se arreglan solos: lo resuelve una revisión conservadora. */
-export function verifyIdentityJournal(path: string): { ok: boolean; lastSeq: number; gaps: number[]; brokenAt: number | null } {
+export function verifyIdentityJournal(path: string): { ok: boolean; lastSeq: number; gaps: number[]; brokenAt: number | null; truncated: boolean } {
   const gaps: number[] = [];
   let prev = ZERO, seq = 0, brokenAt: number | null = null;
-  for (const l of readJournal(path)) {
+  const { lines, truncated } = readJournal(path);
+  for (const l of lines) {
     for (let s = seq + 1; s < l.seq; s++) gaps.push(s);
     const { hash, ...body } = l;
     if (brokenAt === null && (l.prev !== prev || lineHash(body) !== hash)) brokenAt = l.seq;
     prev = hash; seq = l.seq;
   }
-  return { ok: !gaps.length && brokenAt === null, lastSeq: seq, gaps, brokenAt };
+  return { ok: !gaps.length && brokenAt === null, lastSeq: seq, gaps, brokenAt, truncated };
 }
 
 // ---- recuperación restringida (§3.3) ---------------------------------------
@@ -443,7 +451,7 @@ export function applyJournalToRestored(store: Store, operator: string, journalPa
   return store.withRetry(() => {
     if (!recoveryRestricted(store)) throw new StoreError('conflict', 'solo en recuperación restringida');
     let applied = 0;
-    for (const l of readJournal(journalPath)) {
+    for (const l of readJournal(journalPath).lines) {
       if (l.result !== 'ok' || !l.object) continue;
       const u = getUser(store, l.object);
       if (!u) continue;
