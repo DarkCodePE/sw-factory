@@ -52,8 +52,19 @@ export function validateServerConfig(config: ServerConfig): ValidatedServerConfi
     throw new Error(`publicOrigin no canónico: «${config.publicOrigin}». Debe ser exactamente «${parsed.origin}» (sin ruta, barra final, puerto :443 redundante, credenciales, query ni mayúsculas).`);
   }
 
-  if (parsed.hostname === 'localhost' || parsed.hostname === '127.0.0.1' || parsed.hostname === '::1') {
-    throw new Error(`publicOrigin inválido para modo servidor: «${config.publicOrigin}». No se permite loopback en modo servidor.`);
+  if (
+    parsed.hostname === 'localhost' ||
+    parsed.hostname === '127.0.0.1' ||
+    parsed.hostname === '::1' ||
+    parsed.hostname === '[::1]' ||
+    parsed.hostname === '0.0.0.0' ||
+    parsed.hostname === '[::]'
+  ) {
+    throw new Error(`publicOrigin inválido para modo servidor: «${config.publicOrigin}». No se permite loopback ni comodín en modo servidor.`);
+  }
+
+  if (parsed.hostname.endsWith('.')) {
+    throw new Error(`publicOrigin no canónico: «${config.publicOrigin}». No se permite punto final en el nombre de host.`);
   }
 
   const canonicalHost = parsed.host; // incluye puerto si no es estándar (ej. fab.example.com o fab.example.com:8443)
