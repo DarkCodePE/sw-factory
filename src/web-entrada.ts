@@ -7,6 +7,8 @@ import { ChangeLinkStore } from './connectors/links.ts';
 import type { TicketGateway } from './connectors/types.ts';
 import { Store, StoreError, type Workstream } from './store.ts';
 import { join } from 'node:path';
+import { inActor, isServer, preauthorize, type Who } from './web-who.ts';
+import { actorOf, revalidatePrincipal } from './users.ts';
 
 type Escape = (value: unknown) => string;
 export const JIRA_IMPORT_PATH = /^\/config\/jira\/importar$/;
@@ -64,7 +66,7 @@ export function entradaSection(stateDir: string, workstreams: Workstream[], esca
 /** Una instancia por servidor: un solo import a la vez. `gateway` solo lo inyectan los tests. */
 export function jiraImportAction(stateDir: string, gateway?: TicketGateway) {
   let busy = false;
-  return async (form: URLSearchParams): Promise<{ destination: string; result: string }> => {
+  return async (form: URLSearchParams, who: Who = 'web'): Promise<{ destination: string; result: string }> => {
     const out = (result: string, slug?: string) => ({ destination: slug ? `/config?ws=${encodeURIComponent(slug)}` : '/config', result });
     const keys = [...form.keys()];
     const key = form.get('key') ?? '', slug = form.get('ws') ?? '';
@@ -72,6 +74,8 @@ export function jiraImportAction(stateDir: string, gateway?: TicketGateway) {
     try { if (key.length > 40) throw new Error(); validateJiraKey(key); } catch { return out('jira_invalid'); }
     if (new Set(keys).size !== keys.length || keys.some(k => !['csrf', 'ws', 'key', 'triage', 'confirm'].includes(k)) || form.get('confirm') !== 'yes'
       || !/^[a-z0-9][a-z0-9-]{0,62}$/.test(slug)) return out('jira_invalid');
+    // T119c: la política va antes de salir a la red y de abrir el escritor (§4.1); se repite en el commit (`guard`).
+    preauthorize(stateDir, who, 'jira/import');
     if (!gateway && !jiraConfiguredInEnv()) return out('jira_unconfigured', slug);
     if (busy) return out('jira_busy', slug);
     busy = true;
@@ -81,10 +85,10 @@ export function jiraImportAction(stateDir: string, gateway?: TicketGateway) {
       const writer = store;
       let ws: Workstream;
       try { ws = writer.getWorkstream(slug); } catch { return out('jira_invalid'); }
-      const audit = (severity: 'info' | 'warning', message: string) => {
-        const previous = process.env.FAB_ACTOR; process.env.FAB_ACTOR = 'web';
-        try { writer.event(ws.id, severity, message); } finally { if (previous === undefined) delete process.env.FAB_ACTOR; else process.env.FAB_ACTOR = previous; }
-      };
+      // El actor es el del principal ya autorizado y revalidado en el commit; no se vuelve a autorizar tras la espera del proveedor.
+      const audit = (severity: 'info' | 'warning', message: string) => isServer(who)
+        ? writer.event(ws.id, severity, message, undefined, undefined, { ...actorOf(who.principal) })
+        : inActor(writer, who, 'jira/import', () => writer.event(ws.id, severity, message));
       // El tope cuenta las solicitudes (también las que fallen), leídas de la propia auditoría.
       const since = new Date(Date.parse(writer.now()) - 3_600_000).toISOString();
       const used = (writer.db.query("SELECT COUNT(*) AS n FROM events WHERE message LIKE 'Jira: importación solicitada desde la web%' AND created_at > ?").get(since) as { n: number }).n;
@@ -93,7 +97,10 @@ export function jiraImportAction(stateDir: string, gateway?: TicketGateway) {
       audit('info', `Jira: importación solicitada desde la web: ${key}${triage ? ' (con triage)' : ''}`);
       try {
         const tickets = gateway ?? createJiraGateway({ host: process.env.JIRA_HOSTNAME!, user: process.env.JIRA_USERNAME!, token: process.env.JIRA_API_TOKEN! });
-        const r = await importIssue(writer, new ChangeLinkStore(writer.db), tickets, { key, workstream: ws.slug, triage });
+        // La identidad y el rol se revalidan en el commit local, tras la espera del proveedor: una revocación que gana impide el efecto.
+        const guard = isServer(who) ? () => { revalidatePrincipal(writer, who.principal); writer.asActor({ ...actorOf(who.principal), role: who.principal.role }); } : undefined;
+        const r = await importIssue(writer, new ChangeLinkStore(writer.db), tickets, { key, workstream: ws.slug, triage, guard });
+        writer.asActor(undefined);
         audit('info', `Jira: HU ${key} ${r.reused ? 'reutilizada' : 'importada'} desde la web: signal ${r.signalId.slice(0, 8)}${r.changeId ? ` → change ${r.changeId.slice(0, 8)}` : ''}`);
         return out(r.reused ? 'jira_reused' : 'jira_ok', ws.slug);
       } catch (e) {

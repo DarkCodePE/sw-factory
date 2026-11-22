@@ -7,6 +7,7 @@ import { DEFAULT_DIGEST, ROLES, isProfileDigest, resolveProfile, resolveRole, ro
 import { CONFINABLE_AGENTS } from './sandbox/confine.ts';
 import { Store, StoreError, WorkstreamBusyError, type Workstream } from './store.ts';
 import { importProfileForm } from './web-import.ts';
+import { inActor, type Who } from './web-who.ts';
 
 type Escape = (value: unknown) => string;
 /** Siete plantillas de hasta 32 KiB y los campos de configuración, codificados como formulario. */
@@ -226,7 +227,7 @@ function editProfile(profile: Profile, form: URLSearchParams, editRoles: boolean
 }
 
 /** Guardar lee el perfil de origen y sus dos precondiciones en una sola transacción. */
-export function profileAction(stateDir: string, kind: 'guardar' | 'asignar', form: URLSearchParams): { destination: string; result: string } {
+export function profileAction(stateDir: string, kind: 'guardar' | 'asignar', form: URLSearchParams, who: Who = 'web'): { destination: string; result: string } {
   const editRoles = kind === 'guardar' && form.get('mode') === 'roles';
   checkProfileFields(form, kind === 'asignar' ? ASSIGN_FIELDS : editRoles ? [...saveFields, ...roleFormFields, ...roleAccessFields, ...runnerFields] : saveFields);
   if (kind === 'guardar' && ((form.has('mode') && !editRoles) || (editRoles && roleFormFields.some(name => !form.has(name))))) {
@@ -236,9 +237,12 @@ export function profileAction(stateDir: string, kind: 'guardar' | 'asignar', for
   const expected = form.get(kind === 'guardar' ? 'base' : 'previous') ?? '';
   if (!expectedAgent || !isProfileDigest(expected)) throw new ProfileInputError('Vuelve a abrir Perfiles y revisa la configuración vigente.');
   const store = new Store(join(stateDir, 'fabrica.db'));
-  const previous = process.env.FAB_ACTOR;
-  process.env.FAB_ACTOR = 'web';
   try {
+    return inActor(store, who, `perfiles/${kind}`, () => profileWrite(store, stateDir, kind, form, editRoles, expected, expectedAgent));
+  } finally { store.close(); }
+}
+
+function profileWrite(store: Store, stateDir: string, kind: 'guardar' | 'asignar', form: URLSearchParams, editRoles: boolean, expected: string, expectedAgent: string): { destination: string; result: string } {
     const ws = store.getWorkstream(form.get('ws') ?? '');
     const destination = `/perfiles?ws=${encodeURIComponent(ws.slug)}`;
     try {
@@ -270,8 +274,4 @@ export function profileAction(stateDir: string, kind: 'guardar' | 'asignar', for
       if (e instanceof StoreError) return { destination, result: e.code };
       throw e;
     }
-  } finally {
-    if (previous === undefined) delete process.env.FAB_ACTOR; else process.env.FAB_ACTOR = previous;
-    store.close();
-  }
 }
