@@ -12,6 +12,7 @@ services:
       - caddy_config:/config
       - ./certs:/etc/caddy/certs:ro
     networks:
+      - fab-public
       - fab-internal
 
   fab-backend:
@@ -21,6 +22,7 @@ services:
     restart: unless-stopped
     environment:
       - FAB_PUBLIC_ORIGIN=https://fab.ejemplo.com
+      - FAB_SOCKET=
       - NODE_ENV=production
     volumes:
       # IMPORTANTE (D2N-H14): SQLite compartido con Docker exige montaje de disco local
@@ -34,6 +36,8 @@ services:
       - fab-internal
 
 networks:
+  fab-public:
+    driver: bridge # Red externa para Caddy (puertos públicos 80/443 y certificados ACME)
   fab-internal:
     internal: true # Sin acceso directo a internet para el backend; Caddy es el único borde
 

@@ -628,4 +628,20 @@ uQAwb1guU1AUR6nVZtdFNQM9kVZ98hOcE9GUPLNEWYbELrBmbFfLChpyQQU=
     );
     expect(codeIncomplete).toBe(1);
   });
+
+  test('T118-H7: Configuración de despliegue Docker y compose sin variables no expandidas ni colisiones de red', () => {
+    const dockerfile = readFileSync(join(__dirname, '../deploy/docker/Dockerfile'), 'utf8');
+    const compose = readFileSync(join(__dirname, '../deploy/docker/docker-compose.yml'), 'utf8');
+
+    // 1. Dockerfile CMD no contiene literal sin expandir ${FAB_PUBLIC_ORIGIN}
+    expect(dockerfile).not.toContain('${FAB_PUBLIC_ORIGIN}');
+    expect(dockerfile).toContain('bun install --production');
+    expect(dockerfile).toContain('USER bun');
+    expect(dockerfile).not.toContain('groupadd -g 1000');
+
+    // 2. docker-compose.yml cuenta con red pública para Caddy y red interna para backend
+    expect(compose).toContain('fab-public');
+    expect(compose).toContain('fab-internal');
+    expect(compose).toContain('internal: true');
+  });
 });
