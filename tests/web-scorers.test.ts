@@ -183,3 +183,10 @@ test('T111: una tarjeta por juez con la tasa de aprobado por día; el día sin p
   expect(only).toContain('<p class="fig">100 %</p>'); expect(only).toContain('<p class="sub">100 % (1/1)</p>');
   expect(await html('/metricas?tab=jueces&from=2026-11-20&to=2026-11-21')).toContain('No hay puntuaciones en este rango.');
 });
+test('T111-H4: cambiar el rango en Jueces conserva el juez elegido', async () => {
+  const { digest, impls } = seed(1); insertScore(digest, impls[0]!);
+  server = startWeb(dir, 0);
+  expect(await html('/metricas?tab=jueces&range=all&scorer=calidad')).toContain('<input type="hidden" name="scorer" value="calidad">');
+  expect(await html('/metricas?tab=jueces&range=all')).not.toContain('name="scorer" value=');
+  expect(await html('/metricas?tab=jueces&scorer=%22%3E%3Cb%3E')).not.toContain('<b>');
+});
