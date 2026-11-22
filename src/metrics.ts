@@ -1,6 +1,6 @@
 // Agregados de lectura sobre una cohorte explícita. null siempre significa desconocido.
 import type { Store } from './store.ts';
-import { activityCosts, activityInference, activityMetadata, changeCost } from './evidence.ts';
+import { activityInference, activityMetadata } from './evidence.ts';
 import { usdToMicro, type CostAttempt } from './attempt-cost.ts';
 import { tokenCount } from './inference-usage.ts';
 import { roleOf } from './profile.ts';
@@ -11,12 +11,7 @@ export function distribution(values: number[]) {
   return { median: n ? (sorted[Math.floor((n - 1) / 2)]! + sorted[Math.floor(n / 2)]!) / 2 : null,
     p90: n ? sorted[Math.ceil(n * .9) - 1]! : null, samples: n };
 }
-export interface CostGroup { name: string; measured: number | null; unknown: number; total: number | null }
-function addCost(groups: Map<string, CostGroup>, name: string, value: number | null) {
-  const g = groups.get(name) ?? { name, measured: null, unknown: 0, total: null };
-  if (value === null) g.unknown++; else g.measured = (g.measured ?? 0) + value;
-  g.total = g.unknown ? null : g.measured; groups.set(name, g);
-}
+
 type SpendAmounts = Record<'inferenceMicroUsd' | 'computeMicroUsd' | 'platformMicroUsd' | 'totalMicroUsd', number | null>;
 export type SpendAttempt = SpendAmounts & Pick<CostAttempt,
   'changeId' | 'startedAt' | 'effectiveModel' | 'worker' | 'originActorId' | 'originSource' | 'prUrl' | 'attributed'
@@ -150,10 +145,8 @@ export function calculateMetrics(store: Store, stateDir: string, options: { ws?:
   const prInteractions: Array<{ day: string; total: number }> = [];
   // Runs de la cohorte; el rol es el de la activity (validador o tipo). La partición por rol atribuido al intento o subagente queda para una tarea posterior.
   const runList: Array<{ day: string; role: string }> = [];
-  const kinds: string[] = [], adapters = new Map<string, CostGroup>(), models = new Map<string, CostGroup>();
-  const sources = new Map<string, CostGroup>(), actors = new Map<string, CostGroup>();
+  const kinds: string[] = [];
   const humans: Array<{ id: string; title: string; reviews: number; answers: number; retries: number; total: number }> = [];
-  const costs: Array<{ id: string; title: string; cost: number | null }> = [];
   for (const c of cohort.changes) {
     const acts = store.listActivities({ changeId: c.id }), e = events.get(c.id);
     const first = (dates: Array<string | null | undefined>) => {
@@ -174,14 +167,6 @@ export function calculateMetrics(store: Store, stateDir: string, options: { ws?:
 
     const reviews = e?.reviews ?? 0, answers = e?.answers ?? 0, retries = e?.retries ?? 0;
     humans.push({ id: c.id, title: c.title, reviews, answers, retries, total: reviews + answers + retries });
-    let cost: number | null = null;
-    try { cost = changeCost(store, stateDir, c.id); } catch { /* Ruta insegura/ilegible: desconocido. */ }
-    costs.push({ id: c.id, title: c.title, cost });
-
-    const sourceLabel = c.source ? (SOURCES_LABELS[c.source] ?? c.source) : 'No medido';
-    const actorLabel = textField(c.creator);
-    addCost(sources, sourceLabel, cost);
-    addCost(actors, actorLabel, cost);
 
     for (const a of acts) {
       if (Date.parse(a.createdAt) > now) continue;
@@ -204,28 +189,8 @@ export function calculateMetrics(store: Store, stateDir: string, options: { ws?:
           });
         }
       }
-      if (Array.isArray(meta?.inferenceAttempts)) {
-        for (const attempt of activityInference(a, meta)) {
-          const attemptCost = attempt.remoteDeclared ? null : attempt.costUsd;
-          addCost(adapters, textField(attempt.adapter), attemptCost);
-          addCost(models, textField(attempt.usage?.effectiveModel), attemptCost);
-        }
-        continue;
-      }
-      const attempts = activityCosts(a, meta);
-      const sum = attempts && !attempts.some(c => c === null) ? (attempts as number[]).reduce((s, c) => s + c, 0) : null;
-      // El agente configurado ahora en el workstream no prueba qué adaptador ejecutó el intento.
-      const isolation = meta?.isolation;
-      const adapter = isolation && typeof isolation === 'object' ? (isolation as Record<string, unknown>).adapter : undefined;
-      const singleAttempt = a.retryCount === 0 && (attempts?.length ?? 0) <= 1;
-      addCost(adapters, singleAttempt ? textField(adapter) : 'No medido', sum);
-      // La metadata histórica guardaba el modelo solicitado, sin acreditar qué modelo respondió.
-      addCost(models, 'No medido', sum);
     }
   }
-  const measuredCosts = costs.filter((c): c is typeof c & { cost: number } => c.cost !== null);
-  const unknownChanges = costs.length - measuredCosts.length;
-  const measured = measuredCosts.length ? measuredCosts.reduce((s, c) => s + c.cost, 0) : null;
 
   // Series temporales por día
   const days: string[] = [];
@@ -260,7 +225,6 @@ export function calculateMetrics(store: Store, stateDir: string, options: { ws?:
   const dailyInterventionsMap = store.metricsDailyInterventions(cohort.changes.map(c => c.id), until);
   const dailyPrsMap = store.metricsDailyPrs(cohort.changes.map(c => c.id), until);
   const dailyChanges: Array<number | null> = [];
-  const dailyCosts: Array<number | null> = [];
   const dailyInterventions: Array<number | null> = [];
   const dailyPrs: Array<{ opened: number | null; merged: number | null }> = [];
 
@@ -268,15 +232,8 @@ export function calculateMetrics(store: Store, stateDir: string, options: { ws?:
     const dayChanges = cohort.changes.filter(c => c.createdAt.slice(0, 10) === day);
     if (!dayChanges.length) {
       dailyChanges.push(null);
-      dailyCosts.push(null);
     } else {
       dailyChanges.push(dayChanges.length);
-      const dayCosts = dayChanges.map(c => costs.find(x => x.id === c.id)?.cost);
-      if (dayCosts.some(c => c === null || c === undefined)) {
-        dailyCosts.push(null);
-      } else {
-        dailyCosts.push((dayCosts as number[]).reduce((s, c) => s + c, 0));
-      }
     }
     const intCount = dailyInterventionsMap.get(day);
     dailyInterventions.push(intCount !== undefined && intCount > 0 ? intCount : null);
@@ -390,7 +347,7 @@ export function calculateMetrics(store: Store, stateDir: string, options: { ws?:
     cycles: ['Primera activity', 'Primera revisión pedida', 'Primera decisión humana', 'Primer estado terminal registrado'].map((name, i) => ({ name, ...distribution(values[i]!) })),
     prCycles, interactionsPerPr, runs,
     humans, states: counts(cohort.changes.map(c => c.status)), kinds: counts(kinds),
-    daily: { days, changes: dailyChanges, costs: dailyCosts, interventions: dailyInterventions, prs: dailyPrs },
+    daily: { days, changes: dailyChanges, interventions: dailyInterventions, prs: dailyPrs },
     spending: {
       attempts: spendAttempts, ...summarizeSpending(spendAttempts),
       daily: {
@@ -411,8 +368,5 @@ export function calculateMetrics(store: Store, stateDir: string, options: { ws?:
       adapters: groupSpending(spendAttempts, a => a.adapter, days, 'totalMicroUsd'),
       top: top20,
     },
-    cost: { total: unknownChanges ? null : measured, measured, unknownChanges,
-      top: measuredCosts.sort((a, b) => b.cost - a.cost || a.id.localeCompare(b.id)).slice(0, 10),
-      adapters: [...adapters.values()], models: [...models.values()],
-      sources: [...sources.values()], actors: [...actors.values()] } };
+  };
 }

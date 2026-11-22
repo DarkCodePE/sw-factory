@@ -545,14 +545,7 @@ describe('Pestaña Gasto en la web (T113)', () => {
     store.finishCostAttempt('l1', { costUsd: 0.25 }, 100);
 
     const m = calculateMetrics(store, dir, { ws: 'ws-test', from: today, to: today });
-    // M01: guarda de changeCost — el intento remoto con remoteDeclared no debe sumarse como medido
-    expect(m.cost.total).toBeNull();
-
-    // M02: coste remoto no debe imputarse a m.cost.models ni a spending.models como medido
-    const remoteModelCost = m.cost.models.find(g => g.name === 'm-remoto');
-    expect(remoteModelCost?.measured).toBeNull();
-    expect(remoteModelCost?.total).toBeNull();
-
+    // M02: coste remoto no debe imputarse a spending.models como medido
     const remoteModelSpending = m.spending.models.find(g => g.name === 'm-remoto');
     expect(remoteModelSpending?.inference.measured).toBeNull();
     expect(remoteModelSpending?.inference.total).toBeNull();

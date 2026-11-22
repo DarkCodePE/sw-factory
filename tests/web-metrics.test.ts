@@ -30,45 +30,40 @@ test('mediana par/impar y p90 por rango más próximo', () => {
   expect(distribution([9, 1, 3])).toEqual({ median: 3, p90: 9, samples: 3 });
   expect(distribution([])).toEqual({ median: null, p90: null, samples: 0 });
 });
-test('tramos exactos, intervenciones, estados, tipos y coste; null no es cero', () => {
+test('tramos exactos, intervenciones, estados y tipos', () => {
   seed(1, 2); seed(3, 0); seed(5, null);
   const m = calculateMetrics(store, dir, { range: '7', now });
   expect(m.cycles.map(c => c.median)).toEqual([3, 6, 9, 12].map(n => n * 3600000));
   expect(m.cycles.map(c => c.p90)).toEqual([5, 10, 15, 20].map(n => n * 3600000));
   expect(m.humans.map(h => [h.reviews, h.answers, h.retries, h.total])).toEqual([[1,1,1,3],[1,1,1,3],[1,1,1,3]]);
   expect(m.states).toEqual([['completed', 3]]); expect(m.kinds).toEqual([['investigation', 3]]);
-  expect(m.cost.total).toBeNull(); expect(m.cost.measured).toBe(2); expect(m.cost.unknownChanges).toBe(1);
-  expect(m.cost.top.map(c => c.cost)).toEqual([2, 0]);
-  expect(m.cost.adapters).toEqual([{ name: 'synthetic', measured: 2, unknown: 1, total: null }]);
-  expect(m.cost.models).toEqual([{ name: 'No medido', measured: 2, unknown: 1, total: null }]);
 });
 test('filtros de cohorte por fecha y workstream, incluyendo límites y futuro', () => {
   store.createWorkstream({ slug: 'dos', goal: 'g', repo: '/synthetic' });
   seed(1, 1); seed(1, 4, 'dos'); seed(1, 16, 'uno', '2026-10-01T00:00:00Z'); seed(1, 32, 'uno', '2026-11-20T00:00:00Z');
   seed(0, 8, 'uno', '2026-11-12T12:00:00Z');
-  expect(calculateMetrics(store, dir, { ws: 'uno', range: '7', now }).cost.total).toBe(9);
-  expect(calculateMetrics(store, dir, { ws: 'dos', range: '30', now }).cost.total).toBe(4);
-  expect(calculateMetrics(store, dir, { ws: 'uno', range: 'all', now }).cost.total).toBe(25);
+  expect(calculateMetrics(store, dir, { ws: 'uno', range: '7', now }).count).toBe(2);
+  expect(calculateMetrics(store, dir, { ws: 'dos', range: '30', now }).count).toBe(1);
+  expect(calculateMetrics(store, dir, { ws: 'uno', range: 'all', now }).count).toBe(3);
 });
 test('vacío y evidencia ausente, rota o incompleta no inventan datos', () => {
-  expect(calculateMetrics(store, dir, { now }).cost.total).toBeNull();
+  expect(calculateMetrics(store, dir, { now }).count).toBe(0);
   const c = seed(1, 0); const a = store.listActivities({ changeId: c.id })[0]!;
   rmSync(join(dir, 'runs'), { recursive: true });
-  expect(calculateMetrics(store, dir, { now }).cost.unknownChanges).toBe(1);
+  expect(calculateMetrics(store, dir, { now }).count).toBe(1);
   store.db.query('DELETE FROM events').run();
   const m = calculateMetrics(store, dir, { now });
   expect(m.cycles.slice(1).map(c => c.samples)).toEqual([0,0,0]); // no se inventa una fecha sin evento
-  expect(m.cost.adapters[0]?.name).toBe('No medido');
   mkdirSync(join(dir, 'runs', c.id), { recursive: true });
   for (const content of ['{broken', '{"attemptCosts":[null]}', '{"attemptCosts":[]}']) {
     writeFileSync(join(dir, 'runs', c.id, `${a.id}.json`), content);
-    expect(calculateMetrics(store, dir, { now }).cost.total).toBeNull();
+    expect(calculateMetrics(store, dir, { now }).count).toBe(1);
   }
 });
 test('tope de 1000 changes, selección determinista y aviso', () => {
   store.db.transaction(() => { for (let i=0;i<1002;i++) seed(0, 0); })();
   const m = calculateMetrics(store, dir, { now });
-  expect(m.count).toBe(1000); expect(m.omitted).toBe(2); expect(m.cost.total).toBe(0);
+  expect(m.count).toBe(1000); expect(m.omitted).toBe(2);
 });
 test('HTTP: escapado, CSP, sin sondeo, HEAD, Host, 405 y disco inalterado', async () => {
   seed(1, 2); store.close();
@@ -111,10 +106,9 @@ test('atribución histórica desconocida, multiintentos y change sin activities'
   store.db.query("UPDATE activities SET retry_count=1 WHERE id=?").run(a.id);
   writeFileSync(join(dir, 'runs', c.id, `${a.id}.json`), JSON.stringify({ attemptCosts: [1, 2], model: 'ultimo', isolation: { adapter: 'ultimo' } }));
   const m = calculateMetrics(store, dir, { now });
-  expect(m.cost.total).toBe(3);
-  expect(m.cost.models[0]?.name).toBe('No medido'); expect(m.cost.adapters[0]?.name).toBe('No medido');
+  expect(m.count).toBe(1);
   store.db.query('DELETE FROM activities WHERE change_id=?').run(c.id);
-  expect(calculateMetrics(store, dir, { now }).cost.total).toBeNull();
+  expect(calculateMetrics(store, dir, { now }).count).toBe(1);
 });
 
 const H = 3600000, t0 = Date.parse('2026-11-18T00:00:00Z');
@@ -146,19 +140,20 @@ test('H4: hitos y activities posteriores a now o anteriores a la creación no cu
   expect(early.cycles.map(c => c.samples)).toEqual([1, 1, 0, 0]);
   const future = calculateMetrics(store, dir, { now: t0 + 0.5 * H });
   expect(future.cycles.map(c => c.samples)).toEqual([0, 0, 0, 0]);
-  expect(future.kinds).toEqual([]); expect(future.cost.adapters).toEqual([]);
+  expect(future.kinds).toEqual([]);
   store.db.query('UPDATE activities SET created_at=?').run(new Date(t0 - H).toISOString());
   expect(calculateMetrics(store, dir, { now }).cycles[0]?.samples).toBe(0);
 });
 test('H5: el tope conserva los changes más recientes', () => {
   store.db.transaction(() => { for (let i = 0; i < 1002; i++) seed(0, i < 2 ? 5 : 0, 'uno', new Date(t0 + i * 60000).toISOString()); })();
-  expect(calculateMetrics(store, dir, { now }).cost.total).toBe(0);
+  expect(calculateMetrics(store, dir, { now }).count).toBe(1000);
 });
 test('H6: evidencia con ruta insegura deja el coste desconocido', () => {
   const c = seed(1, 3); const other = join(dir, 'otra'); mkdirSync(other);
   rmSync(join(dir, 'runs', c.id), { recursive: true, force: true }); symlinkSync(other, join(dir, 'runs', c.id));
   const m = calculateMetrics(store, dir, { now });
-  expect(m.cost.unknownChanges).toBe(1); expect(m.cost.total).toBeNull();
+  expect(m.spending.total.total).toBeNull();
+  expect(m.spending.total.unknown).toBe(1);
 });
 test('H7: blocked: y quarantined: son estados terminales', () => {
   for (const prefix of ['blocked: x', 'quarantined: y']) {
@@ -167,17 +162,6 @@ test('H7: blocked: y quarantined: son estados terminales', () => {
     expect(calculateMetrics(store, dir).cycles[3]?.samples).toBe(1);
     store.db.query('DELETE FROM changes WHERE id=?').run(c.id);
   }
-});
-test('H8: singleAttempt exige cero reintentos y a lo sumo un coste', () => {
-  const write = (c: { id: string }, retry: number, costs: number[]) => {
-    const a = store.listActivities({ changeId: c.id })[0]!;
-    store.db.query('UPDATE activities SET retry_count=? WHERE id=?').run(retry, a.id);
-    writeFileSync(join(dir, 'runs', c.id, `${a.id}.json`), JSON.stringify({ attemptCosts: costs, model: 'm', isolation: { adapter: 'a' } }));
-    return calculateMetrics(store, dir, { now }).cost.adapters[0]?.name;
-  };
-  const one = seed(1, 1); expect(write(one, 0, [1, 2])).toBe('No medido');
-  store.db.query('DELETE FROM changes WHERE id=?').run(one.id);
-  const two = seed(1, 1); expect(write(two, 1, [1])).toBe('No medido');
 });
 function validatorChange() {
   const c = store.createChange('uno', 'x', '');
@@ -244,7 +228,6 @@ test('T82: rango libre con from y to; rangos inválidos se rechazan', () => {
 
   const m = calculateMetrics(store, dir, { from: '2026-11-14', to: '2026-11-18', now });
   expect(m.count).toBe(2);
-  expect(m.cost.total).toBe(6);
 
   expect(() => calculateMetrics(store, dir, { from: 'bad' })).toThrow(URIError);
   expect(() => calculateMetrics(store, dir, { to: '2026-99-99' })).toThrow(URIError);
@@ -253,10 +236,13 @@ test('T82: rango libre con from y to; rangos inválidos se rechazan', () => {
   expect(() => calculateMetrics(store, dir, { range: 'invalido' as any })).toThrow(URIError);
 });
 
-test('T82: coste por fuente y por actor del primer evento', () => {
+test('T82: gasto por fuente y por actor del primer evento', () => {
   const c1 = seed(1, 10, 'uno', '2026-11-18T00:00:00Z');
+  const a1 = store.listActivities({ changeId: c1.id })[0]!;
   const c2 = seed(1, 20, 'uno', '2026-11-18T01:00:00Z');
+  const a2 = store.listActivities({ changeId: c2.id })[0]!;
   const c3 = seed(1, null, 'uno', '2026-11-18T02:00:00Z');
+  const a3 = store.listActivities({ changeId: c3.id })[0]!;
 
   store.db.query("INSERT INTO signals (id, workstream_id, title, body, status, change_id, created_at) VALUES ('s1', ?, 't', 'b', 'triaged', ?, '2026-11-18T00:00:00Z')")
     .run(c1.workstreamId, c1.id);
@@ -266,15 +252,24 @@ test('T82: coste por fuente y por actor del primer evento', () => {
 
   store.db.query("UPDATE events SET actor='alice' WHERE change_id=? AND id IN (SELECT MIN(id) FROM events WHERE change_id=?)").run(c1.id, c1.id);
   store.db.query("UPDATE events SET actor='bob' WHERE change_id=? AND id IN (SELECT MIN(id) FROM events WHERE change_id=?)").run(c2.id, c2.id);
+  store.db.query("UPDATE changes SET origin_source='cli', origin_actor_id='alice' WHERE id=?").run(c1.id);
+  store.db.query("UPDATE changes SET origin_source='jira', origin_actor_id='bob' WHERE id=?").run(c2.id);
+
+  store.beginCostAttempt(a1, { id: 'att-s1', rate: costRateAt(dir, '2026-11-18T00:00:00Z', null), remote: false, runner: null, adapter: 'claude', legacyCount: 0, startedAt: '2026-11-18T00:00:00Z' });
+  store.finishCostAttempt('att-s1', { costUsd: 10 }, 100);
+  store.beginCostAttempt(a2, { id: 'att-s2', rate: costRateAt(dir, '2026-11-18T01:00:00Z', null), remote: false, runner: null, adapter: 'claude', legacyCount: 0, startedAt: '2026-11-18T01:00:00Z' });
+  store.finishCostAttempt('att-s2', { costUsd: 20 }, 100);
+  store.beginCostAttempt(a3, { id: 'att-s3', rate: costRateAt(dir, '2026-11-18T02:00:00Z', null), remote: true, runner: 'torre', adapter: 'claude', legacyCount: 0, startedAt: '2026-11-18T02:00:00Z' });
+  store.finishCostAttempt('att-s3', undefined, 100);
 
   const m = calculateMetrics(store, dir, { range: '7', now });
-  expect(m.cost.sources.find(s => s.name === 'CLI')).toEqual({ name: 'CLI', measured: 10, unknown: 0, total: 10 });
-  expect(m.cost.sources.find(s => s.name === 'Jira')).toEqual({ name: 'Jira', measured: 20, unknown: 0, total: 20 });
-  expect(m.cost.sources.find(s => s.name === 'No medido')).toEqual({ name: 'No medido', measured: null, unknown: 1, total: null });
+  expect(m.spending.by.source.find(s => s.name === 'cli')?.total.measured).toBe(10_000_000);
+  expect(m.spending.by.source.find(s => s.name === 'jira')?.total.measured).toBe(20_000_000);
+  expect(m.spending.by.source.find(s => s.name === 'Sin dato')?.total.unknown).toBe(1);
 
-  expect(m.cost.actors.find(a => a.name === 'alice')).toEqual({ name: 'alice', measured: 10, unknown: 0, total: 10 });
-  expect(m.cost.actors.find(a => a.name === 'bob')).toEqual({ name: 'bob', measured: 20, unknown: 0, total: 20 });
-  expect(m.cost.actors.find(a => a.name === 'No medido')).toEqual({ name: 'No medido', measured: null, unknown: 1, total: null });
+  expect(m.spending.by.user.find(a => a.name === 'alice')?.total.measured).toBe(10_000_000);
+  expect(m.spending.by.user.find(a => a.name === 'bob')?.total.measured).toBe(20_000_000);
+  expect(m.spending.by.user.find(a => a.name === 'Sin dato')?.total.unknown).toBe(1);
 });
 
 const svgOf = (html: string, label: string) => html.match(new RegExp(`<svg[^>]*aria-label="${label}[^>]*>[\\s\\S]*?</svg>`))?.[0] ?? '';
@@ -316,7 +311,7 @@ test('T82/T111: tarjetas con área SVG, números iguales a la tabla plegada y d�
   expect(gasto).toContain('Coste por actor del primer evento');
   const m = calculateMetrics(store, dir, { from: '2026-11-17', to: '2026-11-19' });
   expect(m.daily.changes).toEqual([1, 1, null]);
-  expect(m.daily.costs).toEqual([5, null, null]);
+  expect(m.spending.daily.total).toEqual([5, null, null]);
   expect(m.daily.interventions).toEqual([3, 3, null]);
 
   // La tabla va plegada bajo cada gráfico y distingue «Sin datos» de «No medido».
@@ -727,7 +722,6 @@ test('T108 H6: el gasto y la tabla distinguen modelos efectivos, caché medida y
     ],
   }));
   const metrics = calculateMetrics(store, dir, { now });
-  const cost = metrics.cost;
   const spending = metrics.spending;
   expect(spending.models.find(g => g.name === 'servido-1')?.inference).toEqual({
     measured: 123000, unknown: 0, total: 123000,
@@ -738,11 +732,6 @@ test('T108 H6: el gasto y la tabla distinguen modelos efectivos, caché medida y
   expect(spending.adapters.find(g => g.name === 'native')?.inference).toEqual({
     measured: 123000, unknown: 1, total: null,
   });
-  expect(cost.models).toEqual([
-    { name: 'servido-1', measured: 0.123, unknown: 0, total: 0.123 },
-    { name: 'servido-2', measured: null, unknown: 1, total: null },
-  ]);
-  expect(cost.total).toBeNull();
 
   // IE2O1-H1 / IE2O1-H2: Gasto muestra los modelos efectivos y el pie actualizado
   const gastoHtml = metricsPage(store, dir, new URL('http://127.0.0.1:4310/metricas?tab=gasto')).body;
