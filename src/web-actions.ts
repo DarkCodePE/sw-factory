@@ -103,7 +103,8 @@ export class InputError extends Error {
 
 type Raw = Record<string, string | undefined>;
 type Outcome = { destination: string; result: string; repo?: string };
-type Action = { path: RegExp; /** T105: sube un paquete (multipart) y pasa por vista previa antes de escribir. */ importKind?: ImportKind; automationForm?: 'create' | 'update' | 'delete'; /** false: solo la web con sesión; la API con clave no la expone (decisión del dueño sobre H1). */ api?: false; httpErrors?: true; input: (raw: Raw) => Raw; run: (store: Store, id: string, input: Raw, out: Outcome, actor: string, stateDir: string, attachment?: NoteAttachment) => void };
+export type ActionOptions = { server?: boolean };
+type Action = { path: RegExp; /** T105: sube un paquete (multipart) y pasa por vista previa antes de escribir. */ importKind?: ImportKind; automationForm?: 'create' | 'update' | 'delete'; /** false: solo la web con sesión; la API con clave no la expone (decisión del dueño sobre H1). */ api?: false; httpErrors?: true; input: (raw: Raw, options?: ActionOptions) => Raw; run: (store: Store, id: string, input: Raw, out: Outcome, actor: string, stateDir: string, attachment?: NoteAttachment, options?: ActionOptions) => void };
 
 type CheckAction = { path: RegExp; importKind?: undefined; automationForm?: undefined; api: false; check: true };
 type JiraAction = { path: RegExp; importKind?: undefined; automationForm?: undefined; api: false; jira: true };
@@ -502,11 +503,11 @@ export const ACTIONS: Record<string, Action | CheckAction | WebResponseAction | 
   'workstreams/acceso': {
     api: false,
     path: route('workstreams', 'acceso'),
-    input: raw => asInput(() => accessInput(raw)),
-    run: (store, id, input, out, _actor, stateDir) => {
+    input: (raw, opts) => asInput(() => accessInput(raw, opts)),
+    run: (store, id, input, out, _actor, stateDir, _attachment, opts) => {
       const ws = store.getWorkstream(id);
       out.destination = `/config?ws=${encodeURIComponent(ws.slug)}`;
-      asInput(() => setAccess(store, stateDir, ws.id, input));
+      asInput(() => setAccess(store, stateDir, ws.id, input, opts));
     },
   },
   // T107: resident.json (lo que acepta fab resident) y la importación de Jira (async: se despacha en webAction).
@@ -530,10 +531,10 @@ export const ACTIONS: Record<string, Action | CheckAction | WebResponseAction | 
 };
 
 /** Abre el Store escritor, fija el actor y ejecuta una acción. Lanza InputError si la entrada no vale; el resto de fallos van en `result`. */
-export async function performAction(stateDir: string, name: string, id: string, rawInput: Raw, actor: string, attachment?: NoteAttachment): Promise<Outcome> {
+export async function performAction(stateDir: string, name: string, id: string, rawInput: Raw, actor: string, attachment?: NoteAttachment, options?: ActionOptions): Promise<Outcome> {
   const action = ACTIONS[name];
   if (!action || !('run' in action)) throw new InputError(404, 'Acción no encontrada.');
-  const input = action.input(rawInput);
+  const input = action.input(rawInput, options);
   const out: Outcome = { destination: '/', result: 'ok' };
   if (attachment) {
     // T96-H4: un estado no apto se rechaza antes de abrir el escritor (que ya tocaría la base y su WAL).
@@ -546,7 +547,7 @@ export async function performAction(stateDir: string, name: string, id: string, 
     const writer = store;
     // FAB_ACTOR es el patrón del Store. El tramo es síncrono: ningún await expone el actor a otra petición.
     const previous = process.env.FAB_ACTOR; process.env.FAB_ACTOR = actor;
-    try { writer.withRetry(() => action.run(writer, id, input, out, actor, stateDir, attachment)); }
+    try { writer.withRetry(() => action.run(writer, id, input, out, actor, stateDir, attachment, options)); }
     finally { if (previous === undefined) delete process.env.FAB_ACTOR; else process.env.FAB_ACTOR = previous; }
     if (out.repo) { await writer.waitForRelease(id); await removeWorktree(out.repo, stateDir, id); }
   } catch (error) {
@@ -658,7 +659,8 @@ function automationFailure(stateDir: string, mode: NonNullable<Action['automatio
 }
 
 export async function webAction(req: Request, stateDir: string, port: number, auth: WebAuth, usage: ApiKeyUsage,
-  runnerCheck: ReturnType<typeof runnerCheckAction>, extendCheckTimeout: () => void, jiraImport: ReturnType<typeof jiraImportAction>): Promise<Response> {
+  runnerCheck: ReturnType<typeof runnerCheckAction>, extendCheckTimeout: () => void, jiraImport: ReturnType<typeof jiraImportAction>,
+  options?: ActionOptions): Promise<Response> {
   const csrf = auth.sessionCsrf(req);
   if (!csrf) return new Response('Se necesita una sesión local.', { status: 401 });
   if (req.headers.get('origin') !== `http://${auth.host}:${port}`) return new Response('Origin rechazado.', { status: 403 });
@@ -715,7 +717,7 @@ export async function webAction(req: Request, stateDir: string, port: number, au
       delete fields.csrf;
       if (repeated) throw new InputError(400, 'El formulario contiene campos repetidos.');
     }
-    ({ destination, result } = await performAction(stateDir, name, id, fields, 'web', file));
+    ({ destination, result } = await performAction(stateDir, name, id, fields, 'web', file, options));
     if (action.httpErrors && result !== 'ok') {
       const status = result === 'conflict' ? 409 : result === 'not_found' ? 404 : result === 'invalid_input' ? 400 : 500;
       return inertPage(runnerErrors[result] ?? 'No se pudo guardar el runner', status, '', { href: '/workstreams', text: 'Volver a workstreams' });

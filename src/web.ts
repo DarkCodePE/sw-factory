@@ -305,7 +305,7 @@ export function startWeb(stateDir: string, port = 4310, options: {
       };
       if (req.method === 'POST' && auth && !readOnlyRoute) {
         let response: Response;
-        try { response = await webAction(req, stateDir, server.port ?? 0, auth, keyUsage, runnerCheck, () => server.timeout(req, 35), jiraImport); }
+        try { response = await webAction(req, stateDir, server.port ?? 0, auth, keyUsage, runnerCheck, () => server.timeout(req, 35), jiraImport, { server: options.server }); }
         catch { return respond('No se pudo registrar la acción.', 500, 'text/plain; charset=utf-8'); }
         for (const [key, value] of Object.entries(respHeaders)) if (!response.headers.has(key)) response.headers.set(key, value);
         // El editor de automations ya devuelve su propia página HTML de error (T86): no se envuelve de nuevo.

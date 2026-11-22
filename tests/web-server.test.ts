@@ -7,6 +7,7 @@ import https from 'node:https';
 import { Store, StoreError } from '../src/store.ts';
 import { startWeb, webMain } from '../src/web.ts';
 import { accessInput, setAccess } from '../src/web-access.ts';
+import { performAction } from '../src/web-actions.ts';
 import { validateServerConfig, isAuthorizedHost, isAuthorizedOrigin } from '../src/web-server.ts';
 
 describe('T118a: Modo servidor, frontera HTTP y arranque', () => {
@@ -698,5 +699,20 @@ uQAwb1guU1AUR6nVZtdFNQM9kVZ98hOcE9GUPLNEWYbELrBmbFfLChpyQQU=
     expect(resServer.status).toBe(200);
     expect(await resServer.text()).toBe('ok');
     serverMode.stop(true);
+  });
+
+  test('T118-H10: Cableado de server en performAction/webAction rechaza modo legacy en acceso', async () => {
+    const store = new Store(join(stateDir, 'fabrica.db'));
+    const ws = store.createWorkstream({ slug: 'ws-acc', goal: 'G', repo: 'R' });
+    store.close();
+
+    // 1. En servidor (server: true) -> performAction rechaza mode: legacy
+    expect(async () => {
+      await performAction(stateDir, 'workstreams/acceso', ws.id, { kind: 'env', mode: 'legacy' }, 'web', undefined, { server: true });
+    }).toThrow('El modo servidor exige modo declarado (no se permite legacy)');
+
+    // 2. En local (server: false / undefined) -> performAction acepta mode: legacy
+    const out = await performAction(stateDir, 'workstreams/acceso', ws.id, { kind: 'env', mode: 'legacy' }, 'web', undefined);
+    expect(out.result).toBe('ok');
   });
 });
