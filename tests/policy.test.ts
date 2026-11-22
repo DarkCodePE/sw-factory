@@ -80,6 +80,14 @@ test('recuperación restringida: solo recovery/confirm; capacidad desconocida fa
   for (const c of ['constructor', '__proto__', 'toString', 'hasOwnProperty']) expect(authorize({ role: 'owner' }, c, web)).toEqual({ ok: false, reason: 'unknown_capability' });
 });
 
+// T119e (cierra el residuo de T119b-H2): en recuperación solo valen confirmar y cerrar sesión; nada más, para ningún rol.
+test('recuperación restringida permite session/revoke y nada más que confirmar', async () => {
+  const { IDENTITY_CAPABILITIES } = await import('../src/policy.ts');
+  const allowed = Object.keys({ ...ACTION_CAPABILITIES, ...IDENTITY_CAPABILITIES, ...READ_CAPABILITIES, ...VERB_CAPABILITIES }).filter(c => authorize({ role: 'owner', recovery: true }, c, web).ok).sort();
+  expect(allowed).toEqual(['recovery/confirm', 'session/revoke']);
+  for (const role of ['admin', 'member', 'viewer'] as const) expect(authorize({ role, recovery: true }, 'session/revoke', web).ok).toBe(true);
+});
+
 test('T119a-H12: un rol desconocido deniega aunque empiece como uno válido', () => {
   for (const r of ['observer', 'auditor', 'owners', 'Owner', '']) {
     expect(authorize({ role: r as Role }, 'session/list', web), r).toEqual({ ok: false, reason: 'role' });

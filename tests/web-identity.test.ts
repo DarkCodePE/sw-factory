@@ -392,7 +392,12 @@ test('T119b-H2: en recuperación restringida el owner designado entra, /cuenta r
   const second = await startLogin('', '10.0.0.3');
   const cb = await call('GET', `/auth/callback?code=${await gh.authorize(second.location, { id: 1, login: 'd' })}&state=${new URL(second.location).searchParams.get('state')}`, { cookie: `${second.loginCookie}; ${s}`, ip: '10.0.0.3' });
   expect(again.res.status).toBe(200); expect(cb.status).toBe(200); expect(cookieOf(cb, '__Host-fab_session')).toBeTruthy();
-  expect((await call('POST', '/logout', { cookie: s, form: { csrf: csrfFor(s) } })).status).toBe(403); // revocar sesión no vale en recuperación: es de la política (T119e)
+  // T119e cierra el residuo: en recuperación `session/revoke` vale, así que la rotación revocó la sesión vieja y el owner puede cerrar la nueva.
+  expect(routes.principalOf(new Request(ORIGIN, { headers: { cookie: s } }))).toBeNull();
+  const fresh = pair(cookieOf(cb, '__Host-fab_session')!);
+  const out = await call('POST', '/logout', { cookie: fresh, form: { csrf: csrfFor(fresh) } });
+  expect(out.status).toBe(303);
+  expect(routes.principalOf(new Request(ORIGIN, { headers: { cookie: fresh } }))).toBeNull();
 });
 
 test('T119b-H3: los intentos basura no agotan los presupuestos globales; solo los canjes y los inicios reales', async () => {
