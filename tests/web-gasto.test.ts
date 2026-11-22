@@ -5,6 +5,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { Store } from '../src/store.ts';
 import { costRateAt } from '../src/attempt-cost.ts';
+import { calculateMetrics } from '../src/metrics.ts';
 import { metricsPage } from '../src/web-metrics.ts';
 
 let dir: string;
@@ -303,5 +304,73 @@ describe('Pestaña Gasto en la web (T113)', () => {
     expect(userCardSection).toContain('Otros');
     expect(userCardSection).toContain(`<th scope="row">${today}</th><td>5.00 USD</td><td>4.00 USD</td><td>3.00 USD</td><td>No medido</td>`);
     expect(userCardSection).not.toContain(`<th scope="row">${today}</th><td>5.00 USD</td><td>4.00 USD</td><td>3.00 USD</td><td>2.00 USD</td>`);
+  });
+
+  test('T113-H4: escenario x1-mezcla en la suite (mata M01 en changeCost y M02 en adapters/models)', () => {
+    const today = new Date().toISOString().slice(0, 10);
+    const date = `${today}T12:00:00.000Z`;
+
+    // A: intento remoto actual con remoteDeclared
+    const itemA = seedItem({
+      title: 'remoto-declarado',
+      date,
+      attemptCosts: [0.50],
+      inferenceAttempts: [{
+        adapter: 'claude',
+        remoteDeclared: true,
+        usage: { effectiveModel: 'm-remoto', costUsd: 0.50 },
+      }],
+    });
+    store.beginCostAttempt(itemA.activity, {
+      id: 'r1',
+      rate: costRateAt(dir, date, 'torre'),
+      remote: true,
+      runner: 'torre',
+      adapter: 'claude',
+      legacyCount: 0,
+    });
+    store.finishCostAttempt('r1', { costUsd: 0.50, effectiveModel: 'm-remoto' }, 100);
+
+    // B: intento local medido
+    const itemB = seedItem({
+      title: 'local-medido',
+      date,
+      attemptCosts: [0.25],
+      inferenceAttempts: [{
+        adapter: 'claude',
+        usage: { effectiveModel: 'm-local', costUsd: 0.25 },
+      }],
+    });
+    store.beginCostAttempt(itemB.activity, {
+      id: 'l1',
+      rate: costRateAt(dir, date, null),
+      remote: false,
+      runner: null,
+      adapter: 'claude',
+      legacyCount: 0,
+    });
+    store.finishCostAttempt('l1', { costUsd: 0.25 }, 100);
+
+    const m = calculateMetrics(store, dir, { ws: 'ws-test', from: today, to: today });
+    // M01: guarda de changeCost — el intento remoto con remoteDeclared no debe sumarse como medido
+    expect(m.cost.total).toBeNull();
+
+    // M02: coste remoto no debe imputarse a m.cost.models ni a spending.models como medido
+    const remoteModelCost = m.cost.models.find(g => g.name === 'm-remoto');
+    expect(remoteModelCost?.measured).toBeNull();
+    expect(remoteModelCost?.total).toBeNull();
+
+    const remoteModelSpending = m.spending.models.find(g => g.name === 'm-remoto');
+    expect(remoteModelSpending?.inference.measured).toBeNull();
+    expect(remoteModelSpending?.inference.total).toBeNull();
+
+    // Afirmaciones sobre el HTML de la pestaña Gasto
+    const url = new URL(`http://127.0.0.1:4310/metricas?tab=gasto&range=custom&from=${today}&to=${today}&ws=ws-test`);
+    const { body } = metricsPage(store, dir, url);
+
+    expect(body).toContain('Total: <strong>No medido</strong>');
+    expect(body).toContain('Subtotal medido: <strong>0.25 USD</strong>');
+    expect(body).not.toContain('0.75 USD');
+    expect(body).not.toContain('0,75 USD');
   });
 });
