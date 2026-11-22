@@ -20,7 +20,7 @@ const MATRIX: [string, [number, number, number, number]][] = [
   ['/automations', [200, 200, 200, 403]], ['/workstreams', [200, 200, 200, 200]], ['/flujo', [200, 200, 200, 403]],
   ['/benchmarks', [200, 200, 200, 403]], ['/benchmarks/x', [200, 200, 200, 403]], ['/experimentos/x', [200, 200, 200, 403]],
   ['/changes/c1', [200, 200, 200, 200]], ['/activities/a1', [200, 200, 200, 200]],
-  ['/metricas', [200, 200, 200, 403]],
+  ['/metricas', [200, 200, 200, 403]], ['/metricas?tab=jueces&ws=uno&preview=1', [200, 200, 403, 403]],
   ['/changes/c1/turns/t1/log', [200, 200, 200, 403]], ['/changes/c1/turns/t1/transcript', [200, 200, 200, 403]],
   ['/config', [200, 200, 403, 403]], ['/config/runners', [200, 200, 403, 403]], ['/perfiles', [200, 200, 403, 403]],
   ['/definicion', [200, 200, 403, 403]], ['/automejora', [200, 200, 403, 403]], ['/webhooks', [200, 200, 403, 403]],

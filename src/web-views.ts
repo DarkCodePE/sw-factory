@@ -22,7 +22,7 @@ const ROUTES: [RegExp, Cap][] = [
   [/^\/(benchmarks|experimentos)\/[^/]+$/, 'ops/read'],
   [/^\/(changes|activities)\/[^/]+$/, 'ops/read'], // el rol decide la proyección, no la ruta
   [/^\/changes\/[^/]+\/turns\/[^/]+\/(log|transcript)$/, 'evidence/read'],
-  [/^\/metricas$/, 'ops/metrics'],
+  [/^\/metricas$/, url => url.searchParams.get('preview') === '1' ? 'scorers/backfill' : 'ops/metrics'], // la vista previa pasa la política de su acción (§4.1)
   [/^\/(config|perfiles|definicion|automejora|webhooks)$/, 'config/read'],
   [/^\/config\/runners$/, url => url.searchParams.has('editar') ? 'runners/update' : 'config/read'],
   [new RegExp(`^${API_KEYS_PATH}$`), 'api-key/list'],
