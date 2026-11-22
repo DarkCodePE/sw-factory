@@ -37,20 +37,20 @@ function suspended(store: Store, userId: string) {
   return u;
 }
 
-export function previewResolveWork(store: Store, p: Principal, userId: string): ResolvePlan {
-  return runAs(store, p, 'user/resolve-work', { write: true }, () => { suspended(store, userId); return plan(store, userId); });
+export function previewResolveWork(store: Store, p: Principal, userId: string, write: boolean): ResolvePlan {
+  return runAs(store, p, 'user/resolve-work', { write }, () => { suspended(store, userId); return plan(store, userId); });
 }
 
 const REASON = /^[^\u0000-\u001f\u007f]{1,500}$/;
 const same = (a: unknown, b: unknown) => JSON.stringify(a) === JSON.stringify(b);
 
 /** Aplica la resolución. El mismo `opId` con los mismos parámetros devuelve el resultado anterior; con otros, `conflict`. */
-export async function resolveWork(store: Store, p: Principal, userId: string, mode: ResolveMode, reason: string, confirm: string, opId: string): Promise<ResolveResult> {
+export async function resolveWork(store: Store, p: Principal, userId: string, mode: ResolveMode, reason: string, confirm: string, opId: string, write: boolean): Promise<ResolveResult> {
   if (!/^[0-9a-f-]{36}$/.test(opId)) throw new StoreError('invalid_input', 'op-id inválido');
   if (!REASON.test(reason.trim())) throw new StoreError('invalid_input', 'motivo inválido');
   const params = { userId, mode: 'cancel' in mode ? 'cancel' : 'reassign', to: 'reassignTo' in mode ? mode.reassignTo : null, reason: reason.trim(), confirm };
   const repos: string[] = [];
-  const result = runAs(store, p, 'user/resolve-work', { write: true }, (me): ResolveResult => {
+  const result = runAs(store, p, 'user/resolve-work', { write }, (me): ResolveResult => {
     const prior = store.db.query(`SELECT action, detail FROM identity_audit WHERE op_id = ?`).get(opId) as { action: string; detail: string | null } | null;
     if (prior) {
       const d = JSON.parse(prior.detail ?? '{}') as { params?: unknown; result?: ResolveResult };

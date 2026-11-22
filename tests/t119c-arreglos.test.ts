@@ -13,7 +13,7 @@ import { jiraImportAction } from '../src/web-entrada.ts';
 import { cloud, ORIGIN, SECRET, type Cloud } from './helpers/cloud.ts';
 import { disableUser, issueSession, resolvePrincipal, type Principal } from '../src/users.ts';
 import { defaultProfile } from '../src/profile.ts';
-import { previewResolveWork } from '../src/users-work.ts';
+import { previewResolveWork, resolveWork } from '../src/users-work.ts';
 import { Store } from '../src/store.ts';
 import { notesBlock } from '../src/prompts.ts';
 
@@ -87,9 +87,9 @@ test('T119c-H3: señal de un member triada por un admin; al suspender al member 
   expect((await web(c.web.admin, `/signals/${sig.id}/triage`)).status).toBe(303);
   const changeOf = c.store.db.query('SELECT change_id FROM signals WHERE id = ?').get(sig.id) as { change_id: string };
   disableUser(c.store, c.web.owner, c.web.member.userId);
-  expect(previewResolveWork(c.store, c.web.owner, c.web.member.userId).affected.map(a => a.id)).toEqual([changeOf.change_id]);
+  expect(previewResolveWork(c.store, c.web.owner, c.web.member.userId, true).affected.map(a => a.id)).toEqual([changeOf.change_id]);
   disableUser(c.store, c.web.owner, c.web.admin.userId);
-  expect(previewResolveWork(c.store, c.web.owner, c.web.admin.userId).affected).toEqual([]);
+  expect(previewResolveWork(c.store, c.web.owner, c.web.admin.userId, true).affected).toEqual([]);
 });
 
 // ---- H4: actor y rol fuera del bloque delimitado ---------------------------------
@@ -185,4 +185,13 @@ test('T119c-H8: la revisión de una importación no vale para otra sesión ni pa
   expect((await send(own, cmd(revision))).status).toBe(409);
   now -= 10 * 60_000 + 1;
   expect((await send(own, cmd(revision))).status).toBe(200);
+});
+
+// ---- H9: el --write lo decide el llamador ------------------------------------------------
+
+test('T119c-H9: resolve-work no salta --write aunque el llamador no pase por la guarda de web-cli', async () => {
+  disableUser(c.store, c.web.owner, c.web.member.userId);
+  expect(() => previewResolveWork(c.store, c.web.owner, c.web.member.userId, false)).toThrow();
+  await expect(resolveWork(c.store, c.web.owner, c.web.member.userId, { cancel: true }, 'r', 'x', '00000000-0000-0000-0000-000000000000', false)).rejects.toThrow();
+  expect(previewResolveWork(c.store, c.web.owner, c.web.member.userId, true).userId).toBe(c.web.member.userId);
 });

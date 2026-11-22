@@ -341,9 +341,9 @@ export function cliRoutes(opts: CliRoutesOptions) {
     if (!userId) throw new StoreError('invalid_input', 'falta el usuario');
     const modes = (f.reassignTo ? 1 : 0) + (f.cancel === 'yes' ? 1 : 0);
     if (modes > 1) throw new StoreError('invalid_input', 'elige un único modo');
-    if (cmd.confirm === undefined) return previewResolveWork(store, p, userId);
+    if (cmd.confirm === undefined) return previewResolveWork(store, p, userId, opts.write);
     if (modes !== 1) throw new StoreError('invalid_input', 'elige --reassign-to o --cancel');
-    return resolveWork(store, p, userId, f.reassignTo ? { reassignTo: f.reassignTo } : { cancel: true }, f.reason ?? '', cmd.confirm, cmd.opId ?? '');
+    return resolveWork(store, p, userId, f.reassignTo ? { reassignTo: f.reassignTo } : { cancel: true }, f.reason ?? '', cmd.confirm, cmd.opId ?? '', opts.write);
   }
 
   async function handle(req: Request, ip: string): Promise<Response | null> {
