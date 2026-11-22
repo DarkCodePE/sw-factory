@@ -59,3 +59,14 @@ test('M23: lo declarado por el runner en un intento SSH queda desconocido en `sp
   expect(s.attempts).toHaveLength(1);
   expect(s.inference).toMatchObject({ measured: null, unknown: 1 });
 }));
+
+test('H6: un usuario llamado «Sin dato» no se funde con el grupo de intentos sin usuario', () => fixture(({ store, dir, ws, change }) => {
+  const s = store.addSignal(ws, 'con actor', 'b', { source: 'cli', actorId: 'Sin dato' });
+  const c = store.triageSignal(s.id);
+  open(store, dir, c.id, 'nombrado', false, 0.01);
+  change('antigua', { attemptCosts: [0.03] });
+  const users = read(store, dir, ws).by.user;
+  expect(users.map(g => g.key).sort((a, b) => String(a).localeCompare(String(b)))).toEqual([null, 'Sin dato']);
+  expect(users.find(g => g.key === 'Sin dato')!.total.unknown).toBe(0);
+  expect(users.find(g => g.key === null)!.total.unknown).toBe(1);
+}));
