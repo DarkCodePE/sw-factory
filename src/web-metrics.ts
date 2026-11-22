@@ -159,6 +159,7 @@ function spending(m: M): string {
         series.push({
           label: labelFmt(g.name),
           values: g.daily ?? d.days.map(() => null),
+          missing: i => g.dailyHasAttempts?.[i] ? 'No medido' : 'Sin datos',
         });
       }
     } else {
@@ -166,6 +167,7 @@ function spending(m: M): string {
         series.push({
           label: labelFmt(g.name),
           values: g.daily ?? d.days.map(() => null),
+          missing: i => g.dailyHasAttempts?.[i] ? 'No medido' : 'Sin datos',
         });
       }
       const otrosGroups = sorted.slice(3);

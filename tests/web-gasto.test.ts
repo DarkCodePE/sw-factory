@@ -460,6 +460,45 @@ describe('Pestaña Gasto en la web (T113)', () => {
     expect(userCardSection).not.toContain(`<th scope="row">${today}</th><td>5.00 USD</td><td>4.00 USD</td><td>3.00 USD</td><td>2.00 USD</td>`);
   });
 
+  test('T113-H12: grupo con intento sin medir ese día dice No medido y no Sin datos en tabla plegada', () => {
+    const today = new Date().toISOString().slice(0, 10);
+    const ws = store.getWorkstream('ws-test');
+    // Dos usuarios (<= 4 grupos, series individuales): u1 medido, u2 con intento remoto sin medir
+    const users = ['usr-a', 'usr-b'];
+    for (const [i, u] of users.entries()) {
+      const s = store.addSignal(ws.id, `signal-${u}`, 'b', { source: 'cli', actorId: u });
+      const c = store.triageSignal(s.id);
+      const a = store.listActivities({ changeId: c.id })[0]!;
+      const isRemote = u === 'usr-b';
+      const date = `${today}T11:00:00.000Z`;
+      store.db.query("UPDATE changes SET created_at=?, status='completed' WHERE id=?").run(date, c.id);
+      store.db.query("UPDATE activities SET created_at=?, started_at=?, completed_at=?, kind='investigation', status='completed' WHERE id=?").run(date, date, date, a.id);
+      const runDir = join(dir, 'runs', c.id);
+      mkdirSync(runDir, { recursive: true });
+      writeFileSync(join(runDir, `${a.id}.json`), JSON.stringify({ attemptCosts: [isRemote ? 3 : 5], costLegacyCount: 0 }));
+
+      store.beginCostAttempt(a, {
+        id: `att-h12-${u}`,
+        rate: costRateAt(dir, date, isRemote ? 'torre' : null),
+        remote: isRemote,
+        runner: isRemote ? 'torre' : null,
+        adapter: 'claude',
+        legacyCount: 0,
+      });
+      store.finishCostAttempt(`att-h12-${u}`, { costUsd: isRemote ? 3 : 5 }, 100);
+    }
+
+    const url = new URL(`http://127.0.0.1:4310/metricas?tab=gasto&range=7`);
+    const { body } = metricsPage(store, dir, url);
+
+    const userCard = body.slice(body.indexOf('aria-labelledby="t-spending-user"'));
+    const userCardSection = userCard.slice(0, userCard.indexOf('</section>'));
+
+    // usr-b tiene un intento ejecutado ese día que no pudo medirse: la celda debe decir «No medido», NO «Sin datos»
+    expect(userCardSection).toContain(`<th scope="row">${today}</th><td>5.00 USD</td><td>No medido</td>`);
+    expect(userCardSection).not.toContain(`<th scope="row">${today}</th><td>5.00 USD</td><td>Sin datos</td>`);
+  });
+
   test('T113-H4: escenario x1-mezcla en la suite (mata M01 en changeCost y M02 en adapters/models)', () => {
     const today = new Date().toISOString().slice(0, 10);
     const date = `${today}T12:00:00.000Z`;
