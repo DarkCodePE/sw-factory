@@ -54,6 +54,7 @@ function groupSpending(
   key: (attempt: SpendAttempt) => string | null,
   days?: string[],
   amountField: 'totalMicroUsd' | 'inferenceMicroUsd' = 'totalMicroUsd',
+  fallbackName = 'Sin dato',
 ): SpendGroup[] {
   const groups = new Map<string | null, SpendAttempt[]>();
   for (const attempt of attempts) {
@@ -75,7 +76,7 @@ function groupSpending(
     ) : undefined;
     return {
       key: groupKey,
-      name: groupKey ?? 'Sin dato',
+      name: groupKey ?? fallbackName,
       ...summary,
       daily,
       dailyHasAttempts,
@@ -424,7 +425,7 @@ export function calculateMetrics(store: Store, stateDir: string, options: { ws?:
         source: groupSpending(spendAttempts, a => a.originSource, days, 'totalMicroUsd'),
         pr: groupSpending(spendAttempts, a => a.attributed ? a.prUrl ?? 'Sin PR' : null, days, 'totalMicroUsd'),
       },
-      models: groupSpending(spendAttempts, a => a.effectiveModel, days, 'inferenceMicroUsd'),
+      models: groupSpending(spendAttempts, a => a.effectiveModel, days, 'inferenceMicroUsd', 'No medido'),
       adapters: groupSpending(spendAttempts, a => a.adapter, days, 'totalMicroUsd'),
       top: top20,
     },

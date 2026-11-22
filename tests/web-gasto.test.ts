@@ -481,4 +481,47 @@ describe('Pestaña Gasto en la web (T113)', () => {
     // Opción A mínima: una línea en la tabla plegada de Coste por día con las referencias distintas del rango
     expect(costCardSection).toContain('Tarifas aplicadas: v1, v2#0123456789ab');
   });
+
+  test('T113-H8: textos coherentes con los datos: columna de intentos, singular en conteo y modelo No medido', () => {
+    const today = new Date().toISOString().slice(0, 10);
+    const date = `${today}T10:00:00.000Z`;
+    // Intento único sin modelo efectivo (evidencia anterior a T108)
+    const item = seedItem({
+      title: 'Change anterior a T108 sin modelo efectivo',
+      date,
+      attemptCosts: [0.10],
+      inferenceAttempts: [{
+        adapter: 'native',
+        usage: { inputTokens: 50, outputTokens: 10, costUsd: 0.10 },
+      }],
+    });
+    store.beginCostAttempt(item.activity, {
+      id: 'att-h8',
+      rate: costRateAt(dir, date, null),
+      remote: false,
+      runner: null,
+      adapter: 'native',
+      legacyCount: 0,
+    });
+    store.finishCostAttempt('att-h8', { costUsd: 0.10 }, 100);
+
+    const url = new URL(`http://127.0.0.1:4310/metricas?tab=gasto&range=7`);
+    const { body } = metricsPage(store, dir, url);
+
+    // 1. Columnas de agrupaciones dicen «Intentos sin coste medido» (no Activities ni Changes)
+    expect(body).toContain('<th scope="col">Intentos sin coste medido</th>');
+    expect(body).not.toContain('<th scope="col">Activities sin coste medido</th>');
+    expect(body).not.toContain('<th scope="col">Changes sin coste medido</th>');
+
+    // 2. Con 0 o 1 intentos sin coste completo medido: singular «1 intento sin coste completo medido» o «0 intentos»
+    // En este caso, el intento tiene coste completo medido, así que unknownCount es 0
+    expect(body).toContain('0 intentos sin coste completo medido');
+    expect(body).not.toContain('0 intentos sin coste medido');
+
+    // 3. En la tabla de modelos, el modelo no efectivo anterior a T108 se llama «No medido», concordando con el pie
+    const modelTable = body.slice(body.indexOf('<caption>Coste por modelo registrado</caption>'));
+    const modelTableSection = modelTable.slice(0, modelTable.indexOf('</table>'));
+    expect(modelTableSection).toContain('No medido');
+    expect(modelTableSection).not.toContain('Sin dato');
+  });
 });

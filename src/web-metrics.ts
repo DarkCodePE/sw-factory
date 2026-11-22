@@ -96,8 +96,8 @@ function productivity(m: M, range: string, runsBy: 'rol'): string {
 
 function spending(m: M): string {
   const s = m.spending, d = m.daily;
-  const groupsTable = (caption: string, groups: SpendGroup[], unit = 'Activities', field: 'total' | 'inference' = 'total', labelFmt: (name: string) => string = x => x) =>
-    table(caption, ['Grupo', 'Coste total', 'Subtotal medido', `${unit} sin coste medido`], groups.map(g => [
+  const groupsTable = (caption: string, groups: SpendGroup[], field: 'total' | 'inference' = 'total', labelFmt: (name: string) => string = x => x) =>
+    table(caption, ['Grupo', 'Coste total', 'Subtotal medido', 'Intentos sin coste medido'], groups.map(g => [
       esc(labelFmt(g.name)),
       g[field].total !== null ? money(g[field].total! / 1_000_000) : 'No medido',
       g[field].measured !== null ? money(g[field].measured! / 1_000_000) : 'No medido',
@@ -109,9 +109,10 @@ function spending(m: M): string {
   const measuredUsd = s.total.measured !== null ? s.total.measured / 1_000_000 : null;
   const unknownCount = s.total.unknown;
   const subTotal = measuredUsd !== null ? money(measuredUsd) : null;
+  const countText = unknownCount === 1 ? '1 intento sin coste completo medido' : `${unknownCount} intentos sin coste completo medido`;
   const subText = measuredUsd !== null
-    ? `Subtotal medido ${money(measuredUsd)} · ${unknownCount} ${unknownCount === 1 ? 'intento' : 'intentos'} sin coste completo medido`
-    : `${unknownCount} intentos sin coste medido`;
+    ? `Subtotal medido ${money(measuredUsd)} · ${countText}`
+    : `${unknownCount === 1 ? '1 intento' : `${unknownCount} intentos`} sin coste medido`;
 
   const distinctRates = [...new Set(s.attempts.map(a => a.rateVersion).filter((v): v is string => Boolean(v)))].sort();
   const rateNote = distinctRates.length ? `Tarifas aplicadas: ${distinctRates.join(', ')}` : undefined;
@@ -258,7 +259,7 @@ function spending(m: M): string {
 
   const cards = [costCard, workerCard, modelCard, userCard, sourceCard];
 
-  return `<section aria-labelledby="coste"><h2 id="coste">Coste</h2><div class="cards">${cards.join('')}</div><div class="summary"><span>Total: <strong>${totalFig}</strong></span><span>Subtotal medido: <strong>${subTotal ?? 'No medido'}</strong></span><span>${unknownCount} ${s.attempts.length ? 'intentos' : 'changes'} sin coste completo medido</span></div><p>Un intento desconocido deja el total como «No medido». El subtotal incluye solo changes con coste completo. La atribución por adaptador o modelo exige evidencia de ejecución; la configuración actual del workstream no prueba la histórica.</p>${table('Los 20 PR más caros', ['Pull Request', 'Change', 'Coste', 'Desglose (Inferencia · Cómputo · Plataforma)'], top20Rows)}${groupsTable('Coste por adaptador registrado', s.adapters, 'Activities')}${groupsTable('Coste por modelo registrado', s.models, 'Activities', 'inference')}${groupsTable('Coste por fuente del change', s.by.source, 'Changes', 'total', name => SOURCES_LABELS[name] ?? name)}${groupsTable('Coste por actor del primer evento', s.by.user, 'Changes', 'total')}<p class="muted">La evidencia anterior a T108 no registra el modelo efectivo y sale como «No medido». Con varios intentos no se atribuye su coste al último adaptador o modelo. En las agrupaciones, el subtotal suma solo activities con coste completo y puede diferir del subtotal por change.</p></section>`;
+  return `<section aria-labelledby="coste"><h2 id="coste">Coste</h2><div class="cards">${cards.join('')}</div><div class="summary"><span>Total: <strong>${totalFig}</strong></span><span>Subtotal medido: <strong>${subTotal ?? 'No medido'}</strong></span><span>${countText}</span></div><p>Un intento desconocido deja el total como «No medido». El subtotal incluye solo changes con coste completo. La atribución por adaptador o modelo exige evidencia de ejecución; la configuración actual del workstream no prueba la histórica.</p>${table('Los 20 PR más caros', ['Pull Request', 'Change', 'Coste', 'Desglose (Inferencia · Cómputo · Plataforma)'], top20Rows)}${groupsTable('Coste por adaptador registrado', s.adapters)}${groupsTable('Coste por modelo registrado', s.models, 'inference')}${groupsTable('Coste por fuente del change', s.by.source, 'total', name => SOURCES_LABELS[name] ?? name)}${groupsTable('Coste por actor del primer evento', s.by.user, 'total')}<p class="muted">La evidencia anterior a T108 no registra el modelo efectivo y sale como «No medido». Con varios intentos no se atribuye su coste al último adaptador o modelo. En las agrupaciones, el subtotal suma solo activities con coste completo y puede diferir del subtotal por change.</p></section>`;
 }
 export const METRICS_STYLE = `
 caption{text-align:left;color:var(--text);font-weight:600;padding:24px 0 8px}td{font-variant-numeric:tabular-nums}tbody th{color:var(--text);font-size:inherit;font-weight:400;overflow-wrap:anywhere;min-width:180px}svg{display:block;max-width:100%;height:auto;color:var(--accent);margin-top:20px}.metrics-columns{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:32px}.metrics-columns>div{min-width:0}details{margin:24px 0;color:var(--muted)}summary{cursor:pointer;color:var(--accent);padding:8px 0}summary:focus-visible{outline:3px solid var(--focus)}section{margin-top:40px}::selection{background:var(--accent);color:var(--bg)}@media(max-width:1000px){.metrics-columns{grid-template-columns:1fr}}${CARD_STYLE}`;
