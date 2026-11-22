@@ -472,3 +472,19 @@ test('T119b-H7: publicOrigin se valida al construir: https, sin ruta, sin barra 
   }
   expect(() => new GithubConnector({ clientId: CLIENT_ID, clientSecret: () => CLIENT_SECRET, publicOrigin: 'https://fab.test:8443' })).not.toThrow();
 });
+
+test('T119b-H9: el token de prelogin caduca a los 5 minutos en servidor y no se puede rejuvenecer', async () => {
+  const page = await call('GET', '/login'), pre = pair(cookieOf(page, '__Host-fab_pre')), token = /name="pre" value="([0-9a-f]+)"/.exec(await page.text())![1]!;
+  now += 5 * 60_000; // justo en el límite sigue valiendo
+  expect((await call('POST', '/auth/start', { cookie: pre, form: { pre: token } })).status).toBe(303);
+  now += 1;
+  expect((await call('POST', '/auth/start', { cookie: pre, form: { pre: token }, ip: '10.0.0.2' })).status).toBe(403);
+  // Cambiar la marca de tiempo por una reciente invalida el HMAC.
+  const forged = now.toString(16).padStart(12, '0') + token.slice(12);
+  expect((await call('POST', '/auth/start', { cookie: pre, form: { pre: forged }, ip: '10.0.0.3' })).status).toBe(403);
+  // Y una marca de tiempo futura no vale.
+  const future = (await call('GET', '/login'));
+  const t2 = /name="pre" value="([0-9a-f]+)"/.exec(await future.text())![1]!;
+  now -= 10 * 60_000;
+  expect((await call('POST', '/auth/start', { cookie: pair(cookieOf(future, '__Host-fab_pre')), form: { pre: t2 }, ip: '10.0.0.4' })).status).toBe(403);
+});

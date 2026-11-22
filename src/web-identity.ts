@@ -12,7 +12,7 @@ import { acceptInvitation, audit, findUserByIdentity, inviteUser, issueSession, 
 import { authorize } from './policy.ts';
 import { WEB_STYLE } from './web-style.ts';
 import { LIMITS, LOGIN_COOKIE, LoginTransactions, PRELOGIN_COOKIE, RateLimiter, SESSION_COOKIE, clearCookie, constantEqual, cookieValue, csrfToken,
-  originOk, preloginToken, setCookie } from './web-auth.ts';
+  originOk, preloginOk, preloginToken, setCookie } from './web-auth.ts';
 
 export const GITHUB_ISSUER = 'github';
 const FORM_LIMIT = 4096;
@@ -224,7 +224,7 @@ export function identityRoutes(opts: IdentityOptions) {
 
     if (path === '/login' && method === 'GET') {
       const nonce = randomBytes(16).toString('hex');
-      return page('Entrar', `<form method="post" action="/auth/start"><input type="hidden" name="pre" value="${preloginToken(secret, nonce)}">
+      return page('Entrar', `<form method="post" action="/auth/start"><input type="hidden" name="pre" value="${preloginToken(secret, nonce, clock())}">
         <label>Código de invitación (si tienes uno) <input name="invitation" maxlength="200" autocomplete="off"></label><button>Entrar con GitHub</button></form>`,
       200, [setCookie(PRELOGIN_COOKIE, nonce, 'Strict', 300)]);
     }
@@ -234,7 +234,7 @@ export function identityRoutes(opts: IdentityOptions) {
       const retry = limiter.hit(`ip:${ip}`, LIMITS.ipPerMin);
       if (retry) return tooMany(retry);
       const form = await formOf(req), nonce = cookieValue(req, PRELOGIN_COOKIE), pre = form?.get('pre');
-      if (!form || !nonce || !pre || !constantEqual(pre, preloginToken(secret, nonce))) return plain(403, 'Petición no válida.');
+      if (!form || !nonce || !pre || !preloginOk(secret, nonce, pre, clock())) return plain(403, 'Petición no válida.');
       // El global cuenta solo los inicios con prelogin válido: los POST basura no lo agotan.
       const global = limiter.hit('starts', LIMITS.globalStartsPerMin);
       if (global) return tooMany(global);

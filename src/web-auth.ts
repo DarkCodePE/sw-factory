@@ -79,7 +79,16 @@ export const constantEqual = equal;
 const hmac = (secret: string, data: string) => createHmac('sha256', secret).update(data).digest('hex');
 /** Token CSRF derivado del ID de sesión y de un secreto de servicio: no se guarda y cambia con cada sesión. */
 export const csrfToken = (secret: string, sessionId: string): string => hmac(secret, `csrf:${sessionId}`);
-export const preloginToken = (secret: string, nonce: string): string => hmac(secret, `prelogin:${nonce}`);
+export const PRELOGIN_TTL_MS = 5 * 60_000;
+/** Token de prelogin: la marca de tiempo (12 hex) va dentro del HMAC, así caduca en servidor y no se puede rejuvenecer. */
+export const preloginToken = (secret: string, nonce: string, now: number): string => {
+  const ts = now.toString(16).padStart(12, '0');
+  return ts + hmac(secret, `prelogin:${nonce}:${ts}`);
+};
+export function preloginOk(secret: string, nonce: string, token: string, now: number): boolean {
+  const ts = token.slice(0, 12), issued = parseInt(ts, 16), age = now - issued;
+  return /^[0-9a-f]{12}$/.test(ts) && age >= 0 && age <= PRELOGIN_TTL_MS && constantEqual(token, ts + hmac(secret, `prelogin:${nonce}:${ts}`));
+}
 
 /** ¿Origin exacto? Ausente o ajeno falla. */
 export const originOk = (req: Request, publicOrigin: string): boolean => req.headers.get('origin') === publicOrigin;
