@@ -2,44 +2,79 @@
 # deploy/scripts/restore.sh — Restauración y verificación de integridad de SQLite para fab (T118b, §3.3)
 set -euo pipefail
 
-BACKUP_FILE="${1:-}"
-TARGET_DIR="${2:-}"
+FORCE=false
+REQUIRE_CHECKSUM=true
+ARGS=()
 
-if [ -z "$BACKUP_FILE" ] || [ -z "$TARGET_DIR" ]; then
-  echo "Uso: $0 <archivo-backup.db> <directorio-destino-stateDir>" >&2
+for arg in "$@"; do
+  case "$arg" in
+    --force)
+      FORCE=true
+      ;;
+    --no-checksum)
+      REQUIRE_CHECKSUM=false
+      ;;
+    -*)
+      echo "Opción desconocida: $arg" >&2
+      exit 1
+      ;;
+    *)
+      ARGS+=("$arg")
+      ;;
+  esac
+done
+
+if [ ${#ARGS[@]} -lt 2 ]; then
+  echo "Uso: $0 [--force] [--no-checksum] <archivo-backup.db> <directorio-destino-stateDir>" >&2
   exit 1
 fi
+
+BACKUP_FILE="${ARGS[0]}"
+TARGET_DIR="${ARGS[1]}"
 
 if [ ! -f "$BACKUP_FILE" ]; then
   echo "Error: Archivo de copia de seguridad no encontrado: $BACKUP_FILE" >&2
   exit 1
 fi
 
-# 1. Comprobación de integridad SHA256 si existe
+# 1. Comprobación de integridad SHA256
 if [ -f "$BACKUP_FILE.sha256" ]; then
-  EXPECTED_SHA=$(cat "$BACKUP_FILE.sha256")
+  EXPECTED_SHA=$(cat "$BACKUP_FILE.sha256" | awk '{print $1}')
   ACTUAL_SHA=$(sha256sum "$BACKUP_FILE" | awk '{print $1}')
   if [ "$EXPECTED_SHA" != "$ACTUAL_SHA" ]; then
-    echo "Error: Fallo de verificación SHA256 en $BACKUP_FILE" >&2
+    echo "Error: Fallo de verificación SHA256 en $BACKUP_FILE (esperado: $EXPECTED_SHA, actual: $ACTUAL_SHA)" >&2
     exit 1
   fi
   echo "[fab-restore] Integridad SHA256 verificada: $ACTUAL_SHA"
+else
+  if [ "$REQUIRE_CHECKSUM" = true ]; then
+    echo "Error: No se encontró archivo de verificación SHA256 ($BACKUP_FILE.sha256). Falla cerrado por seguridad (use --no-checksum para forzar)." >&2
+    exit 1
+  else
+    echo "Aviso: No se encontró archivo SHA256; procediendo con --no-checksum." >&2
+  fi
 fi
 
 mkdir -p "$TARGET_DIR"
 TARGET_DB="$TARGET_DIR/fabrica.db"
 
+# 2. Verificación de destino libre
+if [ -f "$TARGET_DB" ] && [ "$FORCE" = false ]; then
+  echo "Error: El archivo de base de datos destino ya existe en $TARGET_DB. La restauración requiere un directorio nuevo o la opción --force." >&2
+  exit 1
+fi
+
 START_TIME=$(date +%s%N)
-echo "[fab-restore] Restaurando $BACKUP_FILE -> $TARGET_DB..."
+TMP_DB="$TARGET_DIR/fabrica.db.tmp-$$-$(date +%s%N)"
+rm -f "$TMP_DB"
 
-# Copia segura
-cp "$BACKUP_FILE" "$TARGET_DB"
-chmod 0600 "$TARGET_DB"
+trap 'rm -f "$TMP_DB"' EXIT
 
-# Elimina cualquier residuo WAL o SHM antiguo en destino
-rm -f "$TARGET_DB-wal" "$TARGET_DB-shm"
+echo "[fab-restore] Copiando a temporal para verificación: $BACKUP_FILE -> $TMP_DB..."
+cp "$BACKUP_FILE" "$TMP_DB"
+chmod 0600 "$TMP_DB"
 
-# 2. Verificación de integridad SQLite y apertura en solo lectura
+# 3. Verificación de integridad SQLite y apertura en solo lectura sobre el temporal
 bun -e '
 import { Database } from "bun:sqlite";
 const dbPath = process.argv[1];
@@ -66,9 +101,14 @@ const actCount = tables.includes("activities") ? (db.query("SELECT COUNT(*) as c
 console.log(`[fab-restore] Verificaciones completadas: integrity_check=ok, foreign_key_check=0`);
 console.log(`[fab-restore] Filas restauradas: workstreams=${wsCount}, changes=${chCount}, activities=${actCount}`);
 db.close();
-' "$TARGET_DB"
+' "$TMP_DB"
+
+# 4. Sustitución atómica final
+rm -f "$TARGET_DB-wal" "$TARGET_DB-shm"
+mv "$TMP_DB" "$TARGET_DB"
+trap - EXIT
 
 END_TIME=$(date +%s%N)
 DURATION_MS=$(( (END_TIME - START_TIME) / 1000000 ))
 
-echo "[fab-restore] Restauración completada exitosamente en ${DURATION_MS} ms"
+echo "[fab-restore] Restauración completada exitosamente en ${DURATION_MS} ms en $TARGET_DB"

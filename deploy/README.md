@@ -99,7 +99,7 @@ Si se opta por contenedores:
 - **RTO (Tiempo Objetivo de Recuperación):** 2 horas. En el simulacro de recuperación se verifica un tiempo real de ejecución inferior a 1 segundo.
 
 ### 4.2 Ejecución de copia de seguridad
-El script `deploy/scripts/backup.sh` realiza un checkpoint del WAL de SQLite (`PRAGMA wal_checkpoint(TRUNCATE)`) y crea una copia consistente mediante `VACUUM INTO`, calculando el digest SHA256:
+El script `deploy/scripts/backup.sh` realiza un checkpoint pasivo del WAL de SQLite (`PRAGMA wal_checkpoint(PASSIVE)`) y crea una copia consistente mediante `VACUUM INTO`, calculando el digest SHA256:
 ```bash
 sudo -u fab /opt/fab/deploy/scripts/backup.sh /var/lib/fab/fabrica.db /var/backups/fab
 ```
@@ -109,12 +109,12 @@ sudo -u fab /opt/fab/deploy/scripts/backup.sh /var/lib/fab/fabrica.db /var/backu
    ```bash
    sudo systemctl stop fab.service
    ```
-2. Ejecutar la restauración con verificación de integridad:
+2. Ejecutar la restauración hacia un nuevo directorio limpio (o con `--force` si se reemplaza el existente):
    ```bash
-   sudo -u fab /opt/fab/deploy/scripts/restore.sh /var/backups/fab/fabrica-backup-20261122T000000Z.db /var/lib/fab
+   sudo -u fab /opt/fab/deploy/scripts/restore.sh /var/backups/fab/fabrica-backup-20261122T000000Z.db /var/lib/fab-restored
    ```
-   El script verifica el checksum SHA256, aplica `PRAGMA integrity_check` y `PRAGMA foreign_key_check`, audita los recuentos de filas y reabre en modo sólo lectura antes de reiniciar los servicios.
-3. Iniciar el servicio:
+   El script verifica obligatoriamente el checksum SHA256 (salvo `--no-checksum`), copia a un archivo temporal para verificar `PRAGMA integrity_check` y `PRAGMA foreign_key_check`, audita recuentos y renombra atómicamente a `fabrica.db` solo tras superar todas las comprobaciones.
+3. Iniciar el servicio con el nuevo estado:
    ```bash
    sudo systemctl start fab.service
    ```

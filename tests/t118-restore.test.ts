@@ -118,4 +118,76 @@ describe('T118b: Copia de seguridad y recuperación básica (Ola 1, §3.3)', () 
     '`).toString().trim();
     expect(output).toBe('ws-sh true');
   });
+
+  test('T118-H6: restore.sh valida destino libre, obligatoriedad de SHA256 y sustitución atómica', () => {
+    const backupScript = join(__dirname, '../deploy/scripts/backup.sh');
+    const restoreScript = join(__dirname, '../deploy/scripts/restore.sh');
+
+    const sourceState = join(workDir, 'h6-source');
+    mkdirSync(sourceState, { recursive: true });
+    const sourceDb = join(sourceState, 'fabrica.db');
+
+    execSync(`bun -e '
+      import { Store } from "./src/store.ts";
+      const s = new Store("${sourceDb}");
+      s.createWorkstream({ slug: "ws-h6", goal: "H6 test", repo: "test/repo" });
+      s.close();
+    '`);
+
+    const backupDir = join(workDir, 'h6-backups');
+    execSync(`bash "${backupScript}" "${sourceDb}" "${backupDir}"`, { stdio: 'pipe' });
+    const files = execSync(`ls -1 "${backupDir}"/*.db`).toString().trim().split('\n');
+    const backupFile = files[0]!;
+
+    // 1. Destino ya ocupado -> debe fallar sin --force
+    const targetDir = join(workDir, 'h6-target');
+    mkdirSync(targetDir, { recursive: true });
+    const existingDb = join(targetDir, 'fabrica.db');
+    execSync(`touch "${existingDb}"`);
+
+    let failedOccupied = false;
+    try {
+      execSync(`bash "${restoreScript}" "${backupFile}" "${targetDir}"`, { stdio: 'pipe' });
+    } catch {
+      failedOccupied = true;
+    }
+    expect(failedOccupied).toBe(true);
+
+    // Con --force sobrescribe con éxito
+    execSync(`bash "${restoreScript}" --force "${backupFile}" "${targetDir}"`, { stdio: 'pipe' });
+    expect(existsSync(existingDb)).toBe(true);
+
+    // 2. Sin archivo .sha256 -> debe fallar salvo --no-checksum
+    const noShaBackup = join(workDir, 'sin-sha.db');
+    execSync(`cp "${backupFile}" "${noShaBackup}"`); // Sin copiar el .sha256
+    const noShaTarget = join(workDir, 'h6-nosha-target');
+
+    let failedNoSha = false;
+    try {
+      execSync(`bash "${restoreScript}" "${noShaBackup}" "${noShaTarget}"`, { stdio: 'pipe' });
+    } catch {
+      failedNoSha = true;
+    }
+    expect(failedNoSha).toBe(true);
+    expect(existsSync(join(noShaTarget, 'fabrica.db'))).toBe(false);
+
+    // Con --no-checksum se permite
+    execSync(`bash "${restoreScript}" --no-checksum "${noShaBackup}" "${noShaTarget}"`, { stdio: 'pipe' });
+    expect(existsSync(join(noShaTarget, 'fabrica.db'))).toBe(true);
+
+    // 3. Respaldo truncado / corrupto -> falla y no deja fabrica.db en el destino
+    const corruptBackup = join(workDir, 'corrupt.db');
+    execSync(`head -c 200 "${backupFile}" > "${corruptBackup}"`);
+    execSync(`sha256sum "${corruptBackup}" | awk '{print $1}' > "${corruptBackup}.sha256"`);
+    const corruptTarget = join(workDir, 'h6-corrupt-target');
+
+    let failedCorrupt = false;
+    try {
+      execSync(`bash "${restoreScript}" "${corruptBackup}" "${corruptTarget}"`, { stdio: 'pipe' });
+    } catch {
+      failedCorrupt = true;
+    }
+    expect(failedCorrupt).toBe(true);
+    expect(existsSync(join(corruptTarget, 'fabrica.db'))).toBe(false);
+  });
 });
