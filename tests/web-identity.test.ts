@@ -27,10 +27,12 @@ async function call(method: string, p: string, o: Call = {}): Promise<Response> 
   if (o.cookie) headers.cookie = o.cookie;
   if (o.origin !== null && method === 'POST') headers.origin = o.origin ?? ORIGIN;
   let body: string | undefined;
-  if (o.form) { body = new URLSearchParams(o.form).toString(); headers['content-type'] = 'application/x-www-form-urlencoded'; }
+  if (o.form) { body = new URLSearchParams(o.form).toString(); headers['content-type'] ??= 'application/x-www-form-urlencoded'; }
   const res = await routes.handle(new Request(`${ORIGIN}${p}`, { method, headers, body, redirect: 'manual' }), o.ip ?? '10.0.0.1');
   return res ?? new Response('sin ruta', { status: 599 });
 }
+/** El `Origin` que un navegador pone en un POST de formulario del mismo origen enviado desde `from`: `null` si su Referrer-Policy es `no-referrer` (Fetch). */
+const browserOrigin = (from: Response): string => from.headers.get('referrer-policy') === 'no-referrer' ? 'null' : ORIGIN;
 const setCookies = (r: Response) => r.headers.getSetCookie();
 const cookieOf = (r: Response, name: string) => setCookies(r).find(c => c.startsWith(`${name}=`));
 const pair = (c: string | undefined) => c!.split(';')[0]!;
@@ -355,4 +357,24 @@ test('un nombre visible hostil es dato: se escapa y no cambia el rol ni el actor
   const html = await (await call('GET', '/cuenta', { cookie: s })).text();
   expect(html).not.toContain('<img'); expect(html).toContain('&lt;img');
   expect(routes.principalOf(new Request(ORIGIN, { headers: { cookie: s } }))!.role).toBe('member');
+});
+
+test('T119b-H1: los formularios funcionan con el Origin que pone un navegador según la Referrer-Policy de su página', async () => {
+  seedOwner(1);
+  // Login: el formulario de /login, con el Origin que el navegador deriva de la política de esa página (sin ponerlo a mano).
+  const page = await call('GET', '/login'), pre = pair(cookieOf(page, '__Host-fab_pre')), token = /name="pre" value="([0-9a-f]+)"/.exec(await page.text())![1]!;
+  const start = await call('POST', '/auth/start', { cookie: pre, form: { pre: token }, origin: browserOrigin(page) });
+  expect(start.status).toBe(303);
+  const state = new URL(start.headers.get('location')!).searchParams.get('state')!;
+  const cb = await call('GET', `/auth/callback?code=${gh.grant({ id: 1, login: 'd' })}&state=${state}`, { cookie: pair(cookieOf(start, '__Host-fab_login')) });
+  // Logout desde /cuenta: igual.
+  const s = pair(cookieOf(cb, '__Host-fab_session'));
+  const cuenta = await call('GET', '/cuenta', { cookie: s });
+  expect(cuenta.headers.get('referrer-policy')).toBe('same-origin');
+  const out = await call('POST', '/logout', { cookie: s, form: { csrf: csrfFor(s) }, origin: browserOrigin(cuenta) });
+  expect(out.status).toBe(303);
+  // Los 303 y las páginas sin formulario (con la cookie de sesión o el código) siguen sin referente.
+  expect(out.headers.get('referrer-policy')).toBe('no-referrer');
+  expect(start.headers.get('referrer-policy')).toBe('no-referrer');
+  expect(cb.headers.get('referrer-policy')).toBe('no-referrer');
 });

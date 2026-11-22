@@ -114,10 +114,11 @@ export interface IdentityOptions {
 }
 
 const esc = (v: unknown): string => String(v ?? '').replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[c]!);
-const privateHeaders = { 'content-type': 'text/html; charset=utf-8', 'cache-control': 'no-store', 'referrer-policy': 'no-referrer' };
 
 function page(title: string, body: string, status = 200, cookies: string[] = [], extraHead = ''): Response {
-  const h = new Headers(privateHeaders);
+  // Con `no-referrer` el navegador manda `Origin: null` en los POST de formulario, también al mismo origen, y `originOk` los rechazaría:
+  // una página con formulario usa `same-origin` (el referente no sale de fab). Sin formulario, `no-referrer`.
+  const h = new Headers({ 'content-type': 'text/html; charset=utf-8', 'cache-control': 'no-store', 'referrer-policy': body.includes('<form') ? 'same-origin' : 'no-referrer' });
   for (const c of cookies) h.append('set-cookie', c);
   return new Response(`<!doctype html><html lang="es"><head><meta charset="utf-8"><title>${esc(title)}</title>${extraHead}<style>${WEB_STYLE}</style></head><body><main><h1>${esc(title)}</h1>${body}</main></body></html>`, { status, headers: h });
 }
