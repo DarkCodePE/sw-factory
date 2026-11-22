@@ -97,7 +97,7 @@ const ROLE_LETTER: Record<Role, string> = { owner: 'O', admin: 'A', member: 'M',
 const deny = (reason: string): Decision => ({ ok: false, reason });
 
 export function authorize(subject: PolicySubject, capability: string, ctx: PolicyContext): Decision {
-  const cap = CAPABILITIES[capability];
+  const cap = Object.hasOwn(CAPABILITIES, capability) ? CAPABILITIES[capability] : undefined; // `constructor` o `__proto__` no son capacidades
   if (!cap) return deny('unknown_capability');
   if (subject.recovery && capability !== 'recovery/confirm') return deny('recovery_restricted');
   const letter = ROLE_LETTER[subject.role];

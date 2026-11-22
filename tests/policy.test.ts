@@ -77,6 +77,7 @@ test('recuperación restringida: solo recovery/confirm; capacidad desconocida fa
   expect(authorize({ role: 'owner', recovery: true }, 'changes/note', web)).toEqual({ ok: false, reason: 'recovery_restricted' });
   expect(authorize({ role: 'owner', recovery: true }, 'recovery/confirm', web).ok).toBe(true);
   expect(authorize({ role: 'owner' }, 'nada/inventado', web)).toEqual({ ok: false, reason: 'unknown_capability' });
+  for (const c of ['constructor', '__proto__', 'toString', 'hasOwnProperty']) expect(authorize({ role: 'owner' }, c, web)).toEqual({ ok: false, reason: 'unknown_capability' });
 });
 
 test('T119a-H12: un rol desconocido deniega aunque empiece como uno válido', () => {

@@ -6,8 +6,14 @@
  *  - Un `Principal` solo sale de `resolvePrincipal` (sesión) o `verifyUserKey` (clave). Nunca del cuerpo de la petición.
  *  - Toda mutación pasa por `runAs`, que en una transacción inmediata revalida usuario, rol, credencial y recuperación
  *    y aplica `authorize`. Una revocación que gana la escritura impide la mutación.
- *  - `authorize` comprueba `--write` con `ctx.write`; las funciones de este módulo, que son de dominio, pasan `write: true`
- *    y dejan ese filtro al despacho HTTP/CLI.
+ *  - `authorize` comprueba `--write` con `ctx.write`. Las claves lo reciben del llamador; invitar, cambiar rol, dar de baja, revocar
+ *    invitación y confirmar pasan `write: true` y dejan ese filtro al despacho HTTP/CLI, que llama antes a `authorize`.
+ *  - `op_id` es `UNIQUE`: un ID de operación del llamador vale para un solo asiento; un segundo lanza y deshace la transacción entera.
+ *  - `runAs` solo admite `fn` síncrona: con una asíncrona lanza y deshace la parte síncrona, pero la continuación tras el `await`
+ *    corre y confirma fuera de la transacción.
+ *  - Ascender a owner a un emisor también revoca sus invitaciones pendientes.
+ *  - Claves: `api-keys/*` es la acción web y `api-key/*` la capacidad de dominio (§4.2); los dos nombres son casi homónimos y
+ *    tienen los mismos roles. `api-keys/*` es la que despacha hoy `src/web-actions.ts`; `runAs` de este módulo usa `api-key/*`.
  *  - Tras restaurar cualquier copia, el operador llama a `enterRecovery` antes de abrir el frontal (T120): una copia tomada en mitad
  *    de una recuperación anterior ya trae designado y «sin diario» hechos, y esa designación no debe valer sin un asiento nuevo.
  */
