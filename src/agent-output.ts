@@ -42,6 +42,7 @@ export function parseClaudeStream(stdout: string): { result: AgentOutput | null;
       if (model && model !== '<synthetic>') models.add(model);
     }
     if (frame?.type === 'result') {
+      if (result) return { result: null, line: '', hasFrame: true };
       line = current;
       result = parseClaudeJson(current, models.size === 1 ? [...models][0] : undefined);
     }
@@ -50,7 +51,7 @@ export function parseClaudeStream(stdout: string): { result: AgentOutput | null;
 }
 
 export function parseCodexJsonl(stdout: string): AgentOutput | null {
-  let text = '', structured = false, usage: Record<string, unknown> | undefined;
+  let text = '', structured = false, turnOpen = false, usage: Record<string, unknown> | undefined;
   for (const frame of frames(stdout)) {
     if (frame.type === 'thread.started') structured = true;
     if (!structured) continue;
@@ -58,7 +59,13 @@ export function parseCodexJsonl(stdout: string): AgentOutput | null {
       const item = record(frame.item);
       if (item?.type === 'agent_message' && typeof item.text === 'string') text = item.text;
     }
-    if (frame.type === 'turn.completed') usage = record(frame.usage);
+    if (frame.type === 'turn.started') turnOpen = true;
+    if (frame.type === 'turn.failed') turnOpen = false;
+    if (frame.type === 'turn.completed') {
+      if (!turnOpen) return { text: '' };
+      turnOpen = false;
+      usage = record(frame.usage);
+    }
   }
   return structured ? output(text, { inputTokens: tokenCount(usage?.input_tokens),
     outputTokens: tokenCount(usage?.output_tokens), cacheReadTokens: tokenCount(usage?.cached_input_tokens),
@@ -67,13 +74,16 @@ export function parseCodexJsonl(stdout: string): AgentOutput | null {
 
 export function parseGoogleJsonl(stdout: string): AgentOutput | null {
   let text = '', started = false, agyStarted = false, stats: Record<string, unknown> | undefined;
+  let agyResult: AgentOutput | undefined, agyEnded = false, geminiEnded = false;
   for (const frame of frames(stdout)) {
     if (frame.event === 'init') agyStarted = true;
-    if (frame.event === 'result') {
+    if (agyStarted && frame.event === 'result') {
+      if (agyEnded) return { text: '' };
+      agyEnded = true;
       const result = record(frame.result);
       if (result && typeof result.status === 'string') {
         const usage = record(result.usage);
-        return output(result.response, { inputTokens: tokenCount(usage?.input_tokens),
+        agyResult = output(result.response, { inputTokens: tokenCount(usage?.input_tokens),
           outputTokens: tokenCount(usage?.output_tokens), cacheReadTokens: tokenCount(usage?.cache_read_tokens) });
       }
     }
@@ -82,15 +92,20 @@ export function parseGoogleJsonl(stdout: string): AgentOutput | null {
     if (frame.type === 'message' && frame.role === 'assistant' && typeof frame.content === 'string')
       text = frame.delta === true ? text + frame.content : frame.content;
     if (frame.type === 'message' && frame.role === 'user') text = '';
-    if (frame.type === 'result') stats = record(frame.stats);
+    if (frame.type === 'result') {
+      if (geminiEnded) return { text: '' };
+      geminiEnded = true;
+      stats = record(frame.stats);
+    }
   }
+  if (agyStarted) return started ? { text: '' } : agyResult ?? { text: '' };
   const models = Object.keys(record(stats?.models) ?? {});
   const effectiveModel = models.length === 1 ? modelId(models[0]) : undefined;
   const inputTokens = tokenCount(stats?.input_tokens), outputTokens = tokenCount(stats?.output_tokens);
   // El CLI publica candidatos. Si el total incluye otras categorías, no asumimos su tarifa.
   const complete = inputTokens !== undefined && outputTokens !== undefined && tokenCount(stats?.total_tokens) === inputTokens + outputTokens;
   return started ? output(text, { effectiveModel, inputTokens, outputTokens, cacheReadTokens: tokenCount(stats?.cached) }, complete)
-    : agyStarted ? { text: '' } : null;
+    : null;
 }
 
 export function parseNativeJson(stdout: string): AgentOutput | null {

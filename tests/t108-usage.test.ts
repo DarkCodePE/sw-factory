@@ -1,5 +1,6 @@
 import { expect, test } from 'bun:test';
 import { getAgent, runAgent } from '../src/agents.ts';
+import { parseClaudeStream } from '../src/agent-output.ts';
 
 const model = 'claude-sonnet-4-6';
 const claude = [
@@ -38,7 +39,7 @@ const native = JSON.stringify({
 });
 
 for (const [name, stdout, usage] of [
-  ['claude', claude, { effectiveModel: model, inputTokens: 3400, outputTokens: 100, cacheReadTokens: 2000, cacheWriteTokens: 400, costUsd: 0.0066 }],
+  ['claude', claude.split('\n').at(-1)!, { effectiveModel: model, inputTokens: 3400, outputTokens: 100, cacheReadTokens: 2000, cacheWriteTokens: 400, costUsd: 0.0066 }],
   ['codex', codex, { inputTokens: 120, outputTokens: 10, cacheReadTokens: 20, cacheWriteTokens: 0 }],
   ['gemini', gemini, { effectiveModel: 'gemini-2.5-flash', inputTokens: 30, outputTokens: 10, cacheReadTokens: 5 }],
   ['agy', agy, { inputTokens: 10418, outputTokens: 589, cacheReadTokens: 8113 }],
@@ -101,4 +102,19 @@ test('T108: native toma modelo y caché de la respuesta HTTP local, incluso si s
     loopback.stop(true);
     rmSync(dir, { recursive: true, force: true });
   }
+});
+
+test('T108 H2: rechaza finales duplicados y agy solo acepta el resultado tras init', async () => {
+  const { parseCodexJsonl, parseGoogleJsonl } = await import('../src/agent-output.ts');
+  const last = (stream: string) => stream.split('\n').at(-1)!;
+  const duplicate = (stream: string) => stream + '\n' + last(stream);
+  expect(parseClaudeStream(claude).result?.usage?.effectiveModel).toBe(model);
+  expect(parseClaudeStream(duplicate(claude))).toMatchObject({ result: null, line: '', hasFrame: true });
+  expect(getAgent('claude').parse?.(claude)).toBeNull();
+  expect(parseCodexJsonl(duplicate(codex))).toEqual({ text: '' });
+  expect(parseGoogleJsonl(duplicate(gemini))).toEqual({ text: '' });
+  expect(parseGoogleJsonl(duplicate(agy))).toEqual({ text: '' });
+  const early = last(agy).replace('10418', '1').replace('Informe', 'Texto previo');
+  expect(parseGoogleJsonl(early)).toBeNull();
+  expect(parseGoogleJsonl(early + '\n' + agy)).toEqual(parseGoogleJsonl(agy));
 });

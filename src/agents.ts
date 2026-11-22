@@ -5,7 +5,7 @@ import { agentEnv, scrubValues } from './sandbox/env.ts';
 import { atomicEvidence } from './manifest.ts';
 import { existsSync, readFileSync } from 'node:fs';
 import { selfCommand } from './self.ts';
-import { parseClaudeJson, parseClaudeStream, parseCodexJsonl, parseGoogleJsonl, parseNativeJson } from './agent-output.ts';
+import { parseClaudeJson, parseCodexJsonl, parseGoogleJsonl, parseNativeJson } from './agent-output.ts';
 import type { AgentUsage } from './inference-usage.ts';
 export type { AgentUsage } from './inference-usage.ts';
 export { parseClaudeJson } from './agent-output.ts';
@@ -74,7 +74,7 @@ const claude: AgentAdapter = {
     // Con `--strict-mcp-config` no se cargan los servidores del usuario (T72 S5).
     ...(options?.mcpConfig ? ['--strict-mcp-config', '--mcp-config', options.mcpConfig] : []),
   ],
-  parse: (stdout) => parseClaudeJson(stdout) ?? parseClaudeStream(stdout).result,
+  parse: parseClaudeJson,
 };
 
 const codex: AgentAdapter = {

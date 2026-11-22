@@ -362,11 +362,12 @@ test('T99-H13 R35: detecta una sesión perdida por el result sin stderr', async 
   await expect(runClaudeFixture("echo '" + frame + "'; exit 1", 'perdida')).rejects.toBeInstanceOf(SessionNotFoundError);
 });
 
-test('T99-H13 R38: el último result determina la salida, el coste y el monitor', async () => {
+test('T108 H2: dos result de Claude no eligen salida, coste ni entrada del monitor', async () => {
   const first = '{"type":"result","result":"Primero","total_cost_usd":1}';
   const last = '{"type":"result","result":"Último","total_cost_usd":2}';
   const result = await runClaudeFixture("printf '%s\\n' '" + first + "' '" + last + "'");
-  expect(result.output).toBe('Último');
-  expect(result.usage?.costUsd).toBe(2);
-  expect(result.stdoutForMonitor).toBe(last);
+  expect(result.output).toBe('');
+  expect(result.usage).toBeUndefined();
+  expect(result.stdoutForMonitor).toBe('');
+  expect(result.stdout).toContain(last);
 });
