@@ -65,11 +65,14 @@ const toUser = (r: Row): User => ({
 
 // ---- auditoría ------------------------------------------------------------
 
-/** Asiento en la misma transacción que la mutación. Sin contenido sensible: ni tokens, ni códigos, ni nombres visibles. */
-function audit(store: Store, actor: Actor, action: string, object: string | null, detail?: Record<string, unknown>, result = 'ok'): void {
+/**
+ * Asiento en la misma transacción que la mutación. Sin contenido sensible: ni tokens, ni códigos, ni nombres visibles.
+ * Lo usan también T119b (fallo de revocar el token del proveedor) y T119c (operación sin workstream), que traen su ID de operación.
+ */
+export function audit(store: Store, actor: Actor, action: string, object: string | null, detail?: Record<string, unknown>, result = 'ok', opId: string = randomUUID()): void {
   store.db.query(
     `INSERT INTO identity_audit (op_id, at, actor, actor_user_id, actor_source, action, object, detail, result) VALUES (?,?,?,?,?,?,?,?,?)`,
-  ).run(randomUUID(), store.now(), actor.actor, actor.userId, actor.source, action, object, detail ? JSON.stringify(detail) : null, result);
+  ).run(opId, store.now(), actor.actor, actor.userId, actor.source, action, object, detail ? JSON.stringify(detail) : null, result);
 }
 
 // ---- equipo y bootstrap ---------------------------------------------------
@@ -143,7 +146,10 @@ export function runAs<T>(store: Store, p: Principal, capability: string, ctx: Om
     const fresh = revalidatePrincipal(store, p);
     const d = authorize(fresh, capability, { ...ctx, via: fresh.via, keyScope: fresh.keyScope });
     if (!d.ok) throw new StoreError('forbidden', `no autorizado (${d.reason})`);
-    return fn(fresh);
+    const out = fn(fresh);
+    // Una `fn` asíncrona seguiría corriendo fuera de la transacción: no se admite.
+    if (typeof (out as { then?: unknown } | null)?.then === 'function') throw new Error('runAs: fn debe ser síncrona');
+    return out;
   });
 }
 
@@ -164,11 +170,12 @@ export function issueSession(store: Store, userId: string, cls: 'web' | 'cli'): 
   });
 }
 
-export function resolvePrincipal(store: Store, token: string): Principal | null {
+/** `cls` es la superficie que presenta el token (cookie web o sesión CLI): un token de otra clase no resuelve. */
+export function resolvePrincipal(store: Store, token: string, cls: 'web' | 'cli'): Principal | null {
   const m = /^fabs_([a-f0-9]{12})_([A-Za-z0-9_-]{43})$/.exec(token);
   if (!m) return null;
   const s = store.db.query('SELECT * FROM user_sessions WHERE id = ?').get(m[1]!) as Row | null;
-  if (!s || s.revoked_at || (s.expires_at as string) <= store.now() || !sameDigest(s.token_digest as string, sha(m[2]!))) return null;
+  if (!s || s.class !== cls || s.revoked_at || (s.expires_at as string) <= store.now() || !sameDigest(s.token_digest as string, sha(m[2]!))) return null;
   const u = getUser(store, s.user_id as string);
   if (!u || u.disabledAt) return null;
   const rec = recoveryState(store);
@@ -303,14 +310,15 @@ export function listInvitations(store: Store, p: Principal): Invitation[] {
 
 export interface UserKey { id: string; name: string; scope: 'read' | 'decide'; userId: string; createdAt: string; expiresAt: string | null; revokedAt: string | null }
 
-/** D-2 A: la política rechaza a viewer; `verifyUserKey` lo vuelve a rechazar. El valor sale una sola vez. */
-export function createUserKey(store: Store, p: Principal, name: string, scope: 'read' | 'decide', expiresAt?: string): { id: string; key: string } {
+/** D-2 A: la política rechaza a viewer; `verifyUserKey` lo vuelve a rechazar. El valor sale una sola vez. `write` es el `--write` del servidor. */
+export function createUserKey(store: Store, p: Principal, name: string, scope: 'read' | 'decide', opts: { write: boolean; expiresAt?: string }): { id: string; key: string } {
+  const { expiresAt } = opts;
   if (typeof name !== 'string' || !/^[a-z0-9][a-z0-9-]{0,40}$/.test(name)) throw new StoreError('invalid_input', 'nombre de clave API inválido');
   if (scope !== 'read' && scope !== 'decide') throw new StoreError('invalid_input', 'ámbito de clave API inválido');
   // Se guarda en ISO UTC: la comparación con `store.now()` es de texto y una zona u otro formato la falsearía.
   const expires = expiresAt === undefined ? null : new Date(expiresAt);
   if (expires && Number.isNaN(expires.getTime())) throw new StoreError('invalid_input', 'caducidad inválida');
-  return runAs(store, p, 'api-key/create', { write: true }, (me) => {
+  return runAs(store, p, 'api-key/create', { write: opts.write }, (me) => {
     if (expires && expires.toISOString() <= store.now()) throw new StoreError('invalid_input', 'la caducidad ya pasó');
     if (store.db.query('SELECT 1 FROM api_keys WHERE user_id = ? AND name = ?').get(me.userId, name)) throw new StoreError('conflict', 'ya tienes una clave con ese nombre');
     const { n } = store.db.query('SELECT COUNT(*) AS n FROM api_keys WHERE user_id = ? AND revoked_at IS NULL').get(me.userId) as { n: number };
@@ -334,9 +342,9 @@ export function listUserKeys(store: Store, p: Principal, opts: { all?: boolean }
 }
 
 /** Por ID. Una clave ajena solo la revoca el owner. */
-export function revokeUserKey(store: Store, p: Principal, keyId: string): void {
+export function revokeUserKey(store: Store, p: Principal, keyId: string, write: boolean): void {
   const owner = (store.db.query('SELECT user_id FROM api_keys WHERE id = ? AND user_id IS NOT NULL').get(keyId) as { user_id: string } | null)?.user_id;
-  runAs(store, p, 'api-key/revoke', { write: true, target: owner && owner !== p.userId ? 'other' : 'own' }, (me) => {
+  runAs(store, p, 'api-key/revoke', { write, target: owner && owner !== p.userId ? 'other' : 'own' }, (me) => {
     const { changes } = store.db.query(
       `UPDATE api_keys SET revoked_at = COALESCE(revoked_at, ?) WHERE id = ? AND user_id IS NOT NULL AND (user_id = ? OR ? = 'owner')`,
     ).run(store.now(), keyId, me.userId, me.role);

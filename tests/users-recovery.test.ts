@@ -15,7 +15,7 @@ let n = 0;
 beforeEach(() => { dir = mkdtempSync(join(tmpdir(), 'fab-rec-')); store = new Store(join(dir, 'f.db')); });
 afterEach(() => { store.close(); rmSync(dir, { recursive: true, force: true }); });
 
-const login = (s: Store, id: string) => resolvePrincipal(s, issueSession(s, id, 'web').token)!;
+const login = (s: Store, id: string) => resolvePrincipal(s, issueSession(s, id, 'web').token, 'web')!;
 const code = (fn: () => unknown) => { try { fn(); } catch (e) { return (e as StoreError).code; } return 'no lanzó'; };
 function add(s: Store, by: Principal, role: Role): string {
   const sub = `s${++n}`;
@@ -59,7 +59,7 @@ test('baja → restaurar: la cuenta no entra y el rol degradado no recupera priv
   const o = bootstrapOwner(store, { issuer: 'github', subject: '1', displayName: 'A', operator: 'op' });
   const owner = login(store, o.id);
   const gone = add(store, owner, 'member'), demoted = add(store, owner, 'admin'), stays = add(store, owner, 'member');
-  const key = createUserKey(store, login(store, gone), 'k', 'read');
+  const key = createUserKey(store, login(store, gone), 'k', 'read', { write: true });
   store.db.exec('PRAGMA wal_checkpoint(FULL)');
   copyFileSync(store.dbPath, backup); // copia del RPO
   disableUser(store, owner, gone);
@@ -71,11 +71,11 @@ test('baja → restaurar: la cuenta no entra y el rol degradado no recupera priv
     // La copia aún los trae activos y con el rol antiguo.
     expect(getUser(restored, gone)!.disabledAt).toBeNull();
     expect(getUser(restored, demoted)!.role).toBe('admin');
-    const stale = resolvePrincipal(restored, issueSession(restored, o.id, 'web').token)!;
+    const stale = resolvePrincipal(restored, issueSession(restored, o.id, 'web').token, 'web')!;
     enterRecovery(restored, 'op', 'restauración de prueba', o.id);
     expect(recoveryStatus(restored)).toEqual({ restricted: true });
     // Sesiones y claves restauradas quedan revocadas; nada opera hasta que el owner confirme.
-    expect(resolvePrincipal(restored, `fabs_${stale.sessionId}_${'A'.repeat(43)}`)).toBeNull();
+    expect(resolvePrincipal(restored, `fabs_${stale.sessionId}_${'A'.repeat(43)}`, 'web')).toBeNull();
     expect(code(() => runAs(restored, stale, 'session/list', { write: false }, () => 1))).toBe('unauthorized');
     expect(verifyUserKey(restored, key.key)).toBeNull();
     // Solo el owner puede abrir sesión mientras dura la recuperación.
@@ -250,9 +250,9 @@ test('T119a-H14: aplicar el diario y confirmar cortan las sesiones de quien camb
   try {
     enterRecovery(restored, 'op', 'x', b); // el operador designa a B; el diario lo degrada
     const sessionB = issueSession(restored, b, 'web').token;
-    expect(resolvePrincipal(restored, sessionB)).not.toBeNull();
+    expect(resolvePrincipal(restored, sessionB, 'web')).not.toBeNull();
     applyJournalToRestored(restored, 'op', j);
-    expect(resolvePrincipal(restored, sessionB)).toBeNull(); // la sesión de B no sobrevive a su degradación
+    expect(resolvePrincipal(restored, sessionB, 'web')).toBeNull(); // la sesión de B no sobrevive a su degradación
 
   } finally { restored.close(); }
 

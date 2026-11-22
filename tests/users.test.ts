@@ -6,7 +6,7 @@ import { Store, StoreError } from '../src/store.ts';
 import {
   acceptInvitation, bootstrapOwner, changeUserRole, createUserKey, disableUser, findUserByIdentity, inviteUser, issueSession,
   listInvitations, listSessions, listUserKeys, listUsers, resolvePrincipal, revokeInvitation, revokeSession, revokeUserKey, runAs,
-  teamId, verifyUserKey, actorOf, serviceActor, type Principal, type Role,
+  teamId, verifyUserKey, actorOf, serviceActor, audit, consoleActor, type Principal, type Role,
 } from '../src/users.ts';
 
 let now: number;
@@ -32,7 +32,7 @@ function owner(): Principal {
   return login(u.id);
 }
 function login(userId: string, cls: 'web' | 'cli' = 'web', s: Store = store): Principal {
-  return resolvePrincipal(s, issueSession(s, userId, cls).token)!;
+  return resolvePrincipal(s, issueSession(s, userId, cls).token, cls)!;
 }
 /** Alta por invitación completa; devuelve el principal del nuevo usuario. */
 function member(by: Principal, subject: string, role: Role = 'member'): Principal {
@@ -120,46 +120,49 @@ test('un cambio del nombre visible no cambia la identidad; el nombre es dato', (
 test('sesiones: caducidad web 12 h y CLI 1 h, token de otra superficie y revocación persistente', () => {
   const o = owner();
   const web = issueSession(store, o.userId, 'web'), cli = issueSession(store, o.userId, 'cli');
-  expect(resolvePrincipal(store, web.token)!.via).toBe('web');
-  expect(resolvePrincipal(store, cli.token)!.via).toBe('cli');
-  expect(resolvePrincipal(store, `fabk_${web.id}_${web.token.slice(-43)}`)).toBeNull();
+  expect(resolvePrincipal(store, web.token, 'web')!.via).toBe('web');
+  expect(resolvePrincipal(store, cli.token, 'cli')!.via).toBe('cli');
+  // T119a-H13a: el token CLI presentado como cookie web (y al revés) no resuelve.
+  expect(resolvePrincipal(store, cli.token, 'web')).toBeNull();
+  expect(resolvePrincipal(store, web.token, 'cli')).toBeNull();
+  expect(resolvePrincipal(store, `fabk_${web.id}_${web.token.slice(-43)}`, 'web')).toBeNull();
   expect(verifyUserKey(store, web.token)).toBeNull();
-  expect(resolvePrincipal(store, web.token.slice(0, -1) + (web.token.endsWith('A') ? 'B' : 'A'))).toBeNull();
+  expect(resolvePrincipal(store, web.token.slice(0, -1) + (web.token.endsWith('A') ? 'B' : 'A'), 'web')).toBeNull();
   now += 3600_000 + 1;
-  expect(resolvePrincipal(store, cli.token)).toBeNull();
-  expect(resolvePrincipal(store, web.token)).not.toBeNull();
+  expect(resolvePrincipal(store, cli.token, 'cli')).toBeNull();
+  expect(resolvePrincipal(store, web.token, 'web')).not.toBeNull();
   now += 11 * 3600_000;
-  expect(resolvePrincipal(store, web.token)).toBeNull();
+  expect(resolvePrincipal(store, web.token, 'web')).toBeNull();
   const fresh = issueSession(store, o.userId, 'web');
-  const p = resolvePrincipal(store, fresh.token)!;
+  const p = resolvePrincipal(store, fresh.token, 'web')!;
   expect(listSessions(store, p).map((s) => s.current)).toEqual([true]);
   revokeSession(store, p, fresh.id);
   store.close(); store = open();
-  expect(resolvePrincipal(store, fresh.token)).toBeNull();
+  expect(resolvePrincipal(store, fresh.token, 'web')).toBeNull();
 });
 
 test('un usuario no revoca la sesión de otro', () => {
   const o = owner();
   const m = member(o, '60');
   throwsCode(() => revokeSession(store, m, o.sessionId!), 'not_found');
-  expect(resolvePrincipal(store, issueSession(store, o.userId, 'web').token)).not.toBeNull();
+  expect(resolvePrincipal(store, issueSession(store, o.userId, 'web').token, 'web')).not.toBeNull();
 });
 
 test('cambio de rol y baja invalidan sesiones y claves del afectado en la misma transacción', () => {
   const o = owner();
   const m = member(o, '70');
-  const key = createUserKey(store, m, 'k1', 'read');
+  const key = createUserKey(store, m, 'k1', 'read', { write: true });
   const sess = login(m.userId);
   expect(verifyUserKey(store, key.key)).not.toBeNull();
   changeUserRole(store, o, m.userId, 'admin');
-  expect(resolvePrincipal(store, issueSession(store, m.userId, 'web').token)!.role).toBe('admin');
+  expect(resolvePrincipal(store, issueSession(store, m.userId, 'web').token, 'web')!.role).toBe('admin');
   expect(verifyUserKey(store, key.key)).toBeNull();
   expect(sess.sessionId && store.db.query('SELECT revoked_at FROM user_sessions WHERE id = ?').get(sess.sessionId)).toEqual({ revoked_at: expect.any(String) });
   const live = login(m.userId);
   disableUser(store, o, m.userId);
   expect(runAsOk(live)).toBe(false);
   throwsCode(() => issueSession(store, m.userId, 'web'), 'unauthorized');
-  expect(resolvePrincipal(store, 'fabs_000000000000_' + 'A'.repeat(43))).toBeNull();
+  expect(resolvePrincipal(store, 'fabs_000000000000_' + 'A'.repeat(43), 'web')).toBeNull();
 });
 const runAsOk = (p: Principal) => { try { runAs(store, p, 'session/list', { write: false }, () => 1); return true; } catch { return false; } };
 
@@ -170,7 +173,7 @@ test('último owner: dos bajas cruzadas desde conexiones distintas dejan un owne
   const ob = login(b.userId);
   const other = open();
   try {
-    const bOnOther = resolvePrincipal(other, issueSession(other, b.userId, 'web').token)!;
+    const bOnOther = resolvePrincipal(other, issueSession(other, b.userId, 'web').token, 'web')!;
     disableUser(store, a, b.userId);
     // b ya no es owner activo: su baja de a falla por credencial, y a sigue siendo el único.
     throwsCode(() => disableUser(other, bOnOther, a.userId), 'unauthorized');
@@ -197,11 +200,11 @@ test('revocación que gana la escritura impide la mutación (conexión distinta)
   const other = open();
   try {
     let ran = 0;
-    revokeSession(other, resolvePrincipal(other, issueSession(other, m.userId, 'web').token)!, m.sessionId!); // mismo usuario, otra sesión: no afecta
+    revokeSession(other, resolvePrincipal(other, issueSession(other, m.userId, 'web').token, 'web')!, m.sessionId!); // mismo usuario, otra sesión: no afecta
     expect(() => runAs(store, m, 'session/list', { write: false }, () => ran++)).toThrow();
     ran = 0;
     const live = login(m.userId);
-    disableUser(other, resolvePrincipal(other, issueSession(other, o.userId, 'web').token)!, m.userId);
+    disableUser(other, resolvePrincipal(other, issueSession(other, o.userId, 'web').token, 'web')!, m.userId);
     throwsCode(() => runAs(store, live, 'session/list', { write: false }, () => ran++), 'unauthorized');
     expect(ran).toBe(0);
   } finally { other.close(); }
@@ -210,7 +213,7 @@ test('revocación que gana la escritura impide la mutación (conexión distinta)
 test('rol cambiado tras resolver: el principal viejo no opera con el rol antiguo', () => {
   const o = owner();
   const a = member(o, '91', 'admin');
-  const stale = resolvePrincipal(store, issueSession(store, a.userId, 'web').token)!;
+  const stale = resolvePrincipal(store, issueSession(store, a.userId, 'web').token, 'web')!;
   changeUserRole(store, o, a.userId, 'viewer');
   throwsCode(() => inviteUser(store, stale, { expectedIssuer: 'github', expectedSubject: '92', role: 'member' }), 'unauthorized');
 });
@@ -218,10 +221,10 @@ test('rol cambiado tras resolver: el principal viejo no opera con el rol antiguo
 test('claves: viewer rechazado (D-2 A), mismo nombre por usuario, valor solo al crear', () => {
   const o = owner();
   const v = member(o, '100', 'viewer');
-  throwsCode(() => createUserKey(store, v, 'v1', 'read'), 'forbidden');
+  throwsCode(() => createUserKey(store, v, 'v1', 'read', { write: true }), 'forbidden');
   const m1 = member(o, '101'), m2 = member(o, '102');
-  const k1 = createUserKey(store, m1, 'ci', 'read'), k2 = createUserKey(store, m2, 'ci', 'decide');
-  throwsCode(() => createUserKey(store, m1, 'ci', 'read'), 'conflict');
+  const k1 = createUserKey(store, m1, 'ci', 'read', { write: true }), k2 = createUserKey(store, m2, 'ci', 'decide', { write: true });
+  throwsCode(() => createUserKey(store, m1, 'ci', 'read', { write: true }), 'conflict');
   expect(JSON.stringify(listUserKeys(store, m1))).not.toContain(k1.key.slice(-43));
   expect(listUserKeys(store, m1).map((k) => k.id)).toEqual([k1.id]);
   throwsCode(() => listUserKeys(store, m1, { all: true }), 'forbidden');
@@ -239,7 +242,7 @@ test('claves: viewer rechazado (D-2 A), mismo nombre por usuario, valor solo al 
 test('un viewer con clave previa (fila forzada) tampoco autentica', () => {
   const o = owner();
   const m = member(o, '110');
-  const k = createUserKey(store, m, 'x', 'read');
+  const k = createUserKey(store, m, 'x', 'read', { write: true });
   store.db.query(`UPDATE users SET role = 'viewer' WHERE id = ?`).run(m.userId);
   expect(verifyUserKey(store, k.key)).toBeNull();
 });
@@ -247,12 +250,12 @@ test('un viewer con clave previa (fila forzada) tampoco autentica', () => {
 test('revocar clave: por ID, la propia o cualquiera si es owner; ajena sin ser owner no', () => {
   const o = owner();
   const a = member(o, '120', 'admin'), m = member(o, '121');
-  const km = createUserKey(store, m, 'k', 'read'), ka = createUserKey(store, a, 'k', 'read');
-  throwsCode(() => revokeUserKey(store, a, km.id), 'forbidden');
-  throwsCode(() => revokeUserKey(store, m, 'ffffffffffff'), 'not_found');
-  revokeUserKey(store, m, km.id);
+  const km = createUserKey(store, m, 'k', 'read', { write: true }), ka = createUserKey(store, a, 'k', 'read', { write: true });
+  throwsCode(() => revokeUserKey(store, a, km.id, true), 'forbidden');
+  throwsCode(() => revokeUserKey(store, m, 'ffffffffffff', true), 'not_found');
+  revokeUserKey(store, m, km.id, true);
   expect(verifyUserKey(store, km.key)).toBeNull();
-  revokeUserKey(store, o, ka.id);
+  revokeUserKey(store, o, ka.id, true);
   expect(verifyUserKey(store, ka.key)).toBeNull();
   const audit = store.db.query(`SELECT detail FROM identity_audit WHERE action = 'key.revoke' ORDER BY seq DESC LIMIT 1`).get() as { detail: string };
   expect(JSON.parse(audit.detail)).toEqual({ ownerId: a.userId });
@@ -260,7 +263,7 @@ test('revocar clave: por ID, la propia o cualquiera si es owner; ajena sin ser o
 
 test('clave caducada no autentica', () => {
   const o = owner();
-  const k = createUserKey(store, o, 'temp', 'read', new Date(now + 1000).toISOString());
+  const k = createUserKey(store, o, 'temp', 'read', { write: true, expiresAt: new Date(now + 1000).toISOString() });
   expect(verifyUserKey(store, k.key)).not.toBeNull();
   now += 2000;
   expect(verifyUserKey(store, k.key)).toBeNull();
@@ -283,7 +286,7 @@ test('actor estable: el evento guarda ID, origen y no el nombre visible; sin act
 test('auditoría de identidad: una fila por mutación, sin tokens ni nombres visibles', () => {
   const o = owner();
   const m = member(o, '130');
-  const k = createUserKey(store, m, 'k', 'read');
+  const k = createUserKey(store, m, 'k', 'read', { write: true });
   changeUserRole(store, o, m.userId, 'admin');
   const all = JSON.stringify(store.db.query('SELECT * FROM identity_audit').all());
   for (const secret of [k.key.slice(-43), m.sessionId ? 'u130' : '', 'Dueña']) expect(all).not.toContain(secret);
@@ -314,12 +317,12 @@ test('T119a-H5: una invitación pendiente no sobrevive a la degradación ni a la
 
 test('T119a-H7: la caducidad de una clave se normaliza a UTC y no admite fechas pasadas', () => {
   const o = owner();
-  throwsCode(() => createUserKey(store, o, 'pasada', 'read', new Date(now - 1000).toISOString()), 'invalid_input');
-  throwsCode(() => createUserKey(store, o, 'mala', 'read', 'no-es-fecha'), 'invalid_input');
+  throwsCode(() => createUserKey(store, o, 'pasada', 'read', { write: true, expiresAt: new Date(now - 1000).toISOString() }), 'invalid_input');
+  throwsCode(() => createUserKey(store, o, 'mala', 'read', { write: true, expiresAt: 'no-es-fecha' }), 'invalid_input');
   // 12:00 en +05:00 son las 07:00Z, anterior a «ahora» (10:00Z): no se acepta como si fuera futura.
-  throwsCode(() => createUserKey(store, o, 'zona', 'read', '2026-11-22T12:00:00+05:00'), 'invalid_input');
+  throwsCode(() => createUserKey(store, o, 'zona', 'read', { write: true, expiresAt: '2026-11-22T12:00:00+05:00' }), 'invalid_input');
   // Un formato libre se guarda en ISO y caduca a su hora real (13:00Z).
-  const k = createUserKey(store, o, 'libre', 'read', '2026-11-22T18:00:00+05:00');
+  const k = createUserKey(store, o, 'libre', 'read', { write: true, expiresAt: '2026-11-22T18:00:00+05:00' });
   expect(store.db.query('SELECT expires_at FROM api_keys WHERE id = ?').get(k.id)).toEqual({ expires_at: '2026-11-22T13:00:00.000Z' });
   now = Date.parse('2026-11-22T13:00:01.000Z');
   expect(verifyUserKey(store, k.key)).toBeNull();
@@ -327,7 +330,7 @@ test('T119a-H7: la caducidad de una clave se normaliza a UTC y no admite fechas 
 
 test('T119a-H11: las claves de usuario llevan prefijo propio y no valen como claves locales ni al revés', () => {
   const o = owner();
-  const k = createUserKey(store, o, 'prefijo', 'decide');
+  const k = createUserKey(store, o, 'prefijo', 'decide', { write: true });
   expect(k.key).toMatch(/^fabu_[a-f0-9]{12}_[A-Za-z0-9_-]{43}$/);
   expect(verifyUserKey(store, k.key)).not.toBeNull();
   // Con el prefijo de las claves locales, el mismo secreto no autentica por ninguna vía.
@@ -338,4 +341,24 @@ test('T119a-H11: las claves de usuario llevan prefijo propio y no valen como cla
   const local = store.createApiKey('local', 'read');
   expect(local.key.startsWith('fabk_')).toBe(true);
   expect(verifyUserKey(store, local.key.replace('fabk_', 'fabu_'))).toBeNull();
+});
+
+test('T119a-H13: --write en las claves, runAs síncrono, auditoría exportada con op_id del llamador y clase de sesión', () => {
+  const o = owner();
+  // (b) Un servidor sin --write no crea ni revoca claves.
+  throwsCode(() => createUserKey(store, o, 'sinwrite', 'read', { write: false }), 'forbidden');
+  const k = createUserKey(store, o, 'conwrite', 'read', { write: true });
+  throwsCode(() => revokeUserKey(store, o, k.id, false), 'forbidden');
+  expect(verifyUserKey(store, k.key)).not.toBeNull();
+  // (c) Una fn asíncrona se rechaza y su efecto se deshace.
+  expect(() => runAs(store, o, 'session/list', { write: false }, (() => {
+    store.db.query(`INSERT INTO identity_audit (op_id, at, actor, actor_source, action, result) VALUES ('x','t','a','cli','x','ok')`).run();
+    return Promise.resolve(1);
+  }) as never)).toThrow('síncrona');
+  expect(store.db.query(`SELECT 1 FROM identity_audit WHERE op_id = 'x'`).get()).toBeNull();
+  // (d) El llamador aporta el ID de la operación; repetirlo no duplica el asiento.
+  audit(store, serviceActor('channel', 'c1'), 'provider.revoke-failed', null, { why: 'timeout' }, 'error', 'op-ajena-1');
+  expect(store.db.query(`SELECT action, result, actor FROM identity_audit WHERE op_id = 'op-ajena-1'`).get())
+    .toEqual({ action: 'provider.revoke-failed', result: 'error', actor: 'service:channel:c1' });
+  expect(() => audit(store, consoleActor('op'), 'otra', null, undefined, 'ok', 'op-ajena-1')).toThrow();
 });
