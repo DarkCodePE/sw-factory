@@ -65,7 +65,8 @@ test('etiquetas de roles: las tres primeras y «y N más»', async () => {
   for (const a of [impl, inv, 'v1', 'v2', 'v3']) score(digest, a);
   server = startWeb(dir, 0);
   const h = await html('/metricas?tab=jueces&range=all');
-  expect(h.match(/<span class="chip">/g)).toHaveLength(4); // tres roles y «y 2 más» expect(h).toContain('y 2 más');
+  expect(h.match(/<span class="chip">/g)).toHaveLength(4); // tres roles y «y 2 más»
+  expect(h).toContain('y 2 más');
 });
 
 test('con --write aparece «Añadir juez»; crear guarda un perfil nuevo SIN asignarlo y deja evento con actor', async () => {
