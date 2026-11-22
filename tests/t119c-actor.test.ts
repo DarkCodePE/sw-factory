@@ -55,7 +55,8 @@ test('el rol de la nota queda el de ese momento aunque luego cambie, y el prompt
   const [n] = c.store.listChangeNotes(changeId);
   expect(n!.actorRole).toBe('member');
   const block = notesBlock([{ id: n!.id, body: n!.body, createdAt: n!.createdAt, actorUserId: n!.actorUserId, actorRole: n!.actorRole }], 'fijo');
-  expect(block).toContain(`[user:${p.userId} role:member] una nota`);
+  expect(block).toContain(`- note 1: user:${p.userId} role:member`);
+  expect(block.indexOf('role:member')).toBeLessThan(block.indexOf('<<<OWNER_NOTE'));
   // Sin metadata (nota local o histórica) el formato es el de siempre.
   expect(notesBlock([{ id: 'x', body: 'b', createdAt: 't' }], 'fijo')).toContain('[t] b');
 });
