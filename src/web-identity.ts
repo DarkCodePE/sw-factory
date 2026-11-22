@@ -37,6 +37,14 @@ const GH = { authorizeUrl: 'https://github.com/login/oauth/authorize', tokenUrl:
 export const validGithubLogin = (v: unknown): v is string => typeof v === 'string' && /^[A-Za-z0-9](?:[A-Za-z0-9]|-(?=[A-Za-z0-9])){0,38}$/.test(v) && v.length <= 39;
 
 export class GithubError extends Error {}
+
+/** `https://<host>[:puerto]` sin ruta ni barra final: de él salen el redirect exacto, el Host y el Origin. Falla al arrancar, no en el primer login. */
+function checkPublicOrigin(o: string): string {
+  let ok = false;
+  try { const u = new URL(o); ok = u.protocol === 'https:' && u.origin === o; } catch { /* se informa abajo */ }
+  if (!ok) throw new Error(`publicOrigin debe ser https://<host>[:puerto] sin ruta ni barra final: ${JSON.stringify(o)}`);
+  return o;
+}
 /** GitHub respondió con cuota agotada (403/429): se reintenta más tarde, no es un usuario inexistente. */
 export class GithubQuotaError extends GithubError {}
 
@@ -44,7 +52,7 @@ export class GithubConnector {
   readonly redirectUri: string;
   private urls: typeof GH;
   constructor(private cfg: GithubConfig) {
-    this.redirectUri = `${cfg.publicOrigin}/auth/callback`;
+    this.redirectUri = `${checkPublicOrigin(cfg.publicOrigin)}/auth/callback`;
     this.urls = { authorizeUrl: cfg.authorizeUrl ?? GH.authorizeUrl, tokenUrl: cfg.tokenUrl ?? GH.tokenUrl, apiBase: cfg.apiBase ?? GH.apiBase };
   }
 
@@ -159,7 +167,7 @@ async function formOf(req: Request): Promise<URLSearchParams | null> {
 }
 
 export function identityRoutes(opts: IdentityOptions) {
-  const { store, github, publicOrigin } = opts;
+  const { store, github } = opts, publicOrigin = checkPublicOrigin(opts.publicOrigin);
   const host = new URL(publicOrigin).host;
   const secret = opts.secret ?? randomBytes(32).toString('hex');
   const clock = () => store.clock().getTime();

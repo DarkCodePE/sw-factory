@@ -464,3 +464,11 @@ test('T119b-H6: un cuerpo en trozos sin Content-Length se corta al pasar del top
   expect(res!.status).toBe(403);
   expect(pulled).toBeLessThan(20); // 4 KiB de tope: no se leyó el megabyte
 });
+
+test('T119b-H7: publicOrigin se valida al construir: https, sin ruta, sin barra final', () => {
+  for (const bad of ['http://fab.test', 'https://fab.test/', 'https://fab.test/app', 'https://fab.test?x=1', 'fab.test', '']) {
+    expect(() => new GithubConnector({ clientId: CLIENT_ID, clientSecret: () => CLIENT_SECRET, publicOrigin: bad })).toThrow('publicOrigin');
+    expect(() => identityRoutes({ store, github: routes as never, publicOrigin: bad, write: true })).toThrow('publicOrigin');
+  }
+  expect(() => new GithubConnector({ clientId: CLIENT_ID, clientSecret: () => CLIENT_SECRET, publicOrigin: 'https://fab.test:8443' })).not.toThrow();
+});
