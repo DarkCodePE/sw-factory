@@ -117,6 +117,7 @@ export function scorerFromForm(raw: Record<string, string | undefined>): { ws: s
 /** Guarda una copia del perfil vigente del workstream con el juez nuevo y devuelve su digest. No la asigna (D-H) y deja un evento con el actor. */
 export function createScorer(store: Store, stateDir: string, input: ReturnType<typeof scorerFromForm>): { slug: string; digest: string; created: boolean } {
   const ws = store.getWorkstream(input.ws);
+  if (ws.state === 'archived') throw new StoreError('conflict', 'el workstream está archivado');
   const profile = structuredClone(resolveProfile(stateDir, ws.profile).profile);
   if (profile.scorers?.[input.name]) throw new StoreError('conflict', 'ya existe un juez con ese nombre');
   profile.schemaVersion = 2; // los jueces solo existen en perfiles v2

@@ -142,3 +142,12 @@ test('T114-H4: reenviar el mismo juez no deja un segundo evento y redirige con n
   expect(q(second).get('digest')).toBe(q(first).get('digest'));
   expect(events()).toHaveLength(1);
 });
+
+test('T114-H6: un workstream archivado no admite jueces nuevos: sin perfil ni evento', async () => {
+  const { digest } = seed(); store.createWorkstream({ slug: 'otro', goal: 'g', repo: dir, agent: 'fake' }); // da una página con formulario (y CSRF)
+  store.setWorkstreamState('ws', 'archived');
+  server = startWeb(dir, 0, { write: true }); await login();
+  const r = await post('/scorers/nuevo', form());
+  expect(new URL(r.headers.get('location')!, base()).searchParams.has('digest')).toBe(false);
+  expect(events()).toEqual([]); expect(ws().profile).toBe(digest);
+});
