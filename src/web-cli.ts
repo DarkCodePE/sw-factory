@@ -6,7 +6,7 @@
  * en la URL fija y confirma en un segundo paso (sesión + Origin + CSRF); la URL nunca precarga ni aprueba un código. El canje exige el
  * verificador original y consume el pareo. Todo en memoria, con TTL y tope: un reinicio invalida los pareos pendientes.
  */
-import { createHash, randomBytes } from 'node:crypto';
+import { createHash, createHmac, randomBytes } from 'node:crypto';
 import { join } from 'node:path';
 import { Store, StoreError } from './store.ts';
 import {
@@ -310,7 +310,12 @@ export function cliRoutes(opts: CliRoutesOptions) {
         return p.role === 'viewer' ? viewerRead(url.pathname, data) : data;
       }
       case 'triage/all': return verb(store, p, 'triage/all', () => {
-        const done = store.listSignals(fields.ws ?? '', 'new').map(sig => {
+        // Lote: sin `confirm` solo cuenta las señales (ids, no títulos) y da la revisión del lote; con ella repetida se tria.
+        const batch = store.listSignals(fields.ws ?? '', 'new');
+        const revision = createHmac('sha256', opts.secret).update(JSON.stringify(['triage/all', p.userId, fields.ws, batch.map(s => s.id)])).digest('hex');
+        if (cmd.confirm === undefined) return { preview: { count: batch.length, signals: batch.map(s => s.id) }, revision };
+        if (!constantEqual(cmd.confirm, revision)) throw new StoreError('conflict', 'el lote cambió o la revisión no coincide: repite la vista previa');
+        const done = batch.map(sig => {
           const c = store.triageSignal(sig.id);
           if (hasAdmission(store)) linkTriagedSignal(new AdmissionDb(store), sig.id, c.id);
           return { signal: sig.id, change: c.id };

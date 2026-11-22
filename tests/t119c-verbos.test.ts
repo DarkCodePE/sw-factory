@@ -53,9 +53,19 @@ test('triage --all: owner y admin triaban las señales nuevas con su usuario com
   for (const role of ['member', 'viewer'] as const) expect((await send(role, { op: 'triage/all', fields: { ws: ws.slug } })).status).toBe(403);
   expect((await send('admin', { op: 'triage/all', fields: { ws: ws.slug } }, false)).status).toBe(403);
   expect(c.store.listSignals(ws.id, 'new')).toHaveLength(2);
-  const res = await send('admin', { op: 'triage/all', fields: { ws: ws.slug } });
+  // Lote: la primera llamada es vista previa y no triá nada; la revisión solo vale para ese lote.
+  const pre = await send('admin', { op: 'triage/all', fields: { ws: ws.slug } });
+  const { preview, revision } = ((await pre.json()) as { data: { preview: { count: number }; revision: string } }).data;
+  expect(preview.count).toBe(2);
+  expect(c.store.listSignals(ws.id, 'new')).toHaveLength(2);
+  expect((await send('admin', { op: 'triage/all', fields: { ws: ws.slug }, confirm: 'x'.repeat(64) })).status).toBe(409);
+  expect((await send('owner', { op: 'triage/all', fields: { ws: ws.slug }, confirm: revision })).status).toBe(409); // otra persona
+  c.store.addSignal(ws.slug, 's3', 'b'); // el lote cambió
+  expect((await send('admin', { op: 'triage/all', fields: { ws: ws.slug }, confirm: revision })).status).toBe(409);
+  const { data: { revision: r2 } } = (await (await send('admin', { op: 'triage/all', fields: { ws: ws.slug } })).json()) as { data: { revision: string } };
+  const res = await send('admin', { op: 'triage/all', fields: { ws: ws.slug }, confirm: r2 });
   expect(res.status).toBe(200);
-  expect(((await res.json()) as { data: { triaged: unknown[] } }).data.triaged).toHaveLength(2);
+  expect(((await res.json()) as { data: { triaged: unknown[] } }).data.triaged).toHaveLength(3);
   expect(c.store.listSignals(ws.id, 'new')).toHaveLength(0);
   const ev = c.store.db.query("SELECT actor, actor_source FROM events WHERE message LIKE 'signal%' OR change_id IS NOT NULL ORDER BY id DESC LIMIT 1").get() as { actor: string; actor_source: string };
   expect(ev).toEqual({ actor: `user:${c.web.admin.userId}`, actor_source: 'cli' });
