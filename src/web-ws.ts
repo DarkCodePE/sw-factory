@@ -102,7 +102,7 @@ function cardForms(w: Workstream, csrf: string, inProgress: number): string {
   return `<div class="ws-forms">${w.state === 'active' ? state('paused', 'Pausar') : w.state === 'archived' ? state('paused', 'Reabrir (pausado)') : state('active', 'Activar')}${settings}${archive}</div>`;
 }
 
-export function workstreamsBody(store: Store, ui: { badge(s: string): string }, csrf?: string): string {
+export function workstreamsBody(store: Store, ui: { badge(s: string): string }, csrf?: string, hideRepo = false): string {
   const list = store.listWorkstreams();
   const runners = store.listRunnerSummaries();
   const items = list.map(w => {
@@ -113,7 +113,7 @@ export function workstreamsBody(store: Store, ui: { badge(s: string): string }, 
     }
     const running = csrf ? store.changeIndex(w.slug).filter(c => c.status === 'in_progress').length : 0;
     const finish = csrf && w.state === 'draft' ? `<h3>Antes de activar</h3>${checklist({ agent: w.agent, verify: w.verify?.length ? 'definido' : '' })}` : '';
-    return `<li><h2><a href="/changes?ws=${enc(w.slug)}">${esc(w.slug)}</a> ${ui.badge(w.state)}</h2><p>${esc(w.goal)}</p><p class="muted">Agente: ${esc(w.agent)} · ${esc(w.repo)} · Workers: ${w.workerConcurrency} · Tope: ${w.taskLimit}</p>${workstreamRunner(w, runners, csrf, roleRunners)}${finish}${csrf ? cardForms(w, csrf, running) : ''}</li>`;
+    return `<li><h2><a href="/changes?ws=${enc(w.slug)}">${esc(w.slug)}</a> ${ui.badge(w.state)}</h2><p>${esc(w.goal)}</p><p class="muted">Agente: ${esc(w.agent)} ${hideRepo ? '' : ` · ${esc(w.repo)}`} · Workers: ${w.workerConcurrency} · Tope: ${w.taskLimit}</p>${workstreamRunner(w, runners, csrf, roleRunners)}${finish}${csrf ? cardForms(w, csrf, running) : ''}</li>`;
   });
   return `<p class="intro">Frentes de trabajo y su objetivo.</p>${csrf ? '<p><a href="/workstreams/nuevo">Nuevo workstream</a></p>' : ''}<ul class="workstreams">${items.join('')}</ul>${!list.length ? '<p class="empty">No hay workstreams. Crea uno desde fab ws create.</p>' : ''}`;
 }

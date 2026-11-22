@@ -5,8 +5,9 @@ import { join } from 'node:path';
 import { Store } from '../src/store.ts';
 import { authorize, READ_CAPABILITIES, ROLES, type Role } from '../src/policy.ts';
 import type { Principal } from '../src/users.ts';
-import { authorizeRead, configViewFor, readCapability, structuredActivityPage, structuredChangePage, visiblePaths } from '../src/web-views.ts';
+import { authorizeRead, configViewFor, readCapability, structuredActivityPage, structuredChangePage, structuredSignalsPage, structuredWorkstreamsPage, visiblePaths } from '../src/web-views.ts';
 import type { Ui } from '../src/web-changes.ts';
+import { workstreamsBody } from '../src/web-ws.ts';
 
 const who = (role: Role, over: Partial<Principal> = {}): Principal =>
   ({ userId: `u-${role}`, role, issuer: 'github', subject: role, displayName: role, via: 'web', recovery: false, ...over });
@@ -15,11 +16,11 @@ const status = (role: Role, path: string): number => { const d = authorizeRead(w
 
 // Una fila por vista y rol (§4.2): O A M V.
 const MATRIX: [string, [number, number, number, number]][] = [
-  ['/', [200, 200, 200, 200]], ['/changes', [200, 200, 200, 200]], ['/signals', [200, 200, 200, 200]],
-  ['/automations', [200, 200, 200, 200]], ['/workstreams', [200, 200, 200, 200]], ['/flujo', [200, 200, 200, 200]],
-  ['/benchmarks', [200, 200, 200, 200]], ['/benchmarks/x', [200, 200, 200, 200]], ['/experimentos/x', [200, 200, 200, 200]],
+  ['/', [200, 200, 200, 403]], ['/changes', [200, 200, 200, 403]], ['/signals', [200, 200, 200, 200]],
+  ['/automations', [200, 200, 200, 403]], ['/workstreams', [200, 200, 200, 200]], ['/flujo', [200, 200, 200, 403]],
+  ['/benchmarks', [200, 200, 200, 403]], ['/benchmarks/x', [200, 200, 200, 403]], ['/experimentos/x', [200, 200, 200, 403]],
   ['/changes/c1', [200, 200, 200, 200]], ['/activities/a1', [200, 200, 200, 200]],
-  ['/metricas', [200, 200, 200, 200]],
+  ['/metricas', [200, 200, 200, 403]],
   ['/changes/c1/turns/t1/log', [200, 200, 200, 403]], ['/changes/c1/turns/t1/transcript', [200, 200, 200, 403]],
   ['/config', [200, 200, 403, 403]], ['/config/runners', [200, 200, 403, 403]], ['/perfiles', [200, 200, 403, 403]],
   ['/definicion', [200, 200, 403, 403]], ['/automejora', [200, 200, 403, 403]], ['/webhooks', [200, 200, 403, 403]],
@@ -74,8 +75,8 @@ test('inventario: todo GET literal de web.ts y su lista de activos tiene corresp
 });
 
 test('visiblePaths: el menú del viewer omite configuración y claves; el del owner las lista', () => {
-  const nav = ['/', '/changes', '/metricas', '/config', '/perfiles', '/config/claves-api', '/webhooks'];
-  expect(visiblePaths(who('viewer'), nav)).toEqual(['/', '/changes', '/metricas']);
+  const nav = ['/signals', '/workstreams', '/metricas', '/config', '/perfiles', '/config/claves-api', '/webhooks'];
+  expect(visiblePaths(who('viewer'), nav)).toEqual(['/signals', '/workstreams']);
   expect(visiblePaths(who('owner'), nav)).toEqual(nav);
   expect(visiblePaths(undefined, nav)).toEqual([]);
 });
@@ -118,6 +119,30 @@ test('V: un error de worker tampoco aparece', () => {
   const a = store.listActivities({ changeId: store.createChange(w.id, 'T', 'd').id })[0]!;
   store.db.query("UPDATE activities SET status = 'failed', error = ? WHERE id = ?").run('ERROR-DEL-WORKER-XYZ', a.id);
   expect(structuredActivityPage(store, ui, a.id).body).not.toContain('ERROR-DEL-WORKER-XYZ');
+});
+
+// T119d-H1: toda ruta que da `structured` a V tiene su vista estructurada; el resto da 403, nunca se sirve tal cual.
+test('H1: para V solo hay 200 donde existe vista estructurada; el resto 403 no_structured_view', () => {
+  const ok = ['/signals', '/workstreams', '/changes/c1', '/activities/a1'];
+  for (const p of ok) expect(authorizeRead(who('viewer'), get(p)), p).toMatchObject({ ok: true, projection: 'structured' });
+  for (const p of ['/', '/changes', '/automations', '/flujo', '/benchmarks', '/benchmarks/x', '/experimentos', '/experimentos/x', '/metricas'])
+    expect(authorizeRead(who('viewer'), get(p)), p).toMatchObject({ ok: false, status: 403, reason: 'no_structured_view' });
+  expect(authorizeRead(who('member'), get('/metricas'))).toMatchObject({ ok: true, projection: 'full' });
+});
+
+test('H1: señales para V: título, workstream y fecha; sin cuerpo', () => {
+  store.createWorkstream({ slug: 'uno', goal: 'OBJETIVO-CANARIO', repo: '/CANARIO-RUTA-REPO' });
+  store.addSignal('uno', 'Titulo <i>', 'CUERPO-CANARIO');
+  const html = structuredSignalsPage(store, ui).body;
+  expect(html).toContain('Titulo &#60;i&#62;'); expect(html).toContain('uno'); expect(html).not.toContain('CUERPO-CANARIO');
+});
+
+test('H1: workstreams para V: sin objetivo ni ruta del repo; para el resto, hideRepo oculta la ruta', () => {
+  store.createWorkstream({ slug: 'uno', goal: 'OBJETIVO-CANARIO', repo: '/CANARIO-RUTA-REPO' });
+  const html = structuredWorkstreamsPage(store, ui).body;
+  expect(html).toContain('uno'); expect(html).not.toContain('CANARIO');
+  expect(workstreamsBody(store, ui)).toContain('CANARIO-RUTA-REPO');
+  expect(workstreamsBody(store, ui, undefined, true)).not.toContain('CANARIO-RUTA-REPO');
 });
 
 test('sesiones intercaladas: la decisión de cada principal no depende de la anterior', () => {

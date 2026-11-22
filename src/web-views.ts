@@ -31,6 +31,9 @@ const ROUTES: [RegExp, Cap][] = [
   [/^\/automations\/[^/]+\/editar$/, 'automations/update'],
 ];
 
+/** Rutas con vista estructurada para V (§4.2). Una ruta sin ella da 403 a V en vez de servirse tal cual (T119d-H1). */
+const STRUCTURED: RegExp[] = [/^\/(signals|workstreams)$/, /^\/(changes|activities)\/[^/]+$/];
+
 /** Capacidad que exige un GET, o null si la ruta no está en el inventario. */
 export function readCapability(url: URL): string | null {
   for (const [re, cap] of ROUTES) if (re.test(url.pathname)) return typeof cap === 'function' ? cap(url) : cap;
@@ -47,6 +50,7 @@ export function authorizeRead(principal: Principal | undefined, url: URL): ReadD
   const d = authorize(principal, capability, { via: 'web', write: true });
   if (!d.ok) return { ok: false, status: 403, reason: d.reason };
   const evidence = authorize(principal, 'evidence/read', { via: 'web', write: false }).ok;
+  if (!evidence && !STRUCTURED.some(re => re.test(url.pathname))) return { ok: false, status: 403, reason: 'no_structured_view' };
   return { ok: true, capability, projection: evidence ? 'full' : 'structured' };
 }
 
@@ -57,6 +61,19 @@ export const visiblePaths = (principal: Principal | undefined, paths: string[]):
 /** Vista de `/config` para este principal: los indicadores de credenciales del host solo los ve el owner (§4.2). */
 export const configViewFor = (principal: Principal): ConfigView =>
   ({ credentials: authorize(principal, 'config/credentials', { via: 'web', write: false }).ok });
+
+/** Señales para viewer (opción A): título, workstream y fecha; el cuerpo solo para O A M. */
+export function structuredSignalsPage(store: Store, ui: Ui): { title: string; body: string } {
+  const e = ui.escape;
+  const rows = store.listWorkstreams().flatMap(w => store.listSignals(w.id, 'new').map(s => `<li><h2>${e(s.title)}</h2><p class="muted">${e(w.slug)} · ${e(s.createdAt)}</p></li>`)).join('');
+  return { title: 'Señales', body: `<p class="intro">Entradas nuevas a la espera de triaje.</p>${rows ? `<ul class="workstreams">${rows}</ul>` : '<p class="empty">No hay señales nuevas.</p>'}<p class="muted">Tu rol ve el título, no la descripción.</p>` };
+}
+
+/** Workstreams para viewer: nombre y estado, sin objetivo, ruta del repo ni ajustes. */
+export function structuredWorkstreamsPage(store: Store, ui: Ui): { title: string; body: string } {
+  const rows = store.listWorkstreams().map(w => `<li><h2><a href="/changes?ws=${encodeURIComponent(w.slug)}">${ui.escape(w.slug)}</a> ${ui.badge(w.state)}</h2></li>`).join('');
+  return { title: 'Workstreams', body: `<ul class="workstreams">${rows}</ul>${rows ? '' : '<p class="empty">No hay workstreams.</p>'}` };
+}
 
 const when = (v: string | null) => v ?? '—';
 
