@@ -104,13 +104,13 @@ function spending(m: M): string {
       String(g[field].unknown),
     ]));
 
-  const totalKnown = s.total.total !== null ? s.total.total / 1_000_000 : (m.cost?.total !== null && m.cost?.total !== undefined ? m.cost.total : null);
+  const totalKnown = s.total.total !== null ? s.total.total / 1_000_000 : null;
   const totalFig = totalKnown !== null ? money(totalKnown) : 'No medido';
-  const measuredUsd = s.total.measured !== null ? s.total.measured / 1_000_000 : (m.cost?.measured !== null && m.cost?.measured !== undefined ? m.cost.measured : null);
-  const unknownCount = s.total.unknown || m.cost?.unknownChanges || 0;
+  const measuredUsd = s.total.measured !== null ? s.total.measured / 1_000_000 : null;
+  const unknownCount = s.total.unknown;
   const subTotal = measuredUsd !== null ? money(measuredUsd) : null;
   const subText = measuredUsd !== null
-    ? `Subtotal medido ${money(measuredUsd)} · ${unknownCount} ${s.attempts.length ? 'intentos' : 'changes'} sin coste completo medido`
+    ? `Subtotal medido ${money(measuredUsd)} · ${unknownCount} ${unknownCount === 1 ? 'intento' : 'intentos'} sin coste completo medido`
     : `${unknownCount} intentos sin coste medido`;
 
   const costCard = card({
@@ -120,7 +120,7 @@ function spending(m: M): string {
     figure: totalFig,
     sub: subText,
     days: d.days,
-    series: [{ label: 'Coste', values: d.costs, missing: i => d.changes[i] !== null ? 'No medido' : 'Sin datos' }],
+    series: [{ label: 'Coste', values: s.daily.total, missing: i => s.daily.hasAttempts[i] ? 'No medido' : 'Sin datos' }],
     fmt: money,
     tableCaption: 'Coste por día',
   });

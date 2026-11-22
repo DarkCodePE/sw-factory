@@ -205,4 +205,39 @@ describe('Pestaña Gasto en la web (T113)', () => {
     expect(body).toContain(`<a href="/changes/${encodeURIComponent(change.id)}">Change con PR caro</a>`);
     expect(body).toContain('1.25 USD');
   });
+
+  test('T113-H1: sin reserva a m.cost, total y Coste por día provienen de spending.daily', () => {
+    const today = new Date().toISOString().slice(0, 10);
+    // Intento con gasto desconocido en spending
+    const itemA = seedItem({
+      title: 'Change con gasto no medido en spending',
+      date: `${today}T10:00:00.000Z`,
+      attemptCosts: [0.50],
+      inferenceAttempts: [{
+        adapter: 'claude',
+        remoteDeclared: true,
+        usage: { effectiveModel: 'm-remoto', costUsd: 0.50 },
+      }],
+    });
+    store.beginCostAttempt(itemA.activity, {
+      id: 'att-remoto',
+      rate: costRateAt(dir, `${today}T10:00:00.000Z`, 'torre'),
+      remote: true,
+      runner: 'torre',
+      adapter: 'claude',
+      legacyCount: 0,
+    });
+    store.finishCostAttempt('att-remoto', { costUsd: 0.50 }, 100);
+
+    const url = new URL(`http://127.0.0.1:4310/metricas?tab=gasto&range=7`);
+    const { body } = metricsPage(store, dir, url);
+
+    // Sin reserva a m.cost: el total debe ser «No medido» y no caer a ninguna cifra parcial
+    expect(body).toContain('Total: <strong>No medido</strong>');
+    expect(body).not.toContain('Total: <strong>0.50 USD</strong>');
+
+    // Coste por día debe marcar «No medido» en la fecha con intentos no medidos, no 0.50 USD
+    expect(body).toContain(`<th scope="row">${today}</th><td>No medido</td>`);
+    expect(body).not.toContain(`<th scope="row">${today}</th><td>0.50 USD</td>`);
+  });
 });
