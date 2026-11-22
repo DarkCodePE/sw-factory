@@ -272,3 +272,45 @@ test('medium sequences are admitted as a whole and stop after the first failed c
   expect(JSON.parse(results[1]!.content as string).exitCode).toBe(1);
   expect(git('diff', '--cached', '--name-only').stdout.toString()).toBe('');
 });
+
+test('T108 H8: native suma los contadores completos y conserva ausencias entre llamadas', async () => {
+  const cwd = await workspace();
+  const provider = model([
+    { ...turn('incompleto'), inference: { effectiveModel: 'servido', inputTokens: 10, outputTokens: 2, cacheReadTokens: 0, costUsd: 0.125 } },
+    { ...turn('final'), inference: { effectiveModel: 'servido', inputTokens: 20, outputTokens: 3, cacheReadTokens: 4, cacheWriteTokens: 6, costUsd: 0.25 } },
+  ]);
+  const result = await runCodingAgent({ cwd, provider, prompt: 'medir', sessionDir: join(cwd, 'sessions'),
+    validateFinal: text => text === 'final' ? undefined : 'requiere otra llamada' });
+  expect(result.ok).toBe(true);
+  expect(result.inference).toEqual({ effectiveModel: 'servido', inputTokens: 30, outputTokens: 5, cacheReadTokens: 4, costUsd: 0.375 });
+  expect(result.inference?.cacheWriteTokens).toBeUndefined();
+});
+
+test('T108 H8: native no presenta como total una medición posterior a un fallo del proveedor', async () => {
+  const cwd = await workspace();
+  let calls = 0;
+  const provider: ModelProvider = {
+    id: 'synthetic',
+    async complete() {
+      if (++calls === 1) throw new ProviderError('fallo sintético', true);
+      return { ...turn('final'), inference: { effectiveModel: 'servido', inputTokens: 20, outputTokens: 3, cacheReadTokens: 0, costUsd: 0.2 } };
+    },
+  };
+  const result = await runCodingAgent({ cwd, provider, prompt: 'medir', sessionDir: join(cwd, 'sessions') });
+  expect(result.ok).toBe(true);
+  expect(calls).toBe(2);
+  expect(result.inference).toBeUndefined();
+});
+
+test('T108 H8: native no atribuye al último modelo los contadores de varios modelos', async () => {
+  const cwd = await workspace();
+  const provider = model([
+    { ...turn('incompleto'), inference: { effectiveModel: 'primero', inputTokens: 10, outputTokens: 2 } },
+    { ...turn('final'), inference: { effectiveModel: 'segundo', inputTokens: 20, outputTokens: 3 } },
+  ]);
+  const result = await runCodingAgent({ cwd, provider, prompt: 'medir', sessionDir: join(cwd, 'sessions'),
+    validateFinal: text => text === 'final' ? undefined : 'requiere otra llamada' });
+  expect(result.ok).toBe(true);
+  expect(result.inference).toEqual({ inputTokens: 30, outputTokens: 5 });
+  expect(result.inference?.effectiveModel).toBeUndefined();
+});
