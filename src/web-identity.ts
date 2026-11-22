@@ -234,7 +234,8 @@ export function identityRoutes(opts: IdentityOptions) {
         if (!user) return loginDenied(gone);
         // Rotación: una sesión que llegue al callback no se reutiliza; se revoca y se emite otra.
         const old = session(req);
-        if (old) revokeSession(store, old, old.sessionId!);
+        // Si la política no deja revocarla (recuperación restringida), la nueva se emite igual: quien entra no queda fuera.
+        if (old) try { revokeSession(store, old, old.sessionId!); } catch (e) { if (!(e instanceof StoreError)) throw e; }
         const s = issueSession(store, user.id, 'web');
         return page('Sesión iniciada', '<p><a href="/">Continuar al panel</a></p>', 200,
           [sessionCookie(s.token, s.expiresAt), ...gone], '<meta http-equiv="refresh" content="0;url=/">');
@@ -250,7 +251,8 @@ export function identityRoutes(opts: IdentityOptions) {
 
     if (path === '/cuenta' && method === 'GET') {
       const p = session(req);
-      return p ? account(p) : redirect('/login');
+      if (!p) return redirect('/login');
+      try { return account(p); } catch (e) { return refused(e); } // p. ej. recuperación restringida: la política lo deniega todo salvo confirmar
     }
 
     const revoke = /^\/cuenta\/sesiones\/([a-f0-9]{12})\/revocar$/.exec(path);

@@ -3,7 +3,7 @@ import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { Store } from '../src/store.ts';
-import { acceptInvitation, bootstrapOwner, inviteUser, issueSession, listSessions, resolvePrincipal, type Principal, type Role } from '../src/users.ts';
+import { acceptInvitation, bootstrapOwner, enterRecovery, inviteUser, issueSession, listSessions, resolvePrincipal, type Principal, type Role } from '../src/users.ts';
 import { GithubConnector, identityRoutes, validGithubLogin, GITHUB_ISSUER } from '../src/web-identity.ts';
 import { LoginTransactions, PENDING_LOGIN_MAX, csrfToken } from '../src/web-auth.ts';
 import { CLIENT_ID, CLIENT_SECRET, startFakeGithub, type FakeGithub } from './helpers/fake-github.ts';
@@ -377,4 +377,19 @@ test('T119b-H1: los formularios funcionan con el Origin que pone un navegador se
   expect(out.headers.get('referrer-policy')).toBe('no-referrer');
   expect(start.headers.get('referrer-policy')).toBe('no-referrer');
   expect(cb.headers.get('referrer-policy')).toBe('no-referrer');
+});
+
+test('T119b-H2: en recuperación restringida el owner designado entra, /cuenta responde 403 sin excepción y un segundo login con cookie válida no falla', async () => {
+  const o = bootstrapOwner(store, { issuer: GITHUB_ISSUER, subject: '1', displayName: 'Dueña', operator: 'op' });
+  enterRecovery(store, 'op', 'restauración', o.id);
+  const a = await login({ id: 1, login: 'd' });
+  expect(a.res.status).toBe(200);
+  const cuenta = await call('GET', '/cuenta', { cookie: pair(a.session) });
+  expect(cuenta.status).toBe(403);
+  const again = await login({ id: 1, login: 'd' }, '', '10.0.0.2');
+  const s = pair(a.session);
+  const second = await startLogin('', '10.0.0.3');
+  const cb = await call('GET', `/auth/callback?code=${gh.grant({ id: 1, login: 'd' })}&state=${new URL(second.location).searchParams.get('state')}`, { cookie: `${second.loginCookie}; ${s}`, ip: '10.0.0.3' });
+  expect(again.res.status).toBe(200); expect(cb.status).toBe(200); expect(cookieOf(cb, '__Host-fab_session')).toBeTruthy();
+  expect((await call('POST', '/logout', { cookie: s, form: { csrf: csrfFor(s) } })).status).toBe(403); // revocar sesión no vale en recuperación: es de la política (T119e)
 });
