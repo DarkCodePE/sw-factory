@@ -39,6 +39,7 @@ writeFileSync(bundlePath, await bytes(job.bundleBytes));
 const base = { v: 1, type: 'result', jobId: job.jobId, exitCode: 0, durationMs: 5, usage: null, output: reportText, head: null, bundleBytes: 0, bundleSha256: null };
 await send({ v: 1, type: 'accepted', jobId: job.jobId });
 if (scenario === 'lost-accepted') process.exit(0);
+if (scenario === 'accepted-then-busy') { await send({ v: 1, type: 'error', code: 'busy', message: 'TEXTO-LIBRE-DEL-RUNNER' }); process.exit(0); }
 const log = (s: string) => send({ v: 1, type: 'log', data: Buffer.from(s).toString('base64') });
 await log('trabajando');
 if (scenario === 'timed' || scenario === 'lost-after-execution' || scenario === 'double-end') {

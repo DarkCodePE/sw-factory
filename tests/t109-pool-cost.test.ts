@@ -103,3 +103,9 @@ test('M30: descartar solo borra un intento abierto; uno ya cerrado se conserva',
   store.discardUnstartedCostAttempt('abierto');
   expect(attempts().map(r => r.id)).toEqual(['cerrado']);
 });
+
+test('T109-N5 (M29c): un runner que aceptó y después responde busy conserva su intento cerrado', async () => {
+  const { ws, attempts, claim } = setup(true);
+  await processActivity(store, claim(), 'w1', opts(ws.id, { runnerTransport: runner('accepted-then-busy') }));
+  expect(attempts()).toMatchObject([{ remote: true, runner: 'torre', closedAt: expect.any(String), totalMicroUsd: null }]);
+});
