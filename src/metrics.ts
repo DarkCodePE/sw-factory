@@ -87,7 +87,7 @@ export function calculateMetrics(store: Store, stateDir: string, options: { ws?:
     const mergeAt = e?.mergedAt ? Date.parse(e.mergedAt) : NaN;
     const createdMs = Date.parse(c.createdAt);
     if (Number.isFinite(prAt) && prAt >= createdMs && prAt <= now) { kickoffPr.push(prAt - createdMs); prInteractions.push({ day: new Date(prAt).toISOString().slice(0, 10), total: (e?.reviews ?? 0) + (e?.answers ?? 0) + (e?.retries ?? 0) }); }
-    if (Number.isFinite(mergeAt) && mergeAt >= createdMs && mergeAt <= now) kickoffMerge.push(mergeAt - createdMs);
+    if (Number.isFinite(prAt) && Number.isFinite(mergeAt) && mergeAt >= createdMs && mergeAt <= now) kickoffMerge.push(mergeAt - createdMs);
     if (Number.isFinite(prAt) && Number.isFinite(mergeAt) && mergeAt >= prAt && mergeAt <= now) prMerge.push(mergeAt - prAt);
 
     const reviews = e?.reviews ?? 0, answers = e?.answers ?? 0, retries = e?.retries ?? 0;

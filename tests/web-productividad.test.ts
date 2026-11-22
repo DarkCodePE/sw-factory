@@ -113,3 +113,10 @@ test('T112-H2: con «Todo el historial» el subtítulo de runs dice los últimos
   const h = metricsPage(store, dir, new URL('http://127.0.0.1:4310/metricas?range=all')).body;
   expect(card(h, 'runs')).toContain('en los últimos 90 días');
 });
+
+test('T112-H3: un merge sin pr_opened no cuenta en «Kickoff → merge» (es la tarjeta de ciclo con PR)', () => {
+  const c = change('merge sin PR', '2026-11-18T00:00:00Z');
+  ev(c, 'merge_completed', '2026-11-18T05:00:00Z');
+  const t = calculateMetrics(store, dir, { range: '7', now }).prCycles.find(x => x.name === 'Kickoff → merge')!;
+  expect(t).toMatchObject({ median: null, samples: 0 });
+});
