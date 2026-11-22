@@ -6,7 +6,7 @@ import { Store } from '../src/store.ts';
 import { configPage, type ConfigView } from '../src/web-config.ts';
 import { AdmissionDb } from '../src/admission/db.ts';
 import { webhooksPage } from '../src/web-webhooks.ts';
-import { configViewFor } from '../src/web-views.ts';
+import { configViewFor, serverConfigPage, serverWebhooksPage } from '../src/web-views.ts';
 import type { Principal } from '../src/users.ts';
 import { ROLES, type Role } from '../src/policy.ts';
 
@@ -63,4 +63,19 @@ test('/webhooks: el indicador del secreto del host solo lo ve el owner (por rol)
   const seen = ROLES.map(r => page(configViewFor(who(r))).includes('Secreto en entorno'));
   expect(seen).toEqual([true, false, false, false]);
   expect(page({ credentials: false })).not.toContain('No configurado');
+});
+
+// T119d-H7: en servidor la vista sale del principal; no hay forma de pedir la página sin ella.
+test('serverConfigPage y serverWebhooksPage: admin y owner por api no ven credenciales ni rutas; owner web sí ve las credenciales', async () => {
+  new AdmissionDb(store); env('FAB_GITHUB_WEBHOOK_SECRET', 'secreto-canario-1234567890');
+  const who = (role: Role, via: Principal['via'] = 'web'): Principal => ({ userId: role, role, issuer: 'github', subject: role, displayName: role, via, recovery: false });
+  const cfg = async (p: Principal) => (await serverConfigPage(p, store, dir, new URL('http://x/config'), esc)).body;
+  const hook = (p: Principal) => serverWebhooksPage(p, store, new URL('http://x/webhooks'), esc).body;
+  for (const p of [who('admin'), who('owner', 'api')]) {
+    const html = await cfg(p);
+    for (const t of ['Credencial local', 'Jira (entorno)', 'definida en fab web', '>Ruta<']) expect(html, t).not.toContain(t);
+    expect(hook(p)).not.toContain('Secreto en entorno');
+  }
+  expect(await cfg(who('owner'))).toContain('Jira (entorno)');
+  expect(hook(who('owner'))).toContain('Secreto en entorno');
 });

@@ -5,7 +5,8 @@ import { authorize } from './policy.ts';
 import type { Principal } from './users.ts';
 import type { Store, Activity } from './store.ts';
 import type { Ui } from './web-changes.ts';
-import type { ConfigView } from './web-config.ts';
+import { configPage, type ConfigView } from './web-config.ts';
+import { webhooksPage } from './web-webhooks.ts';
 import { API_KEYS_PATH } from './web-api-keys.ts';
 
 /** `full`: el rol ve evidencia (O A M). `structured`: solo campos estructurados, sin texto libre de workers (V, §4.2). */
@@ -63,7 +64,13 @@ export const visiblePaths = (principal: Principal | undefined, paths: string[]):
 
 /** Vista de `/config` para este principal: los indicadores de credenciales del host solo los ve el owner (§4.2). */
 export const configViewFor = (principal: Principal): ConfigView =>
-  ({ credentials: authorize(principal, 'config/credentials', { via: 'web', write: false }).ok });
+  ({ credentials: principal.via === 'web' && authorize(principal, 'config/credentials', { via: 'web', write: false }).ok });
+
+/** Entradas de servidor: la vista sale siempre del principal, así que olvidarla no puede dejar la vista local completa (T119d-H7). */
+export const serverConfigPage = (principal: Principal, store: Store, stateDir: string, url: URL, escape: Ui['escape'], csrf?: string) =>
+  configPage(store, stateDir, url, escape, csrf, configViewFor(principal));
+export const serverWebhooksPage = (principal: Principal, store: Store, url: URL, escape: Ui['escape']) =>
+  webhooksPage(store, url, escape, configViewFor(principal));
 
 /** Señales para viewer (opción A): título, workstream y fecha; el cuerpo solo para O A M. */
 export function structuredSignalsPage(store: Store, ui: Ui): { title: string; body: string } {

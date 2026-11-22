@@ -186,6 +186,13 @@ test('sesiones intercaladas: la decisión de cada principal no depende de la ant
   expect(seq).toEqual([false, true, false, true]);
 });
 
+test('H7: configViewFor también mira la superficie y la recuperación; un rol desconocido no ve nada', () => {
+  expect(configViewFor(who('owner', { via: 'api', keyScope: 'decide' })).credentials).toBe(false);
+  expect(configViewFor(who('owner', { via: 'cli' })).credentials).toBe(false);
+  expect(configViewFor(who('owner', { recovery: true })).credentials).toBe(false);
+  expect(configViewFor(who('raro' as Role)).credentials).toBe(false);
+});
+
 test('configViewFor: solo el owner ve los indicadores de credenciales del host', () => {
   expect(ROLES.map(r => configViewFor(who(r)).credentials)).toEqual([true, false, false, false]);
 });
