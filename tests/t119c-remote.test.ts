@@ -214,3 +214,14 @@ test('T119c-H12: el mensaje de error del servidor se imprime sin caracteres de c
   expect(errs.at(-1)).not.toMatch(/[\u0000-\u001f\u007f]/);
   expect(errs.at(-1)).toContain('linea falsa');
 });
+
+test('T119c-H15: un 429 con Retry-After enorme no hace dormir más de lo que queda del plazo del pareo', async () => {
+  expect(await run('remote', 'add', 'prod', ORIGIN)).toBe(0);
+  const slept: number[] = [];
+  const f = (async (url: string, init: RequestInit) => String(url).endsWith('/pair/start') ? fakeFetch(url, init)
+    : new Response(JSON.stringify({ ok: false, error: { code: 'rate_limited', message: 'x' } }), { status: 429, headers: { 'retry-after': '86400' } })) as unknown as typeof fetch;
+  const code = await remoteMain(['prod', 'login'], deps({ fetch: f, pairTimeoutMs: 300, sleep: async ms => { slept.push(ms); } }));
+  expect(code).toBe(1);
+  expect(slept.length).toBeGreaterThan(0); // el plazo real de 300 ms acota cada espera
+  expect(Math.max(...slept)).toBeLessThanOrEqual(300);
+});

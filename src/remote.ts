@@ -173,7 +173,8 @@ async function login(deps: RemoteDeps, alias: string, origin: string): Promise<v
       // 409 = aún sin aprobar; 429 = esperar lo que pide el servidor; cualquier otra cosa corta.
       const wait = e instanceof RemoteError && (e.status === 409 || e.status === 429);
       if (!wait || Date.now() > deadline) throw wait ? new RemoteError('timeout', 'el pareo no se aprobó a tiempo') : e;
-      await sleep(Math.max(2000, (e as RemoteError).retryAfter * 1000));
+      // Nunca se duerme más de lo que queda del plazo: un servidor que mande un Retry-After enorme no cuelga el login.
+      await sleep(Math.min(Math.max(2000, (e as RemoteError).retryAfter * 1000), Math.max(0, deadline - Date.now())));
     }
   }
 }
