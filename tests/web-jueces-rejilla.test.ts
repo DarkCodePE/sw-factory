@@ -152,3 +152,9 @@ test('T114-H6: un workstream archivado no admite jueces nuevos: sin perfil ni ev
   expect(new URL(r.headers.get('location')!, base()).searchParams.has('digest')).toBe(false);
   expect(events()).toEqual([]); expect(ws().profile).toBe(digest);
 });
+
+test('T114-H8: una rúbrica de más de 4 KiB da 413 y no deja evento', async () => {
+  seed(); server = startWeb(dir, 0, { write: true }); await login();
+  expect((await post('/scorers/nuevo', form({ rubric: 'x'.repeat(5000) }))).status).toBe(413);
+  expect(events()).toEqual([]);
+});
