@@ -6,7 +6,7 @@ export function attemptSection(activity: Activity, metadata: Record<string, unkn
   const e = ui.escape, unknown = 'No medido';
   const rows = activityInference(activity, metadata).map(({ usage, costUsd, durationMs, remoteDeclared }, index) => {
     const cells = [usage?.effectiveModel, usage?.inputTokens, usage?.outputTokens, usage?.cacheReadTokens, usage?.cacheWriteTokens,
-      costUsd === null ? null : `${costUsd.toLocaleString('es', { maximumSignificantDigits: 6 })} USD`,
+      costUsd === null ? null : `${costUsd.toLocaleString('es', { maximumSignificantDigits: 6 })} USD${usage?.priceVersion ? ` · estimado (tabla ${usage.priceVersion})` : ''}`,
       durationMs === undefined ? null : `${durationMs} ms`];
     return `<tr><th scope="row">${index + 1}${remoteDeclared ? '<br><small>Declarado por el runner</small>' : ''}</th>${cells.map(value => `<td>${e(value ?? unknown)}</td>`).join('')}</tr>`;
   });

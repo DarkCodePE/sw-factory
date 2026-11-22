@@ -707,7 +707,7 @@ test('T82-H11: huecos de test (COUNT DISTINCT en merge/abiertos, fallback change
 });
 
 
-test('T108: el gasto y la tabla distinguen modelos efectivos, caché medida y coste desconocido', async () => {
+test('T108 H6: el gasto y la tabla distinguen modelos efectivos, caché medida y coste desconocido', async () => {
   const c = seed(1, 2);
   const a = store.listActivities({ changeId: c.id })[0]!;
   const meta = join(dir, 'runs', c.id, `${a.id}.json`);
@@ -715,7 +715,7 @@ test('T108: el gasto y la tabla distinguen modelos efectivos, caché medida y co
   writeFileSync(meta, JSON.stringify({
     model: 'pedido', attemptCosts: [0.123, null],
     inferenceAttempts: [
-      { adapter: 'native', requestedModel: 'pedido', usage: { effectiveModel: 'servido-1', inputTokens: 95, outputTokens: 7, cacheReadTokens: 0, costUsd: 0.123 } },
+      { adapter: 'native', requestedModel: 'pedido', usage: { effectiveModel: 'servido-1', inputTokens: 95, outputTokens: 7, cacheReadTokens: 0, costUsd: 0.123, priceVersion: '2026-11-21-v1' } },
       { adapter: 'native', requestedModel: 'pedido', usage: { effectiveModel: 'servido-2', inputTokens: 83, outputTokens: 9 } },
     ],
   }));
@@ -731,6 +731,7 @@ test('T108: el gasto y la tabla distinguen modelos efectivos, caché medida y co
     expect(response.status).toBe(200);
     const html = await response.text();
     expect(html).toContain('<td>servido-1</td><td>95</td><td>7</td><td>0</td>');
+    expect(html).toContain('USD · estimado (tabla 2026-11-21-v1)</td>');
     expect(html).toContain('<td>servido-2</td><td>83</td><td>9</td><td>No medido</td><td>No medido</td><td>No medido</td>');
   } finally { web.stop(true); }
 });
