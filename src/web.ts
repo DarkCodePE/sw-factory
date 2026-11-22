@@ -173,7 +173,7 @@ export function startWeb(stateDir: string, port = 4310, options: {
   tls?: ServerTlsConfig;
   fixtureTestOrigin?: boolean;
 } = {}) {
-  const auth = options.write ? new WebAuth() : undefined;
+  const auth = options.write && !options.server ? new WebAuth() : undefined;
   const keyUsage = new ApiKeyUsage(options.clock);
   const runnerCheck = runnerCheckAction(stateDir, options.runnerCheck);
   const jiraImport = jiraImportAction(stateDir, options.jira);
@@ -380,7 +380,7 @@ export function startWeb(stateDir: string, port = 4310, options: {
     canonicalHost,
     publicOrigin: validated?.publicOrigin,
     socketPath: options.socketPath,
-    loginUrl: auth?.loginUrl(server.port ?? 0),
+    loginUrl: options.server ? undefined : auth?.loginUrl(server.port ?? 0),
     stop(force = false) {
       server.stop(force);
       if (options.socketPath && existsSync(options.socketPath)) {

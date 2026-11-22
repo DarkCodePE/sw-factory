@@ -744,4 +744,25 @@ uQAwb1guU1AUR6nVZtdFNQM9kVZ98hOcE9GUPLNEWYbELrBmbFfLChpyQQU=
     const hstsMatches = caddyfile.match(/Strict-Transport-Security/g);
     expect(hstsMatches?.length).toBe(1);
   });
+
+  test('T118-H13: En modo servidor no se emite WebAuth ni loginUrl efímero', () => {
+    // 1. Modo servidor con --write: loginUrl debe ser undefined
+    const socketPath = join(tempDir, 'h13-server.sock');
+    const serverInstance = startWeb(stateDir, 0, {
+      server: true,
+      write: true,
+      publicOrigin: 'https://fab.ejemplo.com',
+      socketPath,
+    });
+    expect(serverInstance.loginUrl).toBeUndefined();
+    expect(serverInstance.host).toBeUndefined();
+    serverInstance.stop(true);
+
+    // 2. Modo local con --write: loginUrl debe generarse con token
+    const localInstance = startWeb(stateDir, 0, { write: true });
+    expect(typeof localInstance.loginUrl).toBe('string');
+    expect(localInstance.loginUrl).toContain('fab-');
+    expect(localInstance.loginUrl).toContain('token=');
+    localInstance.stop(true);
+  });
 });

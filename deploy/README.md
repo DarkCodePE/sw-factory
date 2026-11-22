@@ -87,6 +87,9 @@ Si se opta por contenedores:
    cd deploy/docker
    docker compose up -d
    ```
+> [!NOTE]
+> **Enlace de interfaces en Docker (T118-H13):** En la variante Docker, el backend enlaza el puerto interno 8443 en la interfaz del contenedor para escuchar peticiones mTLS. Dicho puerto no se publica en la red del host (`expose: 8443` en `docker-compose.yml`), siendo accesible únicamente a través de la red interna privada `fab-internal` por Caddy.
+
 > [!IMPORTANT]
 > **Restricción de SQLite en Docker (D2N-H14):** La variante web en contenedor más pool en host compartirá SQLite únicamente mediante montaje de disco local bajo el mismo kernel, host coordinador y UID escritor. Quedan excluidos volúmenes remotos (NFS, SMB), escritores en otra VM, contenedores privilegiados y sockets Docker expuestos. Si el entorno no cumple estas condiciones, use systemd.
 
