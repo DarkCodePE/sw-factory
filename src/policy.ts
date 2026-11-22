@@ -80,7 +80,7 @@ export function authorize(subject: PolicySubject, capability: string, ctx: Polic
     if (cap.mutation && ctx.keyScope !== 'decide') return deny('key_scope');
   }
   if (cap.mutation && !cap.account && !ctx.write) return deny('write_required');
-  if (capability === 'api-key/revoke' && ctx.target === 'other' && subject.role !== 'owner') return deny('role');
+  if ((capability === 'api-key/revoke' || capability === 'api-key/list') && ctx.target === 'other' && subject.role !== 'owner') return deny('role');
   if ((capability === 'user/invite' || capability === 'user/revoke-invite') && subject.role === 'admin'
       && ctx.inviteRole !== 'member' && ctx.inviteRole !== 'viewer') return deny('invite_role');
   return { ok: true };

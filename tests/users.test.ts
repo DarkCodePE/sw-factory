@@ -1,0 +1,292 @@
+import { afterEach, beforeEach, expect, test } from 'bun:test';
+import { mkdtempSync, rmSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
+import { Store, StoreError } from '../src/store.ts';
+import {
+  acceptInvitation, bootstrapOwner, changeUserRole, createUserKey, disableUser, findUserByIdentity, inviteUser, issueSession,
+  listInvitations, listSessions, listUserKeys, listUsers, resolvePrincipal, revokeInvitation, revokeSession, revokeUserKey, runAs,
+  teamId, verifyUserKey, actorOf, serviceActor, type Principal, type Role,
+} from '../src/users.ts';
+
+let now: number;
+let dir: string;
+let path: string;
+let store: Store;
+const clock = () => new Date(now);
+const open = () => new Store(path, { clock });
+
+beforeEach(() => {
+  now = Date.parse('2026-11-22T10:00:00.000Z');
+  dir = mkdtempSync(join(tmpdir(), 'fab-users-'));
+  path = join(dir, 'f.db');
+  store = open();
+});
+afterEach(() => { store.close(); rmSync(dir, { recursive: true, force: true }); });
+
+const code = (e: unknown) => (e as StoreError).code;
+const throwsCode = (fn: () => unknown, c: string) => { try { fn(); } catch (e) { expect(code(e)).toBe(c); return; } throw new Error('no lanzó'); };
+
+function owner(): Principal {
+  const u = bootstrapOwner(store, { issuer: 'github', subject: '1', displayName: 'Dueña', operator: 'op' });
+  return login(u.id);
+}
+function login(userId: string, cls: 'web' | 'cli' = 'web', s: Store = store): Principal {
+  return resolvePrincipal(s, issueSession(s, userId, cls).token)!;
+}
+/** Alta por invitación completa; devuelve el principal del nuevo usuario. */
+function member(by: Principal, subject: string, role: Role = 'member'): Principal {
+  const inv = inviteUser(store, by, { expectedIssuer: 'github', expectedSubject: subject, role });
+  const u = acceptInvitation(store, { code: inv.code, issuer: 'github', subject, displayName: `u${subject}` });
+  return login(u.id);
+}
+
+test('bootstrap: equipo singleton con UUID estable, una sola vez, y se preserva al reabrir', () => {
+  expect(teamId(store)).toBeNull();
+  const u = bootstrapOwner(store, { issuer: 'github', subject: '1', displayName: 'A', operator: 'op' });
+  const id = teamId(store)!;
+  expect(id).toMatch(/^[0-9a-f-]{36}$/);
+  expect(u.teamId).toBe(id);
+  throwsCode(() => bootstrapOwner(store, { issuer: 'github', subject: '2', displayName: 'B', operator: 'op' }), 'conflict');
+  store.close(); store = open();
+  expect(teamId(store)).toBe(id);
+});
+
+test('invitación: solo el sujeto verificado esperado, una vez, sin caducar ni revocar', () => {
+  const o = owner();
+  const inv = inviteUser(store, o, { expectedIssuer: 'github', expectedSubject: '10', role: 'member' });
+  const accept = (extra: object = {}) => () => acceptInvitation(store, { code: inv.code, issuer: 'github', subject: '10', displayName: 'X', ...extra });
+  throwsCode(accept({ subject: '11' }), 'forbidden');
+  throwsCode(accept({ issuer: 'google' }), 'forbidden');
+  throwsCode(() => acceptInvitation(store, { code: 'x', issuer: 'github', subject: '10', displayName: 'X' }), 'forbidden');
+  const u = accept()();
+  expect(u.role).toBe('member');
+  throwsCode(accept(), 'forbidden');
+
+  const inv2 = inviteUser(store, o, { expectedIssuer: 'github', expectedSubject: '12', role: 'viewer' });
+  revokeInvitation(store, o, inv2.id);
+  throwsCode(() => acceptInvitation(store, { code: inv2.code, issuer: 'github', subject: '12', displayName: 'Y' }), 'forbidden');
+
+  const inv3 = inviteUser(store, o, { expectedIssuer: 'github', expectedSubject: '13', role: 'viewer' });
+  now += 24 * 3600_000 + 1;
+  throwsCode(() => acceptInvitation(store, { code: inv3.code, issuer: 'github', subject: '13', displayName: 'Z' }), 'forbidden');
+});
+
+test('dos redenciones desde conexiones distintas crean una sola cuenta', () => {
+  const o = owner();
+  const inv = inviteUser(store, o, { expectedIssuer: 'github', expectedSubject: '20', role: 'member' });
+  const other = open();
+  try {
+    const args = { code: inv.code, issuer: 'github', subject: '20', displayName: 'N' };
+    acceptInvitation(store, args);
+    throwsCode(() => acceptInvitation(other, args), 'forbidden');
+    expect((store.db.query(`SELECT COUNT(*) n FROM users WHERE subject='20'`).get() as { n: number }).n).toBe(1);
+  } finally { other.close(); }
+});
+
+test('el código de invitación no queda en claro y owner no se invita', () => {
+  const o = owner();
+  const inv = inviteUser(store, o, { expectedIssuer: 'github', expectedSubject: '30', role: 'member' });
+  const rows = JSON.stringify(store.db.query('SELECT * FROM user_invitations').all()) + JSON.stringify(store.db.query('SELECT * FROM identity_audit').all());
+  expect(rows).not.toContain(inv.code);
+  throwsCode(() => inviteUser(store, o, { expectedIssuer: 'github', expectedSubject: '31', role: 'owner' }), 'invalid_input');
+});
+
+test('admin solo invita member/viewer y solo revoca las suyas; member no invita', () => {
+  const o = owner();
+  const a = member(o, '40', 'admin');
+  const m = member(o, '41', 'member');
+  throwsCode(() => inviteUser(store, a, { expectedIssuer: 'github', expectedSubject: '42', role: 'admin' }), 'forbidden');
+  throwsCode(() => inviteUser(store, m, { expectedIssuer: 'github', expectedSubject: '42', role: 'viewer' }), 'forbidden');
+  const ownersInv = inviteUser(store, o, { expectedIssuer: 'github', expectedSubject: '43', role: 'member' });
+  throwsCode(() => revokeInvitation(store, a, ownersInv.id), 'not_found');
+  const mine = inviteUser(store, a, { expectedIssuer: 'github', expectedSubject: '44', role: 'viewer' });
+  revokeInvitation(store, a, mine.id);
+  expect(listInvitations(store, a).map((i) => [i.id, !!i.revokedAt])).toEqual([[mine.id, true]]);
+  expect(listInvitations(store, o)).toHaveLength(4);
+});
+
+test('un cambio del nombre visible no cambia la identidad; el nombre es dato', () => {
+  const o = owner();
+  const p = member(o, '50');
+  expect(findUserByIdentity(store, 'github', '50')!.id).toBe(p.userId);
+  expect(() => store.db.query(`UPDATE users SET subject = 'otro' WHERE id = ?`).run(p.userId)).toThrow(/inmutable/);
+  const inv = inviteUser(store, o, { expectedIssuer: 'github', expectedSubject: '51', role: 'viewer' });
+  const u = acceptInvitation(store, { code: inv.code, issuer: 'github', subject: '51', displayName: 'owner (admin)' });
+  expect(u.role).toBe('viewer');
+  expect(actorOf(login(u.id)).actor).toBe(`user:${u.id}`);
+});
+
+test('sesiones: caducidad web 12 h y CLI 1 h, token de otra superficie y revocación persistente', () => {
+  const o = owner();
+  const web = issueSession(store, o.userId, 'web'), cli = issueSession(store, o.userId, 'cli');
+  expect(resolvePrincipal(store, web.token)!.via).toBe('web');
+  expect(resolvePrincipal(store, cli.token)!.via).toBe('cli');
+  expect(resolvePrincipal(store, `fabk_${web.id}_${web.token.slice(-43)}`)).toBeNull();
+  expect(verifyUserKey(store, web.token)).toBeNull();
+  expect(resolvePrincipal(store, web.token.slice(0, -1) + (web.token.endsWith('A') ? 'B' : 'A'))).toBeNull();
+  now += 3600_000 + 1;
+  expect(resolvePrincipal(store, cli.token)).toBeNull();
+  expect(resolvePrincipal(store, web.token)).not.toBeNull();
+  now += 11 * 3600_000;
+  expect(resolvePrincipal(store, web.token)).toBeNull();
+  const fresh = issueSession(store, o.userId, 'web');
+  const p = resolvePrincipal(store, fresh.token)!;
+  expect(listSessions(store, p).map((s) => s.current)).toEqual([true]);
+  revokeSession(store, p, fresh.id);
+  store.close(); store = open();
+  expect(resolvePrincipal(store, fresh.token)).toBeNull();
+});
+
+test('un usuario no revoca la sesión de otro', () => {
+  const o = owner();
+  const m = member(o, '60');
+  throwsCode(() => revokeSession(store, m, o.sessionId!), 'not_found');
+  expect(resolvePrincipal(store, issueSession(store, o.userId, 'web').token)).not.toBeNull();
+});
+
+test('cambio de rol y baja invalidan sesiones y claves del afectado en la misma transacción', () => {
+  const o = owner();
+  const m = member(o, '70');
+  const key = createUserKey(store, m, 'k1', 'read');
+  const sess = login(m.userId);
+  expect(verifyUserKey(store, key.key)).not.toBeNull();
+  changeUserRole(store, o, m.userId, 'admin');
+  expect(resolvePrincipal(store, issueSession(store, m.userId, 'web').token)!.role).toBe('admin');
+  expect(verifyUserKey(store, key.key)).toBeNull();
+  expect(sess.sessionId && store.db.query('SELECT revoked_at FROM user_sessions WHERE id = ?').get(sess.sessionId)).toEqual({ revoked_at: expect.any(String) });
+  const live = login(m.userId);
+  disableUser(store, o, m.userId);
+  expect(runAsOk(live)).toBe(false);
+  throwsCode(() => issueSession(store, m.userId, 'web'), 'unauthorized');
+  expect(resolvePrincipal(store, 'fabs_000000000000_' + 'A'.repeat(43))).toBeNull();
+});
+const runAsOk = (p: Principal) => { try { runAs(store, p, 'session/list', { write: false }, () => 1); return true; } catch { return false; } };
+
+test('último owner: dos bajas cruzadas desde conexiones distintas dejan un owner', () => {
+  const a = owner();
+  const b = member(a, '80', 'member');
+  changeUserRole(store, a, b.userId, 'owner');
+  const ob = login(b.userId);
+  const other = open();
+  try {
+    const bOnOther = resolvePrincipal(other, issueSession(other, b.userId, 'web').token)!;
+    disableUser(store, a, b.userId);
+    // b ya no es owner activo: su baja de a falla por credencial, y a sigue siendo el único.
+    throwsCode(() => disableUser(other, bOnOther, a.userId), 'unauthorized');
+    expect(runAsOk(ob)).toBe(false);
+    throwsCode(() => disableUser(store, a, a.userId), 'conflict');
+    throwsCode(() => changeUserRole(store, a, a.userId, 'admin'), 'conflict');
+    expect(listUsers(store, a).filter((u) => u.role === 'owner' && !u.disabledAt)).toHaveLength(1);
+  } finally { other.close(); }
+});
+
+test('último owner: con dos owners, degradaciones cruzadas conservan uno', () => {
+  const a = owner();
+  const b = member(a, '81');
+  changeUserRole(store, a, b.userId, 'owner');
+  const b2 = login(b.userId);
+  changeUserRole(store, a, b.userId, 'admin');
+  throwsCode(() => changeUserRole(store, b2, a.userId, 'viewer'), 'unauthorized');
+  throwsCode(() => changeUserRole(store, a, a.userId, 'viewer'), 'conflict');
+});
+
+test('revocación que gana la escritura impide la mutación (conexión distinta)', () => {
+  const o = owner();
+  const m = member(o, '90');
+  const other = open();
+  try {
+    let ran = 0;
+    revokeSession(other, resolvePrincipal(other, issueSession(other, m.userId, 'web').token)!, m.sessionId!); // mismo usuario, otra sesión: no afecta
+    expect(() => runAs(store, m, 'session/list', { write: false }, () => ran++)).toThrow();
+    ran = 0;
+    const live = login(m.userId);
+    disableUser(other, resolvePrincipal(other, issueSession(other, o.userId, 'web').token)!, m.userId);
+    throwsCode(() => runAs(store, live, 'session/list', { write: false }, () => ran++), 'unauthorized');
+    expect(ran).toBe(0);
+  } finally { other.close(); }
+});
+
+test('rol cambiado tras resolver: el principal viejo no opera con el rol antiguo', () => {
+  const o = owner();
+  const a = member(o, '91', 'admin');
+  const stale = resolvePrincipal(store, issueSession(store, a.userId, 'web').token)!;
+  changeUserRole(store, o, a.userId, 'viewer');
+  throwsCode(() => inviteUser(store, stale, { expectedIssuer: 'github', expectedSubject: '92', role: 'member' }), 'unauthorized');
+});
+
+test('claves: viewer rechazado (D-2 A), mismo nombre por usuario, valor solo al crear', () => {
+  const o = owner();
+  const v = member(o, '100', 'viewer');
+  throwsCode(() => createUserKey(store, v, 'v1', 'read'), 'forbidden');
+  const m1 = member(o, '101'), m2 = member(o, '102');
+  const k1 = createUserKey(store, m1, 'ci', 'read'), k2 = createUserKey(store, m2, 'ci', 'decide');
+  throwsCode(() => createUserKey(store, m1, 'ci', 'read'), 'conflict');
+  expect(JSON.stringify(listUserKeys(store, m1))).not.toContain(k1.key.slice(-43));
+  expect(listUserKeys(store, m1).map((k) => k.id)).toEqual([k1.id]);
+  throwsCode(() => listUserKeys(store, m1, { all: true }), 'forbidden');
+  expect(listUserKeys(store, o, { all: true }).map((k) => k.id).sort()).toEqual([k1.id, k2.id].sort());
+  const p = verifyUserKey(store, k2.key)!;
+  expect(p).toMatchObject({ userId: m2.userId, role: 'member', via: 'api', keyScope: 'decide', keyId: k2.id });
+  // Se revalida en la escritura.
+  expect(runAs(store, p, 'changes/note', { write: true }, () => 'ok')).toBe('ok');
+  // El digest de una clave de usuario no autentica como clave local, ni al revés.
+  expect(store.verifyApiKey(k1.key)).toBeNull();
+  const local = store.createApiKey('ci', 'read');
+  expect(verifyUserKey(store, local.key)).toBeNull();
+});
+
+test('un viewer con clave previa (fila forzada) tampoco autentica', () => {
+  const o = owner();
+  const m = member(o, '110');
+  const k = createUserKey(store, m, 'x', 'read');
+  store.db.query(`UPDATE users SET role = 'viewer' WHERE id = ?`).run(m.userId);
+  expect(verifyUserKey(store, k.key)).toBeNull();
+});
+
+test('revocar clave: por ID, la propia o cualquiera si es owner; ajena sin ser owner no', () => {
+  const o = owner();
+  const a = member(o, '120', 'admin'), m = member(o, '121');
+  const km = createUserKey(store, m, 'k', 'read'), ka = createUserKey(store, a, 'k', 'read');
+  throwsCode(() => revokeUserKey(store, a, km.id), 'forbidden');
+  throwsCode(() => revokeUserKey(store, m, 'ffffffffffff'), 'not_found');
+  revokeUserKey(store, m, km.id);
+  expect(verifyUserKey(store, km.key)).toBeNull();
+  revokeUserKey(store, o, ka.id);
+  expect(verifyUserKey(store, ka.key)).toBeNull();
+  const audit = store.db.query(`SELECT detail FROM identity_audit WHERE action = 'key.revoke' ORDER BY seq DESC LIMIT 1`).get() as { detail: string };
+  expect(JSON.parse(audit.detail)).toEqual({ ownerId: a.userId });
+});
+
+test('clave caducada no autentica', () => {
+  const o = owner();
+  const k = createUserKey(store, o, 'temp', 'read', new Date(now + 1000).toISOString());
+  expect(verifyUserKey(store, k.key)).not.toBeNull();
+  now += 2000;
+  expect(verifyUserKey(store, k.key)).toBeNull();
+});
+
+test('actor estable: el evento guarda ID, origen y no el nombre visible; sin actor explícito conserva el comportamiento anterior', () => {
+  const o = owner();
+  const ws = store.createWorkstream({ slug: 'w', goal: 'g', repo: dir });
+  store.event(ws.id, 'info', 'a', undefined, undefined, actorOf(o));
+  store.event(ws.id, 'info', 'b', undefined, undefined, serviceActor('pool', 'vm'));
+  store.event(ws.id, 'info', 'c');
+  const rows = store.db.query('SELECT actor, actor_user_id, actor_source FROM events WHERE message IN (\'a\',\'b\',\'c\') ORDER BY id').all();
+  expect(rows).toEqual([
+    { actor: `user:${o.userId}`, actor_user_id: o.userId, actor_source: 'web' },
+    { actor: 'service:pool:vm', actor_user_id: null, actor_source: 'service' },
+    { actor: expect.any(String), actor_user_id: null, actor_source: null },
+  ]);
+});
+
+test('auditoría de identidad: una fila por mutación, sin tokens ni nombres visibles', () => {
+  const o = owner();
+  const m = member(o, '130');
+  const k = createUserKey(store, m, 'k', 'read');
+  changeUserRole(store, o, m.userId, 'admin');
+  const all = JSON.stringify(store.db.query('SELECT * FROM identity_audit').all());
+  for (const secret of [k.key.slice(-43), m.sessionId ? 'u130' : '', 'Dueña']) expect(all).not.toContain(secret);
+  const actions = (store.db.query('SELECT action FROM identity_audit ORDER BY seq').all() as { action: string }[]).map((r) => r.action);
+  expect(actions).toEqual(expect.arrayContaining(['user.bootstrap', 'session.issue', 'invitation.create', 'invitation.accept', 'key.create', 'user.role']));
+});

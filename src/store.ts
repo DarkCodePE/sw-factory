@@ -2492,11 +2492,14 @@ export class Store {
 
   // ---- events ------------------------------------------------------------
 
-  event(workstreamId: string, severity: 'info' | 'warning' | 'error', message: string, changeId?: string, activityId?: string): void {
+  /** `actor` explícito (T119a): ID estable del usuario/servicio y su origen; sin él, el actor sigue saliendo del entorno como antes. */
+  event(workstreamId: string, severity: 'info' | 'warning' | 'error', message: string, changeId?: string, activityId?: string,
+    actor?: { actor: string; userId: string | null; source: string }): void {
     this.withRetry(() => {
       this.db
-        .query('INSERT INTO events (workstream_id, change_id, activity_id, severity, message, created_at, actor) VALUES (?,?,?,?,?,?,?)')
-        .run(workstreamId, changeId ?? null, activityId ?? null, severity, message, this.now(), process.env.FAB_ACTOR ?? userInfo().username);
+        .query('INSERT INTO events (workstream_id, change_id, activity_id, severity, message, created_at, actor, actor_user_id, actor_source) VALUES (?,?,?,?,?,?,?,?,?)')
+        .run(workstreamId, changeId ?? null, activityId ?? null, severity, message, this.now(),
+          actor?.actor ?? process.env.FAB_ACTOR ?? userInfo().username, actor?.userId ?? null, actor?.source ?? null);
     });
     if (changeId && (isTerminalChange(this.getChange(changeId).status) ||
         activityId && this.isTerminal(this.getActivity(activityId).status))) writeManifest(this, changeId);
