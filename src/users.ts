@@ -106,6 +106,15 @@ export function findUserByIdentity(store: Store, issuer: string, subject: string
 const recoveryRestricted = (store: Store): boolean =>
   (store.db.query('SELECT recovery FROM team WHERE singleton = 1').get() as { recovery: string | null } | null)?.recovery === 'restricted';
 
+/** Owner designado por el operador al entrar y si consta el diario aplicado (o un «sin diario» explícito) desde esa entrada. */
+function recoveryState(store: Store): { ownerId: string | null; journalDone: boolean } | null {
+  if (!recoveryRestricted(store)) return null;
+  const enter = store.db.query(`SELECT seq, detail FROM identity_audit WHERE action = 'recovery.enter' ORDER BY seq DESC LIMIT 1`).get() as { seq: number; detail: string | null } | null;
+  if (!enter) return { ownerId: null, journalDone: false }; // restringido sin asiento de entrada: nadie entra
+  const done = store.db.query(`SELECT 1 FROM identity_audit WHERE action IN ('recovery.apply-journal','recovery.no-journal') AND seq > ?`).get(enter.seq);
+  return { ownerId: (JSON.parse(enter.detail ?? '{}') as { ownerId?: string }).ownerId ?? null, journalDone: !!done };
+}
+
 // ---- revalidación y ejecución autorizada -----------------------------------
 
 function activeOwners(store: Store, excluding?: string): number {
@@ -143,8 +152,9 @@ export function runAs<T>(store: Store, p: Principal, capability: string, ctx: Om
 export function issueSession(store: Store, userId: string, cls: 'web' | 'cli'): { id: string; token: string; expiresAt: string } {
   return store.withRetry(() => {
     const u = getUser(store, userId);
-    // Misma respuesta para cuenta inexistente, baja o recuperación sin ser owner.
-    if (!u || u.disabledAt || (recoveryRestricted(store) && u.role !== 'owner')) throw new StoreError('unauthorized', 'no se puede iniciar sesión');
+    // Misma respuesta para cuenta inexistente, baja o recuperación sin ser el owner designado.
+    const rec = recoveryState(store);
+    if (!u || u.disabledAt || (rec && u.id !== rec.ownerId)) throw new StoreError('unauthorized', 'no se puede iniciar sesión');
     const id = randomBytes(6).toString('hex'), secret = randomBytes(32).toString('base64url');
     const expiresAt = iso(store, SESSION_TTL_MS[cls]);
     store.db.query('INSERT INTO user_sessions (id, user_id, class, token_digest, created_at, expires_at) VALUES (?,?,?,?,?,?)')
@@ -161,10 +171,10 @@ export function resolvePrincipal(store: Store, token: string): Principal | null 
   if (!s || s.revoked_at || (s.expires_at as string) <= store.now() || !sameDigest(s.token_digest as string, sha(m[2]!))) return null;
   const u = getUser(store, s.user_id as string);
   if (!u || u.disabledAt) return null;
-  const recovery = recoveryRestricted(store);
-  if (recovery && u.role !== 'owner') return null;
+  const rec = recoveryState(store);
+  if (rec && u.id !== rec.ownerId) return null;
   return { userId: u.id, role: u.role, issuer: u.issuer, subject: u.subject, displayName: u.displayName,
-    via: s.class as 'web' | 'cli', sessionId: s.id as string, recovery };
+    via: s.class as 'web' | 'cli', sessionId: s.id as string, recovery: !!rec };
 }
 
 export function revokeSession(store: Store, p: Principal, sessionId: string): void {
@@ -399,16 +409,21 @@ export function verifyIdentityJournal(path: string): { ok: boolean; lastSeq: num
 
 export const recoveryStatus = (store: Store): { restricted: boolean } => ({ restricted: recoveryRestricted(store) });
 
-/** Consola, tras restaurar una copia: corta sesiones, claves e invitaciones y deja solo la confirmación del owner. */
-export function enterRecovery(store: Store, operator: string, reason: string): void {
+/**
+ * Consola, tras restaurar una copia: corta sesiones, claves e invitaciones y deja solo la confirmación del owner que el operador
+ * designa (D-R1 A, §3.3 paso 2), a partir del registro de autoridad conservado fuera de la copia.
+ */
+export function enterRecovery(store: Store, operator: string, reason: string, ownerId: string): void {
   const why = text(reason, 'motivo', 500);
   store.withRetry(() => {
     if (!isBootstrapped(store)) throw new StoreError('not_found', 'el equipo no tiene bootstrap');
+    const designated = getUser(store, ownerId);
+    if (!designated || designated.role !== 'owner' || designated.disabledAt) throw new StoreError('invalid_input', 'el owner designado no es un owner activo');
     store.db.query(`UPDATE team SET recovery = 'restricted'`).run();
     store.db.query('UPDATE user_sessions SET revoked_at = COALESCE(revoked_at, ?)').run(store.now());
     store.db.query('UPDATE api_keys SET revoked_at = COALESCE(revoked_at, ?) WHERE user_id IS NOT NULL').run(store.now());
     store.db.query('UPDATE user_invitations SET revoked_at = COALESCE(revoked_at, ?) WHERE consumed_at IS NULL').run(store.now());
-    audit(store, consoleActor(operator), 'recovery.enter', null, { reason: why });
+    audit(store, consoleActor(operator), 'recovery.enter', null, { reason: why, ownerId });
   });
 }
 
@@ -435,13 +450,25 @@ export function applyJournalToRestored(store: Store, operator: string, journalPa
   });
 }
 
+/** El operador declara que no hay diario externo que aplicar; sin esto o `applyJournalToRestored`, la recuperación no se confirma. */
+export function declareNoJournal(store: Store, operator: string, reason: string): void {
+  const why = text(reason, 'motivo', 500);
+  store.withRetry(() => {
+    if (!recoveryRestricted(store)) throw new StoreError('conflict', 'solo en recuperación restringida');
+    audit(store, consoleActor(operator), 'recovery.no-journal', null, { reason: why });
+  });
+}
+
 /**
- * El owner vigente confirma la lista completa de identidades y roles. Quien no esté confirmado con su rol queda dado de baja;
+ * El owner designado confirma la lista completa de identidades y roles. Quien no esté confirmado con su rol queda dado de baja;
  * después se reabre el login. Un owner no puede quedarse fuera de su propia lista.
  */
 export function confirmRecovery(store: Store, p: Principal, confirmed: { userId: string; role: Role }[]): { confirmed: number; suspended: string[] } {
   return runAs(store, p, 'recovery/confirm', { write: true }, (me) => {
-    if (!me.recovery) throw new StoreError('conflict', 'no hay recuperación en curso');
+    const rec = recoveryState(store);
+    if (!rec) throw new StoreError('conflict', 'no hay recuperación en curso');
+    if (me.userId !== rec.ownerId) throw new StoreError('forbidden', 'solo confirma el owner designado por el operador');
+    if (!rec.journalDone) throw new StoreError('conflict', 'aplica el diario de identidad (o declara que no hay) antes de confirmar');
     if (!confirmed.some((c) => c.userId === me.userId && c.role === 'owner')) throw new StoreError('invalid_input', 'la lista debe incluir al owner que confirma');
     const want = new Map(confirmed.map((c) => [c.userId, c.role]));
     for (const id of want.keys()) if (!getUser(store, id)) throw new StoreError('invalid_input', 'la lista nombra un usuario desconocido');
