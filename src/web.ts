@@ -255,7 +255,7 @@ export function startWeb(stateDir: string, port = 4310, options: {
         if (!hosts.includes(req.headers.get('host') ?? '')) return respond('Acceso denegado', 403, 'text/plain; charset=utf-8');
       }
 
-      if (url.pathname === '/healthz') {
+      if (options.server && url.pathname === '/healthz') {
         if (req.method !== 'GET' && req.method !== 'HEAD') return respond('Método no permitido', 405, 'text/plain; charset=utf-8');
         return respond('ok', 200, 'text/plain; charset=utf-8');
       }

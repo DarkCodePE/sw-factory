@@ -676,4 +676,27 @@ uQAwb1guU1AUR6nVZtdFNQM9kVZ98hOcE9GUPLNEWYbELrBmbFfLChpyQQU=
     expect(valid2.canonicalHost).toBe('fab.ejemplo.com:8443');
     expect(valid2.publicOrigin).toBe('https://fab.ejemplo.com:8443');
   });
+
+  test('T118-H9: /healthz solo existe en modo servidor y devuelve 404 en modo local (M29)', async () => {
+    // 1. Modo local (sin options.server) -> /healthz devuelve 404
+    const localServer = startWeb(stateDir, 0, {});
+    const resLocal = await fetch(`http://127.0.0.1:${localServer.port}/healthz`);
+    expect(resLocal.status).toBe(404);
+    localServer.stop(true);
+
+    // 2. Modo servidor -> /healthz devuelve 200 'ok'
+    const socketPath = join(tempDir, 'healthz-test.sock');
+    const serverMode = startWeb(stateDir, 0, {
+      server: true,
+      publicOrigin: 'https://fab.ejemplo.com',
+      socketPath,
+    });
+    const resServer = await fetch('http://localhost/healthz', {
+      unix: socketPath,
+      headers: { Host: 'fab.ejemplo.com' },
+    } as any);
+    expect(resServer.status).toBe(200);
+    expect(await resServer.text()).toBe('ok');
+    serverMode.stop(true);
+  });
 });
