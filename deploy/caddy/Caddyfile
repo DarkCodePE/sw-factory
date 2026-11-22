@@ -1,0 +1,30 @@
+# Caddyfile de producción para fab en VM con systemd (D-4 Opción A)
+# Caddy es el único frontal público con TLS y salto a socket Unix 0660
+
+fab.ejemplo.com {
+    # Redirección HTTP a HTTPS automática y certificado gestionado
+
+    # Cabeceras de seguridad estrictas
+    header {
+        Strict-Transport-Security "max-age=31536000; includeSubDomains"
+        X-Content-Type-Options "nosniff"
+        -Server
+    }
+
+    # Proxy inverso al socket Unix compartido con el grupo fab-web
+    reverse_proxy unix//run/fab/fab.sock {
+        # Conserva el Host canónico exacto
+        header_up Host {host}
+
+        # Descarta cabeceras de forwarding del cliente para evitar spoofing
+        header_up -X-Forwarded-For
+        header_up -X-Forwarded-Proto
+        header_up -X-Forwarded-Host
+
+        # Emite metadato de IP confiable generado por Caddy para límites de tasa
+        header_up X-Fab-Client-IP {remote_host}
+
+        # Asegura HSTS en las respuestas
+        header_down Strict-Transport-Security "max-age=31536000; includeSubDomains"
+    }
+}

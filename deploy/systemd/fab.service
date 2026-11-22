@@ -1,0 +1,40 @@
+[Unit]
+Description=fab web server (modo servidor)
+Documentation=https://github.com/fabrica/fabrica
+After=network.target
+
+[Service]
+Type=simple
+User=fab
+Group=fab-web
+UMask=0007
+RuntimeDirectory=fab
+RuntimeDirectoryMode=0770
+
+# Entorno de ejecución
+Environment="FABRICA_HOME=/var/lib/fab"
+Environment="FAB_PUBLIC_ORIGIN=https://fab.ejemplo.com"
+Environment="FAB_SOCKET=/run/fab/fab.sock"
+
+# Comando de arranque: escucha exclusivamente en socket Unix con permisos 0660 (D-4 Opción A)
+ExecStart=/usr/local/bin/bun run /opt/fab/src/cli.ts web --server --socket /run/fab/fab.sock --public-origin https://fab.ejemplo.com
+
+# Aislamiento y confinamiento systemd
+NoNewPrivileges=yes
+ProtectSystem=strict
+ProtectHome=read-only
+ReadWritePaths=/var/lib/fab /run/fab
+PrivateTmp=yes
+PrivateDevices=yes
+ProtectKernelTunables=yes
+ProtectControlGroups=yes
+RestrictSUIDSGID=yes
+RestrictRealtime=yes
+LockPersonality=yes
+
+# Reinicio automático
+Restart=on-failure
+RestartSec=5s
+
+[Install]
+WantedBy=multi-user.target

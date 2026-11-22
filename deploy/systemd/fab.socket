@@ -1,0 +1,13 @@
+[Unit]
+Description=fab web unix socket
+PartOf=fab.service
+
+[Socket]
+ListenStream=/run/fab/fab.sock
+SocketUser=fab
+SocketGroup=fab-web
+SocketMode=0660
+DirectoryMode=0770
+
+[Install]
+WantedBy=sockets.target
