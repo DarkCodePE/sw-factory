@@ -66,13 +66,16 @@ export interface PolicyContext {
 }
 export type Decision = { ok: true } | { ok: false; reason: string };
 
+const ROLE_LETTER: Record<Role, string> = { owner: 'O', admin: 'A', member: 'M', viewer: 'V' };
+
 const deny = (reason: string): Decision => ({ ok: false, reason });
 
 export function authorize(subject: PolicySubject, capability: string, ctx: PolicyContext): Decision {
   const cap = CAPABILITIES[capability];
   if (!cap) return deny('unknown_capability');
   if (subject.recovery && capability !== 'recovery/confirm') return deny('recovery_restricted');
-  if (!cap.roles.includes(subject.role[0]!.toUpperCase())) return deny('role');
+  const letter = ROLE_LETTER[subject.role];
+  if (!letter || !cap.roles.includes(letter)) return deny('role'); // un rol desconocido deniega
   if (ctx.via === 'api') {
     // D-2 A: un viewer no tiene claves de API; el rol se vuelve a comprobar aunque la clave exista.
     if (subject.role === 'viewer') return deny('viewer_no_api');
