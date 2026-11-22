@@ -1669,7 +1669,7 @@
       "acceptance": "Un transcript real de claude se muestra por pasos; los conmutadores ocultan pensamiento y llamadas; texto hostil sale escapado; un stream roto no rompe la página («No medido»).",
       "estimate": "3-4 d",
       "risk": "medio",
-      "status": "pending",
+      "status": "done",
       "depends_on": [
         "T54"
       ],
@@ -1677,7 +1677,7 @@
         "Detalle de run: transcript",
         "Detalle de run: Show thinking / tool calls"
       ],
-      "pr": null
+      "pr": "#93"
     },
     {
       "id": "T100",
@@ -1689,14 +1689,14 @@
       "acceptance": "Dos agentes en paralelo salen en columnas distintas y en su minuto; sin datos de tiempo, «No medido».",
       "estimate": "2 d",
       "risk": "bajo",
-      "status": "pending",
+      "status": "done",
       "depends_on": [
         "T54"
       ],
       "covers": [
         "Detalle de run: timeline por agente"
       ],
-      "pr": null
+      "pr": "#93"
     },
     {
       "id": "T101",
@@ -1708,14 +1708,14 @@
       "acceptance": "Alta inválida da 400 sin fila; baja de un runner asignado se rechaza; matriz sesión/CSRF/host único; la API no expone estas acciones.",
       "estimate": "2-3 d",
       "risk": "medio",
-      "status": "pending",
+      "status": "done",
       "depends_on": [
         "T85"
       ],
       "covers": [
         "Settings: Runners: alta, edición, baja"
       ],
-      "pr": null
+      "pr": "#93"
     },
     {
       "id": "T102",
@@ -1727,7 +1727,7 @@
       "acceptance": "Un rol con runner propio se lanza en ese runner y los demás en el del workstream; un runner pausado o borrado bloquea solo ese rol con motivo; herencia visible.",
       "estimate": "3-4 d",
       "risk": "alto",
-      "status": "pending",
+      "status": "done",
       "depends_on": [
         "T74",
         "T84",
@@ -1736,7 +1736,7 @@
       "covers": [
         "Editor de worker: host y runner por worker"
       ],
-      "pr": null
+      "pr": "#93"
     },
     {
       "id": "T103",
@@ -1748,7 +1748,7 @@
       "acceptance": "Un valor pegado se rechaza; solo nombres válidos; la página nunca muestra un valor del entorno; la API no expone la edición.",
       "estimate": "2-3 d",
       "risk": "medio",
-      "status": "pending",
+      "status": "done",
       "depends_on": [
         "T72"
       ],
@@ -1757,7 +1757,7 @@
         "Settings: secretos y MCP por defecto",
         "Secrets: lista"
       ],
-      "pr": null
+      "pr": "#93"
     },
     {
       "id": "T104",
@@ -1769,14 +1769,14 @@
       "acceptance": "La página lista lo mismo que fab mcp list, escapado y redactado; sin --write no hay formularios.",
       "estimate": "1 d",
       "risk": "bajo",
-      "status": "pending",
+      "status": "done",
       "depends_on": [
         "T72"
       ],
       "covers": [
         "MCPs and apps: registro"
       ],
-      "pr": null
+      "pr": "#93"
     },
     {
       "id": "T105",
@@ -1788,7 +1788,7 @@
       "acceptance": "Paquete con symlink, ruta absoluta o .. se rechaza; perfil inválido 400 sin escribir; la importación queda auditada con actor web; la API no la expone.",
       "estimate": "3 d",
       "risk": "alto",
-      "status": "pending",
+      "status": "done",
       "depends_on": [
         "T58",
         "T59"
@@ -1797,7 +1797,7 @@
         "Workers: importar worker",
         "Factory definition: importar"
       ],
-      "pr": null
+      "pr": "#93"
     },
     {
       "id": "T106",
@@ -1809,14 +1809,14 @@
       "acceptance": "Un binario que no coincide con su pin sale marcado; la página no ejecuta binarios en cada carga (caché o lectura del registro).",
       "estimate": "1 d",
       "risk": "bajo",
-      "status": "pending",
+      "status": "done",
       "depends_on": [
         "T46"
       ],
       "covers": [
         "Agent harnesses: pines"
       ],
-      "pr": null
+      "pr": "#93"
     },
     {
       "id": "T107",
@@ -1828,14 +1828,14 @@
       "acceptance": "La config inválida se rechaza; la importación respeta el tope y deja auditoría; sin --write solo lectura.",
       "estimate": "2-3 d",
       "risk": "medio",
-      "status": "pending",
+      "status": "done",
       "depends_on": [
         "T43"
       ],
       "covers": [
         "Onboarding: entrada por etiqueta y Jira"
       ],
-      "pr": null
+      "pr": "#93"
     }
   ]
 }
