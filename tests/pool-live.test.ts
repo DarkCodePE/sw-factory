@@ -377,3 +377,22 @@ test('T108 H5: una activity antigua conserva coste, tokens, duración y modelo p
   expect(readInferenceAttempts(metadata.inferenceAttempts)?.[0]?.requestedModel).toBe('alias anterior [1m]');
   expect(metadata.attemptCosts).toEqual([0.4, null]);
 });
+
+test('T108 H9: completar un historial desigual mantiene el coste junto a su intento', async () => {
+  const { ws, c } = setup();
+  const a = store.listActivities({ changeId: c.id })[0]!;
+  const path = join(dir, 'runs', c.id, `${a.id}.json`);
+  mkdirSync(join(dir, 'runs', c.id), { recursive: true });
+  writeFileSync(path, JSON.stringify({
+    attemptCosts: [0.125, 0.25],
+    inferenceAttempts: [{ usage: { effectiveModel: 'primero', costUsd: 0.125 } }],
+  }));
+  const backend = fakeLive([{ reports: [{ state: 'done', summary: 'ok' }] }]);
+  const invoke = backend.run;
+  backend.run = async turn => ({ ...await invoke(turn), usage: { effectiveModel: 'nuevo', costUsd: 0.5 } });
+  await pool(ws.id, { fake: backend });
+  const metadata = JSON.parse(readFileSync(path, 'utf8'));
+  expect(metadata.attemptCosts).toEqual([0.125, 0.25, 0.5]);
+  expect(metadata.inferenceAttempts.map((attempt: { usage?: { effectiveModel?: string } }) => attempt.usage?.effectiveModel))
+    .toEqual(['primero', undefined, 'nuevo']);
+});

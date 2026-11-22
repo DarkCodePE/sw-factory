@@ -252,6 +252,9 @@ export async function processActivity(
         usage: readUsage(previous.usage), durationMs: tokenCount(previous.durationMs),
         ...(previous.runner?.kind === 'ssh' ? { remoteDeclared: true as const } : {}),
       } : {});
+    // Ambos historiales se indexan por intento. Los huecos históricos conservan su posición.
+    while (inferenceAttempts.length < attemptCosts.length) inferenceAttempts.push({});
+    while (attemptCosts.length < inferenceAttempts.length) attemptCosts.push(null);
     // Durante la preparación se sabe que aún no hubo gasto de inferencia.
     attemptCosts.push(0);
     inferenceAttempts.push({});
