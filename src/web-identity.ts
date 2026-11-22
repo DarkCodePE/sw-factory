@@ -128,23 +128,25 @@ export interface IdentityOptions {
   write: boolean;
   /** Secreto de servicio para CSRF y prelogin. Por defecto aleatorio por proceso: un reinicio invalida los formularios abiertos. */
   secret?: string;
+  /** Compartido con `cliRoutes` para que las cuotas de invitación sean comunes a la web y a la CLI remota. */
+  limiter?: RateLimiter;
 }
 
-const esc = (v: unknown): string => String(v ?? '').replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[c]!);
+export const esc = (v: unknown): string => String(v ?? '').replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[c]!);
 
-function page(title: string, body: string, status = 200, cookies: string[] = [], extraHead = ''): Response {
+export function page(title: string, body: string, status = 200, cookies: string[] = [], extraHead = ''): Response {
   // Con `no-referrer` el navegador manda `Origin: null` en los POST de formulario, también al mismo origen, y `originOk` los rechazaría:
   // una página con formulario usa `same-origin` (el referente no sale de fab). Sin formulario, `no-referrer`.
   const h = new Headers({ 'content-type': 'text/html; charset=utf-8', 'cache-control': 'no-store', 'referrer-policy': body.includes('<form') ? 'same-origin' : 'no-referrer' });
   for (const c of cookies) h.append('set-cookie', c);
   return new Response(`<!doctype html><html lang="es"><head><meta charset="utf-8"><title>${esc(title)}</title>${extraHead}<style>${WEB_STYLE}</style></head><body><main><h1>${esc(title)}</h1>${body}</main></body></html>`, { status, headers: h });
 }
-const redirect = (to: string, cookies: string[] = []): Response => {
+export const redirect = (to: string, cookies: string[] = []): Response => {
   const h = new Headers({ location: to, 'cache-control': 'no-store', 'referrer-policy': 'no-referrer' });
   for (const c of cookies) h.append('set-cookie', c);
   return new Response(null, { status: 303, headers: h });
 };
-const plain = (status: number, text: string, extra: Record<string, string> = {}): Response =>
+export const plain = (status: number, text: string, extra: Record<string, string> = {}): Response =>
   new Response(text, { status, headers: { 'content-type': 'text/plain; charset=utf-8', 'cache-control': 'no-store', 'referrer-policy': 'no-referrer', ...extra } });
 const tooMany = (retry: number): Response => plain(429, 'Demasiados intentos. Vuelve a intentarlo más tarde.', { 'retry-after': String(retry) });
 /** Mismo mensaje para cuenta desconocida, dada de baja, invitación mala o proveedor caído. */
@@ -171,7 +173,7 @@ export function identityRoutes(opts: IdentityOptions) {
   const host = new URL(publicOrigin).host;
   const secret = opts.secret ?? randomBytes(32).toString('hex');
   const clock = () => store.clock().getTime();
-  const limiter = new RateLimiter(clock), logins = new LoginTransactions(clock);
+  const limiter = opts.limiter ?? new RateLimiter(clock), logins = new LoginTransactions(clock);
   const system = { actor: 'service:login:github', userId: null, source: 'web' } as const;
 
   const session = (req: Request): Principal | null => {

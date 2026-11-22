@@ -18,6 +18,7 @@ export interface ServerConfig {
 export const SERVER_SECURITY_HEADERS: Record<string, string> = {
   'Strict-Transport-Security': 'max-age=31536000; includeSubDomains',
   'Content-Security-Policy': "default-src 'none'; script-src 'self'; style-src 'self'; connect-src 'self'; img-src 'none'; font-src 'none'; base-uri 'none'; form-action 'self'; frame-ancestors 'none'",
+  'X-Frame-Options': 'DENY',
   'X-Content-Type-Options': 'nosniff',
   'Cache-Control': 'no-store',
   'Referrer-Policy': 'no-referrer',

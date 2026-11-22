@@ -622,7 +622,7 @@ uQAwb1guU1AUR6nVZtdFNQM9kVZ98hOcE9GUPLNEWYbELrBmbFfLChpyQQU=
     expect(resGet.status).toBe(401);
     expect(resGet.headers.get('Strict-Transport-Security')).toBe('max-age=31536000; includeSubDomains');
     const textGet = await resGet.text();
-    expect(textGet).toContain('Se requiere autenticación de usuario en modo servidor');
+    expect(textGet).toContain('clave ausente o inválida'); // T119e: la API del servidor solo autentica claves de usuario (fabu_)
     expect(textGet).not.toContain('ws-api');
 
     // 2. POST /api/v1/changes/:id/note con clave local 'decide' -> 401 con HSTS y cero escrituras

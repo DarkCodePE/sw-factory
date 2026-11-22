@@ -514,6 +514,16 @@ export function declareNoJournal(store: Store, operator: string, reason: string)
  * El owner designado confirma la lista completa de identidades y roles. Quien no esté confirmado con su rol queda dado de baja;
  * después se reabre el login. Un owner no puede quedarse fuera de su propia lista.
  */
+/** Lista de usuarios para la pantalla de recuperación: solo el owner designado (la política de lectura general queda cerrada). */
+export function recoveryUsers(store: Store, p: Principal): User[] {
+  return runAs(store, p, 'recovery/confirm', { write: true }, (me) => {
+    const rec = recoveryState(store);
+    if (!rec) throw new StoreError('conflict', 'no hay recuperación en curso');
+    if (me.userId !== rec.ownerId) throw new StoreError('forbidden', 'solo ve la lista el owner designado por el operador');
+    return (store.db.query('SELECT * FROM users WHERE disabled_at IS NULL ORDER BY created_at, id').all() as Row[]).map(toUser);
+  });
+}
+
 export function confirmRecovery(store: Store, p: Principal, confirmed: { userId: string; role: Role }[]): { confirmed: number; suspended: string[] } {
   return runAs(store, p, 'recovery/confirm', { write: true }, (me) => {
     const rec = recoveryState(store);
