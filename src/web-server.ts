@@ -48,8 +48,12 @@ export function validateServerConfig(config: ServerConfig): ValidatedServerConfi
     throw new Error(`El modo servidor requiere HTTPS canónico en publicOrigin; se recibió «${config.publicOrigin}»`);
   }
 
-  if (!parsed.hostname || parsed.hostname === 'localhost' || parsed.hostname === '127.0.0.1') {
-    // Nota: para pruebas sintéticas locales se admiten nombres DNS locales calificados si son https, pero no loopback no seguro
+  if (config.publicOrigin !== parsed.origin) {
+    throw new Error(`publicOrigin no canónico: «${config.publicOrigin}». Debe ser exactamente «${parsed.origin}» (sin ruta, barra final, puerto :443 redundante, credenciales, query ni mayúsculas).`);
+  }
+
+  if (parsed.hostname === 'localhost' || parsed.hostname === '127.0.0.1' || parsed.hostname === '::1') {
+    throw new Error(`publicOrigin inválido para modo servidor: «${config.publicOrigin}». No se permite loopback en modo servidor.`);
   }
 
   const canonicalHost = parsed.host; // incluye puerto si no es estándar (ej. fab.example.com o fab.example.com:8443)

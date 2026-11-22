@@ -167,17 +167,19 @@ describe('T118a: Modo servidor, frontera HTTP y arranque', () => {
     expect(resMissing.status).toBe(403);
     expect(await resMissing.text()).toContain('Origin ausente o ajeno');
 
-    // 3. Origin ajeno -> 403
-    const resEvil = await fetch('http://localhost/_test/origin', {
-      method: 'POST',
-      unix: socketPath,
-      headers: {
-        Host: 'fab.ejemplo.com',
-        Origin: 'https://evil-phishing.com',
-      },
-    } as any);
-    expect(resEvil.status).toBe(403);
-    expect(await resEvil.text()).toContain('Origin ausente o ajeno');
+    // 3. Origin ajeno -> 403 (incluyendo sufijo malicioso / M04)
+    for (const evilOrigin of ['https://evil-phishing.com', 'https://fab.ejemplo.com.evil.com', 'http://fab.ejemplo.com', 'null']) {
+      const resEvil = await fetch('http://localhost/_test/origin', {
+        method: 'POST',
+        unix: socketPath,
+        headers: {
+          Host: 'fab.ejemplo.com',
+          Origin: evilOrigin,
+        },
+      } as any);
+      expect(resEvil.status).toBe(403);
+      expect(await resEvil.text()).toContain('Origin ausente o ajeno');
+    }
 
     // 4. Método GET -> 405
     const resGet = await fetch('http://localhost/_test/origin', {
@@ -643,5 +645,35 @@ uQAwb1guU1AUR6nVZtdFNQM9kVZ98hOcE9GUPLNEWYbELrBmbFfLChpyQQU=
     expect(compose).toContain('fab-public');
     expect(compose).toContain('fab-internal');
     expect(compose).toContain('internal: true');
+  });
+
+  test('T118-H8: Rechazo estricto de publicOrigin no canónico', () => {
+    const invalidOrigins = [
+      'https://fab.ejemplo.com/ruta',
+      'https://fab.ejemplo.com/',
+      'https://FAB.ejemplo.com',
+      'https://fab.ejemplo.com:443',
+      'https://user:pass@fab.ejemplo.com',
+      'https://localhost',
+      'https://127.0.0.1',
+      'https://fab.ejemplo.com?x=1',
+      'https://fab.ejemplo.com#fragmento',
+      'https://',
+    ];
+
+    for (const origin of invalidOrigins) {
+      expect(() => {
+        validateServerConfig({ server: true, publicOrigin: origin });
+      }).toThrow();
+    }
+
+    // Orígenes válidos y canónicos
+    const valid1 = validateServerConfig({ server: true, publicOrigin: 'https://fab.ejemplo.com' });
+    expect(valid1.canonicalHost).toBe('fab.ejemplo.com');
+    expect(valid1.publicOrigin).toBe('https://fab.ejemplo.com');
+
+    const valid2 = validateServerConfig({ server: true, publicOrigin: 'https://fab.ejemplo.com:8443' });
+    expect(valid2.canonicalHost).toBe('fab.ejemplo.com:8443');
+    expect(valid2.publicOrigin).toBe('https://fab.ejemplo.com:8443');
   });
 });
