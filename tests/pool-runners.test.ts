@@ -427,3 +427,12 @@ test('T102-H5: una pausa después de la reserva y durante la preparación evita 
     expect(store.listEvents(ws.id, undefined, change.id).some(e => String(e.message).includes('encargo enviado'))).toBe(false);
   } finally { pause.mockRestore(); other.close(); }
 });
+
+test('T109-H1: un cost-rates.json inválido para el pool antes de reclamar y no gasta reintentos', async () => {
+  const ws = workstream();
+  const c = store.createChange(ws.id, 'fix', 'desc');
+  writeFileSync(join(dir, 'cost-rates.json'), '[{"version":"x"}]');
+  await expect(runPool(store, opts(ws.id))).rejects.toThrow('versión de tarifa inválida');
+  expect(store.listActivities({ changeId: c.id }).map(a => [a.status, a.retryCount])).toEqual([['pending', 0]]);
+  expect(store.getChange(c.id).status).not.toBe('failed');
+});

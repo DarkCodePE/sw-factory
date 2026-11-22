@@ -772,6 +772,7 @@ export async function runPool(store: Store, opts: PoolOptions): Promise<void> {
   if (agentCheck?.violation && !opts.acceptAgentBinaries) throw new Error(agentCheck.violation);
   if (agentCheck?.warning) log(agentCheck.warning);
   if (opts.live && !backendOf(opts, startupAdapter)) log(`aviso: --live pero el adaptador «${startupAdapter}» no tiene backend vivo: depende del rol; las activities sin backend vivo correrán de un disparo, sin sesión reanudable`); // B4
+  costRateAt(opts.stateDir, new Date().toISOString(), null); // H1: tarifas inválidas paran el pool antes de reclamar
   const adm = opts.live || hasAdmission(store) ? new AdmissionDb(store) : undefined; // una vez, no en cada vuelta del bucle (B3)
   const running = new Set<Promise<void>>();
   const activeControllers = new Map<Promise<void>, AbortController>();
@@ -831,6 +832,7 @@ export async function runPool(store: Store, opts: PoolOptions): Promise<void> {
       while (!interrupted && current.state === 'active' && running.size < current.workerConcurrency) {
         const workerId = `w${(slot++ % current.workerConcurrency) + 1}-${process.pid}-${randomUUID()}`;
         let claimed: Activity | null = null;
+        costRateAt(opts.stateDir, new Date().toISOString(), null); // H1: sin reclamo ni reintento gastado si el fichero se rompió
         try {
           claimed = store.claimActivity(ws.id, workerId, opts.leaseTtlMs);
         } catch (err) {
