@@ -33,12 +33,26 @@ export function repoByAlias(stateDir: string, alias: string): string {
   return real;
 }
 
+/** Rutas reales de los repos del inventario: la importación de una definición solo puede apuntar a una de ellas. */
+function inventoryPaths(stateDir: string): Set<string> {
+  const out = new Set<string>();
+  for (const alias of Object.keys(loadInventory(stateDir).repos ?? {})) { try { out.add(repoByAlias(stateDir, alias)); } catch { /* alias roto: no cuenta */ } }
+  return out;
+}
+
 type Raw = Record<string, string>;
 const GUARDS: Record<string, (input: Raw, store: Store, stateDir: string, id: string) => Raw> = {
   // El `repo` del formulario es un alias; la ruta sale del inventario. Los comandos de verificación quedan en consola.
   'workstreams/create': (input, _store, stateDir) => {
     if (input.verify) throw bad('El comando de verificación se fija desde la consola del operador.');
     return { ...input, repo: repoByAlias(stateDir, input.repo ?? '') };
+  },
+  // El destino de una definición se elige por alias en la vista previa; la confirmación lleva la ruta resuelta y debe seguir en el inventario.
+  'definicion/importar': (input, _store, stateDir) => {
+    let real: string;
+    try { real = realpathSync(input.repo ?? ''); } catch { throw bad('El repositorio no está en el inventario del servidor.'); }
+    if (!inventoryPaths(stateDir).has(real)) throw bad('El repositorio no está en el inventario del servidor.');
+    return input;
   },
   'workstreams/settings': (input, _store, stateDir) => {
     const c = loadInventory(stateDir).ceiling ?? {};

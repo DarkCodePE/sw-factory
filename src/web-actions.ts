@@ -35,7 +35,7 @@ import { automationEditor, automationEditorPath, automationErrorDocument } from 
 import { csrfToken, constantEqual, originOk } from './web-auth.ts';
 import { actorOf } from './users.ts';
 import { inActor, isServer, preauthorize, type ServerWho, type Who } from './web-who.ts';
-import { serverGuard } from './web-server-guards.ts';
+import { repoByAlias, serverGuard } from './web-server-guards.ts';
 
 // Cancelar vale para todo change que no haya terminado bien o por decisión: igual que `fab reject`, también limpia failed, blocked y quarantined.
 const FINAL_STATUSES = ['completed', 'canceled', 'declined'];
@@ -731,7 +731,11 @@ async function runWebAction(req: Request, stateDir: string, gate: WebGate, usage
     if (action.importKind && !form.has('payload')) {
       // Paso 1: sin confirmación; renderiza la vista previa y no escribe.
       if (!file?.bytes.byteLength) throw new InputError(400, 'Elige un fichero para importar.');
-      try { return importPreview(action.importKind, stateDir, form, file.bytes, csrf, escape); } catch (e) { throw importFailure(e); }
+      try {
+        // En servidor el destino de una definición es un alias del inventario; la ruta resuelta es lo que se sella.
+        if (isServer(gate.who) && action.importKind === 'definition') form.set('repo', repoByAlias(stateDir, form.get('repo') ?? ''));
+        return importPreview(action.importKind, stateDir, form, file.bytes, csrf, escape);
+      } catch (e) { throw importFailure(e); }
     }
     const raw = action.path.exec(pathname)![1] ?? '';
     if ('respond' in action) {

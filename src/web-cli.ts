@@ -20,6 +20,7 @@ import { constantEqual, cookieValue, csrfToken, originOk, RateLimiter, SESSION_C
 import { jiraImportAction } from './web-entrada.ts';
 import { runnerCheckAction } from './web-runner-check.ts';
 import { preauthorize } from './web-who.ts';
+import { repoByAlias } from './web-server-guards.ts';
 import { ProfileInputError, profileAction } from './web-profile.ts';
 import { previewResolveWork, resolveWork } from './users-work.ts';
 import { seal, IMPORT_UPLOAD_LIMIT } from './web-import.ts';
@@ -262,6 +263,7 @@ export function cliRoutes(opts: CliRoutesOptions) {
         // Vista previa y confirmación: sin `confirm` devuelve la revisión del paquete; con ella repetida se importa.
         const kind = IMPORT_OPS[op as keyof typeof IMPORT_OPS];
         if (!cmd.file) throw new StoreError('invalid_input', 'falta el paquete');
+        if (kind === 'definition') fields.repo = repoByAlias(opts.stateDir, fields.repo ?? ''); // alias del inventario → ruta real
         const target = kind === 'profile' ? [fields.ws ?? ''] : [fields.repo ?? '', fields.slug ?? ''];
         const revision = seal(kind, attachment!.bytes, ...target);
         if (cmd.confirm === undefined) return { preview: { kind, bytes: attachment!.bytes.byteLength, target }, revision };

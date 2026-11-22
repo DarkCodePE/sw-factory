@@ -32,6 +32,7 @@ afterEach(() => c.close());
 /** `fetch` que entra directo en las rutas del servidor y anota lo enviado (sin red). */
 const fakeFetch = (async (url: string, init: RequestInit) => {
   const headers = new Headers(init.headers); headers.set('host', HOST);
+  expect(init.redirect).toBe('manual'); // una redirección con credenciales nunca se sigue
   seen.push({ url, body: String(init.body ?? ''), auth: headers.get('authorization') });
   return (await routes.handle(new Request(url, { ...init, headers }), '203.0.113.9')) ?? new Response('no', { status: 404 });
 }) as unknown as typeof fetch;

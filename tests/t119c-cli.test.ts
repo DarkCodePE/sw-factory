@@ -338,3 +338,12 @@ test('resolve-work: dos aplicaciones con IDs distintos sobre la misma cola dan u
   const [x, y] = await Promise.all([resolveCmd(c.web.member.userId, f, revision, OP), resolveCmd(c.web.member.userId, f, revision, '22222222-2222-4222-8222-222222222222')]);
   expect([x.status, y.status].sort()).toEqual([200, 409]);
 });
+
+test('resolve-work: la aplicación vuelve a comprobar que el origen sigue suspendido', async () => {
+  await mkWork('member', 1);
+  disableUser(c.store, c.web.owner, c.web.member.userId);
+  const { revision } = await data<{ revision: string }>(await resolveCmd(c.web.member.userId, {}));
+  c.store.db.query('UPDATE users SET disabled_at = NULL WHERE id = ?').run(c.web.member.userId); // reactivado entre la vista y la aplicación
+  expect((await resolveCmd(c.web.member.userId, { cancel: 'yes', reason: 'r' }, revision, OP)).status).toBe(409);
+  expect(c.store.db.query("SELECT COUNT(*) AS n FROM changes WHERE status = 'canceled'").get()).toEqual({ n: 0 });
+});

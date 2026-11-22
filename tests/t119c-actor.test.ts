@@ -9,7 +9,8 @@ import { csrfToken } from '../src/web-auth.ts';
 import { runnerCheckAction } from '../src/web-runner-check.ts';
 import { jiraImportAction } from '../src/web-entrada.ts';
 import { notesBlock } from '../src/prompts.ts';
-import { disableUser, issueSession, resolvePrincipal, revokeSession, type Principal } from '../src/users.ts';
+import { disableUser, revokeSession, revokeUserKey, type Principal } from '../src/users.ts';
+import { repoByAlias, serverGuard } from '../src/web-server-guards.ts';
 import { cloud, ORIGIN, SECRET, type Cloud } from './helpers/cloud.ts';
 
 let c: Cloud;
@@ -186,4 +187,32 @@ test('performAction directo con un principal: member no cancela; owner sí llega
   const ok = await performAction(c.stateDir, 'changes/cancel', changeId, { confirm: 'yes' }, { principal: c.web.owner, write: true });
   expect(ok.result).not.toBe('forbidden'); // el repo del fixture no es un worktree real: la limpieza posterior puede fallar
   expect(c.store.getChange(changeId).status).toBe('canceled');
+});
+
+test('performAction directo: la política va antes que la validación del formulario (viewer con campos rotos: forbidden, no InputError)', async () => {
+  const out = await performAction(c.stateDir, 'changes/rename', changeId, { title: '' }, { principal: c.web.viewer, write: true });
+  expect(out.result).toBe('forbidden');
+  await expect(performAction(c.stateDir, 'changes/rename', changeId, { title: '' }, { principal: c.web.member, write: true })).rejects.toMatchObject({ status: 400 });
+});
+
+test('definicion/importar: el destino debe ser un repo del inventario (alias → ruta real)', () => {
+  const repo = join(c.dir, 'repo');
+  writeFileSync(join(c.stateDir, 'server-inventory.json'), JSON.stringify({ repos: { ok: repo } }));
+  expect(() => serverGuard('definicion/importar', { repo: '/etc' }, c.store, c.stateDir, '')).toThrow('inventario');
+  expect(() => serverGuard('definicion/importar', { repo: c.dir }, c.store, c.stateDir, '')).toThrow('inventario');
+  expect(serverGuard('definicion/importar', { repo }, c.store, c.stateDir, '')).toEqual({ repo });
+  expect(repoByAlias(c.stateDir, 'ok')).toBe(repo);
+  expect(() => repoByAlias(c.stateDir, 'constructor')).toThrow('inventario');
+});
+
+test('API: una clave local fabk_ no vale en servidor, una clave revocada tampoco y la lectura funciona con una clave de usuario', async () => {
+  const get = (token: string) => { const r = new Request(`${ORIGIN}/api/v1/workstreams`, { headers: { authorization: `Bearer ${token}` } }); return handleServerApi(r, new URL(r.url), c.stateDir, true); };
+  const local = c.store.createApiKey('local', 'decide');
+  expect((await get(local.key)).status).toBe(401);
+  const ok = await get(c.keys.member.read);
+  expect(ok.status).toBe(200);
+  expect(((await ok.json()) as { data: { slug: string }[] }).data[0]!.slug).toBe('nube');
+  const id = /^fabu_([a-f0-9]{12})_/.exec(c.keys.member.read)![1]!;
+  revokeUserKey(c.store, c.web.member, id, true);
+  expect((await get(c.keys.member.read)).status).toBe(401);
 });
