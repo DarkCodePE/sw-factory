@@ -427,7 +427,6 @@ export function calculateMetrics(store: Store, stateDir: string, options: { ws?:
       models: groupSpending(spendAttempts, a => a.effectiveModel, days, 'inferenceMicroUsd'),
       adapters: groupSpending(spendAttempts, a => a.adapter, days, 'totalMicroUsd'),
       top: top20,
-      topPrs: top20,
     },
     cost: { total: unknownChanges ? null : measured, measured, unknownChanges,
       top: measuredCosts.sort((a, b) => b.cost - a.cost || a.id.localeCompare(b.id)).slice(0, 10),

@@ -3,6 +3,7 @@ import { mkdtempSync, mkdirSync, writeFileSync, rmSync, readdirSync, readFileSyn
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { Store } from '../src/store.ts';
+import { costRateAt } from '../src/attempt-cost.ts';
 import { calculateMetrics, distribution } from '../src/metrics.ts';
 import { startWeb } from '../src/web.ts';
 import { metricsPage } from '../src/web-metrics.ts';
@@ -278,8 +279,32 @@ test('T82: coste por fuente y por actor del primer evento', () => {
 
 const svgOf = (html: string, label: string) => html.match(new RegExp(`<svg[^>]*aria-label="${label}[^>]*>[\\s\\S]*?</svg>`))?.[0] ?? '';
 test('T82/T111: tarjetas con área SVG, números iguales a la tabla plegada y días sin datos como hueco, nunca cero', () => {
-  seed(1, 5, 'uno', '2026-11-17T10:00:00Z');
-  seed(1, null, 'uno', '2026-11-18T10:00:00Z');
+  const c1 = seed(1, 5, 'uno', '2026-11-17T10:00:00Z');
+  const a1 = store.listActivities({ changeId: c1.id })[0]!;
+  store.beginCostAttempt(a1, {
+    id: 'att-280-1',
+    rate: costRateAt(dir, '2026-11-17T10:00:00Z', null),
+    remote: false,
+    runner: null,
+    adapter: 'synthetic',
+    legacyCount: 0,
+    startedAt: '2026-11-17T10:00:00Z',
+  });
+  store.finishCostAttempt('att-280-1', { costUsd: 5 }, 100);
+
+  const c2 = seed(1, null, 'uno', '2026-11-18T10:00:00Z');
+  const a2 = store.listActivities({ changeId: c2.id })[0]!;
+  store.beginCostAttempt(a2, {
+    id: 'att-280-2',
+    rate: costRateAt(dir, '2026-11-18T10:00:00Z', null),
+    remote: false,
+    runner: null,
+    adapter: 'synthetic',
+    legacyCount: 0,
+    startedAt: '2026-11-18T10:00:00Z',
+  });
+  store.finishCostAttempt('att-280-2', undefined, 100);
+
   const q = 'http://127.0.0.1:4310/metricas?from=2026-11-17&to=2026-11-19';
   const { body: html } = metricsPage(store, dir, new URL(q));
   const { body: gasto } = metricsPage(store, dir, new URL(q + '&tab=gasto'));
@@ -701,13 +726,21 @@ test('T108 H6: el gasto y la tabla distinguen modelos efectivos, caché medida y
       { adapter: 'native', requestedModel: 'pedido', usage: { effectiveModel: 'servido-2', inputTokens: 83, outputTokens: 9 } },
     ],
   }));
-  const cost = calculateMetrics(store, dir, { now }).cost;
+  const metrics = calculateMetrics(store, dir, { now });
+  const cost = metrics.cost;
+  const spending = metrics.spending;
+  expect(spending.models.find(g => g.name === 'servido-1')?.inference).toEqual({
+    measured: 123000, unknown: 0, total: 123000,
+  });
+  expect(spending.models.find(g => g.name === 'servido-2')?.inference).toEqual({
+    measured: null, unknown: 1, total: null,
+  });
+  expect(spending.adapters.find(g => g.name === 'native')?.inference).toEqual({
+    measured: 123000, unknown: 1, total: null,
+  });
   expect(cost.models).toEqual([
     { name: 'servido-1', measured: 0.123, unknown: 0, total: 0.123 },
     { name: 'servido-2', measured: null, unknown: 1, total: null },
-  ]);
-  expect(cost.adapters).toEqual([
-    { name: 'native', measured: 0.123, unknown: 1, total: null },
   ]);
   expect(cost.total).toBeNull();
 
