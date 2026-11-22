@@ -39,7 +39,7 @@ test('tramos exactos, intervenciones, estados, tipos y coste; null no es cero', 
   expect(m.cost.total).toBeNull(); expect(m.cost.measured).toBe(2); expect(m.cost.unknownChanges).toBe(1);
   expect(m.cost.top.map(c => c.cost)).toEqual([2, 0]);
   expect(m.cost.adapters).toEqual([{ name: 'synthetic', measured: 2, unknown: 1, total: null }]);
-  expect(m.cost.models).toEqual([{ name: 'modelo-demo', measured: 2, unknown: 1, total: null }]);
+  expect(m.cost.models).toEqual([{ name: 'No medido', measured: 2, unknown: 1, total: null }]);
 });
 test('filtros de cohorte por fecha y workstream, incluyendo límites y futuro', () => {
   store.createWorkstream({ slug: 'dos', goal: 'g', repo: '/synthetic' });
@@ -172,7 +172,7 @@ test('H8: singleAttempt exige cero reintentos y a lo sumo un coste', () => {
     const a = store.listActivities({ changeId: c.id })[0]!;
     store.db.query('UPDATE activities SET retry_count=? WHERE id=?').run(retry, a.id);
     writeFileSync(join(dir, 'runs', c.id, `${a.id}.json`), JSON.stringify({ attemptCosts: costs, model: 'm', isolation: { adapter: 'a' } }));
-    return calculateMetrics(store, dir, { now }).cost.models[0]?.name;
+    return calculateMetrics(store, dir, { now }).cost.adapters[0]?.name;
   };
   const one = seed(1, 1); expect(write(one, 0, [1, 2])).toBe('No medido');
   store.db.query('DELETE FROM changes WHERE id=?').run(one.id);
@@ -706,3 +706,31 @@ test('T82-H11: huecos de test (COUNT DISTINCT en merge/abiertos, fallback change
   expect(changePrLink(store, c3.id)).toBe('No medido');
 });
 
+
+test('T108: el gasto y la tabla distinguen modelos efectivos, caché medida y coste desconocido', async () => {
+  const c = seed(1, 2);
+  const a = store.listActivities({ changeId: c.id })[0]!;
+  const meta = join(dir, 'runs', c.id, `${a.id}.json`);
+  store.db.query('UPDATE activities SET retry_count = 1 WHERE id = ?').run(a.id);
+  writeFileSync(meta, JSON.stringify({
+    model: 'pedido', attemptCosts: [0.123, null],
+    inferenceAttempts: [
+      { adapter: 'native', requestedModel: 'pedido', usage: { effectiveModel: 'servido-1', inputTokens: 95, outputTokens: 7, cacheReadTokens: 0, costUsd: 0.123 } },
+      { adapter: 'native', requestedModel: 'pedido', usage: { effectiveModel: 'servido-2', inputTokens: 83, outputTokens: 9 } },
+    ],
+  }));
+  const cost = calculateMetrics(store, dir, { now }).cost;
+  expect(cost.models).toEqual([
+    { name: 'servido-1', measured: 0.123, unknown: 0, total: 0.123 },
+    { name: 'servido-2', measured: null, unknown: 1, total: null },
+  ]);
+  expect(cost.total).toBeNull();
+  const web = startWeb(dir, 0);
+  try {
+    const response = await fetch(`http://127.0.0.1:${web.port}/activities/${a.id}`);
+    expect(response.status).toBe(200);
+    const html = await response.text();
+    expect(html).toContain('<td>servido-1</td><td>95</td><td>7</td><td>0</td>');
+    expect(html).toContain('<td>servido-2</td><td>83</td><td>9</td><td>No medido</td><td>No medido</td><td>No medido</td>');
+  } finally { web.stop(true); }
+});

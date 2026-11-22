@@ -1,5 +1,5 @@
 // Verificación (pin sha256) de los binarios externos que invoca la fábrica:
-// claude, codex, agy, droid (idea: cmd/factory/release.go:171,226-265@d901657).
+// claude, codex, agy, gemini, droid (idea: cmd/factory/release.go:171,226-265@d901657).
 // El pin vive en <FABRICA_HOME>/agents.json y se verifica al arrancar el pool.
 import { createHash, randomUUID } from 'node:crypto';
 import { accessSync, constants, existsSync, mkdirSync, readFileSync, renameSync, statSync, writeFileSync } from 'node:fs';
@@ -7,7 +7,7 @@ import { homedir } from 'node:os';
 import { join, resolve } from 'node:path';
 
 /** Adaptadores externos cuyo binario se puede fijar/pinar. */
-export const PINNED_AGENTS = ['claude', 'codex', 'agy', 'droid'];
+export const PINNED_AGENTS = ['claude', 'codex', 'agy', 'droid', 'gemini'];
 
 export const factoryHome = (): string =>
   resolve(process.env.FABRICA_HOME ?? resolve(process.env.HOME ?? '.', '.fabrica'));

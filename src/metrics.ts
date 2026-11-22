@@ -1,6 +1,6 @@
 // Agregados de lectura sobre una cohorte explícita. null siempre significa desconocido.
 import type { Store } from './store.ts';
-import { activityCosts, activityMetadata, changeCost } from './evidence.ts';
+import { activityCosts, activityInference, activityMetadata, changeCost } from './evidence.ts';
 export const METRICS_LIMIT = 1000;
 export type MetricsRange = '7' | '30' | 'all' | 'custom';
 export function distribution(values: number[]) {
@@ -102,6 +102,13 @@ export function calculateMetrics(store: Store, stateDir: string, options: { ws?:
       kinds.push(a.validator ? `validador:${a.validator}` : a.kind);
       let meta: Record<string, unknown> | null = null;
       try { meta = activityMetadata(stateDir, a); } catch { /* Fallo cerrado del lector compartido. */ }
+      if (Array.isArray(meta?.inferenceAttempts)) {
+        for (const attempt of activityInference(a, meta)) {
+          addCost(adapters, textField(attempt.adapter), attempt.costUsd);
+          addCost(models, textField(attempt.usage?.effectiveModel), attempt.costUsd);
+        }
+        continue;
+      }
       const attempts = activityCosts(a, meta);
       const sum = attempts && !attempts.some(c => c === null) ? (attempts as number[]).reduce((s, c) => s + c, 0) : null;
       // El agente configurado ahora en el workstream no prueba qué adaptador ejecutó el intento.
@@ -109,8 +116,8 @@ export function calculateMetrics(store: Store, stateDir: string, options: { ws?:
       const adapter = isolation && typeof isolation === 'object' ? (isolation as Record<string, unknown>).adapter : undefined;
       const singleAttempt = a.retryCount === 0 && (attempts?.length ?? 0) <= 1;
       addCost(adapters, singleAttempt ? textField(adapter) : 'No medido', sum);
-      // La metadata solo conserva el último modelo: con reintentos no se atribuye el total a él.
-      addCost(models, singleAttempt ? textField(meta?.model) : 'No medido', sum);
+      // La metadata histórica guardaba el modelo solicitado, sin acreditar qué modelo respondió.
+      addCost(models, 'No medido', sum);
     }
   }
   const measuredCosts = costs.filter((c): c is typeof c & { cost: number } => c.cost !== null);

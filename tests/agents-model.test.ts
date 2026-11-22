@@ -33,8 +33,8 @@ test('sin modelo el argv es el de siempre', () => {
     expect(argv(n).join(' ')).not.toMatch(/--model|(^| )-m m/);
   }
   expect(argv('claude')).not.toContain('--model');
-  expect(argv('codex')).toEqual(['codex', 'exec', '--sandbox', 'workspace-write', '--skip-git-repo-check', '-']);
-  expect(argv('codex', undefined, { readOnly: true })).toEqual(['codex', 'exec', '--sandbox', 'read-only', '--skip-git-repo-check', '-']);
+  expect(argv('codex')).toEqual(['codex', 'exec', '--json', '--sandbox', 'workspace-write', '--skip-git-repo-check', '-']);
+  expect(argv('codex', undefined, { readOnly: true })).toEqual(['codex', 'exec', '--json', '--sandbox', 'read-only', '--skip-git-repo-check', '-']);
   expect(argv('droid')).toEqual(['droid', 'exec', '-m', 'custom:qwen-local', '--auto', 'medium', '--output-format', 'text', '--file', '/dev/stdin']);
   expect(argv('native')).not.toContain('-m');
   expect(argv('fake').length).toBe(5);
@@ -70,4 +70,9 @@ test('T57 H5a: runAgent pasa el modelo a confineAgent y ANTHROPIC_MODEL no entra
     if (prev.M === undefined) delete process.env.ANTHROPIC_MODEL; else process.env.ANTHROPIC_MODEL = prev.M;
     rmSync(dir, { recursive: true, force: true });
   }
+});
+
+test('Gemini CLI usa JSONL y activa el modo de solo lectura para investigación', () => {
+  expect(argv('gemini', undefined, { readOnly: true })).toEqual(['gemini', '--output-format', 'stream-json', '--approval-mode', 'plan']);
+  expect(argv('gemini')).toEqual(['gemini', '--output-format', 'stream-json']);
 });

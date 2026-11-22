@@ -50,6 +50,7 @@ export type LiveActivityCtx = {
   prompt: string;
   model?: string | null;
   timeoutMs?: number; signal: AbortSignal; confine?: boolean; capturePath?: string; claudeProjects?: string; mcpConfigDir?: string;
+  onAttemptStart?: () => void; onAttemptEnd?: (run: AgentRun) => void;
   onSpawn: (pgid: number) => void; crash?: (point: CrashPoint) => void;
   /** T72: servidores MCP del rol, entorno declarado y valores a limpiar. Todo ausente en modo anterior. */
   mcpServers?: Record<string, unknown>; envDecl?: EnvDecl; scrub?: Record<string, string>;
@@ -121,6 +122,7 @@ export async function runLiveActivity(store: Store, adm: AdmissionDb, a: Activit
         attemptId, activityId: a.id, changeId: a.changeId, sessionId: session.sessionId,
         generation: session.generation, plan: reason, questionId,
       });
+      ctx.onAttemptStart?.();
       ctx.crash?.('session-launched');
       const record = reports.recorder(a.id, attemptId, ctx.crash);
       let result;
@@ -143,6 +145,7 @@ export async function runLiveActivity(store: Store, adm: AdmissionDb, a: Activit
         outcome: outcome?.kind ?? 'no_report', exitCode: result.exitCode, durationMs: result.durationMs,
         costUsd: result.usage?.costUsd, log: writeTurnLog(ctx, a, attemptId, result),
       });
+      ctx.onAttemptEnd?.(result);
       const confirm = reserved > 0 && !ctx.signal.aborted && (!hasAttachments || result.exitCode === 0);
       if (questionId || confirm) adm.tx(() => {
         if (questionId) markAnswerDelivered(adm, questionId);

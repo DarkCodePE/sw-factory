@@ -46,7 +46,7 @@ test('the stream decoder assembles text, completed tool calls and usage', async 
     { type: 'response.output_item.done', output_index: 1, item: { type: 'function_call', call_id: 'c9', name: 'Read', arguments: '{"file_path":"/a"}' } },
     { type: 'response.completed', response: { usage: { input_tokens: 12, output_tokens: 3 } } },
   ]), 1 << 20, d => deltas.push(d));
-  expect(turn).toEqual({ text: 'Reading', finishReason: 'tool_calls', usage: { inputTokens: 12, outputTokens: 3 },
+  expect(turn).toEqual({ text: 'Reading', finishReason: 'tool_calls', usage: { inputTokens: 12, outputTokens: 3 }, inference: { inputTokens: 12, outputTokens: 3 },
     toolCalls: [{ id: 'c9', type: 'function', function: { name: 'Read', arguments: '{"file_path":"/a"}' } }] });
   expect(deltas).toEqual(['Rea', 'ding']);
 });

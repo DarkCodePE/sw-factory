@@ -50,7 +50,7 @@ export function gitEvidence(repo: string, ...args: string[]): string | null {
 export function isolationFor(adapter: string) {
   const posture: Record<string, string> = {
     fake: 'test process; no sandbox', codex: 'CLI sandbox: read-only or workspace-write',
-    claude: 'CLI tool allowlist; no fab sandbox', agy: 'CLI permissions bypassed; no fab sandbox',
+    claude: 'CLI tool allowlist; no fab sandbox', agy: 'CLI permissions bypassed; no fab sandbox', gemini: 'Gemini CLI permissions; no fab sandbox',
     droid: 'CLI auto medium; no fab sandbox', native: 'native tool sandbox policy',
   };
   return { adapter, posture: posture[adapter] ?? 'unknown; no isolation attested' };

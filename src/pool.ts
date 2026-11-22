@@ -7,6 +7,7 @@ import { existsSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { join, resolve } from 'node:path';
 import { selfCommand } from './self.ts';
 import { activityLog, atomicEvidence, gitEvidence, isolationFor, readEgressProbe, runDirectory, writeManifest } from './manifest.ts';
+import { modelId, readInferenceAttempts, readUsage, tokenCount, type InferenceAttempt } from './inference-usage.ts';
 import { verifyAgentStart, type AgentStartCheck } from './agents-verify.ts';
 import { getAgent, MCP_AGENTS, runAgent, type AgentAdapter, type AgentRun } from './agents.ts';
 import { expireQuestions } from './admission/answers.ts';
@@ -240,12 +241,21 @@ export async function processActivity(
     const { adapter, model } = resolveRole(profile, role, ws.agent, opts.agentOverride);
     const meta = `${runDirectory(opts.stateDir, change.id)}/${a.id}.json`;
     const previous = existsSync(meta) ? JSON.parse(readFileSync(meta, 'utf8')) : null;
-    // Preserve all costs, including unknown attempts from legacy evidence. Reports remain attempt-local.
-    const attemptCosts: unknown[] = previous?.attemptCosts ?? Array.from({ length: a.retryCount }, (_, i) =>
-      i === a.retryCount - 1 ? previous?.usage?.costUsd ?? null : null);
-    attemptCosts.push(0);
-    // Reset before setup too: a launch/setup failure must not reuse an earlier report or cost.
-    const pendingEvidence = { isolation: opts.confine ? 'bwrap-allowlist' : isolationFor(adapter), workerReport: null, attemptCosts };
+    // Conserva costes y contadores históricos. Solo la última ejecución antigua tenía metadata propia.
+    const attemptCosts: unknown[] = Array.isArray(previous?.attemptCosts) ? previous.attemptCosts
+      : previous ? Array.from({ length: Math.max(1, a.retryCount) }, (_, i) =>
+        i === Math.max(1, a.retryCount) - 1 ? readUsage(previous.usage)?.costUsd ?? null : null)
+        : Array.from({ length: a.retryCount }, () => null);
+    const inferenceAttempts: InferenceAttempt[] = readInferenceAttempts(previous?.inferenceAttempts) ?? attemptCosts.map((_, i) =>
+      i === attemptCosts.length - 1 && previous ? {
+        adapter: modelId(previous.adapter), requestedModel: modelId(previous.model),
+        usage: readUsage(previous.usage), durationMs: tokenCount(previous.durationMs),
+        ...(previous.runner?.kind === 'ssh' ? { remoteDeclared: true as const } : {}),
+      } : {});
+    attemptCosts.push(null);
+    inferenceAttempts.push({});
+    const pendingEvidence = { isolation: opts.confine ? 'bwrap-allowlist' : isolationFor(adapter), workerReport: null, attemptCosts, inferenceAttempts };
+    // Un fallo de preparación no reutiliza el resultado de un intento anterior.
     atomicEvidence(meta, JSON.stringify(pendingEvidence));
     if (runnerProblem) {
       store.setActivityProvenance(a.id, profileDigest, fabSha());
@@ -418,10 +428,20 @@ export async function processActivity(
       ...selfCommand('__capture', new URL('./manifest-capture.ts', import.meta.url)),
       activityLog(opts.stateDir, change.id, a.id), ...agent.command(text, options),
     ] };
-    // From launch onward the cost is unknown until the agent reports it.
-    attemptCosts[attemptCosts.length - 1] = null;
     let runnerMeta: Record<string, unknown> = runner ? { runner: { name: runner.name, kind: runner.kind } } : {};
-    atomicEvidence(meta, JSON.stringify({ ...pendingEvidence, ...provenance, ...accessMeta, ...runnerMeta }));
+    let turnCount = 0;
+    const attempt: InferenceAttempt = { adapter, requestedModel: model ?? undefined, ...(remote ? { remoteDeclared: true } : {}) };
+    const savePending = () => atomicEvidence(meta, JSON.stringify({ ...pendingEvidence, ...provenance, ...accessMeta, ...runnerMeta }));
+    inferenceAttempts[inferenceAttempts.length - 1] = attempt;
+    savePending();
+    const saveAttempt = (result: AgentRun) => {
+      const usage = readUsage(result.usage);
+      const cleanUsage = usage && access.decl && usage.effectiveModel
+        ? { ...usage, effectiveModel: modelId(scrubValues(usage.effectiveModel, scrub)) } : usage;
+      const entry: InferenceAttempt = { ...attempt, usage: cleanUsage, durationMs: tokenCount(result.durationMs) };
+      attemptCosts[attemptCosts.length - 1] = cleanUsage?.costUsd ?? null;
+      inferenceAttempts[inferenceAttempts.length - 1] = entry;
+    };
     const crash = (point: CrashPoint) => opts.crash?.(point);
     let outcome: LiveOutcome | undefined;
     let run: AgentRun;
@@ -434,8 +454,21 @@ export async function processActivity(
         capturePath: confine ? activityLog(opts.stateDir, change.id, a.id) : undefined,
         onSpawn: pgid => store.setActivityAgentPgid(a.id, pgid), crash,
         templates: profile.worker, branch, factoryCommits: agent.factoryCommits,
+        onAttemptStart: () => {
+          if (turnCount++ > 0) {
+            attemptCosts.push(null);
+            inferenceAttempts.push(attempt);
+            savePending();
+          }
+        },
+        onAttemptEnd: result => { saveAttempt(result); savePending(); },
         mcpServers: access.servers, envDecl: access.decl, scrub: access.decl ? scrub : undefined,
       }));
+      if (!turnCount && attemptCosts.length > 1) {
+        // Aplicar un report huérfano recupera la decisión, no ejecuta otro intento.
+        attemptCosts.pop();
+        inferenceAttempts.pop();
+      }
       if (!confine) atomicEvidence(activityLog(opts.stateDir, change.id, a.id), `${run.stdout ?? ''}${run.stderr ?? ''}`);
     } else {
       let turnPrompt = prompt;
@@ -476,7 +509,12 @@ export async function processActivity(
           if (!(err instanceof RunnerError)) throw err;
           // R9: ningún fallo del runner vuelve a local. Solo códigos y nombres a la base y al log; nunca texto libre del runner.
           if (abortController.signal.aborted || store.isTerminalChange(store.getChange(change.id).status)) { store.releaseActivity(a.id, workerId); return; }
-          if (err.code === 'RUNNER_BUSY') store.requeueActivity(a.id, workerId); // sin gastar reintento
+          if (err.code === 'RUNNER_BUSY') {
+            attemptCosts.pop();
+            inferenceAttempts.pop();
+            savePending();
+            store.requeueActivity(a.id, workerId); // sin gastar reintento
+          }
           else if (err.code === 'RUNNER_LOST') failLive(store, a.id, workerId, err.message);
           else {
             if (err.code === 'RUNNER_RESULT_REJECTED') store.event(ws.id, 'warning', `resultado del runner ${remote.name} rechazado (${jobId})`, change.id, a.id);
@@ -501,12 +539,12 @@ export async function processActivity(
     // S6: nada de lo que la fab guarda de la ejecución lleva un valor entregado (los backends vivos y falsos no pasan por runAgent).
     if (access.decl) {
       const clean = (t: string) => scrubValues(t, scrub);
-      run = { ...run, output: clean(run.output), status: { ...run.status, reason: clean(run.status.reason) }, ...(run.stdout !== undefined ? { stdout: clean(run.stdout) } : {}), ...(run.stderr !== undefined ? { stderr: clean(run.stderr) } : {}) };
+      run = { ...run, output: clean(run.output), status: { ...run.status, reason: clean(run.status.reason) }, ...(run.stdout !== undefined ? { stdout: clean(run.stdout) } : {}), ...(run.stdoutForMonitor !== undefined ? { stdoutForMonitor: clean(run.stdoutForMonitor) } : {}), ...(run.stderr !== undefined ? { stderr: clean(run.stderr) } : {}) };
     }
-    attemptCosts[attemptCosts.length - 1] = run.usage?.costUsd ?? null;
+    if (!live) saveAttempt(run);
     atomicEvidence(meta, JSON.stringify({
-      ...provenance, ...accessMeta, ...runnerMeta, isolation: remote ? 'remote: declarado por el runner, no verificado' : confine ? 'bwrap-allowlist' : isolationFor(provenance.adapter ?? adapter), durationMs: run.durationMs, exitCode: run.exitCode, usage: run.usage ?? null,
-      attemptCosts,
+      ...provenance, ...accessMeta, ...runnerMeta, isolation: remote ? 'remote: declarado por el runner, no verificado' : confine ? 'bwrap-allowlist' : isolationFor(provenance.adapter ?? adapter), durationMs: run.durationMs, exitCode: run.exitCode, usage: inferenceAttempts.at(-1)?.usage ?? null,
+      attemptCosts, inferenceAttempts,
       egressProbe: adapter === 'native' ? readEgressProbe(probeFile) : null,
       // Keep only a declared final worker report, independently of later block/failure decisions; never diagnostics or an earlier attempt.
       workerReport: !a.validator && !abortController.signal.aborted && run.status.kind !== 'missing' ? run.output : null,

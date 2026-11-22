@@ -1,3 +1,4 @@
+import { readUsage, tokenCount, usd, type AgentUsage } from '../inference-usage.ts';
 import { Hooks } from './hooks.ts';
 import { missionProgressSnapshot } from './mission-progress.ts';
 import { canReconcileMissionPause, missionChildSessionSaved } from './mission-pause.ts';
@@ -40,6 +41,21 @@ export async function runCodingAgent(opts: AgentOptions, inherited?: AgentLineag
   };
   const start = Date.now(), id = opts.sessionId && !opts.fork ? opts.sessionId : opts.newSessionId ?? crypto.randomUUID();
   const usage = { inputTokens: 0, outputTokens: 0 };
+  let inference: AgentUsage | undefined;
+  let observedCalls = 0;
+  function recordInference(measurement: AgentUsage | undefined) {
+    const current = readUsage(measurement) ?? {};
+    if (observedCalls++ === 0) { inference = current; return; }
+    const previous = inference ?? {};
+    inference = {
+      effectiveModel: previous.effectiveModel === current.effectiveModel ? current.effectiveModel : undefined,
+    };
+    if (previous.costUsd !== undefined && current.costUsd !== undefined) inference.costUsd = usd(previous.costUsd + current.costUsd);
+    for (const key of ['inputTokens', 'outputTokens', 'cacheReadTokens', 'cacheWriteTokens'] as const) {
+      const left = previous[key], right = current[key];
+      if (left !== undefined && right !== undefined) inference[key] = tokenCount(left + right);
+    }
+  }
   let store: SessionStore | undefined, state: SessionState | undefined;
   let saved = false;
   let runtime: ToolRuntime | undefined;
@@ -63,7 +79,7 @@ export async function runCodingAgent(opts: AgentOptions, inherited?: AgentLineag
   let executionPolicy: ExecutionPolicy | undefined;
   let timer: ReturnType<typeof setTimeout> | undefined;
   const result = (ok: boolean, text: string, error?: AgentResult['error']): AgentResult => ({
-    ok, executionPolicy, sessionId: id, text, turns, toolCalls: toolCount, durationMs: Date.now() - start, usage, ...(error ? { error } : {}),
+    ok, executionPolicy, sessionId: id, text, turns, toolCalls: toolCount, durationMs: Date.now() - start, usage, ...(readUsage(inference) ? { inference } : {}), ...(error ? { error } : {}),
     ...(state?.mission ? { mission: { missionId: state.mission.missionId, state: state.mission.state, directory: state.mission.directory,
       completed: Object.values(state.mission.features).filter(f => f.status === 'completed').length, total: Object.keys(state.mission.features).length, snapshot: missionProgressSnapshot(state.mission) } } : {}),
   });
@@ -162,12 +178,14 @@ export async function runCodingAgent(opts: AgentOptions, inherited?: AgentLineag
           const activeProvider = context.interactionMode === 'spec' ? (opts.specProvider ?? opts.provider) : opts.provider;
           const response = await abortable(activeProvider.complete({ messages: outgoing, tools: withTools ? schemas : [], maxOutputTokens: withTools ? maxOutput : Math.min(maxOutput, 2048) },
             context.signal, text => { if (!context.signal.aborted && withTools) emit('assistant_delta', { text }); }), context.signal);
+          recordInference(response.inference);
           if (response.usage) for (const key of ['inputTokens', 'outputTokens'] as const) {
             const n = response.usage[key]; if (Number.isSafeInteger(n) && n >= 0) usage[key] += n;
           }
           emit('usage', { usage: { ...usage }, contextTokens: estimatedTokens(messages, withTools ? schemas : []), maxContextTokens: maxContext });
           return response;
         } catch (e) {
+          recordInference(undefined);
           if (!(e instanceof ProviderError) || !e.retryable || attempt >= Math.min(2, maxRecovery)) throw e;
           emit('provider_retry', { attempt: attempt + 2, maxAttempts: Math.min(2, maxRecovery) + 1, message: textError(e) });
           await abortable(Bun.sleep(50 * 2 ** attempt), context.signal);

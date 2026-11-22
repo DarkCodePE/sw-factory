@@ -5,18 +5,15 @@ import { agentEnv, scrubValues } from './sandbox/env.ts';
 import { atomicEvidence } from './manifest.ts';
 import { existsSync, readFileSync } from 'node:fs';
 import { selfCommand } from './self.ts';
+import { parseClaudeJson, parseClaudeStream, parseCodexJsonl, parseGoogleJsonl, parseNativeJson } from './agent-output.ts';
+import type { AgentUsage } from './inference-usage.ts';
+export type { AgentUsage } from './inference-usage.ts';
+export { parseClaudeJson } from './agent-output.ts';
 import { parseReportStatus, reportStatusLine } from './prompts.ts';
 
 export interface AgentRunStatus {
   kind: 'done' | 'blocked' | 'missing';
   reason: string;
-}
-
-/** What the agent reports about its own consumption; absent when the CLI does not report it (codex, agy, droid, native). */
-export interface AgentUsage {
-  costUsd: number;
-  inputTokens: number;
-  outputTokens: number;
 }
 
 export interface AgentRun {
@@ -77,21 +74,8 @@ const claude: AgentAdapter = {
     // Con `--strict-mcp-config` no se cargan los servidores del usuario (T72 S5).
     ...(options?.mcpConfig ? ['--strict-mcp-config', '--mcp-config', options.mcpConfig] : []),
   ],
-  parse: parseClaudeJson,
+  parse: (stdout) => parseClaudeJson(stdout) ?? parseClaudeStream(stdout).result,
 };
-
-/** `claude -p --output-format json` prints one result object; input tokens include cache reads and writes. */
-export function parseClaudeJson(stdout: string): { text: string; usage?: AgentUsage } | null {
-  let r: any;
-  try { r = JSON.parse(stdout); } catch { return null; }
-  if (r?.type !== 'result') return null;
-  const u = r.usage ?? {};
-  const n = (x: unknown) => (typeof x === 'number' && Number.isFinite(x) && x >= 0 ? x : 0);
-  const usage = typeof r.total_cost_usd === 'number' && Number.isFinite(r.total_cost_usd) && r.total_cost_usd >= 0
-    ? { costUsd: r.total_cost_usd, inputTokens: n(u.input_tokens) + n(u.cache_creation_input_tokens) + n(u.cache_read_input_tokens), outputTokens: n(u.output_tokens) }
-    : undefined;
-  return { text: typeof r.result === 'string' ? r.result : '', ...(usage ? { usage } : {}) };
-}
 
 const codex: AgentAdapter = {
   name: 'codex',
@@ -102,14 +86,24 @@ const codex: AgentAdapter = {
   // `--full-auto` was removed in codex-cli 0.160; workspace-write keeps writes inside the worktree.
   // A linked worktree keeps its index and objects in the main repository's .git, which must also be
   // writable or `git commit` fails; read-only activities keep the default read-only sandbox.
-  command: (prompt, options) => ['codex', 'exec', ...(options?.model ? ['-m', options.model] : []),
+  command: (prompt, options) => ['codex', 'exec', ...(options?.model ? ['-m', options.model] : []), '--json',
     '--sandbox', options?.readOnly ? 'read-only' : 'workspace-write', '--skip-git-repo-check', options?.promptStdin ? '-' : prompt],
+  parse: parseCodexJsonl,
 };
 
 /** Antigravity CLI in print mode; uses the signed-in Google AI subscription. */
 const agy: AgentAdapter = {
   name: 'agy',
-  command: (prompt) => ['agy', '-p', prompt, '--dangerously-skip-permissions', '--output-format', 'text'],
+  command: (prompt) => ['agy', '-p', prompt, '--dangerously-skip-permissions', '--output-format', 'stream-json'],
+  parse: parseGoogleJsonl,
+};
+
+const gemini: AgentAdapter = {
+  name: 'gemini',
+  promptStdin: true,
+  command: (prompt, options) => ['gemini', '--output-format', 'stream-json',
+    ...(options?.readOnly ? ['--approval-mode', 'plan'] : []), ...(options?.promptStdin ? [] : ['-p', prompt])],
+  parse: parseGoogleJsonl,
 };
 
 /**
@@ -160,15 +154,16 @@ const native: AgentAdapter = {
   supportsModel: true,
   command: (prompt, options) => [...selfCommand('exec', new URL('./agent/exec.ts', import.meta.url)),
     ...(options?.model ? ['-m', options.model] : []),
-    '--require-status',
+    '--require-status', '-o', 'json',
     '--auto', process.env.FABRICA_AGENT_AUTONOMY ?? 'medium',
     ...(process.env.FABRICA_AGENT_SETTINGS ? ['--settings', process.env.FABRICA_AGENT_SETTINGS] : []),
     ...(process.env.FABRICA_AGENT_TIMEOUT_MS ? ['--timeout-ms', process.env.FABRICA_AGENT_TIMEOUT_MS] : []),
     ...(process.env.FABRICA_AGENT_MAX_TURNS ? ['--max-turns', process.env.FABRICA_AGENT_MAX_TURNS] : []),
     ...(options?.readOnly ? ['--use-spec'] : []), ...(options?.promptStdin ? [] : [prompt])],
+  parse: parseNativeJson,
 };
 
-const ADAPTERS: Record<string, AgentAdapter> = { claude, codex, agy, droid, native, fake };
+const ADAPTERS: Record<string, AgentAdapter> = { claude, codex, agy, gemini, droid, native, fake };
 
 export function getAgent(name: string): AgentAdapter {
   const a = Object.hasOwn(ADAPTERS, name) ? ADAPTERS[name] : undefined;
@@ -300,6 +295,9 @@ export async function runAgent(
     status: { kind: status.kind, reason: status.reason },
     ...(parsed?.usage ? { usage: parsed.usage } : {}),
     stdout,
+    // Mantiene el texto decodificado que antes llegaba en stdout junto con las tramas nuevas.
+    ...(parsed && ['codex', 'agy', 'gemini', 'native'].includes(agent.name)
+      ? { stdoutForMonitor: rawOutput + '\n' + stdout } : {}),
     stderr,
   };
 }

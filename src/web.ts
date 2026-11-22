@@ -3,7 +3,7 @@ import { join } from 'node:path';
 import { parseArgs } from 'node:util';
 import { Store, StoreError, type Activity } from './store.ts';
 import { ChangeStatus } from './enums.ts';
-import { activityCosts, activityMetadata, changeCost, evidencePath, readEvidence } from './evidence.ts';
+import { activityMetadata, changeCost, evidencePath, readEvidence } from './evidence.ts';
 import { redact } from './manifest.ts';
 import { WEB_STYLE } from './web-style.ts';
 import { benchmarksPage } from './web-bench.ts';
@@ -21,6 +21,7 @@ import { SIDEBAR_JS, SIDEBAR_STYLE, sidebarNav } from './web-sidebar.ts';
 import { activityScores } from './web-scorers.ts';
 import { metricsPage, METRICS_STYLE } from './web-metrics.ts';
 import { WebAuth, assertLoopback } from './web-auth.ts';
+import { attemptSection } from './web-attempts.ts';
 import { changeTurnSections, notesSection, turnEvidenceRoute } from './web-turns.ts';
 import { activityLogSection, transcriptSection } from './web-transcript.ts';
 import { signalsView } from './web-signals.ts';
@@ -124,10 +125,7 @@ function page(store: Store, stateDir: string, url: URL, csrf?: string): { title:
   const c = store.getChange(a.changeId);
   let meta: Record<string, unknown> | null = null;
   try { meta = activityMetadata(stateDir, a); } catch { /* La sección de metadata informa del fallo. */ }
-  const costs = activityCosts(a, meta);
-  const count = Math.max(costs?.length ?? 0, a.retryCount + (a.status === 'failed' ? 0 : 1), 1);
-  const duration = typeof meta?.durationMs === 'number' && Number.isFinite(meta.durationMs) ? meta.durationMs : null;
-  return { title: `Activity · ${a.validator ?? a.kind}`, body: `<p><a href="/changes/${enc(c.id)}">${escape(c.title)}</a></p><div class="summary">${badge(a.status)} ${a.reviewStatus ? badge(a.reviewStatus) : ''}<span>${escape(a.id)}</span>${copyButton(ui, a.id)}${roleLink(ui, a, store.getWorkstream(c.workstreamId).slug, 'Ver el rol en Perfiles')}</div>${actionForms(store, url, csrf)}${activityScores(store, stateDir, a, csrf)}<h2>Intentos</h2><div class="table-wrap"><table><thead><tr><th>Intento</th><th>Coste</th><th>Duración</th></tr></thead><tbody>${Array.from({ length: count }, (_, i) => `<tr><td>${i + 1}</td><td>${money(costs?.[i] ?? null)}</td><td>${i === count - 1 && duration !== null ? `${duration} ms` : 'No medida'}</td></tr>`).join('')}</tbody></table></div><p class="muted">La evidencia histórica solo conserva la duración del último intento.</p><h2>Veredicto y resultado</h2><p>Validador: ${escape(a.validator ?? (a.kind === 'gates' ? 'gate' : 'No aplica'))} · Revisión: ${escape(labels[a.reviewStatus ?? ''] ?? a.reviewStatus ?? 'Sin veredicto')}</p><pre tabindex="0">${escape([a.reviewComment, a.result, a.error].filter(Boolean).join('\n') || 'Sin resultado registrado.')}</pre>${activityLogSection(stateDir, c.id, a.id, url, ui)}${evidence(stateDir, c.id, `${a.id}.json`, 'Metadata de ejecución')}${evidence(stateDir, c.id, 'run.json', 'run.json')}${evidence(stateDir, c.id, 'diff.patch', 'Diff')}` };
+  return { title: `Activity · ${a.validator ?? a.kind}`, body: `<p><a href="/changes/${enc(c.id)}">${escape(c.title)}</a></p><div class="summary">${badge(a.status)} ${a.reviewStatus ? badge(a.reviewStatus) : ''}<span>${escape(a.id)}</span>${copyButton(ui, a.id)}${roleLink(ui, a, store.getWorkstream(c.workstreamId).slug, 'Ver el rol en Perfiles')}</div>${actionForms(store, url, csrf)}${activityScores(store, stateDir, a, csrf)}${attemptSection(a, meta, ui)}<h2>Veredicto y resultado</h2><p>Validador: ${escape(a.validator ?? (a.kind === 'gates' ? 'gate' : 'No aplica'))} · Revisión: ${escape(labels[a.reviewStatus ?? ''] ?? a.reviewStatus ?? 'Sin veredicto')}</p><pre tabindex="0">${escape([a.reviewComment, a.result, a.error].filter(Boolean).join('\n') || 'Sin resultado registrado.')}</pre>${activityLogSection(stateDir, c.id, a.id, url, ui)}${evidence(stateDir, c.id, `${a.id}.json`, 'Metadata de ejecución')}${evidence(stateDir, c.id, 'run.json', 'run.json')}${evidence(stateDir, c.id, 'diff.patch', 'Diff')}` };
 }
 
 /** Un error de acción se muestra en la plantilla normal, con menú y enlace de vuelta a la página de origen (T78). */

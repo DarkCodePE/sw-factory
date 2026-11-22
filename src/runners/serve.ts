@@ -12,7 +12,7 @@ import { assertConfinement, confineAgent, CONFINABLE_AGENTS } from '../sandbox/c
 import { GIT_SAFE_FLAGS } from '../worktrees.ts';
 import { receiveJob, sealResult } from './bundle.ts';
 import { Reader } from './client.ts';
-import { LIMITS, ProtocolError, decodeLine, encode, logBudget, type ErrorCode, type Message, type Usage } from './protocol.ts';
+import { LIMITS, ProtocolError, decodeLine, encode, logBudget, type ErrorCode, type Message } from './protocol.ts';
 
 const DAY_MS = 24 * 3_600_000;
 const KILL_MS = 2_000;
@@ -107,9 +107,6 @@ async function declaredAgents(): Promise<Record<string, { sha256: string }>> {
   return out;
 }
 
-const finiteUsage = (u?: { costUsd: number; inputTokens: number; outputTokens: number }): Usage | null =>
-  u && [u.costUsd, u.inputTokens, u.outputTokens].every(n => Number.isFinite(n) && n >= 0) ? { costUsd: u.costUsd, inputTokens: u.inputTokens, outputTokens: u.outputTokens } : null;
-
 /** Lanza el agente confinado en `repo`, reenvía su salida como `log` y devuelve el resultado. El argv lo construye el adaptador del runner (R4). */
 async function runAgentJob(
   agent: AgentAdapter, job: Extract<Message, { type: 'job' }>, prompt: string, repo: string, send: Out,
@@ -169,7 +166,7 @@ async function runAgentJob(
     phase = 'interpretación del resultado';
     const parsed = agent.parse?.(stdout) ?? null;
     const output = boundedAgentOutput((parsed ? parsed.text : stdout).trim() || stderr.trim());
-    return { exitCode: Math.max(-255, Math.min(255, code ?? 1)), durationMs: Date.now() - start, usage: finiteUsage(parsed?.usage), output };
+    return { exitCode: Math.max(-255, Math.min(255, code ?? 1)), durationMs: Date.now() - start, usage: parsed?.usage ?? null, output };
   } catch {
     return { error: `falló la fase de ${phase} del agente` } as const;
   } finally { confined?.cleanup(); }

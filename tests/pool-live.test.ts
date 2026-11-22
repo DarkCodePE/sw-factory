@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, expect, test } from 'bun:test';
-import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { mkdtempSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { AdmissionDb } from '../src/admission/db.ts';
@@ -334,4 +334,44 @@ test('B3: el pool crea el AdmissionDb una vez, no en cada vuelta del bucle', asy
   (store.db as { exec: unknown }).exec = (sql: string) => { if (sql.includes('adm_effects')) schemaRuns++; return exec(sql); };
   await pool(ws.id, { fake: fakeLive([DONE]) }, { pollMs: 20 });
   expect(schemaRuns).toBeLessThanOrEqual(3); // 1 en runPool + 1 por activity procesada (antes: una por vuelta, decenas)
+});
+
+test('T108: la activity conserva los tokens de la pregunta y de la reanudación por separado', async () => {
+  const { ws, c } = setup();
+  const backend = fakeLive([
+    { reports: [{ state: 'awaiting', summary: 'pregunta', human_action: '¿Color?' }] },
+    { reports: [{ state: 'done', summary: 'ok' }] },
+  ]);
+  const invoke = backend.run;
+  backend.run = async turn => {
+    const result = await invoke(turn);
+    const inputTokens = backend.turns.length * 10;
+    return { ...result, usage: { effectiveModel: `medido-${backend.turns.length}`, inputTokens, outputTokens: 1, costUsd: inputTokens / 100 } };
+  };
+  await pool(ws.id, { fake: backend });
+  const [inv] = store.listActivities({ changeId: c.id });
+  expect(inv?.status).toBe('waiting_reply');
+  expect(answerQuestion(store, new AdmissionDb(store), { questionId: inv!.questionId!, answer: 'rojo', by: 'maint' })).toBe('answered');
+  await pool(ws.id, { fake: backend });
+  const metadata = JSON.parse(readFileSync(join(dir, 'runs', c.id, `${inv!.id}.json`), 'utf8'));
+  expect(metadata.attemptCosts).toEqual([0.1, 0.2]);
+  expect(metadata.inferenceAttempts.map((a: { usage: unknown }) => a.usage)).toEqual([
+    { effectiveModel: 'medido-1', inputTokens: 10, outputTokens: 1, costUsd: 0.1 },
+    { effectiveModel: 'medido-2', inputTokens: 20, outputTokens: 1, costUsd: 0.2 },
+  ]);
+});
+
+test('T108: una activity antigua conserva coste, tokens, duración y modelo pedido al registrar un intento nuevo', async () => {
+  const { ws, c } = setup();
+  const a = store.listActivities({ changeId: c.id })[0]!;
+  const path = join(dir, 'runs', c.id, `${a.id}.json`);
+  mkdirSync(join(dir, 'runs', c.id), { recursive: true });
+  const prior = { inputTokens: 34, outputTokens: 12, costUsd: 0.4 };
+  writeFileSync(path, JSON.stringify({ adapter: 'claude', model: 'alias-anterior', usage: prior, durationMs: 73 }));
+  const backend = fakeLive([{ reports: [{ state: 'done', summary: 'ok' }] }]);
+  await pool(ws.id, { fake: backend });
+  expect(store.getActivity(a.id).status).toBe('completed');
+  const metadata = JSON.parse(readFileSync(path, 'utf8'));
+  expect(metadata.inferenceAttempts[0]).toEqual({ adapter: 'claude', requestedModel: 'alias-anterior', durationMs: 73, usage: prior });
+  expect(metadata.attemptCosts).toEqual([0.4, null]);
 });

@@ -1,3 +1,4 @@
+import { modelId, readUsage, tokenCount } from '../../inference-usage.ts';
 import { ProviderError, sseData, streamIdleFromEnv, validateTurn } from '../provider.ts';
 import { withIdleResponse, retryAfterMs } from '../transport.ts';
 import type { Message, ModelProvider, ModelRequest, ModelTurn, ToolCall } from '../types.ts';
@@ -190,6 +191,8 @@ export async function decodeAnthropicStream(
   const toolCallsByIndex = new Map<number, { id: string; name: string; args: string }>();
   let inputTokens = 0;
   let outputTokens = 0;
+  let effectiveModel: string | undefined, input: number | undefined, output: number | undefined;
+  let cacheReadTokens: number | undefined, cacheWriteTokens: number | undefined;
 
   for await (const data of sseData(stream, maxBytes)) {
     let event: any;
@@ -202,6 +205,12 @@ export async function decodeAnthropicStream(
 
     switch (event.type) {
       case 'message_start': {
+        effectiveModel = modelId(event.message?.model);
+        const usage = event.message?.usage;
+        input = tokenCount(usage?.input_tokens);
+        output = tokenCount(usage?.output_tokens);
+        cacheReadTokens = tokenCount(usage?.cache_read_input_tokens);
+        cacheWriteTokens = tokenCount(usage?.cache_creation_input_tokens);
         if (object(event.message?.usage)) {
           inputTokens += Number(event.message.usage.input_tokens) || 0;
           outputTokens += Number(event.message.usage.output_tokens) || 0;
@@ -244,6 +253,7 @@ export async function decodeAnthropicStream(
         }
         if (object(event.usage)) {
           outputTokens += Number(event.usage.output_tokens) || 0;
+          output = tokenCount(event.usage.output_tokens);
         }
         break;
       }
@@ -280,6 +290,8 @@ export async function decodeAnthropicStream(
     toolCalls,
     finishReason,
     usage: { inputTokens, outputTokens },
+    inference: readUsage({ effectiveModel, outputTokens: output, cacheReadTokens, cacheWriteTokens,
+      inputTokens: input === undefined ? undefined : tokenCount(input + (cacheReadTokens ?? 0) + (cacheWriteTokens ?? 0)) }),
   });
 }
 

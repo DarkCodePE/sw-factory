@@ -1,3 +1,4 @@
+import { modelId, readUsage, tokenCount } from '../inference-usage.ts';
 import type { ReadHttpFailure } from './omni/contracts.ts';
 import type { Message, ModelProvider, ModelRequest, ModelTurn, ToolCall } from './types.ts';
 import { ProviderError, streamIdleFromEnv, withIdleResponse } from './transport.ts';
@@ -72,19 +73,28 @@ export function validateTurn(turn: ModelTurn): ModelTurn {
   return turn;
 }
 
+function completionInference(model: unknown, usage: unknown) {
+  const u = object(usage) ? usage : {};
+  return readUsage({ effectiveModel: modelId(model), inputTokens: tokenCount(u.prompt_tokens),
+    outputTokens: tokenCount(u.completion_tokens),
+    cacheReadTokens: tokenCount(object(u.prompt_tokens_details) ? u.prompt_tokens_details.cached_tokens : undefined) });
+}
+
 async function decodeStream(response: Response, maxBytes: number, delta?: (text: string) => void): Promise<ModelTurn> {
   if (!response.body) throw new ProviderError('Model response has no body');
   const calls = new Map<number, ToolCall>();
   let text = '', finishReason = '', done = false;
-  let usage: ModelTurn['usage'];
+  let usage: ModelTurn['usage'], inference: ModelTurn['inference'], model: string | undefined;
   for await (const data of sseData(response.body, maxBytes)) {
     if (data === '[DONE]') { done = true; break; }
     let chunk: any;
     try { chunk = JSON.parse(data); } catch { throw new ProviderError('Malformed model SSE JSON'); }
     if (!object(chunk) || chunk.error) throw new ProviderError('Model returned an error in its stream');
-    if (object(chunk.usage)) usage = {
-      inputTokens: Number(chunk.usage.prompt_tokens ?? 0), outputTokens: Number(chunk.usage.completion_tokens ?? 0),
-    };
+    model = modelId(chunk.model) ?? model;
+    if (object(chunk.usage)) {
+      usage = { inputTokens: Number(chunk.usage.prompt_tokens ?? 0), outputTokens: Number(chunk.usage.completion_tokens ?? 0) };
+      inference = completionInference(model, chunk.usage);
+    }
     if (!Array.isArray(chunk.choices)) throw new ProviderError('Invalid model choice array');
     const choice = chunk.choices.find((c: any) => object(c) && c.index === 0);
     if (!choice) continue;
@@ -123,7 +133,7 @@ async function decodeStream(response: Response, maxBytes: number, delta?: (text:
     }
   }
   if (!done || !finishReason) throw new ProviderError('Model stream ended before completion');
-  return validateTurn({ text, finishReason, toolCalls: [...calls].sort(([a], [b]) => a - b).map(([, c]) => c), usage });
+  return validateTurn({ text, finishReason, toolCalls: [...calls].sort(([a], [b]) => a - b).map(([, c]) => c), usage, inference: inference ?? completionInference(model, undefined) });
 }
 
 export function createOpenAICompatibleProvider(opts: OpenAICompatibleOptions): ModelProvider {
@@ -191,6 +201,7 @@ export function createOpenAICompatibleProvider(opts: OpenAICompatibleOptions): M
         const choice = json.choices?.[0];
         if (!choice || !object(choice.message)) throw new ProviderError('Missing model choice');
         return validateTurn({ text: choice.message.content ?? '', toolCalls: choice.message.tool_calls ?? [], finishReason: choice.finish_reason,
+          inference: completionInference(json.model, json.usage),
           ...(object(json.usage) ? { usage: { inputTokens: Number(json.usage.prompt_tokens ?? 0), outputTokens: Number(json.usage.completion_tokens ?? 0) } } : {}) });
       });
     },

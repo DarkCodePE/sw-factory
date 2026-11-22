@@ -1,3 +1,4 @@
+import { readUsage } from '../inference-usage.ts';
 // Model provider for a ChatGPT subscription, through the Codex Responses endpoint.
 // Credentials are read from an existing Codex CLI login (~/.codex/auth.json). This client never
 // refreshes or rewrites them: refresh tokens rotate, so refreshing here would sign the Codex CLI
@@ -98,7 +99,7 @@ export function responsesBody(
 
 /** Decode the Responses event stream into one model turn; tool calls are taken from completed items only. */
 export async function decodeResponses(stream: ReadableStream<Uint8Array>, maxBytes: number, delta?: (t: string) => void): Promise<ModelTurn> {
-  let text = '', finish = '', usage: ModelTurn['usage'];
+  let text = '', finish = '', usage: ModelTurn['usage'], inference: ModelTurn['inference'];
   const calls = new Map<number, ToolCall>();
   for await (const data of sseData(stream, maxBytes)) {
     let event: any;
@@ -121,6 +122,8 @@ export async function decodeResponses(stream: ReadableStream<Uint8Array>, maxByt
       case 'response.completed': case 'response.incomplete': case 'response.failed': {
         const r = event.response ?? {};
         if (event.type === 'response.failed') throw new ProviderError(`ChatGPT response failed: ${r.error?.message ?? 'unknown error'}`, true);
+        inference = readUsage({ effectiveModel: r.model, inputTokens: r.usage?.input_tokens,
+          outputTokens: r.usage?.output_tokens, cacheReadTokens: r.usage?.input_tokens_details?.cached_tokens });
         if (r.usage) usage = { inputTokens: Number(r.usage.input_tokens) || 0, outputTokens: Number(r.usage.output_tokens) || 0 };
         // Tools from an incomplete response are never dispatched; the call can be retried without effects.
         if (event.type === 'response.incomplete' && calls.size) throw new ProviderError('Incomplete response contained tool calls', true);
@@ -133,7 +136,7 @@ export async function decodeResponses(stream: ReadableStream<Uint8Array>, maxByt
   }
   if (!finish) throw new ProviderError('Model stream ended before completion', true);
   const toolCalls = [...calls.entries()].sort((a, b) => a[0] - b[0]).map(([, c]) => c);
-  return { text, toolCalls, finishReason: finish, usage };
+  return { text, toolCalls, finishReason: finish, usage, ...(inference ? { inference } : {}) };
 }
 
 export function createChatGPTProvider(opts: ChatGPTOptions): ModelProvider {

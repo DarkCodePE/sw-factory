@@ -3,7 +3,8 @@
 import { randomUUID } from 'node:crypto';
 import { rmSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
-import { getAgent, parseClaudeJson, runAgent, type AgentAdapter } from '../agents.ts';
+import { getAgent, runAgent, type AgentAdapter } from '../agents.ts';
+import { parseClaudeStream } from '../agent-output.ts';
 import { hostDir } from '../sandbox/confine.ts';
 import { createSdkMcpServer } from '../sdk/mcp-server.ts';
 import { REPORT_SCHEMA, REPORT_TOOL, SessionNotFoundError, type LiveBackend, type LiveReport, type LiveTurn } from './contract.ts';
@@ -63,23 +64,16 @@ export const claudeLive: LiveBackend = {
         ...base,
         command: (prompt, options) => liveClaudeArgv(base.command(prompt, { ...options, mcpConfig: undefined }), turn, sessionId, path),
         parse(stdout) {
-          let hasFrame = false;
-          for (const line of stdout.trimEnd().split('\n').reverse()) {
-            let frame: { type?: unknown } | null;
-            try { frame = JSON.parse(line); }
-            catch {
-              if (!stdoutDiagnostic && !line.trimStart().startsWith('{') && NOT_FOUND.test(line)) stdoutDiagnostic = line.trim();
-              continue;
-            }
-            if (typeof frame?.type !== 'string') continue;
-            hasFrame = true;
-            if (frame.type !== 'result') continue;
+          const parsed = parseClaudeStream(stdout);
+          if (parsed.result) {
             // Conserva la entrada histórica del monitor: el objeto result de Claude.
-            stdoutForMonitor = line;
-            return parseClaudeJson(line);
+            stdoutForMonitor = parsed.line;
+            return parsed.result;
           }
+          stdoutDiagnostic = stdout.trimEnd().split('\n').reverse()
+            .find(line => !line.trimStart().startsWith('{') && NOT_FOUND.test(line))?.trim() ?? '';
           // Con frames parciales, deja que runAgent use stderr como diagnóstico.
-          return hasFrame ? { text: '' } : null;
+          return parsed.hasFrame ? { text: '' } : null;
         },
       };
       let run;

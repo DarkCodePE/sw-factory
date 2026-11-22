@@ -528,8 +528,8 @@ test('un intento que falla antes de lanzar el agente descarta la evidencia anter
   expect(store.getActivity(activity.id).status).toBe('blocked');
   expect(store.getActivity(activity.id).error).toContain('WORKTREE_NEEDS_REPAIR:');
   expect(armWorkerReport(store, dir, change.id)).toBeNull();
-  expect(JSON.parse(readFileSync(join(run, `${activity.id}.json`), 'utf8')).attemptCosts).toEqual([0.25, 0]);
-  expect(armCost(store, dir, change.id)).toBe(0.25);
+  expect(JSON.parse(readFileSync(join(run, `${activity.id}.json`), 'utf8')).attemptCosts).toEqual([0.25, null]);
+  expect(armCost(store, dir, change.id)).toBeNull();
 });
 
 test('T102-H6: el brazo con runner por rol devuelve un diagnóstico antes de clonar', async () => {
