@@ -189,3 +189,13 @@ test('T119a-H2: una sesión de otro owner no confirma aunque el diario esté apl
   expect(code(() => confirmRecovery(store, { ...ownerA, sessionId: 'raw', recovery: true }, [{ userId: a.id, role: 'owner' }]))).toBe('forbidden');
   expect(() => confirmRecovery(store, login(store, b), [{ userId: b, role: 'owner' }])).not.toThrow();
 });
+
+test('T119a-H3: la lista de confirmación no admite IDs repetidos y el único owner no queda de baja', () => {
+  const o = bootstrapOwner(store, { issuer: 'github', subject: '1', displayName: 'A', operator: 'op' });
+  enterRecovery(store, 'op', 'x', o.id);
+  declareNoJournal(store, 'op', 'sin diario');
+  const p = login(store, o.id);
+  expect(code(() => confirmRecovery(store, p, [{ userId: o.id, role: 'owner' }, { userId: o.id, role: 'admin' }]))).toBe('invalid_input');
+  expect(recoveryStatus(store)).toEqual({ restricted: true });
+  expect(getUser(store, o.id)!.disabledAt).toBeNull();
+});

@@ -471,6 +471,7 @@ export function confirmRecovery(store: Store, p: Principal, confirmed: { userId:
     if (!rec.journalDone) throw new StoreError('conflict', 'aplica el diario de identidad (o declara que no hay) antes de confirmar');
     if (!confirmed.some((c) => c.userId === me.userId && c.role === 'owner')) throw new StoreError('invalid_input', 'la lista debe incluir al owner que confirma');
     const want = new Map(confirmed.map((c) => [c.userId, c.role]));
+    if (want.size !== confirmed.length) throw new StoreError('invalid_input', 'la lista repite un usuario'); // «A owner, A admin» dejaría sin owner
     for (const id of want.keys()) if (!getUser(store, id)) throw new StoreError('invalid_input', 'la lista nombra un usuario desconocido');
     const suspended: string[] = [];
     for (const u of (store.db.query('SELECT * FROM users WHERE disabled_at IS NULL').all() as Row[]).map(toUser)) {
