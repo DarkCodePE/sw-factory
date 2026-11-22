@@ -406,6 +406,60 @@ uQAwb1guU1AUR6nVZtdFNQM9kVZ98hOcE9GUPLNEWYbELrBmbFfLChpyQQU=
     store.close();
   });
 
+  test('T118-H1: /api/v1/* se cierra en modo servidor (401 con HSTS) y no autentica claves locales sin usuario', async () => {
+    const store = new Store(join(stateDir, 'fabrica.db'));
+    const ws = store.createWorkstream({ slug: 'ws-api', goal: 'G', repo: 'R' });
+    store.setWorkstreamState(ws.id, 'active');
+    const ch = store.createChange(ws.id, 'Change API', 'Desc');
+    const { key: readKey } = store.createApiKey('k-read', 'read');
+    const { key: decideKey } = store.createApiKey('k-decide', 'decide');
+    store.close();
+
+    const socketPath = join(tempDir, 'fab-h1.sock');
+    const server = startWeb(stateDir, 0, {
+      server: true,
+      write: true,
+      publicOrigin: 'https://fab.ejemplo.com',
+      socketPath,
+    });
+
+    // 1. GET /api/v1/workstreams con clave local 'read' -> 401 con HSTS
+    const resGet = await fetch('http://localhost/api/v1/workstreams', {
+      unix: socketPath,
+      headers: {
+        Host: 'fab.ejemplo.com',
+        Authorization: `Bearer ${readKey}`,
+      },
+    } as any);
+    expect(resGet.status).toBe(401);
+    expect(resGet.headers.get('Strict-Transport-Security')).toBe('max-age=31536000; includeSubDomains');
+    const textGet = await resGet.text();
+    expect(textGet).toContain('Se requiere autenticación de usuario en modo servidor');
+    expect(textGet).not.toContain('ws-api');
+
+    // 2. POST /api/v1/changes/:id/note con clave local 'decide' -> 401 con HSTS y cero escrituras
+    const resPost = await fetch(`http://localhost/api/v1/changes/${ch.id}/note`, {
+      method: 'POST',
+      unix: socketPath,
+      headers: {
+        Host: 'fab.ejemplo.com',
+        Origin: 'https://fab.ejemplo.com',
+        Authorization: `Bearer ${decideKey}`,
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify({ body: 'Nota no autorizada en servidor' }),
+    } as any);
+    expect(resPost.status).toBe(401);
+    expect(resPost.headers.get('Strict-Transport-Security')).toBe('max-age=31536000; includeSubDomains');
+
+    // Verificar que no se escribió nada en la base de datos
+    const verifyStore = new Store(join(stateDir, 'fabrica.db'), { readonly: true });
+    expect(verifyStore.listChangeNotes(ch.id).length).toBe(0);
+    verifyStore.close();
+
+    server.stop(true);
+  });
+
   test('CLI webMain valida banderas y argumentos de modo servidor', async () => {
     // 1. --help retorna 0
     const codeHelp = await webMain(['--help'], stateDir);

@@ -235,6 +235,10 @@ export function startWeb(stateDir: string, port = 4310, options: {
         return new Response(null, { status: 204, headers: { ...respHeaders } });
       }
 
+      if (options.server && isApiPath(url.pathname)) {
+        return respond('Se requiere autenticación de usuario en modo servidor.', 401, 'text/plain; charset=utf-8');
+      }
+
       if (isApiPath(url.pathname)) return handleApi(req, url, openStore, auth ? { stateDir } : undefined, keyUsage);
       const isMetrics = url.pathname === '/metricas';
       const isConfig = url.pathname === '/config';
