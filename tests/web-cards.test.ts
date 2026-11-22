@@ -84,3 +84,7 @@ test('T111-H2: la cifra de la tarjeta es la que pasa quien llama, aunque la seri
 test('T111-H3: el gráfico no crece sin tope (el texto de los ejes no supera al del título)', () => {
   expect(CARD_STYLE).toMatch(/\.card \.plot\{max-width:560px\}/);
 });
+test('T111-H9: el botón de ayuda y las etiquetas de serie miden al menos 24 px (WCAG 2.2, 2.5.8)', () => {
+  expect(CARD_STYLE).toMatch(/\.help summary\{[^}]*min-width:24px;min-height:24px/);
+  expect(CARD_STYLE).toMatch(/\.card \.chart label\{min-height:24px/);
+});
