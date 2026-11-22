@@ -444,9 +444,9 @@ export function applyJournalToRestored(store: Store, operator: string, journalPa
       if (!u) continue;
       const d = (l.detail ?? {}) as { to?: Role };
       if (l.action === 'user.disable' && !u.disabledAt) {
-        store.db.query('UPDATE users SET disabled_at = ? WHERE id = ?').run(store.now(), u.id); applied++;
+        store.db.query('UPDATE users SET disabled_at = ? WHERE id = ?').run(store.now(), u.id); cutCredentials(store, u.id); applied++;
       } else if (l.action === 'user.role' && d.to && RANK[d.to] < RANK[u.role]) { // solo reducciones: un ascenso no se reaplica
-        store.db.query('UPDATE users SET role = ? WHERE id = ?').run(d.to, u.id); applied++;
+        store.db.query('UPDATE users SET role = ? WHERE id = ?').run(d.to, u.id); cutCredentials(store, u.id); applied++;
       }
     }
     if (activeOwners(store) < 1) throw new StoreError('conflict', 'el diario dejaría al equipo sin owner: decide el operador');
@@ -482,6 +482,7 @@ export function confirmRecovery(store: Store, p: Principal, confirmed: { userId:
     for (const u of (store.db.query('SELECT * FROM users WHERE disabled_at IS NULL').all() as Row[]).map(toUser)) {
       if (want.get(u.id) === u.role) continue;
       store.db.query('UPDATE users SET disabled_at = ? WHERE id = ?').run(store.now(), u.id);
+      cutCredentials(store, u.id);
       audit(store, actorOf(me), 'user.disable', u.id, { role: u.role, reason: 'recovery_unconfirmed' });
       suspended.push(u.id);
     }

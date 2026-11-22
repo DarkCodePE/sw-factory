@@ -234,3 +234,34 @@ test('T119a-H4: el diario solo reaplica reducciones, no ascensos, y no deja al e
     expect(getUser(restored2, m)!.role).toBe('owner');
   } finally { restored2.close(); }
 });
+
+test('T119a-H14: aplicar el diario y confirmar cortan las sesiones de quien cambia de rol o queda de baja', () => {
+  const j = join(dir, 'identity.jsonl');
+  const backup = join(dir, 'backup.db');
+  const a = bootstrapOwner(store, { issuer: 'github', subject: '1', displayName: 'A', operator: 'op' });
+  const ownerA = login(store, a.id);
+  const b = add(store, ownerA, 'member');
+  changeUserRole(store, ownerA, b, 'owner');
+  store.db.exec('PRAGMA wal_checkpoint(FULL)');
+  copyFileSync(store.dbPath, backup);
+  changeUserRole(store, ownerA, b, 'viewer'); // tras el corte A degrada a B
+  exportIdentityJournal(store, j);
+  const restored = new Store(backup);
+  try {
+    enterRecovery(restored, 'op', 'x', b); // el operador designa a B; el diario lo degrada
+    const sessionB = issueSession(restored, b, 'web').token;
+    expect(resolvePrincipal(restored, sessionB)).not.toBeNull();
+    applyJournalToRestored(restored, 'op', j);
+    expect(resolvePrincipal(restored, sessionB)).toBeNull(); // la sesión de B no sobrevive a su degradación
+
+  } finally { restored.close(); }
+
+  const r2 = new Store(backup);
+  try {
+    enterRecovery(r2, 'op', 'x', a.id);
+    declareNoJournal(r2, 'op', 'sin diario');
+    r2.db.query(`INSERT INTO user_sessions (id, user_id, class, token_digest, created_at, expires_at) VALUES ('raw', ?, 'web', 'd', ?, '2999-01-01T00:00:00.000Z')`).run(b, r2.now());
+    confirmRecovery(r2, login(r2, a.id), [{ userId: a.id, role: 'owner' }]); // B queda suspendido
+    expect(r2.db.query(`SELECT revoked_at FROM user_sessions WHERE id = 'raw'`).get()).not.toEqual({ revoked_at: null });
+  } finally { r2.close(); }
+});
