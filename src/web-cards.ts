@@ -69,7 +69,7 @@ export function card(o: CardOpts): string {
   const has = ss.some(s => s.values.some(v => v !== null));
   const legend = ss.length > 1 || o.stacked ? ss.map((s, j) => `<input type="checkbox" id="c-${id}-${j}" class="sc sc${j}" checked><label for="c-${id}-${j}"><span class="sw sw${j}" aria-hidden="true"></span>${esc(s.label)}</label>`).join('') : '';
   const rows = o.days.map((d, i) => [esc(d), ...ss.map(s => { const v = s.values[i] ?? null; return v === null ? esc(s.missing?.(i) ?? 'Sin datos') : esc(o.fmt(v)); })]);
-  return `<section class="card" aria-labelledby="t-${id}">${head(id, o.title, o.help)}<p class="fig">${esc(has ? o.figure : 'No medido')}</p>${o.sub ? `<p class="sub">${esc(o.sub)}</p>` : ''}<div class="chart">${has ? `${legend}${plot({ ...o, series: ss })}` : '<p class="empty">No medido: no hay datos en este rango.</p>'}</div>${folded(o.tableCaption, table(o.tableCaption, ['Fecha', ...ss.map(s => s.label)], rows))}</section>`;
+  return `<section class="card" aria-labelledby="t-${id}">${head(id, o.title, o.help)}<p class="fig">${esc(o.figure)}</p>${o.sub ? `<p class="sub">${esc(o.sub)}</p>` : ''}<div class="chart">${has ? `${legend}${plot({ ...o, series: ss })}` : '<p class="empty">No medido: no hay datos en este rango.</p>'}</div>${folded(o.tableCaption, table(o.tableCaption, ['Fecha', ...ss.map(s => s.label)], rows))}</section>`;
 }
 
 /** Tarjeta de cifras (p. ej. tiempos de ciclo): una cifra grande por celda, «No medido» si falta. */

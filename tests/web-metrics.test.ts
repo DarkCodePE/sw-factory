@@ -614,7 +614,7 @@ test('T83: serie de PRs abiertos y fusionados en el tiempo', () => {
   expect(prSvg).toContain('<title>2026-11-18 · Fusionados: 1</title>');
   expect(prSvg).not.toContain('2026-11-19 ·');
   expect(prSvg).not.toContain(': 0</title>');
-  expect(html).toContain('<p class="sub">1 fusionados</p>');
+  expect(html).toContain('<p class="sub">1 fusionados en el rango</p>');
 });
 
 test('T83: detalle del change muestra enlace al PR, escapa URL, solo admite https, y sin PR es No medido', async () => {
@@ -695,5 +695,13 @@ test('T111-H1: fusiones sin ningún pr_opened en el rango no pintan «null» en 
   store.db.query("UPDATE events SET created_at=? WHERE change_id=? AND message='merge_completed'").run('2026-11-18T12:00:00Z', c.id);
   const { body } = metricsPage(store, dir, new URL('http://127.0.0.1:4310/metricas?from=2026-11-17&to=2026-11-19'));
   expect(body).not.toContain('>null<'); expect(body).not.toContain('NaN');
-  expect(body).toMatch(/<h2 id="t-prs">Pull requests<\/h2>.*?<p class="fig">No medido<\/p><p class="sub">1 fusionados<\/p>/s);
+  expect(body).toMatch(/<h2 id="t-prs">Pull requests<\/h2>.*?<p class="fig">No medido<\/p><p class="sub">1 fusionados en el rango<\/p>/s);
+});
+test('T111-H2: con «Todo el historial» y changes de hace más de 90 días, las cifras no dicen «No medido»', () => {
+  seed(1, 3, 'uno', '2025-01-10T00:00:00Z');
+  const url = (tab: string) => new URL(`http://127.0.0.1:4310/metricas?range=all&tab=${tab}`);
+  const prod = metricsPage(store, dir, url('productividad')).body, gasto = metricsPage(store, dir, url('gasto')).body;
+  expect(prod).toMatch(/<h2 id="t-changes">Changes creados<\/h2>.*?<p class="fig">1<\/p>/s);
+  expect(prod).toContain('en los últimos 90 días');
+  expect(gasto).toMatch(/<h2 id="t-cost">Coste por día<\/h2>.*?<p class="fig">3.00 USD<\/p>/s);
 });

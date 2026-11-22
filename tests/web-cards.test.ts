@@ -27,7 +27,7 @@ test('T111: contraste AA en tema claro y oscuro (texto 4.5:1, gráficos y trazos
 
 const base = { id: 'x', title: 'T', help: 'h', figure: '9', days: ['2026-11-01', '2026-11-02', '2026-11-03', '2026-11-04'], fmt: (n: number) => String(n), tableCaption: 'Tabla T' };
 test('T111: sin datos, «No medido» y ningún gráfico', () => {
-  const h = card({ ...base, series: [{ label: 'A', values: [null, null, null, null] }] });
+  const h = card({ ...base, figure: 'No medido', series: [{ label: 'A', values: [null, null, null, null] }] });
   expect(h).toContain('<p class="fig">No medido</p>'); expect(h).toContain('No medido: no hay datos');
   expect(h).not.toContain('<svg'); expect(h).toContain('<td>Sin datos</td>'); expect(h).not.toContain('<td>0</td>');
   expect(card({ ...base, days: [], series: [{ label: 'A', values: [] }] })).not.toContain('<svg');
@@ -77,4 +77,7 @@ test('T111: con cero datos las pestañas dicen «No medido» y no dibujan gráfi
     const { body } = metricsPage(store, dir, new URL(`http://x/metricas?tab=${tab}&range=7`));
     expect(body).toContain('<p class="fig">No medido</p>'); expect(body).not.toContain('<svg class="plot"'); expect(body).not.toContain('<script');
   }
+});
+test('T111-H2: la cifra de la tarjeta es la que pasa quien llama, aunque la serie esté vacía', () => {
+  expect(card({ ...base, figure: '7', series: [{ label: 'A', values: [null, null, null, null] }] })).toContain('<p class="fig">7</p>');
 });
