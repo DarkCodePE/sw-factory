@@ -7,23 +7,37 @@ fab.ejemplo.com {
         -Server
     }
 
-    reverse_proxy https://fab-backend:8443 {
-        # Host canónico
-        header_up Host {host}
+    # Límite global del cuerpo de peticiones (§6)
+    request_body {
+        max_size 10MB
+    }
 
-        # Descarte de headers forwarding
-        header_up -X-Forwarded-For
-        header_up -X-Forwarded-Proto
-        header_up -X-Forwarded-Host
+    # Ruta de salud reservada exclusivamente para sondeos locales: rechaza acceso público
+    handle /healthz {
+        respond 404
+    }
 
-        # IP confiable
-        header_up X-Fab-Client-IP {remote_host}
+    handle {
+        reverse_proxy https://fab-backend:8443 {
+            # Host canónico
+            header_up Host {host}
 
-        # Salto mTLS autenticado con CA interna dedicada
-        transport http {
-            tls_client_auth /etc/caddy/certs/client.crt /etc/caddy/certs/client.key
-            tls_trusted_ca_certs /etc/caddy/certs/ca.crt
-            tls_server_name fab-backend
+            # Descarte de headers forwarding
+            header_up -X-Forwarded-For
+            header_up -X-Forwarded-Proto
+            header_up -X-Forwarded-Host
+
+            # IP confiable
+            header_up X-Fab-Client-IP {remote_host}
+
+            # Salto mTLS autenticado con CA interna dedicada
+            transport http {
+                tls_client_auth /etc/caddy/certs/client.crt /etc/caddy/certs/client.key
+                tls_trusted_ca_certs /etc/caddy/certs/server-ca.crt
+                tls_server_name fab-backend
+                dial_timeout 5s
+                response_header_timeout 60s
+            }
         }
     }
 }

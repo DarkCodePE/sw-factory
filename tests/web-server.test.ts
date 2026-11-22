@@ -726,4 +726,22 @@ uQAwb1guU1AUR6nVZtdFNQM9kVZ98hOcE9GUPLNEWYbELrBmbFfLChpyQQU=
     expect(serviceContent).toContain('RuntimeDirectoryMode=0770');
     expect(serviceContent).toContain('UMask=0007');
   });
+
+  test('T118-H12: Caddyfile protege /healthz con 404, deduplica HSTS y fija límites de petición', () => {
+    const caddyfile = readFileSync(join(__dirname, '../deploy/caddy/Caddyfile'), 'utf8');
+
+    // 1. /healthz público responde 404
+    expect(caddyfile).toContain('handle /healthz');
+    expect(caddyfile).toContain('respond 404');
+
+    // 2. Límites de tamaño de cuerpo
+    expect(caddyfile).toContain('request_body');
+    expect(caddyfile).toContain('max_size 10MB');
+
+    // 3. No duplica Strict-Transport-Security en header_down
+    expect(caddyfile).not.toContain('header_down Strict-Transport-Security');
+    // Aparece una sola vez en el bloque de cabeceras
+    const hstsMatches = caddyfile.match(/Strict-Transport-Security/g);
+    expect(hstsMatches?.length).toBe(1);
+  });
 });
