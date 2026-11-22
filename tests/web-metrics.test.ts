@@ -706,7 +706,19 @@ test('T108 H6: el gasto y la tabla distinguen modelos efectivos, caché medida y
     { name: 'servido-1', measured: 0.123, unknown: 0, total: 0.123 },
     { name: 'servido-2', measured: null, unknown: 1, total: null },
   ]);
+  expect(cost.adapters).toEqual([
+    { name: 'native', measured: 0.123, unknown: 1, total: null },
+  ]);
   expect(cost.total).toBeNull();
+
+  // IE2O1-H1 / IE2O1-H2: Gasto muestra los modelos efectivos y el pie actualizado
+  const gastoHtml = metricsPage(store, dir, new URL('http://127.0.0.1:4310/metricas?tab=gasto')).body;
+  expect(gastoHtml).toContain('servido-1');
+  expect(gastoHtml).toContain('servido-2');
+  expect(gastoHtml).not.toContain('pedido');
+  expect(gastoHtml).toContain('La evidencia anterior a T108 no registra el modelo efectivo y sale como «No medido»');
+  expect(gastoHtml).not.toContain('La evidencia habitual no registra el modelo');
+
   const web = startWeb(dir, 0);
   try {
     const response = await fetch(`http://127.0.0.1:${web.port}/activities/${a.id}`);
