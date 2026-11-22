@@ -141,3 +141,20 @@ test('T109-N3: todo fallo de lectura o de validación nombra cost-rates.json', (
     expect(read).not.toThrow(); // sin fichero, la tarifa por defecto
   } finally { rmSync(dir, { recursive: true, force: true }); }
 });
+
+test('T109-N4: la referencia cambia con la tarifa local y la vigencia, y no con el orden de los runners', () => {
+  const dir = mkdtempSync(join(tmpdir(), 'fab-rate-hash2-'));
+  try {
+    const ref = (over: { local?: number; from?: string; runners?: Record<string, number> } = {}) => {
+      writeFileSync(join(dir, 'cost-rates.json'), JSON.stringify([{
+        version: 'v1', effectiveFrom: over.from ?? '2026-01-01T00:00:00.000Z', localHourlyMicroUsd: over.local ?? 0,
+        platformMicroUsd: 5, runnerHourlyMicroUsd: over.runners ?? { a: 1, b: 2 },
+      }]));
+      return costRateAt(dir, '2027-01-01T00:00:00.000Z', null).version;
+    };
+    const base = ref();
+    expect(ref({ local: 7 })).not.toBe(base);
+    expect(ref({ from: '2026-02-01T00:00:00.000Z' })).not.toBe(base);
+    expect(ref({ runners: { b: 2, a: 1 } })).toBe(base);
+  } finally { rmSync(dir, { recursive: true, force: true }); }
+});
