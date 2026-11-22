@@ -4,6 +4,11 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { Store } from '../src/store.ts';
 import { configPage, type ConfigView } from '../src/web-config.ts';
+import { AdmissionDb } from '../src/admission/db.ts';
+import { webhooksPage } from '../src/web-webhooks.ts';
+import { configViewFor } from '../src/web-views.ts';
+import type { Principal } from '../src/users.ts';
+import { ROLES, type Role } from '../src/policy.ts';
 
 // T119d · §4.2: la configuración del servidor omite rutas absolutas y deja los indicadores de credenciales del host solo al owner.
 let dir: string; let store: Store;
@@ -46,4 +51,16 @@ test('la tabla de adaptadores mantiene tantas celdas como cabeceras en cada vist
     const row = t.match(/<tr[^>]*>(?:(?!<\/tr>).)*<td>(?:(?!<\/tr>).)*<\/tr>/s)![0];
     expect((row.match(/<td>/g) ?? []).length).toBe(heads);
   }
+});
+
+// T119d-H2: el indicador del secreto HMAC del host es una credencial: solo el owner lo ve por URL directa.
+test('/webhooks: el indicador del secreto del host solo lo ve el owner (por rol)', () => {
+  env('FAB_GITHUB_WEBHOOK_SECRET', 'secreto-canario-1234567890');
+  new AdmissionDb(store);
+  const who = (role: Role): Principal => ({ userId: role, role, issuer: 'github', subject: role, displayName: role, via: 'web', recovery: false });
+  const page = (view?: ConfigView) => webhooksPage(store, new URL('http://x/webhooks'), esc, view).body;
+  expect(page()).toContain('Configurado (FAB_GITHUB_WEBHOOK_SECRET)'); // local
+  const seen = ROLES.map(r => page(configViewFor(who(r))).includes('Secreto en entorno'));
+  expect(seen).toEqual([true, false, false, false]);
+  expect(page({ credentials: false })).not.toContain('No configurado');
 });
