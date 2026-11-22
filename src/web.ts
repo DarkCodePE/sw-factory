@@ -1,6 +1,7 @@
 // Superficie local de lectura. Las decisiones del ciclo pertenecen al Store.
 import { join, dirname } from 'node:path';
-import { existsSync, unlinkSync, chmodSync, mkdirSync } from 'node:fs';
+import { existsSync, unlinkSync, chmodSync, mkdirSync, statSync } from 'node:fs';
+import { spawnSync } from 'node:child_process';
 import { parseArgs } from 'node:util';
 import { Store, StoreError, type Activity } from './store.ts';
 import { ChangeStatus } from './enums.ts';
@@ -192,11 +193,31 @@ export function startWeb(stateDir: string, port = 4310, options: {
   }
 
   let serveOptions: Record<string, unknown>;
+  let prevUmask: number | undefined;
   if (options.server && options.socketPath) {
-    mkdirSync(dirname(options.socketPath), { recursive: true });
+    const socketDir = dirname(options.socketPath);
+    if (!existsSync(socketDir)) {
+      mkdirSync(socketDir, { recursive: true, mode: 0o770 });
+      try { chmodSync(socketDir, 0o770); } catch { /* ignore */ }
+    }
+    const dirStat = statSync(socketDir);
+    const dirMode = dirStat.mode & 0o777;
+    if ((dirMode & 0o002) !== 0) {
+      throw new Error(`Directorio de socket inseguro (${socketDir}): permisos 0${dirMode.toString(8)} (escribible por otros). Debe ser 0770 o 0750.`);
+    }
+
     if (existsSync(options.socketPath)) {
+      const sockStat = statSync(options.socketPath);
+      if (!sockStat.isSocket()) {
+        throw new Error(`Ruta de socket inválida (${options.socketPath}): ya existe un archivo regular o directorio.`);
+      }
+      const probe = spawnSync('ss', ['-xl', 'src', options.socketPath], { encoding: 'utf8' });
+      if (probe.status === 0 && probe.stdout && probe.stdout.includes('LISTEN')) {
+        throw new Error(`Socket Unix en uso: ya existe una instancia activa escuchando en ${options.socketPath}`);
+      }
       try { unlinkSync(options.socketPath); } catch { /* ignore */ }
     }
+    prevUmask = process.umask(0o007);
     serveOptions = { unix: options.socketPath, ...(auth ? { maxRequestBodySize: PROFILE_BODY_LIMIT } : {}) };
   } else if (options.server && options.tls) {
     serveOptions = {
@@ -215,8 +236,9 @@ export function startWeb(stateDir: string, port = 4310, options: {
   }
 
   let server: ReturnType<typeof Bun.serve>;
-  // Verifica la base antes de escuchar y vuelve a abrirla en cada petición.
-  server = Bun.serve({
+  try {
+    // Verifica la base antes de escuchar y vuelve a abrirla en cada petición.
+    server = Bun.serve({
     ...serveOptions,
     async fetch(req) {
       const respHeaders = options.server ? SERVER_SECURITY_HEADERS : HEADERS;
@@ -332,9 +354,24 @@ export function startWeb(stateDir: string, port = 4310, options: {
       } finally { store?.close(); }
     }
   });
+  } finally {
+    if (prevUmask !== undefined) {
+      process.umask(prevUmask);
+    }
+  }
 
   if (options.server && options.socketPath) {
-    try { chmodSync(options.socketPath, 0o660); } catch { /* ignore */ }
+    try {
+      chmodSync(options.socketPath, 0o660);
+    } catch (err) {
+      server.stop(true);
+      throw new Error(`Error al aplicar permisos 0660 al socket: ${err instanceof Error ? err.message : String(err)}`);
+    }
+    const finalMode = statSync(options.socketPath).mode & 0o777;
+    if (finalMode !== 0o660) {
+      server.stop(true);
+      throw new Error(`Permisos de socket Unix inválidos: se esperaba 0660 pero se obtuvo 0${finalMode.toString(8)}`);
+    }
   }
 
   return {

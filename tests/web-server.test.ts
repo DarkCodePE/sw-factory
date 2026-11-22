@@ -1,5 +1,5 @@
 import { describe, expect, test, beforeEach, afterEach } from 'bun:test';
-import { existsSync, mkdirSync, readFileSync, rmSync, statSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, readFileSync, rmSync, statSync, writeFileSync, chmodSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { execSync } from 'node:child_process';
@@ -275,6 +275,73 @@ describe('T118a: Modo servidor, frontera HTTP y arranque', () => {
     // 4. server.stop() elimina el socket
     server.stop(true);
     expect(existsSync(socketPath)).toBe(false);
+  });
+
+  test('T118-H4: Validación estricta de directorio, permisos y rechazo de socket usurpado', async () => {
+    // 1. Directorio con permisos 0777 (world-writable) debe ser rechazado
+    const insecureDir = join(tempDir, 'insecure-run');
+    mkdirSync(insecureDir);
+    chmodSync(insecureDir, 0o777);
+    const sockInsecure = join(insecureDir, 'fab.sock');
+    expect(() => {
+      startWeb(stateDir, 0, {
+        server: true,
+        publicOrigin: 'https://fab.ejemplo.com',
+        socketPath: sockInsecure,
+      });
+    }).toThrow('Directorio de socket inseguro');
+
+    // 2. Fichero regular existente no se sobrescribe ni se destruye
+    const victimFile = join(tempDir, 'archivo-importante.txt');
+    writeFileSync(victimFile, 'contenido-critico');
+    expect(() => {
+      startWeb(stateDir, 0, {
+        server: true,
+        publicOrigin: 'https://fab.ejemplo.com',
+        socketPath: victimFile,
+      });
+    }).toThrow('ya existe un archivo regular');
+    expect(existsSync(victimFile)).toBe(true);
+    expect(readFileSync(victimFile, 'utf8')).toBe('contenido-critico');
+
+    // 3. Directorio creado automáticamente por fab tiene permisos restringidos (0770)
+    const autoDir = join(tempDir, 'auto-created', 'nested');
+    const sockAuto = join(autoDir, 'fab.sock');
+    const serverAuto = startWeb(stateDir, 0, {
+      server: true,
+      publicOrigin: 'https://fab.ejemplo.com',
+      socketPath: sockAuto,
+    });
+    expect(statSync(sockAuto).isSocket()).toBe(true);
+    expect((statSync(autoDir).mode & 0o777).toString(8)).toBe('770');
+    serverAuto.stop(true);
+
+    // 4. Segunda instancia no puede usurpar un socket activo de otra instancia viva
+    const liveDir = join(tempDir, 'live-sock-dir');
+    mkdirSync(liveDir, { mode: 0o770 });
+    const liveSock = join(liveDir, 'live.sock');
+    const server1 = startWeb(stateDir, 0, {
+      server: true,
+      publicOrigin: 'https://fab.ejemplo.com',
+      socketPath: liveSock,
+    });
+
+    expect(() => {
+      startWeb(stateDir, 0, {
+        server: true,
+        publicOrigin: 'https://fab.ejemplo.com',
+        socketPath: liveSock,
+      });
+    }).toThrow('Socket Unix en uso: ya existe una instancia activa');
+
+    // La primera instancia sigue funcionando
+    const resLive = await fetch('http://localhost/healthz', {
+      unix: liveSock,
+      headers: { Host: 'fab.ejemplo.com' },
+    } as any);
+    expect(resLive.status).toBe(200);
+
+    server1.stop(true);
   });
 
   test('Transporte D-4 Opción A: mTLS en Docker rechaza clientes sin cert y admite cert de CA (T118-H3)', async () => {
