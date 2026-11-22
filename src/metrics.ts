@@ -356,38 +356,20 @@ export function calculateMetrics(store: Store, stateDir: string, options: { ws?:
   const topPrItems: TopPrItem[] = [];
   for (const c of cohort.changes) {
     const attempts = changeAttempts.get(c.id) ?? [];
-    const prUrl = attempts.find(a => a.prUrl)?.prUrl ?? store.getChangePrUrl(c.id);
-    if (!attempts.length) {
-      const cCost = costs.find(x => x.id === c.id)?.cost ?? null;
-      if (cCost !== null) {
-        topPrItems.push({
-          changeId: c.id,
-          title: c.title,
-          prUrl,
-          cost: cCost,
-          inference: cCost,
-          compute: null,
-          platform: null,
-        });
-      }
-      continue;
-    }
-    const cCost = costs.find(x => x.id === c.id)?.cost ?? null;
+    if (!attempts.length) continue;
     const isModern = attempts.some(a => a.id !== null);
-    const hasTotal = isModern
-      ? attempts.every(a => a.totalMicroUsd !== null)
-      : cCost !== null;
+    if (!isModern) continue;
+    const hasTotal = attempts.every(a => a.totalMicroUsd !== null);
     if (!hasTotal) continue;
-    const tot = isModern
-      ? attempts.reduce((s, a) => s + (a.totalMicroUsd ?? 0), 0) / 1_000_000
-      : cCost!;
+    const prUrl = attempts.find(a => a.prUrl)?.prUrl ?? store.getChangePrUrl(c.id);
+    const tot = attempts.reduce((s, a) => s + (a.totalMicroUsd ?? 0), 0) / 1_000_000;
     const inf = attempts.every(a => a.inferenceMicroUsd !== null)
       ? attempts.reduce((s, a) => s + (a.inferenceMicroUsd ?? 0), 0) / 1_000_000
-      : (cCost !== null ? cCost : null);
-    const comp = isModern && attempts.every(a => a.computeMicroUsd !== null)
+      : null;
+    const comp = attempts.every(a => a.computeMicroUsd !== null)
       ? attempts.reduce((s, a) => s + (a.computeMicroUsd ?? 0), 0) / 1_000_000
       : null;
-    const plat = isModern && attempts.every(a => a.platformMicroUsd !== null)
+    const plat = attempts.every(a => a.platformMicroUsd !== null)
       ? attempts.reduce((s, a) => s + (a.platformMicroUsd ?? 0), 0) / 1_000_000
       : null;
     topPrItems.push({

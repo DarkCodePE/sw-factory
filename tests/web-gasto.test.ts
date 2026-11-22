@@ -309,10 +309,55 @@ describe('Pestaña Gasto en la web (T113)', () => {
     const url = new URL(`http://127.0.0.1:4310/metricas?tab=gasto&range=7`);
     const { body } = metricsPage(store, dir, url);
 
-    // En la tabla de los 20 PR debe salir «No medido» para cómputo y plataforma, nunca 0.00 USD
-    expect(body).toContain('0.30 USD · No medido · No medido');
-    expect(body).not.toContain('0.30 USD · 0.00 USD · 0.00 USD');
+    const tablePart = body.slice(body.indexOf('<caption>Los 20 PR más caros</caption>'));
+    const tableSection = tablePart.slice(0, tablePart.indexOf('</table>'));
+
+    // Al no tener coste completo medido, queda fuera del ranking de los 20 PR y no sale 0.00 USD
+    expect(tableSection).not.toContain('Change histórico sin cómputo');
+    expect(tableSection).not.toContain('0.00 USD');
     expect(body).not.toContain('· 0.00 USD ·');
+  });
+
+  test('T113-H10: en Los 20 PR más caros solo entran changes con coste completo medido (excluye históricos y parciales)', () => {
+    // 1. Change histórico con sólo inferencia
+    seedItem({
+      title: 'Change histórico sólo inferencia',
+      attemptCosts: [0.90],
+    });
+
+    // 2. Change moderno con coste completo medido
+    const today = new Date().toISOString().slice(0, 10);
+    const date = `${today}T12:00:00.000Z`;
+    const modernItem = seedItem({
+      title: 'Change moderno completo',
+      date,
+      attemptCosts: [0.45],
+      inferenceAttempts: [{
+        adapter: 'claude',
+        usage: { effectiveModel: 'm1', costUsd: 0.25 },
+      }],
+    });
+    store.beginCostAttempt(modernItem.activity, {
+      id: 'att-modern-h10',
+      rate: costRateAt(dir, date, null),
+      remote: false,
+      runner: null,
+      adapter: 'claude',
+      legacyCount: 0,
+    });
+    store.finishCostAttempt('att-modern-h10', { costUsd: 0.25 }, 100);
+
+    const m = calculateMetrics(store, dir, { ws: 'ws-test', from: today, to: today });
+    expect(m.spending.top.map(p => p.title)).toEqual(['Change moderno completo']);
+    expect(m.spending.top.some(p => p.title === 'Change histórico sólo inferencia')).toBe(false);
+
+    const url = new URL(`http://127.0.0.1:4310/metricas?tab=gasto&range=7`);
+    const { body } = metricsPage(store, dir, url);
+    const tablePart = body.slice(body.indexOf('<caption>Los 20 PR más caros</caption>'));
+    const tableSection = tablePart.slice(0, tablePart.indexOf('</table>'));
+
+    expect(tableSection).toContain('Change moderno completo');
+    expect(tableSection).not.toContain('Change histórico sólo inferencia');
   });
 
   test('T113-H3: la serie Otros en tarjeta por dimensión es null si algún grupo del resto es desconocido ese día', () => {
