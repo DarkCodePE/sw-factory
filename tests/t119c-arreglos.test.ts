@@ -195,3 +195,15 @@ test('T119c-H9: resolve-work no salta --write aunque el llamador no pase por la 
   await expect(resolveWork(c.store, c.web.owner, c.web.member.userId, { cancel: true }, 'r', 'x', '00000000-0000-0000-0000-000000000000', false)).rejects.toThrow();
   expect(previewResolveWork(c.store, c.web.owner, c.web.member.userId, true).userId).toBe(c.web.member.userId);
 });
+
+// ---- H10: waiting_reply es un lease activo -------------------------------------------------
+
+test('T119c-H10: un change con el turno esperando respuesta queda fuera de la cola afectada, como uno en curso', async () => {
+  const mine = (title: string) => { c.store.asActor({ actor: `user:${c.web.member.userId}`, userId: c.web.member.userId, source: 'web', role: 'member' }); try { return c.store.createChange(ws.id, title, 'd').id; } finally { c.store.asActor(undefined); } };
+  const waiting = mine('espera'), idle = mine('quieto');
+  c.store.db.query("UPDATE activities SET status = 'waiting_reply', question_id = 'q' WHERE change_id = ?").run(waiting);
+  disableUser(c.store, c.web.owner, c.web.member.userId);
+  const plan = previewResolveWork(c.store, c.web.owner, c.web.member.userId, true);
+  expect(plan.affected.map(a => a.id)).toEqual([idle]);
+  expect(plan.excluded).toEqual([{ id: waiting, reason: 'active_attempt' }]);
+});

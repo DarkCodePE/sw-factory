@@ -1,9 +1,9 @@
 /**
  * Trabajo en cola de una cuenta suspendida (T119c, diseño §4.4): vista previa con revisión y resolución idempotente
- * (reasignar o cancelar) por el owner. El bloqueo de las reclamaciones del pool es de T120.
+ * (reasignar o cancelar) por el owner. Un intento vivo (`in_progress` o `waiting_reply`) deja el change fuera de la cola afectada. El bloqueo de las reclamaciones del pool es de T120.
  *
- * El responsable de un change es `changes.responsible_user_id` (lo fija una reasignación) o, si no, el usuario del primer evento
- * del change (el originador autenticado). Reasignar no toca ese evento ni los asientos previos: el originador histórico se conserva.
+ * El responsable de un change es `changes.responsible_user_id` (lo fija el triage de una señal con originador, o una reasignación) o, si no,
+ * el usuario del primer evento del change (el que lo creó directamente). Reasignar no toca ese evento ni los asientos previos: el originador histórico se conserva.
  */
 import { createHash } from 'node:crypto';
 import { actorOf, audit, getUser, runAs, type Principal } from './users.ts';
@@ -23,7 +23,8 @@ function plan(store: Store, userId: string): ResolvePlan {
     WHERE COALESCE(c.responsible_user_id, (SELECT e.actor_user_id FROM events e WHERE e.change_id = c.id ORDER BY e.id LIMIT 1)) = ?
     ORDER BY c.created_at, c.id`).all(userId) as AffectedChange[];
   const open = rows.filter(r => !isTerminalChange(r.status));
-  const live = new Set((store.db.query(`SELECT DISTINCT change_id FROM activities WHERE status = 'in_progress'`).all() as { change_id: string }[]).map(r => r.change_id));
+  // Intento vivo = lease activo: `in_progress` y también `waiting_reply` (turno vivo con una pregunta abierta, no ocupa slot pero conserva su sesión).
+  const live = new Set((store.db.query(`SELECT DISTINCT change_id FROM activities WHERE status IN ('in_progress', 'waiting_reply')`).all() as { change_id: string }[]).map(r => r.change_id));
   const affected = open.filter(r => !live.has(r.id));
   const excluded = open.filter(r => live.has(r.id)).map(r => ({ id: r.id, reason: 'active_attempt' as const }));
   const revision = sha(JSON.stringify([userId, affected.map(a => [a.id, a.status]), excluded.map(e => e.id)]));
