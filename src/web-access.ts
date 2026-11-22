@@ -59,7 +59,7 @@ function roleRows(stateDir: string, ws: Workstream, escape: Escape): string {
     <p class="muted">Los nombres por rol se editan en <a href="/perfiles?ws=${escape(ws.slug)}">Perfiles</a>; el tope del workstream manda sobre ellos.</p>`;
 }
 
-export function accessSection(stateDir: string, ws: Workstream, escape: Escape, csrf?: string): string {
+export function accessSection(stateDir: string, ws: Workstream, escape: Escape, csrf?: string, credentials = true): string {
   let registry = '<p class="muted">No hay servidores en el registro MCP.</p>';
   try { const names = Object.keys(loadMcpRegistry(stateDir)); if (names.length) registry = `<p>Registro MCP: ${names.map(n => `<code>${escape(n)}</code>`).join(', ')}</p>`; }
   catch { registry = '<p class="notice">El registro MCP (mcp-servers.json) no es válido.</p>'; }
@@ -72,7 +72,7 @@ export function accessSection(stateDir: string, ws: Workstream, escape: Escape, 
     ${current === null ? '<label><input type="checkbox" name="confirm" value="yes"> Confirmo: una lista vacía no permite nada a los workers</label>' : ''}
     <button>Guardar ${label}</button></fieldset></form>`;
   return `<section><h2>Secretos y MCP del workstream</h2>
-    <p class="muted">Solo nombres: la fábrica nunca guarda ni muestra valores. La tabla del registro MCP indica si la variable está definida en el entorno del proceso fab web; el del pool es No medido desde la web.</p>
+    <p class="muted">Solo nombres: la fábrica nunca guarda ni muestra valores. ${credentials ? 'La tabla del registro MCP indica si la variable está definida en el entorno del proceso fab web; el del pool es No medido desde la web.' : 'El estado de las credenciales del host solo lo ve el owner.'}</p>
     <dl class="config-facts"><div><dt>Variables permitidas</dt><dd>${list(ws.envAllow, escape)}</dd></div><div><dt>Servidores MCP permitidos</dt><dd>${list(ws.mcpAllow, escape)}</dd></div></dl>
     ${registry}${roleRows(stateDir, ws, escape)}${form('env', 'variables', ws.envAllow)}${form('mcp', 'servidores MCP', ws.mcpAllow)}</section>`;
 }

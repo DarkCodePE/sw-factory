@@ -79,3 +79,11 @@ test('serverConfigPage y serverWebhooksPage: admin y owner por api no ven creden
   expect(await cfg(who('owner'))).toContain('Jira (entorno)');
   expect(hook(who('owner'))).toContain('Secreto en entorno');
 });
+
+// T119e: el texto fijo de «Secretos y MCP» (src/web-access.ts) solo habla del estado de las variables si la vista lo enseña.
+test('el texto de «Secretos y MCP» no promete indicadores de credenciales a quien no los ve', async () => {
+  const frase = 'indica si la variable está definida en el entorno del proceso fab web';
+  expect(await render()).toContain(frase);
+  expect(await render({ credentials: true })).toContain(frase);
+  expect(await render({ credentials: false })).not.toContain(frase);
+});

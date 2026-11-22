@@ -288,7 +288,7 @@ export async function configPage(store: Store, stateDir: string, url: URL, escap
       ['Aprobación de change', yesNo(selected.requireChangeApproval)],
       ['Aprobación de spec', yesNo(selected.requireApproval)],
     ])}</section>
-    ${accessSection(stateDir, selected, escape, csrf)}
+    ${accessSection(stateDir, selected, escape, csrf, view ? view.credentials : true)}
     <section><h2>Perfil vigente</h2>${profileView(stateDir, selected, escape)}</section>
     <section><h2>Definición</h2>
       <p>El árbol de definición agrupa la configuración, el perfil y las skills en ficheros versionables.</p>
