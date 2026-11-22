@@ -169,7 +169,7 @@ export async function connectorsMain(cmd: 'jira' | 'pr', argv: string[], deps: C
     }
     return 0;
   } catch (err) {
-    const message = err instanceof StoreError ? ({ not_found: 'No se encontró el recurso local solicitado', invalid_transition: 'Transición local no permitida', conflict: 'El estado local cambió; vuelve a consultar', limit_reached: 'El workstream alcanzó su límite de changes', invalid_input: 'Entrada local inválida' }[err.code]) : err instanceof Error ? err.message : 'Error de conector';
+    const message = err instanceof StoreError ? ({ not_found: 'No se encontró el recurso local solicitado', invalid_transition: 'Transición local no permitida', conflict: 'El estado local cambió; vuelve a consultar', limit_reached: 'El workstream alcanzó su límite de changes', invalid_input: 'Entrada local inválida', forbidden: 'Operación no permitida', unauthorized: 'Credencial no válida' }[err.code]) : err instanceof Error ? err.message : 'Error de conector';
     error(`error: ${message}`);
     return 1;
   } finally { ownedStore?.close(); }
