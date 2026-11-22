@@ -44,11 +44,11 @@ test('un intento fija la versión al inicio y un cierre repetido conserva el car
     try {
       const attempts = ro.listCostAttempts([c.id]);
       expect(attempts.find(a => a.id === first)).toMatchObject({
-        rateVersion: 'v1', inferenceMicroUsd: 3000, inferenceBasis: 'catalog', inferenceVersion: '2026-11-21-v1',
+        rateVersion: expect.stringMatching(/^v1#[0-9a-f]{12}$/), inferenceMicroUsd: 3000, inferenceBasis: 'catalog', inferenceVersion: '2026-11-21-v1',
         computeMicroUsd: 6000, platformMicroUsd: 2000, totalMicroUsd: 11000,
       });
       expect(attempts.find(a => a.id === missing)).toMatchObject({
-        rateVersion: 'v2', inferenceMicroUsd: 0, inferenceBasis: 'runner_declared',
+        rateVersion: expect.stringMatching(/^v2#[0-9a-f]{12}$/), inferenceMicroUsd: 0, inferenceBasis: 'runner_declared',
         computeMicroUsd: null, platformMicroUsd: 7000, totalMicroUsd: null,
       });
       expect(attempts.find(a => a.id === unobserved)).toMatchObject({ inferenceMicroUsd: 0, computeMicroUsd: null, totalMicroUsd: null });
@@ -82,5 +82,23 @@ test('una base anterior se lee sin escribir y aplica el registro de esquema una 
         expect(writer.db.query('SELECT id FROM schema_migrations').all()).toEqual([{ id: 't109-cost-attempts' }, { id: 't110-cost-attribution' }]);
       } finally { writer.close(); }
     }
+  } finally { rmSync(dir, { recursive: true, force: true }); }
+});
+
+test('T109-H7: editar en sitio una versión de tarifa cambia su referencia; el defecto conserva la suya', () => {
+  const dir = mkdtempSync(join(tmpdir(), 'fab-rate-hash-'));
+  try {
+    const at = '2026-11-21T00:00:00.000Z';
+    const write = (platformMicroUsd: number, runnerHourlyMicroUsd: Record<string, number> = {}) => writeFileSync(join(dir, 'cost-rates.json'), JSON.stringify([
+      { version: 'v1', effectiveFrom: '2026-01-01T00:00:00.000Z', localHourlyMicroUsd: 0, platformMicroUsd, runnerHourlyMicroUsd },
+    ]));
+    expect(costRateAt(dir, at, null).version).toBe('c2-v1'); // sin fichero
+    write(100);
+    const first = costRateAt(dir, at, null).version;
+    expect(costRateAt(dir, at, null).version).toBe(first); // estable
+    write(200);
+    expect(costRateAt(dir, at, null).version).not.toBe(first);
+    const withRunner = (hourly: number) => { write(200, { a: hourly, b: 2 }); return costRateAt(dir, at, null).version; };
+    expect(withRunner(1)).not.toBe(withRunner(3));
   } finally { rmSync(dir, { recursive: true, force: true }); }
 });

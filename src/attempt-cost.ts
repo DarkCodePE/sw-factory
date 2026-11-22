@@ -1,5 +1,6 @@
 import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
+import { createHash } from 'node:crypto';
 import { record, tokenCount, usd } from './inference-usage.ts';
 import { isRunnerName } from './runners/name.ts';
 import type { OriginSource } from './store.ts';
@@ -64,8 +65,12 @@ export function costRateAt(stateDir: string | undefined, at: string, sshRunner: 
       if (rate.effectiveFrom <= at && rate.effectiveFrom > chosen.effectiveFrom) chosen = rate;
     }
   }
+  // H7: el hash del contenido hace que dos ediciones en sitio de la misma versión no compartan referencia de auditoría.
+  const version = chosen === defaultRate ? chosen.version : `${chosen.version}#${createHash('sha256')
+    .update(JSON.stringify([chosen.version, chosen.effectiveFrom, chosen.platformMicroUsd, chosen.localHourlyMicroUsd,
+      Object.entries(chosen.runnerHourlyMicroUsd).sort(([a], [b]) => a.localeCompare(b))])).digest('hex').slice(0, 12)}`;
   return {
-    version: chosen.version, effectiveFrom: chosen.effectiveFrom, platformMicroUsd: chosen.platformMicroUsd,
+    version, effectiveFrom: chosen.effectiveFrom, platformMicroUsd: chosen.platformMicroUsd,
     hourlyMicroUsd: sshRunner === null ? chosen.localHourlyMicroUsd :
       Object.hasOwn(chosen.runnerHourlyMicroUsd, sshRunner) ? chosen.runnerHourlyMicroUsd[sshRunner]! : null,
   };
