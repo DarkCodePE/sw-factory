@@ -115,7 +115,8 @@ afterEach(() => { store.close(); rmSync(dir, { recursive: true, force: true }); 
 
 function seed() {
   const w = store.createWorkstream({ slug: 'uno', goal: 'g', repo: '/r' });
-  const c = store.createChange(w.id, 'Cambio <b>', 'd');
+  const c = store.createChange(w.id, 'Cambio <b>', 'DESCRIPCION-CANARIO');
+  store.db.query("INSERT INTO events (workstream_id, change_id, severity, message, created_at) VALUES (?, ?, 'info', 'EVENTO-CANARIO', ?)").run(w.id, c.id, new Date().toISOString());
   store.addChangeNote(c.id, 'NOTA-SECRETA-DEL-EQUIPO');
   const a = store.listActivities({ changeId: c.id })[0]!;
   store.db.query("UPDATE activities SET result = ?, review_status = 'declined', review_comment = ? WHERE id = ?").run('RESULTADO-DE-WORKER-ABC', 'COMENTARIO-DE-REVISION', a.id);
@@ -127,6 +128,7 @@ test('V: el change estructurado trae título y estado, sin notas ni resultado, y
   const html = structuredChangePage(store, ui, c.id).body;
   expect(html).toContain('uno');
   expect(html).not.toContain('NOTA-SECRETA'); expect(html).not.toContain('RESULTADO-DE-WORKER'); expect(html).not.toContain('COMENTARIO');
+  for (const t of ['DESCRIPCION-CANARIO', 'EVENTO-CANARIO', 'Coste', 'USD']) expect(html, t).not.toContain(t);
   expect(structuredChangePage(store, ui, c.id).title).toBe('Cambio <b>'); // el título lo escapa quien pinta la plantilla
 });
 
@@ -135,6 +137,16 @@ test('V: la activity estructurada no trae comentario, resultado, error, log ni d
   const html = structuredActivityPage(store, ui, a.id).body;
   for (const t of ['RESULTADO-DE-WORKER', 'COMENTARIO-DE-REVISION', 'Veredicto y resultado', 'diff.patch', 'run.json']) expect(html).not.toContain(t);
   expect(html).toContain('declined');
+});
+
+test('V: rama y validador con «<» salen escapados en change y activity', () => {
+  const { c, a } = seed();
+  store.setChangeBranch(c.id, 'rama<img>');
+  store.db.query('UPDATE activities SET validator = ? WHERE id = ?').run('val<script>', a.id);
+  const ch = structuredChangePage(store, ui, c.id).body, ac = structuredActivityPage(store, ui, a.id).body;
+  expect(ch).toContain('rama&#60;img&#62;'); expect(ch).not.toContain('<img>');
+  expect(ch).toContain('val&#60;script&#62;'); expect(ac).toContain('val&#60;script&#62;');
+  expect(ch + ac).not.toContain('<script>');
 });
 
 test('V: un error de worker tampoco aparece', () => {
