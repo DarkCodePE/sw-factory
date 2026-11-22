@@ -91,3 +91,8 @@ test('T111-H9: el botón de ayuda y las etiquetas de serie miden al menos 24 px 
   expect(CARD_STYLE).toMatch(/\.help summary\{[^}]*min-width:24px;min-height:24px/);
   expect(CARD_STYLE).toMatch(/\.card \.chart label\{min-height:24px/);
 });
+test('T111-H6: una tarjeta admite como máximo 4 series', () => {
+  const s = (l: string) => ({ label: l, values: [1, 2, 3, 4] });
+  const h = card({ ...base, series: ['A', 'B', 'C', 'D', 'E'].map(s) });
+  expect((h.match(/<input type="checkbox"/g) ?? []).length).toBe(4); expect(h).not.toContain('c-x-4'); expect(h).not.toContain('class="a4"');
+});

@@ -705,3 +705,10 @@ test('T111-H2: con «Todo el historial» y changes de hace más de 90 días, las
   expect(prod).toContain('en los últimos 90 días');
   expect(gasto).toMatch(/<h2 id="t-cost">Coste por día<\/h2>.*?<p class="fig">3.00 USD<\/p>/s);
 });
+test('T111-H6: el rango de 90 días existe: 91 días en la serie y opción seleccionada; 91 días es inválido', () => {
+  const m = calculateMetrics(store, dir, { range: '90', now });
+  expect(m.daily.days.length).toBe(91); expect(m.daily.days.at(-1)).toBe('2026-11-19');
+  const { body } = metricsPage(store, dir, new URL('http://127.0.0.1:4310/metricas?range=90'));
+  expect(body).toContain('<option value="90" selected>Últimos 90 días</option>');
+  expect(() => calculateMetrics(store, dir, { range: '91' })).toThrow(URIError);
+});

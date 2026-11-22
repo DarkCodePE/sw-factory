@@ -207,3 +207,16 @@ test('T111-H8: la tasa por día agrupa por la fecha con la que se filtra (creada
   expect(h).toContain('<title>2026-11-19 · Aprobadas: 100 %</title>');
   expect(h).not.toContain('2026-11-20');
 });
+test('T111-H6: cableado de Jueces: fecha inválida, until, formulario, vista previa y enlaces llevan el rango', async () => {
+  const { digest, impls } = seed(2);
+  insertScore(digest, impls[0]!, { at: '2026-11-19T10:00:00.000Z' }); insertScore(digest, impls[1]!, { at: '2026-11-21T10:00:00.000Z' });
+  server = startWeb(dir, 0);
+  expect((await fetch(url('/metricas?tab=jueces&from=2026-02-31&to=2026-03-02'))).status).toBe(400); // M8
+  const h = await html('/metricas?tab=jueces&ws=ws&from=2026-11-18&to=2026-11-19');
+  expect(h).toContain('100 % (1/1)'); expect(h).not.toContain('2026-11-21T10'); // M11: until
+  expect(h).toMatch(/<form action="\/metricas" method="get" class="filters"><input type="hidden" name="tab" value="jueces">/); // M20
+  expect(h).toContain('href="?tab=jueces&amp;scorer=calidad&amp;ws=ws&amp;range=custom&amp;from=2026-11-18&amp;to=2026-11-19"'); // M27
+  const prev = await html('/metricas?tab=jueces&ws=ws&from=2026-11-18&to=2026-11-19&preview=1');
+  expect(prev).toContain('<input type="hidden" name="from" value="2026-11-18"><input type="hidden" name="to" value="2026-11-19">'); // M25
+  expect(prev).toContain('<input type="hidden" name="range" value="custom">');
+});
