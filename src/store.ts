@@ -15,6 +15,7 @@ import { dirname, resolve } from 'node:path';
 import { gitEvidence, writeManifest } from './manifest.ts';
 import { redact, redactField } from './evidence.ts';
 import { lastDue, parseCron } from './cron.ts';
+import { applyMigrations } from './migrations.ts';
 import {
   assertNoteAttachmentMounts, assertPrivateNoteDatabase, NOTE_ATTACHMENT_HISTORY_MAX, NOTE_ATTACHMENT_MAX,
   NOTE_ATTACHMENT_REMOTE, NOTE_ATTACHMENT_WAIT, noteAttachmentInventory, validateNoteAttachment, type NoteAttachment, type NoteAttachmentMeta, type NoteAttachmentTarget, type NoteAttachmentWait,
@@ -295,7 +296,7 @@ export interface Activity {
 
 export class StoreError extends Error {
   constructor(
-    readonly code: 'not_found' | 'invalid_transition' | 'conflict' | 'limit_reached' | 'invalid_input',
+    readonly code: 'not_found' | 'invalid_transition' | 'conflict' | 'limit_reached' | 'invalid_input' | 'forbidden' | 'unauthorized',
     message: string
   ) {
     super(message);
@@ -713,6 +714,7 @@ export class Store {
     this.db
       .query(`UPDATE activities SET lease_expires_at = ? WHERE status = 'in_progress' AND lease_expires_at IS NULL`)
       .run(migrationTtl);
+    applyMigrations(this.db, this.now());
   }
 
   private addColumn(table: string, column: string, ddl: string): void {
@@ -1728,11 +1730,11 @@ export class Store {
       throw new StoreError('invalid_input', 'ámbito de clave API inválido');
     }
     return this.withRetry(() => {
-      if (this.db.query('SELECT 1 FROM api_keys WHERE name = ?').get(name)) {
+      if (this.db.query('SELECT 1 FROM api_keys WHERE name = ? AND user_id IS NULL').get(name)) {
         throw new StoreError('conflict', 'ya existe una clave API con ese nombre');
       }
       const { count } = this.db.query<{ count: number }, []>(
-        'SELECT COUNT(*) AS count FROM api_keys WHERE revoked_at IS NULL',
+        'SELECT COUNT(*) AS count FROM api_keys WHERE revoked_at IS NULL AND user_id IS NULL',
       ).get()!;
       if (count >= API_KEY_ACTIVE_LIMIT) {
         throw new StoreError('limit_reached', `ya hay ${API_KEY_ACTIVE_LIMIT} claves API activas`);
@@ -1751,7 +1753,7 @@ export class Store {
     if (!this.hasApiKeysTable()) return [];
     return this.db.query<ApiKeyMetadata, []>(
       `SELECT id, name, scope, created_at AS createdAt, created_by AS createdBy, revoked_at AS revokedAt
-       FROM api_keys ORDER BY created_at, name`,
+       FROM api_keys WHERE user_id IS NULL ORDER BY created_at, name`,
     ).all();
   }
 
@@ -1762,7 +1764,7 @@ export class Store {
       const name = typeof target === 'string' ? target : null;
       const { changes } = this.db.query(
         `UPDATE api_keys SET revoked_at = COALESCE(revoked_at, ?)
-         WHERE id = (SELECT id FROM api_keys WHERE id = ? OR name = ? ORDER BY (id = ?) DESC LIMIT 1)`,
+         WHERE id = (SELECT id FROM api_keys WHERE user_id IS NULL AND (id = ? OR name = ?) ORDER BY (id = ?) DESC LIMIT 1)`,
       ).run(this.now(), id, name, id);
       if (changes === 0) throw new StoreError('not_found', 'clave API no encontrada');
     });
@@ -1773,7 +1775,7 @@ export class Store {
     if (!match || !this.hasApiKeysTable()) return null;
     const [, id, secret] = match;
     const row = this.db.query<ApiKeyIdentity & { hash: string }, [string]>(
-      'SELECT id, name, scope, hash FROM api_keys WHERE id = ? AND revoked_at IS NULL',
+      'SELECT id, name, scope, hash FROM api_keys WHERE id = ? AND revoked_at IS NULL AND user_id IS NULL',
     ).get(id!);
     if (!row) return null;
     const stored = Buffer.from(row.hash);

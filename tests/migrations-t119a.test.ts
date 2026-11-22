@@ -1,0 +1,79 @@
+import { afterEach, beforeEach, expect, test } from 'bun:test';
+import { Database } from 'bun:sqlite';
+import { mkdtempSync, rmSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
+import { Store } from '../src/store.ts';
+import { applyMigrations, MIGRATIONS } from '../src/migrations.ts';
+
+let dir: string;
+beforeEach(() => { dir = mkdtempSync(join(tmpdir(), 'fab-mig-')); });
+afterEach(() => rmSync(dir, { recursive: true, force: true }));
+
+const ids = (db: Database) => (db.query('SELECT id FROM schema_migrations ORDER BY id').all() as { id: string }[]).map((r) => r.id);
+
+// Base «de release»: api_keys con UNIQUE(name) y sin registro de migraciones.
+function releaseDb(path: string): void {
+  const s = new Store(path);
+  s.db.exec(`DROP TABLE schema_migrations; DROP TABLE user_sessions; DROP TABLE user_invitations; DROP TABLE users; DROP TABLE team; DROP TABLE identity_audit;
+    ALTER TABLE events DROP COLUMN actor_user_id; ALTER TABLE events DROP COLUMN actor_source;
+    DROP TABLE api_keys;
+    CREATE TABLE api_keys (id TEXT PRIMARY KEY, name TEXT NOT NULL UNIQUE, scope TEXT NOT NULL CHECK (scope IN ('read','decide')),
+      hash TEXT NOT NULL, created_at TEXT NOT NULL, created_by TEXT NOT NULL, revoked_at TEXT);
+    INSERT INTO api_keys VALUES ('a1','uno','read','h1','2026-01-01','ana',NULL),('b2','dos','decide','h2','2026-01-02','ben','2026-02-01');`);
+  s.close();
+}
+
+test('base limpia: aplica los IDs una vez y reabrir no repite', () => {
+  const path = join(dir, 'a.db');
+  const s = new Store(path);
+  expect(ids(s.db)).toEqual(MIGRATIONS.map((m) => m.id).sort());
+  s.close();
+  const again = new Store(path);
+  expect(ids(again.db)).toHaveLength(MIGRATIONS.length);
+  again.close();
+});
+
+test('base de release: api_keys se reconstruye sin perder filas ni digests', () => {
+  const path = join(dir, 'r.db');
+  releaseDb(path);
+  const s = new Store(path);
+  const rows = s.db.query('SELECT id, name, scope, hash, created_by, revoked_at, user_id, expires_at FROM api_keys ORDER BY id').all();
+  expect(rows).toEqual([
+    { id: 'a1', name: 'uno', scope: 'read', hash: 'h1', created_by: 'ana', revoked_at: null, user_id: null, expires_at: null },
+    { id: 'b2', name: 'dos', scope: 'decide', hash: 'h2', created_by: 'ben', revoked_at: '2026-02-01', user_id: null, expires_at: null },
+  ]);
+  expect(s.db.query('PRAGMA foreign_key_check').all()).toEqual([]);
+  // UNIQUE(name) global cayó: el mismo nombre se admite por usuario, pero no entre claves locales.
+  expect(() => s.db.query(`INSERT INTO api_keys (id,name,scope,hash,created_at,created_by) VALUES ('c3','uno','read','h','t','x')`).run()).toThrow();
+  s.close();
+});
+
+test('un fallo a mitad hace rollback y no registra el ID', () => {
+  const db = new Database(':memory:', { strict: true });
+  const boom = [{ id: 'x-1', up: (d: Database) => { d.exec('CREATE TABLE t (a)'); throw new Error('boom'); } }];
+  expect(() => applyMigrations(db, 'now', boom)).toThrow('boom');
+  expect(db.query("SELECT 1 FROM sqlite_schema WHERE name = 't'").get()).toBeNull();
+  expect(ids(db)).toEqual([]);
+});
+
+test('dos escritores: el segundo ve el registro bajo lock y no repite', () => {
+  const path = join(dir, 'w.db');
+  const a = new Store(path);
+  const b = new Store(path);
+  let runs = 0;
+  const step = [{ id: 'x-2', up: () => { runs++; } }];
+  applyMigrations(a.db, 'n', step);
+  applyMigrations(b.db, 'n', step);
+  expect(runs).toBe(1);
+  a.close(); b.close();
+});
+
+test('el esquema de identidad impide segundo equipo y cambiar su UUID', () => {
+  const s = new Store(join(dir, 't.db'));
+  s.db.query(`INSERT INTO team (singleton,id,created_at) VALUES (1,'u1','t')`).run();
+  expect(() => s.db.query(`INSERT INTO team (singleton,id,created_at) VALUES (2,'u2','t')`).run()).toThrow();
+  expect(() => s.db.query(`UPDATE team SET id='u9'`).run()).toThrow(/inmutable/);
+  expect(() => s.db.query(`DELETE FROM team`).run()).toThrow();
+  s.close();
+});
