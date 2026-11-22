@@ -3,6 +3,7 @@ import { mkdtempSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'nod
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { AdmissionDb } from '../src/admission/db.ts';
+import { readInferenceAttempts } from '../src/inference-usage.ts';
 import { SessionStore } from '../src/admission/sessions.ts';
 import { processActivity, runPool } from '../src/pool.ts';
 import { defaultProfile, saveProfile } from '../src/profile.ts';
@@ -361,17 +362,18 @@ test('T108: la activity conserva los tokens de la pregunta y de la reanudación 
   ]);
 });
 
-test('T108: una activity antigua conserva coste, tokens, duración y modelo pedido al registrar un intento nuevo', async () => {
+test('T108 H5: una activity antigua conserva coste, tokens, duración y modelo pedido al registrar un intento nuevo', async () => {
   const { ws, c } = setup();
   const a = store.listActivities({ changeId: c.id })[0]!;
   const path = join(dir, 'runs', c.id, `${a.id}.json`);
   mkdirSync(join(dir, 'runs', c.id), { recursive: true });
   const prior = { inputTokens: 34, outputTokens: 12, costUsd: 0.4 };
-  writeFileSync(path, JSON.stringify({ adapter: 'claude', model: 'alias-anterior', usage: prior, durationMs: 73 }));
+  writeFileSync(path, JSON.stringify({ adapter: 'claude', model: 'alias anterior [1m]', usage: prior, durationMs: 73 }));
   const backend = fakeLive([{ reports: [{ state: 'done', summary: 'ok' }] }]);
   await pool(ws.id, { fake: backend });
   expect(store.getActivity(a.id).status).toBe('completed');
   const metadata = JSON.parse(readFileSync(path, 'utf8'));
-  expect(metadata.inferenceAttempts[0]).toEqual({ adapter: 'claude', requestedModel: 'alias-anterior', durationMs: 73, usage: prior });
+  expect(metadata.inferenceAttempts[0]).toEqual({ adapter: 'claude', requestedModel: 'alias anterior [1m]', durationMs: 73, usage: prior });
+  expect(readInferenceAttempts(metadata.inferenceAttempts)?.[0]?.requestedModel).toBe('alias anterior [1m]');
   expect(metadata.attemptCosts).toEqual([0.4, null]);
 });

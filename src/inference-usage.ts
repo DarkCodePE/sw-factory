@@ -14,7 +14,7 @@ export const tokenCount = (value: unknown): number | undefined =>
 export const usd = (value: unknown): number | undefined =>
   typeof value === 'number' && Number.isFinite(value) && value >= 0 ? value : undefined;
 export const modelId = (value: unknown): string | undefined =>
-  typeof value === 'string' && /^[A-Za-z0-9][A-Za-z0-9._:/@-]{0,127}$/.test(value) ? value : undefined;
+  typeof value === 'string' && /^[A-Za-z0-9][A-Za-z0-9._:/@\[\]-]{0,127}$/.test(value) ? value : undefined;
 export function record(value: unknown): Record<string, unknown> | undefined {
   return value !== null && typeof value === 'object' && !Array.isArray(value) ? value as Record<string, unknown> : undefined;
 }
@@ -73,7 +73,7 @@ export function readInferenceAttempts(value: unknown): InferenceAttempt[] | unde
   return value.map(item => {
     const o = record(item);
     return {
-      adapter: modelId(o?.adapter), requestedModel: modelId(o?.requestedModel),
+      adapter: modelId(o?.adapter), requestedModel: typeof o?.requestedModel === 'string' ? o.requestedModel : undefined,
       usage: readUsage(o?.usage), durationMs: tokenCount(o?.durationMs),
       ...(o?.remoteDeclared === true ? { remoteDeclared: true } : {}),
     };

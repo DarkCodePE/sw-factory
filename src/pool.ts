@@ -248,7 +248,7 @@ export async function processActivity(
         : Array.from({ length: a.retryCount }, () => null);
     const inferenceAttempts: InferenceAttempt[] = readInferenceAttempts(previous?.inferenceAttempts) ?? attemptCosts.map((_, i) =>
       i === attemptCosts.length - 1 && previous ? {
-        adapter: modelId(previous.adapter), requestedModel: modelId(previous.model),
+        adapter: modelId(previous.adapter), requestedModel: typeof previous.model === 'string' ? previous.model : undefined,
         usage: readUsage(previous.usage), durationMs: tokenCount(previous.durationMs),
         ...(previous.runner?.kind === 'ssh' ? { remoteDeclared: true as const } : {}),
       } : {});

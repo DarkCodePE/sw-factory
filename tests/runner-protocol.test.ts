@@ -170,3 +170,8 @@ test('T108: el runner puede declarar caché sin un precio ni un modelo efectivo'
   bad(() => runner({ ...result, usage: { ...usage, effectiveModel: '<script>' } }));
   bad(() => runner({ ...result, usage: { ...usage, cacheReadTokens: 0.5 } }));
 });
+
+test('T108 H5: el modelo efectivo con sufijo de contexto llega del runner', () => {
+  const usage = { effectiveModel: 'claude-sonnet-4-6[1m]', inputTokens: 42 };
+  expect(runner({ ...result, usage })).toMatchObject({ usage });
+});
