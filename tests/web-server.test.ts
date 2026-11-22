@@ -78,6 +78,17 @@ describe('T118a: Modo servidor, frontera HTTP y arranque', () => {
     server.stop(true);
   });
 
+  test('Rutas de T108/T111 (/metricas, /activities/:id) dan 401 sin sesión en modo servidor', async () => {
+    const socketPath = join(tempDir, 'fab-guarda.sock');
+    const server = startWeb(stateDir, 0, { server: true, publicOrigin: 'https://fab.ejemplo.com', socketPath });
+    try {
+      for (const path of ['/metricas', '/metricas?tab=gasto', '/activities/a1']) {
+        const res = await fetch(`http://localhost${path}`, { unix: socketPath, headers: { Host: 'fab.ejemplo.com' } } as any);
+        expect(res.status).toBe(401);
+      }
+    } finally { server.stop(true); }
+  });
+
   test('Host ajeno da 403', async () => {
     const socketPath = join(tempDir, 'fab-host.sock');
     const server = startWeb(stateDir, 0, {
