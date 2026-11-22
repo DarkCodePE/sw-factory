@@ -79,6 +79,12 @@
       "topic": "Decisiones de la ronda T77–T98",
       "date": "2026-11-21",
       "decision": "T90 último uso: opción A (en memoria, por arranque). T84: canal A (toda config nueva debe ser confinable) y trabajo vivo A (rechazo bajo el lock). T96: destinos A (solo turno local confinado) y caída A (confirmación por intento). T91-H1: opción A (avisar qué fuente manda). INT-O1: opción B (verbos de CLI fab ws agent, fab automation update, fab note --file). Fable solo valida; implementan Codex, Sonnet y AGY."
+    },
+    {
+      "id": "D14",
+      "topic": "fab corre en local y en nube; métricas y créditos como Warp",
+      "date": "2026-11-21",
+      "decision": "Sustituye a D-A. fab corre igual en local (127.0.0.1, un usuario) y en una máquina en la nube del dueño (modo servidor, varios usuarios). Las métricas replican las de Warp completas, con el coste en tres componentes (inferencia, cómputo y plataforma), gasto por worker, por modelo y por usuario, y un sistema de créditos con saldo. Se mantienen D-F (la web nunca da más poder que la CLI) y D-K (secretos solo por nombre). Pendiente del dueño: método de login en nube (T119), tarifas por defecto (T109, T115) y si las recargas son solo manuales o con pago (T117)."
     }
   ],
   "tasks": [
@@ -1669,7 +1675,7 @@
       "acceptance": "Un transcript real de claude se muestra por pasos; los conmutadores ocultan pensamiento y llamadas; texto hostil sale escapado; un stream roto no rompe la página («No medido»).",
       "estimate": "3-4 d",
       "risk": "medio",
-      "status": "pending",
+      "status": "done",
       "depends_on": [
         "T54"
       ],
@@ -1677,7 +1683,7 @@
         "Detalle de run: transcript",
         "Detalle de run: Show thinking / tool calls"
       ],
-      "pr": null
+      "pr": "#93"
     },
     {
       "id": "T100",
@@ -1689,14 +1695,14 @@
       "acceptance": "Dos agentes en paralelo salen en columnas distintas y en su minuto; sin datos de tiempo, «No medido».",
       "estimate": "2 d",
       "risk": "bajo",
-      "status": "pending",
+      "status": "done",
       "depends_on": [
         "T54"
       ],
       "covers": [
         "Detalle de run: timeline por agente"
       ],
-      "pr": null
+      "pr": "#93"
     },
     {
       "id": "T101",
@@ -1708,14 +1714,14 @@
       "acceptance": "Alta inválida da 400 sin fila; baja de un runner asignado se rechaza; matriz sesión/CSRF/host único; la API no expone estas acciones.",
       "estimate": "2-3 d",
       "risk": "medio",
-      "status": "pending",
+      "status": "done",
       "depends_on": [
         "T85"
       ],
       "covers": [
         "Settings: Runners: alta, edición, baja"
       ],
-      "pr": null
+      "pr": "#93"
     },
     {
       "id": "T102",
@@ -1727,7 +1733,7 @@
       "acceptance": "Un rol con runner propio se lanza en ese runner y los demás en el del workstream; un runner pausado o borrado bloquea solo ese rol con motivo; herencia visible.",
       "estimate": "3-4 d",
       "risk": "alto",
-      "status": "pending",
+      "status": "done",
       "depends_on": [
         "T74",
         "T84",
@@ -1736,7 +1742,7 @@
       "covers": [
         "Editor de worker: host y runner por worker"
       ],
-      "pr": null
+      "pr": "#93"
     },
     {
       "id": "T103",
@@ -1748,7 +1754,7 @@
       "acceptance": "Un valor pegado se rechaza; solo nombres válidos; la página nunca muestra un valor del entorno; la API no expone la edición.",
       "estimate": "2-3 d",
       "risk": "medio",
-      "status": "pending",
+      "status": "done",
       "depends_on": [
         "T72"
       ],
@@ -1757,7 +1763,7 @@
         "Settings: secretos y MCP por defecto",
         "Secrets: lista"
       ],
-      "pr": null
+      "pr": "#93"
     },
     {
       "id": "T104",
@@ -1769,14 +1775,14 @@
       "acceptance": "La página lista lo mismo que fab mcp list, escapado y redactado; sin --write no hay formularios.",
       "estimate": "1 d",
       "risk": "bajo",
-      "status": "pending",
+      "status": "done",
       "depends_on": [
         "T72"
       ],
       "covers": [
         "MCPs and apps: registro"
       ],
-      "pr": null
+      "pr": "#93"
     },
     {
       "id": "T105",
@@ -1788,7 +1794,7 @@
       "acceptance": "Paquete con symlink, ruta absoluta o .. se rechaza; perfil inválido 400 sin escribir; la importación queda auditada con actor web; la API no la expone.",
       "estimate": "3 d",
       "risk": "alto",
-      "status": "pending",
+      "status": "done",
       "depends_on": [
         "T58",
         "T59"
@@ -1797,7 +1803,7 @@
         "Workers: importar worker",
         "Factory definition: importar"
       ],
-      "pr": null
+      "pr": "#93"
     },
     {
       "id": "T106",
@@ -1809,14 +1815,14 @@
       "acceptance": "Un binario que no coincide con su pin sale marcado; la página no ejecuta binarios en cada carga (caché o lectura del registro).",
       "estimate": "1 d",
       "risk": "bajo",
-      "status": "pending",
+      "status": "done",
       "depends_on": [
         "T46"
       ],
       "covers": [
         "Agent harnesses: pines"
       ],
-      "pr": null
+      "pr": "#93"
     },
     {
       "id": "T107",
@@ -1828,12 +1834,244 @@
       "acceptance": "La config inválida se rechaza; la importación respeta el tope y deja auditoría; sin --write solo lectura.",
       "estimate": "2-3 d",
       "risk": "medio",
-      "status": "pending",
+      "status": "done",
       "depends_on": [
         "T43"
       ],
       "covers": [
         "Onboarding: entrada por etiqueta y Jira"
+      ],
+      "pr": "#93"
+    },
+    {
+      "id": "T108",
+      "title": "Modelo y tokens reales por intento en la evidencia",
+      "phase": "F10",
+      "why": "El gasto por modelo sale «No medido»: la activity guarda el modelo pedido, pero no el que respondió ni los tokens.",
+      "where": "src/evidence.ts, src/live/*, src/agent/*, src/store.ts (activities)",
+      "proposal": "Leer del stream de cada adaptador (claude stream-json, codex, gemini y agy, native) el modelo efectivo y los tokens de entrada, salida y caché, y guardarlos por intento. Si el adaptador no da USD, calcular el coste con una tabla de precios versionada en el repo. Si no hay dato, «No medido», nunca 0.",
+      "acceptance": "Fixtures reales de cada adaptador con modelo y tokens. Un modelo sin precio da «No medido». Migración sin pérdida de las activities viejas. Mutación: quitar el parseo de tokens rompe un test.",
+      "estimate": "2-3 d",
+      "risk": "medio",
+      "status": "pending",
+      "depends_on": [
+        "T54"
+      ],
+      "covers": [
+        "Spending: gasto por modelo"
+      ],
+      "pr": null
+    },
+    {
+      "id": "T109",
+      "title": "Coste en tres componentes: inferencia, cómputo y plataforma",
+      "phase": "F10",
+      "why": "Warp desglosa el coste por PR en Compute, Platform e Inference. En nube, el cómputo (VM o runner) y la plataforma cuestan dinero.",
+      "where": "src/store.ts, src/pool.ts, src/runners/*, src/metrics.ts, config de fab",
+      "proposal": "Por intento: inferencia (T108); cómputo = tiempo de pared del sandbox o del runner × tarifa por hora del runner (local 0 por defecto, cada runner remoto declara la suya); plataforma = tarifa fija por run, configurable, 0 por defecto. Las tarifas viven en la config del dueño, con fecha de vigencia, para que los cambios no reescriban la historia.",
+      "acceptance": "Los tres componentes suman el total. Cambiar una tarifa no altera los intentos ya cerrados. El runner que no declara tarifa sale «No medido». Tests de redondeo en céntimos.",
+      "estimate": "2 d",
+      "risk": "medio",
+      "status": "pending",
+      "depends_on": [
+        "T108",
+        "T74"
+      ],
+      "covers": [
+        "Spending: Cost per PR con desglose Compute/Platform/Inference"
+      ],
+      "pr": null
+    },
+    {
+      "id": "T110",
+      "title": "Atribución del gasto: worker, usuario, fuente y PR",
+      "phase": "F10",
+      "why": "Warp agrupa el gasto por fuente, usuario, worker y modelo. fab agrupa por adaptador y por actor del primer evento.",
+      "where": "src/store.ts, src/metrics.ts, src/pool.ts",
+      "proposal": "Guardar en cada intento el rol del perfil (worker), el usuario que originó el change, la fuente (web, cli, api, automation, webhook, jira, resident) y el PR enlazado. Así cualquier agrupación sale de una sola consulta.",
+      "acceptance": "Agrupar por cualquiera de las cuatro dimensiones suma el total. Un change sin PR cuenta en «sin PR». Los datos viejos salen «sin dato», sin inventar.",
+      "estimate": "1-2 d",
+      "risk": "bajo",
+      "status": "pending",
+      "depends_on": [
+        "T108"
+      ],
+      "covers": [
+        "Spending: por fuente, por usuario, por worker"
+      ],
+      "pr": null
+    },
+    {
+      "id": "T111",
+      "title": "Métricas en pestañas y tarjetas con cifra y gráfico de área",
+      "phase": "F11",
+      "why": "Warp muestra Productivity, Spending y Scorers como pestañas en línea, con cifra grande y gráfico por tarjeta; fab enseña enlaces apilados, barras pequeñas y tablas.",
+      "where": "src/web-metrics.ts, src/web-style.ts, src/web-scorers.ts",
+      "proposal": "Pestañas Productividad · Gasto · Jueces en línea. Selector de rango global (7, 30 y 90 días, y personalizado) que se conserva entre pestañas. Tarjeta: título con ayuda, cifra destacada, subtítulo y área o área apilada en SVG del servidor, con casillas de serie. La tabla queda plegada debajo, por accesibilidad. Sin JS obligatorio.",
+      "acceptance": "Las tres pestañas con el mismo rango y workstream. Contraste AA en claro y oscuro. Con cero datos, «No medido», sin gráfico falso. E2E con captura de cada pestaña.",
+      "estimate": "2-3 d",
+      "risk": "bajo",
+      "status": "pending",
+      "depends_on": [],
+      "covers": [
+        "Dashboard: pestañas y tarjetas"
+      ],
+      "pr": null
+    },
+    {
+      "id": "T112",
+      "title": "Productividad completa: los cuatro tramos, interacciones por PR y runs por tipo",
+      "phase": "F11",
+      "why": "Faltan kickoff→merge, primera revisión→merge, la media de interacciones humanas por PR y los runs por tipo de worker (raíz frente a subagentes).",
+      "where": "src/metrics.ts, src/web-metrics.ts",
+      "proposal": "Añadir los dos tramos, la media de interacciones por PR (cifra y serie) y la serie diaria de runs apilada por rol o tipo, con selector y la cuenta de runs raíz.",
+      "acceptance": "Cada tramo con mediana, p90 y muestras. Los runs suman el total. Tests con datos sembrados de fechas conocidas.",
+      "estimate": "2 d",
+      "risk": "bajo",
+      "status": "pending",
+      "depends_on": [
+        "T111",
+        "T110"
+      ],
+      "covers": [
+        "Productivity: tiempo de ciclo, interacciones por PR, total runs por worker"
+      ],
+      "pr": null
+    },
+    {
+      "id": "T113",
+      "title": "Gasto completo: coste por PR, series por dimensión y los 20 PR más caros",
+      "phase": "F11",
+      "why": "La pestaña Spending de Warp tiene coste por PR con desglose, los 20 PR más caros y series de gasto por fuente, usuario, worker y modelo.",
+      "where": "src/metrics.ts, src/web-metrics.ts",
+      "proposal": "Tarjetas: coste por PR (con desglose conmutables), los 20 PR más caros, y gasto por fuente, por usuario, por worker y por modelo, cada una con cifra, «por X, N X», área apilada y lista ordenada.",
+      "acceptance": "Cada tarjeta cuadra con la suma de intentos del rango. Lo «No medido» se cuenta aparte, sin sumar como 0.",
+      "estimate": "2 d",
+      "risk": "bajo",
+      "status": "pending",
+      "depends_on": [
+        "T109",
+        "T110",
+        "T111"
+      ],
+      "covers": [
+        "Spending: todas las tarjetas"
+      ],
+      "pr": null
+    },
+    {
+      "id": "T114",
+      "title": "Jueces en rejilla y botón «Puesta en marcha»",
+      "phase": "F11",
+      "why": "Warp muestra una tarjeta por scorer con su tendencia, los agentes que lo usan y «Add scorer»; el dashboard tiene un botón Setup.",
+      "where": "src/web-scorers.ts, src/web-metrics.ts, src/web-entrada.ts",
+      "proposal": "Rejilla de tarjetas por juez: serie de puntuación media, etiquetas de los roles que lo usan («y N más») y una tarjeta para crear juez (con --write). Botón «Puesta en marcha» con el progreso del asistente de alta.",
+      "acceptance": "Sin --write, la tarjeta de crear no aparece. Al crear un juez, queda evento con actor. Tests de la rejilla vacía y con datos.",
+      "estimate": "1-2 d",
+      "risk": "bajo",
+      "status": "pending",
+      "depends_on": [
+        "T111",
+        "T65"
+      ],
+      "covers": [
+        "Scorers en el dashboard",
+        "Setup"
+      ],
+      "pr": null
+    },
+    {
+      "id": "T115",
+      "title": "Libro de créditos: saldo, concesiones, reservas y liquidaciones",
+      "phase": "F12",
+      "why": "Warp cobra en créditos y muestra el saldo restante; fab no tiene presupuesto ni saldo.",
+      "where": "src/credits.ts (nuevo), src/store.ts, src/cli.ts",
+      "proposal": "Libro de solo añadir con asientos grant, reserve, settle, release, refund y adjust, por cuenta (en local, el dueño; en nube, equipo y usuario). Conversión USD→créditos configurable con vigencia. Verbo `fab credits` (balance, ledger, grant, adjust) solo para el dueño. Saldo = suma de asientos, nunca un campo mutable.",
+      "acceptance": "Concurrencia: dos reservas simultáneas no dejan el saldo negativo (test con carrera). Liquidar más de lo reservado queda registrado. Auditoría con actor. Mutación sobre el signo de cada asiento.",
+      "estimate": "3 d",
+      "risk": "alto",
+      "status": "pending",
+      "depends_on": [
+        "T109"
+      ],
+      "covers": [
+        "Créditos: saldo y consumo"
+      ],
+      "pr": null
+    },
+    {
+      "id": "T116",
+      "title": "El pool reserva créditos antes de cada intento y liquida al terminar",
+      "phase": "F12",
+      "why": "Sin control previo, una cuenta sin saldo puede seguir gastando.",
+      "where": "src/pool.ts, src/credits.ts, src/runners/*",
+      "proposal": "Antes del intento, reservar una estimación por rol (configurable). Al terminar, liquidar con el coste real (T109) y liberar el sobrante. Sin saldo, el change no arranca y queda bloqueado con motivo «sin créditos». Con tope por intento: el agente termina su paso y se detiene sin dar el change por fallido; se reanuda al recargar.",
+      "acceptance": "Un change sin saldo no lanza agente. Una recarga lo desbloquea. Ningún intento queda con la reserva sin cerrar tras caída (barrido al arrancar). E2E con el adaptador fake.",
+      "estimate": "2-3 d",
+      "risk": "alto",
+      "status": "pending",
+      "depends_on": [
+        "T115"
+      ],
+      "covers": [
+        "Créditos: consumo por run y tope"
+      ],
+      "pr": null
+    },
+    {
+      "id": "T117",
+      "title": "Créditos en la web: saldo, movimientos, límites y avisos",
+      "phase": "F12",
+      "why": "Warp muestra «N credits» o «$X remaining» en la barra lateral y el gasto por usuario.",
+      "where": "src/web-sidebar.ts, src/web-credits.ts (nuevo), src/web-actions.ts",
+      "proposal": "Saldo en la barra lateral. Página Créditos: movimientos, consumo por usuario y workstream, límites por usuario y workstream y aviso de umbral (notificación). Concesión y ajuste desde la web solo para owner, con verbo de CLI equivalente (D-F). Recargas: manuales por ahora; el pago externo queda para decisión del dueño.",
+      "acceptance": "Sin --write, solo lectura. Un member no ve los botones de conceder ni puede llamarlos (test 403). La API con clave no concede créditos (api:false).",
+      "estimate": "2 d",
+      "risk": "medio",
+      "status": "pending",
+      "depends_on": [
+        "T115",
+        "T119"
+      ],
+      "covers": [
+        "Créditos: saldo en la barra y gestión"
+      ],
+      "pr": null
+    },
+    {
+      "id": "T118",
+      "title": "Modo servidor: fab en una máquina en la nube",
+      "phase": "F13",
+      "why": "fab solo escucha en 127.0.0.1 con host aleatorio por arranque; para correr en nube necesita un modo servidor seguro.",
+      "where": "src/web.ts, src/web-auth.ts, src/web-access.ts, deploy/ (nuevo), techdocs",
+      "proposal": "`fab web --server` con host público fijo en config, escucha detrás de un proxy TLS (Caddy) y cookies Secure y SameSite=Strict. HSTS. Sin enlace de un solo uso: login de T119. Unidad systemd y Dockerfile, copia de seguridad del SQLite y guía de despliegue en una VM. El modo local queda igual.",
+      "acceptance": "Sin TLS, el modo servidor no arranca. Un Host u Origin ajeno da 403. El modo local pasa toda su suite sin cambios. Prueba de despliegue en una VM desechable con captura.",
+      "estimate": "3 d",
+      "risk": "alto",
+      "status": "pending",
+      "depends_on": [],
+      "covers": [
+        "Plataforma en nube"
+      ],
+      "pr": null
+    },
+    {
+      "id": "T119",
+      "title": "Usuarios, roles y login para el modo servidor",
+      "phase": "F13",
+      "why": "En nube hay varias personas: Warp tiene equipo, usuario y gasto por usuario.",
+      "where": "src/users.ts (nuevo), src/web-auth.ts, src/store.ts, src/cli.ts",
+      "proposal": "Usuarios con rol owner, admin, member o viewer, e invitaciones. Login por OIDC (GitHub o Google), pendiente de decisión del dueño. Cada evento guarda el usuario como actor. Las claves de API van por usuario. El rol limita las acciones de la web y de la CLI remota. En local, un solo usuario owner implícito.",
+      "acceptance": "Matriz de permisos rol × acción con tests. Un viewer no puede ninguna acción. Cerrar la sesión invalida en servidor. Sin secretos en el repo; el client secret de OIDC va solo por nombre (D-K).",
+      "estimate": "3-4 d",
+      "risk": "alto",
+      "status": "pending",
+      "depends_on": [
+        "T118"
+      ],
+      "covers": [
+        "Equipo y usuarios",
+        "Spending: por usuario"
       ],
       "pr": null
     }
