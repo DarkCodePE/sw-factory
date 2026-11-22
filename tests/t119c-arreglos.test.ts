@@ -11,7 +11,7 @@ import { csrfToken } from '../src/web-auth.ts';
 import { runnerCheckAction } from '../src/web-runner-check.ts';
 import { jiraImportAction } from '../src/web-entrada.ts';
 import { cloud, ORIGIN, SECRET, type Cloud } from './helpers/cloud.ts';
-import { disableUser, type Principal } from '../src/users.ts';
+import { disableUser, resolvePrincipal, type Principal } from '../src/users.ts';
 import { previewResolveWork } from '../src/users-work.ts';
 import { Store } from '../src/store.ts';
 import { notesBlock } from '../src/prompts.ts';
@@ -113,4 +113,43 @@ test('T119c-H4: una nota con una línea falsificada no puede hacerse pasar por u
   // Cabecera neutra: la nota no es «del dueño».
   expect(block).toContain('# Notes from the team');
   expect(block).not.toContain('factory owner');
+});
+
+// ---- H5: pareo ------------------------------------------------------------------
+
+const pairKit = () => {
+  const routes = cliRoutes({ stateDir: c.stateDir, publicOrigin: ORIGIN, write: true, secret: SECRET });
+  const h = (extra: Record<string, string> = {}) => ({ host: HOST, ...extra });
+  const json = (path: string, body: unknown) => routes.handle(new Request(`${ORIGIN}${path}`, { method: 'POST', body: JSON.stringify(body), headers: h({ 'content-type': 'application/json' }) }), '203.0.113.7').then(r => r!);
+  const form = (role: 'owner' | 'member', fields: Record<string, string>) => routes.handle(new Request(`${ORIGIN}/cuenta/cli/autorizar`, { method: 'POST',
+    body: new URLSearchParams({ csrf: csrfToken(SECRET, c.web[role].sessionId!), ...fields }),
+    headers: h({ cookie: `__Host-fab_session=${c.tokens.web[role]}`, origin: ORIGIN, 'content-type': 'application/x-www-form-urlencoded' }) }), '203.0.113.7').then(r => r!);
+  return { json, form };
+};
+async function startPair() {
+  const { json, form } = pairKit(), verifier = 'v'.repeat(43);
+  const { createHash } = await import('node:crypto');
+  const res = await json('/cli/v1/pair/start', { challenge: createHash('sha256').update(verifier).digest('hex') });
+  const code = ((await res.json()) as { data: { code: string } }).data.code.replace('-', '');
+  return { json, form, code, verifier, exchange: () => json('/cli/v1/pair/exchange', { code, verifier }) };
+}
+
+test('T119c-H5a: una segunda aprobación del mismo código no sobrescribe a quien lo aprobó', async () => {
+  const { form, code, exchange } = await startPair();
+  await form('member', { code }); await form('member', { code, confirm: 'yes' });
+  const again = await form('owner', { code }); const again2 = await form('owner', { code, confirm: 'yes' });
+  expect([again.status, again2.status]).toEqual([409, 409]);
+  const { data } = await (await exchange()).json() as { data: { token: string } };
+  expect(resolvePrincipal(c.store, data.token, 'cli')).toMatchObject({ userId: c.web.member.userId });
+});
+
+test('T119c-H5b: un POST directo con confirm=yes no aprueba sin pasar por la página de confirmación', async () => {
+  const { form, code, exchange } = await startPair();
+  expect((await form('owner', { code, confirm: 'yes' })).status).toBe(200); // vuelve a mostrar el paso 1
+  expect((await exchange()).status).toBe(409);                              // sigue sin aprobar
+  await form('member', { code, confirm: 'yes' });                           // otra persona no hereda la vista de la primera
+  expect((await exchange()).status).toBe(409);
+  expect(await (await form('owner', { code, confirm: 'yes' })).text()).toContain('Confirma la terminal'); // la vista de otra persona no cuenta
+  expect(await (await form('owner', { code, confirm: 'yes' })).text()).toContain('Terminal autorizada');   // ya vio el paso 1
+  expect((await exchange()).status).toBe(200);
 });

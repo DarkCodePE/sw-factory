@@ -36,7 +36,7 @@ const COMMAND_LIMIT = 128 * 1024;
 const CODE_ALPHABET = 'ABCDEFGHJKMNPQRSTUVWXYZ23456789';
 const sha = (s: string) => createHash('sha256').update(s).digest('hex');
 
-interface Pairing { code: string; challenge: string; ip: string; startedAt: number; expiresAt: number; approvedBy?: { userId: string; role: Role }; attempts: number }
+interface Pairing { code: string; challenge: string; ip: string; startedAt: number; expiresAt: number; approvedBy?: { userId: string; role: Role }; shownTo?: string; attempts: number }
 
 /** Pareos pendientes: el código visible no es el comprobante secreto (el verificador no sale de la terminal). */
 export class CliPairings {
@@ -202,7 +202,11 @@ export function cliRoutes(opts: CliRoutesOptions) {
       if (!constantEqual(form.get('csrf') ?? '', csrf)) return new Response('Petición no válida.', { status: 403 });
       const pairing = pairings.lookup(form.get('code') ?? '');
       if (!pairing) return page('Código no válido', '<p>El código no es válido o caducó. Vuelve a empezar desde la terminal.</p>', 400);
-      if (form.get('confirm') !== 'yes') {
+      // Un pareo ya aprobado no se reaprueba (otra persona no puede quedarse la sesión).
+      if (pairing.approvedBy) return page('Código ya usado', '<p>Este código ya se aprobó.</p>', 409);
+      // La confirmación solo vale si esta persona vio antes el paso 1: un POST directo con `confirm=yes` no aprueba.
+      if (form.get('confirm') !== 'yes' || pairing.shownTo !== p.userId) {
+        pairing.shownTo = p.userId;
         return page('Confirma la terminal', `<p>Se pedirá una sesión de CLI para <strong>${esc(p.displayName)}</strong>, rol <strong>${esc(p.role)}</strong>.</p>
           <dl><dt>Servidor</dt><dd>${esc(host)}</dd><dt>Origen de la solicitud</dt><dd>${esc(pairing.ip)}</dd><dt>Hora</dt><dd>${esc(new Date(pairing.startedAt).toISOString())}</dd>
           <dt>Alcance</dt><dd>sesión de CLI de 1 hora; ${opts.write ? 'lecturas y mutaciones según tu rol' : 'solo lectura (el servidor corre sin --write)'}</dd></dl>
