@@ -715,4 +715,15 @@ uQAwb1guU1AUR6nVZtdFNQM9kVZ98hOcE9GUPLNEWYbELrBmbFfLChpyQQU=
     const out = await performAction(stateDir, 'workstreams/acceso', ws.id, { kind: 'env', mode: 'legacy' }, 'web', undefined);
     expect(out.result).toBe('ok');
   });
+
+  test('T118-H11: fab.service gestiona directamente el socket sin unidad fab.socket redundante', () => {
+    // 1. fab.socket no debe existir en deploy/systemd
+    expect(existsSync(join(__dirname, '../deploy/systemd/fab.socket'))).toBe(false);
+
+    // 2. fab.service define RuntimeDirectory=fab y RuntimeDirectoryMode=0770
+    const serviceContent = readFileSync(join(__dirname, '../deploy/systemd/fab.service'), 'utf8');
+    expect(serviceContent).toContain('RuntimeDirectory=fab');
+    expect(serviceContent).toContain('RuntimeDirectoryMode=0770');
+    expect(serviceContent).toContain('UMask=0007');
+  });
 });

@@ -39,14 +39,14 @@ sudo chown -R fab:fab-web /opt/fab
 ```
 
 ### 2.2 Configuración de systemd
-Copiar las unidades de servicio y socket:
+Copiar la unidad de servicio:
 ```bash
-sudo cp deploy/systemd/fab.socket /etc/systemd/system/
 sudo cp deploy/systemd/fab.service /etc/systemd/system/
 
 sudo systemctl daemon-reload
-sudo systemctl enable --now fab.socket fab.service
+sudo systemctl enable --now fab.service
 ```
+El servicio gestiona directamente el ciclo de vida del socket Unix en `/run/fab/fab.sock` mediante `RuntimeDirectory=fab`, `RuntimeDirectoryMode=0770` y `UMask=0007`, garantizando permisos `0660` sin requerir activación por socket externa.
 
 Verificar estado y permisos del socket:
 ```bash
