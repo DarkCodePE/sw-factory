@@ -205,8 +205,8 @@ export function startWeb(stateDir: string, port = 4310, options: {
         cert: Bun.file(options.tls.cert),
         key: Bun.file(options.tls.key),
         ca: options.tls.ca ? Bun.file(options.tls.ca) : undefined,
-        requestCert: options.tls.requestCert ?? true,
-        rejectUnauthorized: options.tls.rejectUnauthorized ?? true,
+        requestCert: true,
+        rejectUnauthorized: true,
       },
       ...(auth ? { maxRequestBodySize: PROFILE_BODY_LIMIT } : {})
     };

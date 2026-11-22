@@ -66,14 +66,21 @@ sudo systemctl reload caddy
 ## 3. Despliegue en Contenedores (Docker + mTLS)
 
 Si se opta por contenedores:
-1. Generar la CA interna y certificados cliente/servidor (vigencia inicial de 30 días):
+1. Generar la infraestructura mTLS con usos separados (serverAuth vs clientAuth) y CA cliente dedicada (vigencia inicial de 30 días):
    ```bash
    # Generar en ./certs
-   openssl req -x509 -newkey rsa:2048 -nodes -keyout certs/ca.key -out certs/ca.crt -days 30 -subj "/CN=FabInternalCA"
+   # CA dedicada para clientes (Caddy)
+   openssl req -x509 -newkey rsa:2048 -nodes -keyout certs/client-ca.key -out certs/client-ca.crt -days 30 -subj "/CN=FabClientCA"
+   # CA dedicada para servidores backend
+   openssl req -x509 -newkey rsa:2048 -nodes -keyout certs/server-ca.key -out certs/server-ca.crt -days 30 -subj "/CN=FabServerCA"
+
+   # Certificado de backend con serverAuth
    openssl req -newkey rsa:2048 -nodes -keyout certs/server.key -out certs/server.csr -subj "/CN=fab-backend"
-   openssl x509 -req -in certs/server.csr -CA certs/ca.crt -CAkey certs/ca.key -CAcreateserial -out certs/server.crt -days 30
+   openssl x509 -req -in certs/server.csr -CA certs/server-ca.crt -CAkey certs/server-ca.key -CAcreateserial -out certs/server.crt -days 30 -extfile <(printf "extendedKeyUsage = serverAuth\nsubjectAltName = DNS:fab-backend")
+
+   # Certificado de cliente Caddy con clientAuth
    openssl req -newkey rsa:2048 -nodes -keyout certs/client.key -out certs/client.csr -subj "/CN=caddy"
-   openssl x509 -req -in certs/client.csr -CA certs/ca.crt -CAkey certs/ca.key -CAcreateserial -out certs/client.crt -days 30
+   openssl x509 -req -in certs/client.csr -CA certs/client-ca.crt -CAkey certs/client-ca.key -CAcreateserial -out certs/client.crt -days 30 -extfile <(printf "extendedKeyUsage = clientAuth")
    ```
 2. Iniciar con Docker Compose:
    ```bash

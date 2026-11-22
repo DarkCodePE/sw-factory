@@ -5,8 +5,6 @@ export interface ServerTlsConfig {
   cert: string;
   key: string;
   ca?: string;
-  requestCert?: boolean;
-  rejectUnauthorized?: boolean;
 }
 
 export interface ServerConfig {

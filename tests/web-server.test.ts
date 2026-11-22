@@ -277,18 +277,26 @@ describe('T118a: Modo servidor, frontera HTTP y arranque', () => {
     expect(existsSync(socketPath)).toBe(false);
   });
 
-  test('Transporte D-4 Opción A: mTLS en Docker rechaza clientes sin cert y admite cert de CA', async () => {
+  test('Transporte D-4 Opción A: mTLS en Docker rechaza clientes sin cert y admite cert de CA (T118-H3)', async () => {
     const tlsDir = join(tempDir, 'tls');
     mkdirSync(tlsDir, { recursive: true });
 
-    // CA válida
-    execSync(`openssl req -x509 -newkey rsa:2048 -nodes -keyout ${tlsDir}/ca.key -out ${tlsDir}/ca.crt -days 30 -subj "/CN=FabInternalCA"`, { stdio: 'ignore' });
-    // Servidor cert
+    // CA dedicada para clientes (Caddy)
+    execSync(`openssl req -x509 -newkey rsa:2048 -nodes -keyout ${tlsDir}/client-ca.key -out ${tlsDir}/client-ca.crt -days 30 -subj "/CN=FabClientCA"`, { stdio: 'ignore' });
+    // CA dedicada para servidores backend y workers internos
+    execSync(`openssl req -x509 -newkey rsa:2048 -nodes -keyout ${tlsDir}/server-ca.key -out ${tlsDir}/server-ca.crt -days 30 -subj "/CN=FabServerCA"`, { stdio: 'ignore' });
+
+    // Servidor cert (firmado por server-ca, con serverAuth)
     execSync(`openssl req -newkey rsa:2048 -nodes -keyout ${tlsDir}/server.key -out ${tlsDir}/server.csr -subj "/CN=fab-backend"`, { stdio: 'ignore' });
-    execSync(`openssl x509 -req -in ${tlsDir}/server.csr -CA ${tlsDir}/ca.crt -CAkey ${tlsDir}/ca.key -CAcreateserial -out ${tlsDir}/server.crt -days 30`, { stdio: 'ignore' });
-    // Cliente Caddy cert (firmado por la CA válida)
+    execSync(`openssl x509 -req -in ${tlsDir}/server.csr -CA ${tlsDir}/server-ca.crt -CAkey ${tlsDir}/server-ca.key -CAcreateserial -out ${tlsDir}/server.crt -days 30`, { stdio: 'ignore' });
+
+    // Cliente Caddy cert (firmado por client-ca, con clientAuth)
     execSync(`openssl req -newkey rsa:2048 -nodes -keyout ${tlsDir}/client.key -out ${tlsDir}/client.csr -subj "/CN=caddy"`, { stdio: 'ignore' });
-    execSync(`openssl x509 -req -in ${tlsDir}/client.csr -CA ${tlsDir}/ca.crt -CAkey ${tlsDir}/ca.key -CAcreateserial -out ${tlsDir}/client.crt -days 30`, { stdio: 'ignore' });
+    execSync(`openssl x509 -req -in ${tlsDir}/client.csr -CA ${tlsDir}/client-ca.crt -CAkey ${tlsDir}/client-ca.key -CAcreateserial -out ${tlsDir}/client.crt -days 30`, { stdio: 'ignore' });
+
+    // Identidad ajena / worker (firmado por server-ca, no por client-ca)
+    execSync(`openssl req -newkey rsa:2048 -nodes -keyout ${tlsDir}/worker.key -out ${tlsDir}/worker.csr -subj "/CN=worker-ajeno"`, { stdio: 'ignore' });
+    execSync(`openssl x509 -req -in ${tlsDir}/worker.csr -CA ${tlsDir}/server-ca.crt -CAkey ${tlsDir}/server-ca.key -CAcreateserial -out ${tlsDir}/worker.crt -days 30`, { stdio: 'ignore' });
 
     // CA no autorizada (rogue)
     execSync(`openssl req -x509 -newkey rsa:2048 -nodes -keyout ${tlsDir}/rogue-ca.key -out ${tlsDir}/rogue-ca.crt -days 30 -subj "/CN=RogueCA"`, { stdio: 'ignore' });
@@ -301,9 +309,7 @@ describe('T118a: Modo servidor, frontera HTTP y arranque', () => {
       tls: {
         cert: `${tlsDir}/server.crt`,
         key: `${tlsDir}/server.key`,
-        ca: `${tlsDir}/ca.crt`,
-        requestCert: true,
-        rejectUnauthorized: true,
+        ca: `${tlsDir}/client-ca.crt`,
       },
     });
 
@@ -316,7 +322,7 @@ describe('T118a: Modo servidor, frontera HTTP y arranque', () => {
         path: '/healthz',
         method: 'GET',
         headers: { Host: 'fab.ejemplo.com' },
-        ca: readFileSync(`${tlsDir}/ca.crt`),
+        ca: readFileSync(`${tlsDir}/server-ca.crt`),
         checkServerIdentity: () => undefined,
         ...options,
       }, res => {
@@ -339,7 +345,21 @@ describe('T118a: Modo servidor, frontera HTTP y arranque', () => {
     });
     expect(resRogueCert.error).toBeDefined();
 
-    // 3. Cliente con certificado válido firmado por la CA del dueño -> aceptado 200 OK
+    // 3. Cliente con identidad ajena (worker-ajeno firmado por server-ca) -> rechazado en handshake
+    const resWorker = await requestHttps({
+      cert: readFileSync(`${tlsDir}/worker.crt`),
+      key: readFileSync(`${tlsDir}/worker.key`),
+    });
+    expect(resWorker.error).toBeDefined();
+
+    // 4. Servidor backend intentando actuar como cliente -> rechazado en handshake
+    const resServerAsClient = await requestHttps({
+      cert: readFileSync(`${tlsDir}/server.crt`),
+      key: readFileSync(`${tlsDir}/server.key`),
+    });
+    expect(resServerAsClient.error).toBeDefined();
+
+    // 5. Cliente con certificado válido firmado por client-ca (Caddy) -> aceptado 200 OK
     const resValido = await requestHttps({
       cert: readFileSync(`${tlsDir}/client.crt`),
       key: readFileSync(`${tlsDir}/client.key`),
@@ -348,6 +368,35 @@ describe('T118a: Modo servidor, frontera HTTP y arranque', () => {
     expect(resValido.data).toBe('ok');
 
     server.stop(true);
+
+    // 6. Intentar pasar requestCert: false o rejectUnauthorized: false no desactiva la protección
+    const serverHardened = startWeb(stateDir, 0, {
+      server: true,
+      publicOrigin: 'https://fab.ejemplo.com',
+      tls: {
+        cert: `${tlsDir}/server.crt`,
+        key: `${tlsDir}/server.key`,
+        ca: `${tlsDir}/client-ca.crt`,
+        ...({ requestCert: false, rejectUnauthorized: false } as any),
+      },
+    });
+    const portHardened = serverHardened.port;
+    const reqNoAuth = https.request({
+      hostname: 'localhost',
+      port: portHardened,
+      path: '/healthz',
+      method: 'GET',
+      headers: { Host: 'fab.ejemplo.com' },
+      ca: readFileSync(`${tlsDir}/server-ca.crt`),
+      checkServerIdentity: () => undefined,
+    });
+    const errHardened = await new Promise<string | undefined>(resolve => {
+      reqNoAuth.on('error', e => resolve(e.message));
+      reqNoAuth.on('response', () => resolve(undefined));
+      reqNoAuth.end();
+    });
+    expect(errHardened).toBeDefined(); // Debe seguir rechazando conexiones sin certificado
+    serverHardened.stop(true);
   });
 
   test('mTLS falla cerrado si el certificado está caducado o falta CA', () => {
