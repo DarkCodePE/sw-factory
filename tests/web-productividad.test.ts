@@ -62,29 +62,26 @@ test('sin ningún PR la media es null (No medido), no 0', () => {
   expect(m.prCycles.every(c => c.median === null)).toBe(true);
 });
 
-test('runs: raíz frente a subagentes y por rol suman el total, día a día', () => {
+test('runs por rol suman el total, día a día; la partición raíz/subagentes no se ofrece (T112-H1)', () => {
   seed();
   const r = calculateMetrics(store, dir, { range: '7', now }).runs, d = calculateMetrics(store, dir, { range: '7', now }).daily.days;
-  expect(r).toMatchObject({ total: 7, root: 4, sub: 3 });
+  expect(r.total).toBe(7); expect(r).not.toHaveProperty('root'); expect(r).not.toHaveProperty('sub');
   const idx = (day: string) => d.indexOf(day);
-  expect([r.rootDaily[idx('2026-11-17')], r.rootDaily[idx('2026-11-18')], r.rootDaily[idx('2026-11-19')]]).toEqual([1, 3, null]);
-  expect([r.subDaily[idx('2026-11-17')], r.subDaily[idx('2026-11-18')], r.subDaily[idx('2026-11-19')]]).toEqual([1, 1, 1]);
   expect(r.roles.map(x => [x.name, x.total])).toEqual([['implementation', 2], ['investigation', 2], ['validador:code_review', 2], ['validador:qa', 1]]);
   expect(r.roles.reduce((s, x) => s + x.total, 0)).toBe(r.total);
   expect(r.roles.find(x => x.name === 'validador:code_review')!.daily[idx('2026-11-19')]).toBe(1);
 });
 
-test('la página muestra los cuatro tramos, la media, y los runs con selector rol/raíz', () => {
+test('la página muestra los cuatro tramos, la media, y los runs por rol', () => {
   seed();
   const html = (q = '') => metricsPage(store, dir, new URL(`http://127.0.0.1:4310/metricas?from=2026-11-15&to=2026-11-21${q}`)).body;
   const h = html();
   for (const t of ['Kickoff → merge', 'Kickoff → PR', 'PR → primera revisión humana', 'Primera revisión humana → merge']) expect(h).toContain(t);
   expect(h).toContain('10 h'); expect(h).toContain('Interacciones humanas por PR'); expect(h).toContain('2 PRs');
-  expect(h).toContain('Runs totales'); expect(h).toContain('4 raíz · 3 subagentes');
+  expect(h).toContain('Runs totales'); expect(h).not.toContain('subagentes');
   expect(h).toContain('name="runs"'); expect(h).toContain('Runs por día · rol');
   expect(h).toContain('validador:qa');
-  const raiz = html('&runs=raiz');
-  expect(raiz).toContain('Runs por día · raíz y subagentes'); expect(raiz).toContain('Subagentes'); expect(raiz).not.toContain('Runs por día · rol'); expect(raiz).toContain('<option value="raiz" selected>');
+  expect(() => html('&runs=raiz')).toThrow(URIError); // sin partición hasta T110
   expect(() => html('&runs=otro')).toThrow(URIError);
 });
 

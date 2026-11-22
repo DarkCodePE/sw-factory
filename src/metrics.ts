@@ -67,7 +67,7 @@ export function calculateMetrics(store: Store, stateDir: string, options: { ws?:
   const kickoffPr: number[] = [], prMerge: number[] = [], kickoffMerge: number[] = [];
   const prInteractions: Array<{ day: string; total: number }> = [];
   // Runs de la cohorte; el rol es el de la activity (validador o tipo). T110 lo sustituirá por el rol atribuido al intento.
-  const runList: Array<{ day: string; role: string; root: boolean }> = [];
+  const runList: Array<{ day: string; role: string }> = [];
   const kinds: string[] = [], adapters = new Map<string, CostGroup>(), models = new Map<string, CostGroup>();
   const sources = new Map<string, CostGroup>(), actors = new Map<string, CostGroup>();
   const humans: Array<{ id: string; title: string; reviews: number; answers: number; retries: number; total: number }> = [];
@@ -105,7 +105,7 @@ export function calculateMetrics(store: Store, stateDir: string, options: { ws?:
       if (Date.parse(a.createdAt) > now) continue;
       const role = a.validator ? `validador:${a.validator}` : a.kind;
       kinds.push(role);
-      runList.push({ day: a.createdAt.slice(0, 10), role, root: a.parentActivityId === null });
+      runList.push({ day: a.createdAt.slice(0, 10), role });
       let meta: Record<string, unknown> | null = null;
       try { meta = activityMetadata(stateDir, a); } catch { /* Fallo cerrado del lector compartido. */ }
       if (Array.isArray(meta?.inferenceAttempts)) {
@@ -210,8 +210,8 @@ export function calculateMetrics(store: Store, stateDir: string, options: { ws?:
   const perDay = (pick: (r: typeof runList[number]) => boolean) => days.map(day => { const n = inWindow.filter(r => r.day === day && pick(r)).length; return n || null; });
   const runRoles = [...inWindow.reduce((m, r) => m.set(r.role, (m.get(r.role) ?? 0) + 1), new Map<string, number>())]
     .sort(([a, x], [b, y]) => y - x || a.localeCompare(b)).map(([name, total]) => ({ name, total, daily: perDay(r => r.role === name) }));
-  const runs = { total: inWindow.length, root: inWindow.filter(r => r.root).length, sub: inWindow.filter(r => !r.root).length,
-    rootDaily: perDay(r => r.root), subDaily: perDay(r => !r.root), roles: runRoles };
+  // Raíz frente a subagentes queda fuera hasta T110: parent_activity_id encadena pasos del flujo, no subagentes (verif T112-H1).
+  const runs = { total: inWindow.length, roles: runRoles };
 
   return { count: cohort.changes.length, omitted: cohort.total - cohort.changes.length, since, until,
     cycles: ['Primera activity', 'Primera revisión pedida', 'Primera decisión humana', 'Primer estado terminal registrado'].map((name, i) => ({ name, ...distribution(values[i]!) })),
