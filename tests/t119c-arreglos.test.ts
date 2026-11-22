@@ -12,6 +12,7 @@ import { runnerCheckAction } from '../src/web-runner-check.ts';
 import { jiraImportAction } from '../src/web-entrada.ts';
 import { cloud, ORIGIN, SECRET, type Cloud } from './helpers/cloud.ts';
 import type { Principal } from '../src/users.ts';
+import { Store } from '../src/store.ts';
 
 let c: Cloud;
 let ws: { id: string; slug: string };
@@ -57,4 +58,20 @@ test('T119c-H2 (contraste): la pregunta de un change sin hilo se responde con no
   const adm = seedQuestion(false);
   expect((await web(c.web.member, '/questions/q1/answer', { answer: 'sí' })).status).toBe(303);
   expect(state(adm)).toEqual({ status: 'answered', answered_by: `user:${c.web.member.userId}` });
+});
+
+// ---- H6: migraciones con ID ----------------------------------------------------
+
+test('T119c-H6: las columnas de T119c entran por un paso con ID en schema_migrations, también en una base anterior', () => {
+  const cols = (s: Store, t: string) => (s.db.query(`PRAGMA table_info(${t})`).all() as { name: string }[]).map(x => x.name);
+  const registered = (s: Store) => s.db.query("SELECT 1 FROM schema_migrations WHERE id = 't119c-001-actor-de-notas-y-responsable'").get() !== null;
+  expect(registered(c.store)).toBe(true);
+  const path = join(c.dir, 'anterior.db');
+  const old = new Store(path);
+  old.db.exec("DELETE FROM schema_migrations WHERE id LIKE 't119c-%'; ALTER TABLE change_notes DROP COLUMN actor_user_id; ALTER TABLE change_notes DROP COLUMN actor_role; ALTER TABLE changes DROP COLUMN responsible_user_id;");
+  old.close();
+  const s = new Store(path);
+  try {
+    expect([cols(s, 'change_notes').includes('actor_role'), cols(s, 'change_notes').includes('actor_user_id'), cols(s, 'changes').includes('responsible_user_id'), registered(s)]).toEqual([true, true, true, true]);
+  } finally { s.close(); }
 });

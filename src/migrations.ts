@@ -117,6 +117,17 @@ CREATE TRIGGER identity_audit_sin_reemplazo BEFORE INSERT ON identity_audit
   BEGIN SELECT RAISE(ABORT, 'identity_audit es de solo añadir'); END;`);
     },
   },
+  {
+    // T119c: usuario y rol verificados de cada nota y responsable vigente de un change (`user resolve-work`). Nulos en filas históricas.
+    // `change_notes` los trae ya en el esquema base de las bases nuevas, de ahí la comprobación.
+    id: 't119c-001-actor-de-notas-y-responsable',
+    up(db) {
+      const has = (table: string, col: string) => (db.query(`PRAGMA table_info(${table})`).all() as { name: string }[]).some((c) => c.name === col);
+      if (!has('change_notes', 'actor_user_id')) db.exec('ALTER TABLE change_notes ADD COLUMN actor_user_id TEXT');
+      if (!has('change_notes', 'actor_role')) db.exec('ALTER TABLE change_notes ADD COLUMN actor_role TEXT');
+      if (!has('changes', 'responsible_user_id')) db.exec('ALTER TABLE changes ADD COLUMN responsible_user_id TEXT');
+    },
+  },
 ];
 
 /** Aplica los pasos pendientes. Cada uno: BEGIN IMMEDIATE, revalida el registro bajo lock, ejecuta y registra; si falla, rollback. */

@@ -368,7 +368,9 @@ CREATE TABLE IF NOT EXISTS change_notes (
   created_at TEXT NOT NULL,
   activity_id TEXT,
   attempt_id TEXT,
-  delivered_at TEXT);
+  delivered_at TEXT,
+  actor_user_id TEXT,
+  actor_role TEXT);
 CREATE INDEX IF NOT EXISTS idx_change_notes_pending ON change_notes(change_id, delivered_at);
 CREATE TABLE IF NOT EXISTS activities (
   id TEXT PRIMARY KEY, workstream_id TEXT NOT NULL REFERENCES workstreams(id) ON DELETE CASCADE,
@@ -696,10 +698,6 @@ export class Store {
   private migrate(): void {
     this.addColumn('change_notes', 'attachment_name', 'TEXT');
     this.addColumn('change_notes', 'attachment_bytes', 'BLOB');
-    // T119c: usuario y rol verificados de cada nota y responsable vigente de un change (`user resolve-work`). Nulos en filas históricas.
-    this.addColumn('change_notes', 'actor_user_id', 'TEXT');
-    this.addColumn('change_notes', 'actor_role', 'TEXT');
-    this.addColumn('changes', 'responsible_user_id', 'TEXT');
     this.addColumn('activities', 'validator', 'TEXT');
     this.addColumn('workstreams', 'verify', 'TEXT');
     this.addColumn('workstreams', 'verify_setup', 'TEXT');
