@@ -5,7 +5,7 @@ import { join } from 'node:path';
 import { Store } from '../src/store.ts';
 import { authorize, READ_CAPABILITIES, ROLES, type Role } from '../src/policy.ts';
 import type { Principal } from '../src/users.ts';
-import { authorizeRead, readCapability, structuredActivityPage, structuredChangePage, visiblePaths } from '../src/web-views.ts';
+import { authorizeRead, configViewFor, readCapability, structuredActivityPage, structuredChangePage, visiblePaths } from '../src/web-views.ts';
 import type { Ui } from '../src/web-changes.ts';
 
 const who = (role: Role, over: Partial<Principal> = {}): Principal =>
@@ -124,4 +124,8 @@ test('sesiones intercaladas: la decisión de cada principal no depende de la ant
   const v = who('viewer'), m = who('member', { userId: 'u2' });
   const seq = [v, m, v, m].map(p => { const d = authorizeRead(p, get('/changes/c1/turns/t/log')); return d.ok; });
   expect(seq).toEqual([false, true, false, true]);
+});
+
+test('configViewFor: solo el owner ve los indicadores de credenciales del host', () => {
+  expect(ROLES.map(r => configViewFor(who(r)).credentials)).toEqual([true, false, false, false]);
 });

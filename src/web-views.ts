@@ -5,6 +5,7 @@ import { authorize } from './policy.ts';
 import type { Principal } from './users.ts';
 import type { Store, Activity } from './store.ts';
 import type { Ui } from './web-changes.ts';
+import type { ConfigView } from './web-config.ts';
 import { API_KEYS_PATH } from './web-api-keys.ts';
 
 /** `full`: el rol ve evidencia (O A M). `structured`: solo campos estructurados, sin texto libre de workers (V, §4.2). */
@@ -52,6 +53,10 @@ export function authorizeRead(principal: Principal | undefined, url: URL): ReadD
 /** Rutas de la lista que este principal puede abrir: el menú no ofrece lo que daría 403. */
 export const visiblePaths = (principal: Principal | undefined, paths: string[]): string[] =>
   paths.filter(p => authorizeRead(principal, new URL(p, 'http://x')).ok);
+
+/** Vista de `/config` para este principal: los indicadores de credenciales del host solo los ve el owner (§4.2). */
+export const configViewFor = (principal: Principal): ConfigView =>
+  ({ credentials: authorize(principal, 'config/credentials', { via: 'web', write: false }).ok });
 
 const when = (v: string | null) => v ?? '—';
 
