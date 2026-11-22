@@ -368,9 +368,9 @@ async function recorrido(login: string) {
     abrir('/metricas'); assert(paginaTexto().includes('Tiempo de ciclo'), 'métricas'); foto('metricas');
     abrir('/metricas?tab=gasto&range=all&ws=plataforma'); assert(paginaTexto().includes('Coste'), 'métricas filtradas');
     // T111: una captura por pestaña, con el mismo rango y workstream; cada una con sus tarjetas y sin JS de página.
-    for (const [tab, texto] of [['productividad', 'Pull requests'], ['gasto', 'Coste por día'], ['jueces', 'Los jueces clasifican']]) {
+    for (const [tab, texto] of [['productividad', 'Runs totales'], ['gasto', 'Coste por día'], ['jueces', 'Los jueces clasifican']]) {
       abrir(`/metricas?tab=${tab}&range=30&ws=plataforma`); assert(paginaTexto().includes(texto), `pestaña ${tab}`);
-      assert(Number(ab('get', 'count', 'nav.tabs a')) === 3, `tres pestañas en ${tab}`); foto(`metricas-${tab}`);
+      assert(Number(ab('get', 'count', 'nav.tabs a')) === 3, `tres pestañas en ${tab}`); assert(paginaTexto().includes('Puesta en marcha'), `botón de puesta en marcha en ${tab}`); foto(`metricas-${tab}`);
     }
     abrir('/config'); assert(paginaTexto().includes('Configuración'), 'configuración'); foto('config');
     abrir('/flujo?ws=plataforma'); assert(paginaTexto().includes('Flujo'), 'flujo'); eq(ab('get', 'count', 'svg.flow'), '1', 'diagrama del flujo'); foto('flujo');
