@@ -96,3 +96,20 @@ test('sin actividad en el rango: No medido y sin gráfico', () => {
   const h = metricsPage(store, dir, new URL('http://127.0.0.1:4310/metricas?from=2026-11-15&to=2026-11-21')).body;
   expect(h).toContain('Runs totales'); expect(h).toContain('No medido');
 });
+
+const card = (h: string, id: string) => new RegExp(`<section class="card" aria-labelledby="t-${id}">.*?</section>`, 's').exec(h)?.[0] ?? '';
+
+test('T112-H2: una activity fuera de los días de la serie no entra en «Runs totales», y el subtítulo dice el alcance', () => {
+  const { a } = seed();
+  store.db.query("INSERT INTO activities(id,workstream_id,change_id,kind,status,retry_count,created_at) VALUES ('viejo',?,?,'steward','completed',0,'2026-10-01T00:00:00Z')").run(a.workstreamId, a.id);
+  const m = calculateMetrics(store, dir, { range: '7', now });
+  expect(m.runs.total).toBe(7); expect(m.kinds.find(([k]) => k === 'steward')?.[1]).toBe(1); // «Activities por tipo» sí la cuenta
+  const h = metricsPage(store, dir, new URL('http://127.0.0.1:4310/metricas?from=2026-11-15&to=2026-11-21')).body;
+  expect(card(h, 'runs')).toContain('<p class="fig">7</p><p class="sub">en el rango</p>');
+});
+
+test('T112-H2: con «Todo el historial» el subtítulo de runs dice los últimos 90 días', () => {
+  seed();
+  const h = metricsPage(store, dir, new URL('http://127.0.0.1:4310/metricas?range=all')).body;
+  expect(card(h, 'runs')).toContain('en los últimos 90 días');
+});
