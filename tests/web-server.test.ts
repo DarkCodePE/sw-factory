@@ -701,9 +701,8 @@ uQAwb1guU1AUR6nVZtdFNQM9kVZ98hOcE9GUPLNEWYbELrBmbFfLChpyQQU=
     expect(compose).not.toContain('client-ca.key');
     expect(compose).not.toContain('server-ca.key');
 
-    // 3. Verificación real de docker build (T118-P2-3) si el demonio Docker está activo
-    const hasDocker = spawnSync('docker', ['info'], { stdio: 'pipe' }).status === 0;
-    if (hasDocker) {
+    // 3. docker build real (T118-P2-3), opt-in: es lento, depende de red y no cabe en la suite unitaria de CI.
+    if (process.env.FAB_TEST_DOCKER_BUILD === '1') {
       const buildRes = spawnSync('docker', ['build', '-f', join(__dirname, '../deploy/docker/Dockerfile'), '-t', 'fab-server-test:ci', join(__dirname, '..')], {
         stdio: 'pipe',
         encoding: 'utf8',
@@ -711,7 +710,7 @@ uQAwb1guU1AUR6nVZtdFNQM9kVZ98hOcE9GUPLNEWYbELrBmbFfLChpyQQU=
       expect(buildRes.status).toBe(0);
       spawnSync('docker', ['rmi', 'fab-server-test:ci'], { stdio: 'pipe' });
     }
-  });
+  }, 600_000);
 
   test('T118-H8: Rechazo estricto de publicOrigin no canónico', () => {
     const invalidOrigins = [
