@@ -407,7 +407,7 @@ export function calculateMetrics(store: Store, stateDir: string, options: { ws?:
         source: groupSpending(spendAttempts, a => a.originSource, days, 'totalMicroUsd'),
         pr: groupSpending(spendAttempts, a => a.attributed ? a.prUrl ?? 'Sin PR' : null, days, 'totalMicroUsd'),
       },
-      models: groupSpending(spendAttempts, a => a.effectiveModel, days, 'inferenceMicroUsd', 'No medido'),
+      models: groupSpending(spendAttempts, a => a.effectiveModel, days, 'inferenceMicroUsd', 'Modelo no registrado'),
       adapters: groupSpending(spendAttempts, a => a.adapter, days, 'totalMicroUsd'),
       top: top20,
     },

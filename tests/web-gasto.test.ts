@@ -654,11 +654,16 @@ describe('Pestaña Gasto en la web (T113)', () => {
     expect(body).toContain('0 intentos sin coste completo medido');
     expect(body).not.toContain('0 intentos sin coste medido');
 
-    // 3. En la tabla de modelos, el modelo no efectivo anterior a T108 se llama «No medido», concordando con el pie
+    // 3. En la tabla de modelos, el modelo no efectivo anterior a T108 se llama «Modelo no registrado», concordando con el pie
     const modelTable = body.slice(body.indexOf('<caption>Coste por modelo registrado</caption>'));
     const modelTableSection = modelTable.slice(0, modelTable.indexOf('</table>'));
-    expect(modelTableSection).toContain('No medido');
+    expect(modelTableSection).toContain('Modelo no registrado');
     expect(modelTableSection).not.toContain('Sin dato');
+
+    // 4. Textos unificados a intentos (T113-H13)
+    expect(body).toContain('Suma del coste medido de los intentos empezados cada día. Un día con algún intento sin coste medido es «No medido»; un día sin intentos es «Sin datos». Nunca se suma como 0.');
+    expect(body).toContain('El subtotal incluye solo intentos con coste completo.');
+    expect(body).toContain('La evidencia anterior a T108 no registra el modelo efectivo y sale como «Modelo no registrado». Con varios intentos no se atribuye su coste al último adaptador o modelo. En las agrupaciones, el subtotal suma solo intentos con coste completo y puede diferir del subtotal por change.');
   });
 
   test('T113-H9: enlaces de celda en tablas de métricas cumplen altura mínima de 24px para WCAG 2.5.8', () => {

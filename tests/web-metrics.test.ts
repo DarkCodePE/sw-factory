@@ -749,7 +749,7 @@ test('T108 H6: el gasto y la tabla distinguen modelos efectivos, caché medida y
   expect(gastoHtml).toContain('servido-1');
   expect(gastoHtml).toContain('servido-2');
   expect(gastoHtml).not.toContain('pedido');
-  expect(gastoHtml).toContain('La evidencia anterior a T108 no registra el modelo efectivo y sale como «No medido»');
+  expect(gastoHtml).toContain('La evidencia anterior a T108 no registra el modelo efectivo y sale como «Modelo no registrado»');
   expect(gastoHtml).not.toContain('La evidencia habitual no registra el modelo');
 
   const web = startWeb(dir, 0);
