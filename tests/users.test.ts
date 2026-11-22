@@ -25,7 +25,7 @@ beforeEach(() => {
 afterEach(() => { store.close(); rmSync(dir, { recursive: true, force: true }); });
 
 const code = (e: unknown) => (e as StoreError).code;
-const throwsCode = (fn: () => unknown, c: string) => { try { fn(); } catch (e) { expect(code(e)).toBe(c); return; } throw new Error('no lanzó'); };
+const throwsCode = (fn: () => unknown, c: StoreError['code']) => { try { fn(); } catch (e) { expect(code(e)).toBe(c); return; } throw new Error('no lanzó'); };
 
 function owner(): Principal {
   const u = bootstrapOwner(store, { issuer: 'github', subject: '1', displayName: 'Dueña', operator: 'op' });
