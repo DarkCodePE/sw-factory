@@ -444,3 +444,13 @@ test('T119b-H4: resolveLogin va con las credenciales de la aplicación y una cuo
   expect(r.status).toBe(503); expect(r.headers.get('retry-after')).toBeTruthy();
   expect(store.db.query('SELECT COUNT(*) AS n FROM user_invitations').get()).toEqual({ n: 1 });
 });
+
+test('T119b-H5: un rol inválido no gasta cuota ni llega a GitHub', async () => {
+  seedOwner(1);
+  const s = pair((await login({ id: 1, login: 'd' })).session), csrf = csrfFor(s);
+  gh.users.set('ana', { id: 5, login: 'ana' }); gh.calls.length = 0;
+  for (let i = 0; i < 12; i++) for (const role of ['zzz', 'owner', '']) expect((await call('POST', '/equipo/invitaciones', { cookie: s, form: { csrf, login: 'ana', role } })).status).toBe(400);
+  expect(gh.calls.length).toBe(0);
+  // La cuota (10/min) sigue intacta tras 36 intentos inválidos.
+  expect((await call('POST', '/equipo/invitaciones', { cookie: s, form: { csrf, login: 'ana', role: 'admin' } })).status).toBe(200);
+});

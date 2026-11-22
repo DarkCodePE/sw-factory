@@ -16,6 +16,7 @@ import { LIMITS, LOGIN_COOKIE, LoginTransactions, PRELOGIN_COOKIE, RateLimiter, 
 
 export const GITHUB_ISSUER = 'github';
 const FORM_LIMIT = 4096;
+const INVITABLE_ROLES: readonly Role[] = ['admin', 'member', 'viewer'];
 
 // ---- conector de GitHub ----------------------------------------------------------------------------------------
 
@@ -301,6 +302,7 @@ export function identityRoutes(opts: IdentityOptions) {
       // La política va antes de la red: quien no puede invitar no gasta cuota ni llama a GitHub.
       const d = authorize(g.p, 'user/invite', { via: 'web', write: opts.write, inviteRole: role });
       if (!d.ok) return plain(403, 'No autorizado.');
+      if (!INVITABLE_ROLES.includes(role)) return plain(400, 'Rol no válido.'); // lo inválido no llega a la cuota ni a la red
       if (!validGithubLogin(login)) return plain(400, 'Login no válido.');
       const retry = limiter.hit(`inviter:${g.p.userId}`, LIMITS.inviterPerMin) || limiter.hit('invites', LIMITS.globalInvitesPerMin);
       if (retry) return tooMany(retry);
