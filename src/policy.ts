@@ -18,7 +18,7 @@ interface Capability {
 }
 
 const A = (roles: string, api = false): Capability => ({ roles, api, mutation: true });
-const R = (roles: string): Capability => ({ roles, api: false, mutation: false });
+const R = (roles: string, api = false): Capability => ({ roles, api, mutation: false });
 
 /** Acciones de `src/web-actions.ts` (§4.1). El test de inventario falla si ACTIONS gana o pierde una. */
 export const ACTION_CAPABILITIES: Record<string, Capability> = {
@@ -50,7 +50,33 @@ export const IDENTITY_CAPABILITIES: Record<string, Capability> = {
   'credits/balance-self': R('OAMV'),
 };
 
-const CAPABILITIES: Record<string, Capability> = { ...ACTION_CAPABILITIES, ...IDENTITY_CAPABILITIES };
+/**
+ * Lecturas y verbos remotos de §4.2 que no son ACTIONS. Los nombres son el contrato de T119c (API y despacho) y T119d (vistas).
+ * `api` marca solo los GET existentes que una clave puede pedir; un viewer nunca llega por API (D-2 A).
+ */
+export const READ_CAPABILITIES: Record<string, Capability> = {
+  // ws list, signal list, inbox, status, show, events, note <id> sin texto, automation list, score list, validate status, bench report, improve report|candidates, pr show.
+  'ops/read': R('OAMV', true),
+  // Estado operativo, métricas agregadas y evidencia resumida en campos estructurados permitidos.
+  'ops/metrics': R('OAMV', true),
+  // Diff, logs, transcripts y adjuntos de ejecuciones compartidas, con redacción.
+  'evidence/read': R('OAM'),
+  // profile inspect|list|export, definition export, ws env|mcp lectura, runner list, resident report|config lectura, jira show.
+  'config/read': R('OA'),
+  // Indicadores de credenciales de host.
+  'config/credentials': R('O'),
+};
+
+/** Verbos remotos de §4.2 que mutan y no tienen ACTION web propia. Ninguno es API. */
+export const VERB_CAPABILITIES: Record<string, Capability> = {
+  'triage/all': A('OA'), 'validate/run': A('OA'), 'improve/dismiss': A('OA'),
+  'runner/enable': A('O'), 'runner/disable': A('O'),
+  'credits/read': R('O'), 'credits/grant': A('O'), 'credits/adjust': A('O'), 'credits/limit': A('O'), 'credits/threshold': A('O'),
+  'credits/resume': A('O'),
+  'credits/refund': A(''), // solo consola
+};
+
+const CAPABILITIES: Record<string, Capability> = { ...ACTION_CAPABILITIES, ...IDENTITY_CAPABILITIES, ...READ_CAPABILITIES, ...VERB_CAPABILITIES };
 
 export interface PolicySubject { role: Role; recovery?: boolean }
 export interface PolicyContext {

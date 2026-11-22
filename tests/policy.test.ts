@@ -1,6 +1,6 @@
 import { expect, test } from 'bun:test';
 import { ACTIONS } from '../src/web-actions.ts';
-import { ACTION_CAPABILITIES, authorize, ROLES, type PolicyContext, type Role } from '../src/policy.ts';
+import { ACTION_CAPABILITIES, authorize, ROLES, READ_CAPABILITIES, VERB_CAPABILITIES, type PolicyContext, type Role } from '../src/policy.ts';
 
 const web: PolicyContext = { via: 'web', write: true };
 const who = (cap: string, ctx: PolicyContext = web) => ROLES.filter((r) => authorize({ role: r }, cap, ctx).ok);
@@ -103,4 +103,27 @@ test('T119a-H9: los roles de cada acción de la web son los de §4.1', () => {
   for (const [cap, letters] of Object.entries(SECTION_4_1)) {
     expect(who(cap).map((r) => LETTER[r]).join(''), cap).toBe(letters);
   }
+});
+
+// Lecturas y verbos remotos de §4.2: roles y si una clave puede pedirlos (api).
+test.each([
+  ['ops/read', 'OAMV', true], ['ops/metrics', 'OAMV', true], ['evidence/read', 'OAM', false], ['config/read', 'OA', false],
+  ['config/credentials', 'O', false], ['triage/all', 'OA', false], ['validate/run', 'OA', false], ['improve/dismiss', 'OA', false],
+  ['runner/enable', 'O', false], ['runner/disable', 'O', false], ['credits/read', 'O', false], ['credits/grant', 'O', false],
+  ['credits/adjust', 'O', false], ['credits/limit', 'O', false], ['credits/threshold', 'O', false], ['credits/resume', 'O', false],
+  ['credits/refund', '', false],
+] as [string, string, boolean][])('T119a-H8: §4.2 %s', (cap, letters, api) => {
+  expect(who(cap).map((r) => LETTER[r]).join('')).toBe(letters);
+  // Una clave `decide` de owner lo pide por API solo si api es true; un viewer nunca llega por API.
+  expect(authorize({ role: 'owner' }, cap, { via: 'api', write: true, keyScope: 'decide' }).ok).toBe(api && letters.includes('O'));
+  expect(authorize({ role: 'viewer' }, cap, { via: 'api', write: true, keyScope: 'decide' }).ok).toBe(false);
+});
+
+test('T119a-H8: las lecturas no exigen --write, los verbos que mutan sí, y no hay nombres repetidos entre tablas', () => {
+  const ro = { via: 'web', write: false } as const;
+  for (const c of Object.keys(READ_CAPABILITIES)) expect(authorize({ role: 'owner' }, c, ro).ok, c).toBe(true);
+  expect(authorize({ role: 'owner' }, 'triage/all', ro)).toEqual({ ok: false, reason: 'write_required' });
+  expect(authorize({ role: 'owner' }, 'credits/read', ro).ok).toBe(true);
+  const all = [ACTION_CAPABILITIES, READ_CAPABILITIES, VERB_CAPABILITIES].flatMap((t) => Object.keys(t));
+  expect(new Set(all).size).toBe(all.length);
 });
