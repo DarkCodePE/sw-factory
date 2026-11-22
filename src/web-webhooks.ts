@@ -3,6 +3,7 @@
 // Invariantes de seguridad (D-K, §4): nunca se almacena ni se expone el cuerpo de la entrega
 // ni el secreto en el HTML. El alta y la rotación de secretos residen en el entorno del dueño.
 import type { Store, WebhookDelivery } from './store.ts';
+import type { ConfigView } from './web-config.ts';
 
 type Escape = (value: unknown) => string;
 
@@ -23,7 +24,7 @@ function facts(rows: [string, string][]): string {
   return `<dl class="config-facts">${rows.map(([label, value]) => `<div><dt>${label}</dt><dd>${value}</dd></div>`).join('')}</dl>`;
 }
 
-export function webhooksPage(store: Store, url: URL, escape: Escape): { title: string; body: string } {
+export function webhooksPage(store: Store, url: URL, escape: Escape, view?: ConfigView): { title: string; body: string } {
   if (!store.hasWebhookTables()) {
     return {
       title: 'Webhooks',
@@ -96,7 +97,7 @@ export function webhooksPage(store: Store, url: URL, escape: Escape): { title: s
         ['Estado del receptor', 'No medido (escucha en --hook-port)'],
         ['Ruta receptora local', '<code>POST /github</code> (solo loopback 127.0.0.1)'],
         ['Autenticación', 'Firma HMAC-SHA256 (<code>X-Hub-Signature-256</code>)'],
-        ['Secreto en entorno (proceso web)', secretConfigured ? 'Configurado (FAB_GITHUB_WEBHOOK_SECRET)' : 'No configurado'],
+        ...(view && !view.credentials ? [] : [['Secreto en entorno (proceso web)', secretConfigured ? 'Configurado (FAB_GITHUB_WEBHOOK_SECRET)' : 'No configurado'] as [string, string]]),
         ['Eventos admitidos', '<code>issues</code>, <code>issue_comment</code>'],
         ['Entregas últimas 24 h', summary24h],
         ['Entregas rechazadas (sin firma válida)', status.rejectedCount ? `${escape(status.rejectedCount)}${status.lastRejectedAt ? ` (última: <time>${escape(status.lastRejectedAt)}</time>)` : ''}` : '0'],
