@@ -3,6 +3,8 @@
 import { existsSync, readFileSync, realpathSync, statSync } from 'node:fs';
 import { join } from 'node:path';
 import { StoreError, type Store } from './store.ts';
+import { AdmissionDb, hasAdmission } from './admission/db.ts';
+import { isChannelChange } from './admission/channel.ts';
 
 export interface ServerInventory {
   /** alias → ruta absoluta de un repositorio git que el equipo puede usar. */
@@ -64,6 +66,14 @@ const GUARDS: Record<string, (input: Raw, store: Store, stateDir: string, id: st
   'workstreams/state': (input, store, _stateDir, id) => {
     const ws = store.getWorkstream(id);
     if (input.state === 'active' && (ws.envAllow === null || ws.mcpAllow === null)) throw bad('El workstream usa el modo anterior de acceso: declara sus nombres antes de activarlo en el servidor.');
+    return input;
+  },
+  // §4.1: la pregunta de un change de canal solo acepta el circuito del residente; los roles fab no lo sustituyen.
+  'questions/answer': (input, store, _stateDir, id) => {
+    if (!hasAdmission(store)) return input;
+    const adm = new AdmissionDb(store);
+    const q = adm.db.query('SELECT change_id FROM adm_questions WHERE id = ?').get(id) as { change_id: string } | null;
+    if (q && isChannelChange(adm, q.change_id)) throw new StoreError('forbidden', 'la pregunta de un change de canal no se responde por esta vía');
     return input;
   },
   'runners/create': (input, _store, stateDir) => runnerGuard(input, stateDir),
