@@ -119,7 +119,7 @@ export function remoteOrigin(stateDir: string, alias: string): string {
   return checkOrigin(o);
 }
 
-class RemoteError extends Error { constructor(readonly code: string, message: string, readonly status = 0) { super(message); } }
+class RemoteError extends Error { constructor(readonly code: string, message: string, readonly status = 0, readonly retryAfter = 0) { super(message); } }
 
 async function request(deps: RemoteDeps, origin: string, path: string, body: unknown, token?: string): Promise<unknown> {
   const f = deps.fetch ?? fetch;
@@ -131,7 +131,7 @@ async function request(deps: RemoteDeps, origin: string, path: string, body: unk
   if (res.status >= 300 && res.status < 400) throw new RemoteError('redirect', 'el servidor respondió con una redirección; no se sigue', res.status);
   let parsed: { ok?: boolean; data?: unknown; error?: { code: string; message: string } } = {};
   try { parsed = await res.json() as typeof parsed; } catch { /* cuerpo no JSON */ }
-  if (!res.ok || parsed.ok === false) throw new RemoteError(parsed.error?.code ?? 'error', parsed.error?.message ?? `HTTP ${res.status}`, res.status);
+  if (!res.ok || parsed.ok === false) throw new RemoteError(parsed.error?.code ?? 'error', parsed.error?.message ?? `HTTP ${res.status}`, res.status, Number(res.headers.get('retry-after')) || 0);
   return parsed.data;
 }
 
@@ -150,9 +150,10 @@ async function login(deps: RemoteDeps, alias: string, origin: string): Promise<v
       (deps.out ?? console.log)(`Sesión guardada (caduca ${s.expiresAt}).`);
       return;
     } catch (e) {
-      // 409 = aún sin aprobar; cualquier otra cosa corta.
-      if (!(e instanceof RemoteError && e.status === 409) || Date.now() > deadline) throw e instanceof RemoteError && e.status === 409 ? new RemoteError('timeout', 'el pareo no se aprobó a tiempo') : e;
-      await sleep(2000);
+      // 409 = aún sin aprobar; 429 = esperar lo que pide el servidor; cualquier otra cosa corta.
+      const wait = e instanceof RemoteError && (e.status === 409 || e.status === 429);
+      if (!wait || Date.now() > deadline) throw wait ? new RemoteError('timeout', 'el pareo no se aprobó a tiempo') : e;
+      await sleep(Math.max(2000, (e as RemoteError).retryAfter * 1000));
     }
   }
 }

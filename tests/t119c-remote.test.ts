@@ -57,6 +57,18 @@ async function login(role: Role = 'member'): Promise<void> {
   expect(code).toBe(0);
 }
 
+test('T119c-H1: una persona real tarda en aprobar: tras 30 sondeos (60 s) y tras 2 min el login funciona', async () => {
+  for (const polls of [30, 60]) {
+    out.length = 0; errs.length = 0;
+    let tnow = Date.now();
+    routes = cliRoutes({ stateDir: c.stateDir, publicOrigin: ORIGIN, write: true, secret: SECRET, clock: () => tnow });
+    expect(await run('remote', 'add', 'prod', ORIGIN)).toBe(0);
+    const approve = await approveWhenShown('member');
+    let n = 0;
+    expect([await remoteMain(['prod', 'login'], deps({ sleep: async () => { tnow += 2000; if (++n === polls) await approve(); } })), errs]).toEqual([0, []]);
+  }
+});
+
 test('alias: solo https://<host> canónico; un alias desconocido no se resuelve ni llama a la red', async () => {
   expect(await run('remote', 'add', 'x', 'http://evil.example')).toBe(1);
   expect(await run('remote', 'add', 'x', 'https://fab.example.test/ruta')).toBe(1);

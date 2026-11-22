@@ -60,13 +60,16 @@ export class CliPairings {
     if (++p.attempts > PAIR_ATTEMPTS_PER_CODE) { this.pending.delete(p.code); return null; }
     return p;
   }
-  /** Canje: exige aprobación y el verificador original; un verificador ajeno cuenta como intento y no consume el pareo ajeno. */
+  /** Canje: exige aprobación y el verificador original; un verificador ajeno cuenta como intento y no consume el pareo ajeno.
+   *  Los sondeos «pendiente» con el verificador correcto no gastan intentos: la persona tarda en aprobar. */
   exchange(code: string, verifier: string): Pairing | 'pending' | null {
     this.sweep();
     const p = this.pending.get(code);
     if (!p) return null;
-    if (++p.attempts > PAIR_ATTEMPTS_PER_CODE * 4) { this.pending.delete(code); return null; }
-    if (!constantEqual(sha(verifier), p.challenge)) return null;
+    if (!constantEqual(sha(verifier), p.challenge)) {
+      if (++p.attempts > PAIR_ATTEMPTS_PER_CODE * 4) this.pending.delete(code);
+      return null;
+    }
     if (!p.approvedBy) return 'pending';
     this.pending.delete(code);
     return p;
@@ -166,15 +169,15 @@ export function cliRoutes(opts: CliRoutesOptions) {
   }
 
   function pairExchange(store: Store, req: Request, ip: string, body: Record<string, unknown>): Response {
-    const retry = limiter.hit(`pair-ip:${ip}`, LIMITS.ipPerMin);
-    if (retry) return fail(429, 'rate_limited', 'demasiados intentos', { 'retry-after': String(retry) });
     const code = typeof body.code === 'string' ? body.code.toUpperCase().replace(/[^A-Z0-9]/g, '') : '', verifier = body.verifier;
     if (!/^[A-Z0-9]{8}$/.test(code) || typeof verifier !== 'string' || verifier.length < 32 || verifier.length > 200) return fail(400, 'invalid_input', 'petición inválida');
-    const flow = limiter.hit(`pair-code:${code}`, PAIR_PER_FLOW_PER_MIN);
-    if (flow) return fail(429, 'rate_limited', 'demasiados intentos', { 'retry-after': String(flow) });
     const r = pairings.exchange(code, verifier);
     if (r === 'pending') return fail(409, 'conflict', 'el pareo aún no está aprobado');
-    if (!r?.approvedBy) return fail(403, 'forbidden', 'pareo no válido');
+    if (!r?.approvedBy) {
+      // El tope protege contra verificadores ajenos: solo los canjes fallidos lo gastan.
+      const retry = limiter.hit(`pair-ip:${ip}`, LIMITS.ipPerMin) || limiter.hit(`pair-code:${code}`, PAIR_PER_FLOW_PER_MIN);
+      return retry ? fail(429, 'rate_limited', 'demasiados intentos', { 'retry-after': String(retry) }) : fail(403, 'forbidden', 'pareo no válido');
+    }
     try {
       const s = issueSession(store, r.approvedBy.userId, 'cli');
       return ok({ token: s.token, expiresAt: s.expiresAt });
