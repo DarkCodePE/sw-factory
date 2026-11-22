@@ -217,7 +217,7 @@ export interface Change {
   updatedAt: string;
 }
 
-const ORIGIN_SOURCES = ['web', 'cli', 'api', 'automation', 'webhook', 'jira', 'resident'] as const;
+const ORIGIN_SOURCES = ['web', 'cli', 'api', 'automation', 'jira', 'resident'] as const;
 export type OriginSource = (typeof ORIGIN_SOURCES)[number];
 export interface ChangeOrigin { source: OriginSource; actorId: string | null }
 

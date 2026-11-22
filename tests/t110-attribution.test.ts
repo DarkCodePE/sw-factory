@@ -62,7 +62,7 @@ test('T110: origen desatendido, automatización normalizada y señales anteriore
     const automation = store.createAutomation({ workstream: ws.id, name: 'diaria', cron: '0 0 * * *', title: 'a', body: 'b' });
     const automated = store.triageSignal(store.runAutomationNow(automation.id).signalId!);
     expect(store.getChangeOrigin(automated.id)).toEqual({ source: 'automation', actorId: null });
-    for (const source of ['api', 'jira', 'resident', 'webhook'] as const) {
+    for (const source of ['api', 'jira', 'resident'] as const) {
       const c = store.triageSignal(store.addSignal(ws.id, 'web', 'cli', { source }).id);
       expect(store.getChangeOrigin(c.id)).toEqual({ source, actorId: null });
     }
