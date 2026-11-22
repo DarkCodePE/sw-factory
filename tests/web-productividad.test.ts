@@ -28,7 +28,7 @@ function seed() {
   const a = change('A', '2026-11-17T00:00:00Z'), b = change('B', '2026-11-18T00:00:00Z'), c = change('C sin PR', '2026-11-18T00:00:00Z');
   ev(a, 'pr_opened: https://github.com/o/r/pull/1', '2026-11-17T02:00:00Z'); ev(a, 'merge_completed', '2026-11-17T10:00:00Z');
   ev(a, 'change_review approved', '2026-11-17T03:00:00Z'); ev(a, 'change_review approved', '2026-11-17T04:00:00Z'); // 2 interacciones
-  ev(b, 'pr_opened: https://github.com/o/r/pull/2', '2026-11-18T04:00:00Z');
+  ev(b, 'pr_opened: https://github.com/o/r/pull/2', '2026-11-19T04:00:00Z'); // otro día que el de creación
   for (const m of ['change_review approved', 'change_review commented', 'change retried (implementation)', 'human reply received (question q); re-queued']) ev(b, m, '2026-11-18T05:00:00Z'); // 4
   for (let i = 0; i < 7; i++) ev(c, 'change retried (implementation)', '2026-11-18T06:00:00Z'); // 7, pero sin PR: no cuenta
   acts(a, [['a1', 'implementation', null, null, '2026-11-17T01:00:00Z'], ['a2', 'change_review', 'code_review', 'a1', '2026-11-17T05:00:00Z']]);
@@ -42,7 +42,7 @@ test('los cuatro tramos: mediana, p90 y muestras; los de revisión humana siguen
   const t = Object.fromEntries(calculateMetrics(store, dir, { range: '7', now }).prCycles.map(x => [x.name, x]));
   expect(Object.keys(t)).toEqual(['Kickoff → merge', 'Kickoff → PR', 'PR → primera revisión humana', 'Primera revisión humana → merge', 'PR → merge']);
   expect(t['Kickoff → merge']).toEqual({ name: 'Kickoff → merge', median: 10 * H, p90: 10 * H, samples: 1 });
-  expect(t['Kickoff → PR']).toMatchObject({ median: 3 * H, p90: 4 * H, samples: 2 });
+  expect(t['Kickoff → PR']).toMatchObject({ median: 15 * H, p90: 28 * H, samples: 2 }); // 2 h y 28 h
   expect(t['PR → merge']).toMatchObject({ median: 8 * H, samples: 1 });
   for (const n of ['PR → primera revisión humana', 'Primera revisión humana → merge']) expect(t[n]).toMatchObject({ median: null, p90: null, samples: 0 });
 });
@@ -52,7 +52,7 @@ test('interacciones por PR: media de los changes con PR (los sin PR no cuentan) 
   const m = calculateMetrics(store, dir, { range: '7', now });
   expect(m.interactionsPerPr.mean).toBe(3); expect(m.interactionsPerPr.prs).toBe(2);
   const at = (d: string) => m.interactionsPerPr.daily[m.daily.days.indexOf(d)];
-  expect(at('2026-11-17')).toBe(2); expect(at('2026-11-18')).toBe(4); expect(at('2026-11-19')).toBeNull();
+  expect(at('2026-11-17')).toBe(2); expect(at('2026-11-18')).toBeNull(); expect(at('2026-11-19')).toBe(4); // el día del PR, no el de creación
 });
 
 test('sin ningún PR la media es null (No medido), no 0', () => {
@@ -77,8 +77,9 @@ test('la página muestra los cuatro tramos, la media, y los runs por rol', () =>
   const html = (q = '') => metricsPage(store, dir, new URL(`http://127.0.0.1:4310/metricas?from=2026-11-15&to=2026-11-21${q}`)).body;
   const h = html();
   for (const t of ['Kickoff → merge', 'Kickoff → PR', 'PR → primera revisión humana', 'Primera revisión humana → merge']) expect(h).toContain(t);
-  expect(h).toContain('10 h'); expect(h).toContain('Interacciones humanas por PR'); expect(h).toContain('2 PRs');
-  expect(h).toContain('Runs totales'); expect(h).not.toContain('subagentes');
+  expect(card(h, 'pr-cycles')).toContain('<p class="lbl">Kickoff → merge</p><p class="fig">10 h</p>');
+  expect(card(h, 'interacciones')).toContain('<p class="fig">3</p><p class="sub">2 PRs en el rango</p>');
+  expect(card(h, 'runs')).toContain('<p class="fig">7</p>'); expect(h).not.toContain('subagentes');
   expect(h).toContain('name="runs"'); expect(h).toContain('Runs por día · rol');
   expect(h).toContain('validador:qa');
   expect(() => html('&runs=raiz')).toThrow(URIError); // sin partición hasta T110
@@ -89,12 +90,15 @@ test('más de cuatro roles: los tres mayores y «Otros»; el total se conserva',
   const { c } = seed();
   store.db.query("INSERT INTO activities(id,workstream_id,change_id,kind,status,retry_count,created_at) VALUES ('c2',?,?,'steward','completed',0,'2026-11-18T09:00:00Z')").run(c.workstreamId, c.id);
   const h = metricsPage(store, dir, new URL('http://127.0.0.1:4310/metricas?from=2026-11-15&to=2026-11-21')).body;
-  expect(h).toContain('Otros'); expect(h).toContain('8</');
+  const r = card(h, 'runs');
+  expect(r).toContain('<p class="fig">8</p>'); expect(r).toContain('2026-11-18 · Otros: 2</title>');
+  expect(r).toMatch(/2026-11-17<\/th>(<td>[^<]*<\/td>){3}<td>Sin datos<\/td>/); // un día sin runs fuera de los tres mayores es hueco, no 0
 });
 
 test('sin actividad en el rango: No medido y sin gráfico', () => {
   const h = metricsPage(store, dir, new URL('http://127.0.0.1:4310/metricas?from=2026-11-15&to=2026-11-21')).body;
-  expect(h).toContain('Runs totales'); expect(h).toContain('No medido');
+  expect(card(h, 'runs')).toContain('<p class="fig">No medido</p>');
+  expect(card(h, 'interacciones')).toContain('<p class="fig">No medido</p>');
 });
 
 const card = (h: string, id: string) => new RegExp(`<section class="card" aria-labelledby="t-${id}">.*?</section>`, 's').exec(h)?.[0] ?? '';
