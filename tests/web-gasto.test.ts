@@ -663,4 +663,381 @@ describe('Pestaña Gasto en la web (T113)', () => {
     // Los estilos de métricas deben asegurar al menos 24px de altura para los enlaces en celdas (td a)
     expect(METRICS_STYLE).toContain('td a{display:inline-block;min-height:24px;line-height:24px}');
   });
+
+  test('T113-H15: M18 - el título del change en «Los 20 PR más caros» escapa HTML hostil', () => {
+    const today = new Date().toISOString().slice(0, 10);
+    const date = `${today}T12:00:00.000Z`;
+    const hostileTitle = '<b onmouseover=alert(1)>hostil & peligroso</b>';
+    const item = seedItem({
+      title: hostileTitle,
+      date,
+      attemptCosts: [0.50],
+      inferenceAttempts: [{
+        adapter: 'claude',
+        usage: { effectiveModel: 'm1', costUsd: 0.50 },
+      }],
+    });
+    store.beginCostAttempt(item.activity, {
+      id: 'att-m18',
+      rate: costRateAt(dir, date, null),
+      remote: false,
+      runner: null,
+      adapter: 'claude',
+      legacyCount: 0,
+      startedAt: date,
+    });
+    store.finishCostAttempt('att-m18', { costUsd: 0.50 }, 100);
+
+    const url = new URL('http://127.0.0.1:4310/metricas?tab=gasto&range=7');
+    const { body } = metricsPage(store, dir, url);
+    const tablePart = body.slice(body.indexOf('<caption>Los 20 PR más caros</caption>'));
+    const tableSection = tablePart.slice(0, tablePart.indexOf('</table>'));
+
+    expect(tableSection).toContain('&lt;b onmouseover=alert(1)&gt;hostil &amp; peligroso&lt;/b&gt;');
+    expect(tableSection).not.toContain(hostileTitle);
+  });
+
+  test('T113-H15: N14 - dailyHasAttempts es false en días sin intentos de un grupo', () => {
+    const d1 = '2026-11-17';
+    const d2 = '2026-11-18';
+    const ws = store.getWorkstream('ws-test');
+    const s = store.addSignal(ws.id, 's-n14', 'b', { source: 'cli', actorId: 'usr-n14' });
+    const c = store.triageSignal(s.id);
+    const a = store.listActivities({ changeId: c.id })[0]!;
+    const date = `${d2}T12:00:00.000Z`;
+    store.db.query("UPDATE changes SET created_at=?, status='completed' WHERE id=?").run(date, c.id);
+    store.db.query("UPDATE activities SET created_at=?, kind='investigation', status='completed' WHERE id=?").run(date, a.id);
+    store.beginCostAttempt(a, {
+      id: 'att-n14',
+      rate: costRateAt(dir, date, null),
+      remote: false,
+      runner: null,
+      adapter: 'claude',
+      legacyCount: 0,
+      startedAt: date,
+      worker: 'investigate',
+    });
+    store.finishCostAttempt('att-n14', { costUsd: 1 }, 100);
+
+    const m = calculateMetrics(store, dir, { ws: 'ws-test', from: d1, to: d2 });
+    const workerGroup = m.spending.by.worker.find(g => g.name === 'investigate');
+    expect(workerGroup).toBeDefined();
+    expect(workerGroup?.dailyHasAttempts).toEqual([false, true]);
+
+    const url = new URL(`http://127.0.0.1:4310/metricas?tab=gasto&ws=ws-test&from=${d1}&to=${d2}`);
+    const { body } = metricsPage(store, dir, url);
+    const workerSection = body.slice(body.indexOf('id="t-spending-worker"'));
+    const workerCard = workerSection.slice(0, workerSection.indexOf('</section>'));
+    expect(workerCard).toContain('Sin datos');
+  });
+
+  test('T113-H15: N16 - la nota de tarifas aplicadas escapa HTML hostil', () => {
+    const today = new Date().toISOString().slice(0, 10);
+    const date = `${today}T12:00:00.000Z`;
+    const item = seedItem({ title: 'Change tarifa hostil', date });
+    store.beginCostAttempt(item.activity, {
+      id: 'att-n16',
+      rate: { ...costRateAt(dir, date, null), version: '<b>v9&alpha;</b>' },
+      remote: false,
+      runner: null,
+      adapter: 'claude',
+      legacyCount: 0,
+      startedAt: date,
+    });
+    store.finishCostAttempt('att-n16', { costUsd: 0.10 }, 100);
+
+    const url = new URL('http://127.0.0.1:4310/metricas?tab=gasto&range=7');
+    const { body } = metricsPage(store, dir, url);
+    const costCard = body.slice(body.indexOf('id="t-cost"'));
+    const costCardSection = costCard.slice(0, costCard.indexOf('</section>'));
+
+    expect(costCardSection).toContain('Tarifas aplicadas: &lt;b&gt;v9&amp;alpha;&lt;/b&gt;');
+    expect(costCardSection).not.toContain('Tarifas aplicadas: <b>v9&alpha;</b>');
+  });
+
+  test('T113-H15: N18 - unknownCount === 1 usa singular «1 intento sin coste completo medido»', () => {
+    const today = new Date().toISOString().slice(0, 10);
+    const date = `${today}T12:00:00.000Z`;
+    const item = seedItem({ title: 'Change con un intento desconocido', date });
+    store.beginCostAttempt(item.activity, {
+      id: 'att-n18',
+      rate: costRateAt(dir, date, null),
+      remote: true,
+      runner: 'ssh-node',
+      adapter: 'claude',
+      legacyCount: 0,
+      startedAt: date,
+    });
+    store.finishCostAttempt('att-n18', undefined, 100);
+
+    const url = new URL('http://127.0.0.1:4310/metricas?tab=gasto&range=7');
+    const { body } = metricsPage(store, dir, url);
+
+    expect(body).toContain('1 intento sin coste completo medido');
+    expect(body).not.toContain('1 intentos sin coste completo medido');
+  });
+
+  test('T113-H15: M05 - spending.models agrupa por inferencia y no por total', () => {
+    const today = new Date().toISOString().slice(0, 10);
+    const date = `${today}T12:00:00.000Z`;
+    const item = seedItem({
+      title: 'Change modelo inferencia vs total',
+      date,
+      attemptCosts: [0.30],
+      inferenceAttempts: [{
+        adapter: 'claude',
+        usage: { effectiveModel: 'm-inf-only', costUsd: 0.10 },
+      }],
+    });
+    store.beginCostAttempt(item.activity, {
+      id: 'att-m05',
+      rate: { ...costRateAt(dir, date, null), hourlyMicroUsd: 10_000_000 },
+      remote: false,
+      runner: null,
+      adapter: 'claude',
+      legacyCount: 0,
+      startedAt: date,
+    });
+    store.finishCostAttempt('att-m05', { costUsd: 0.10, effectiveModel: 'm-inf-only' }, 3600000);
+
+    const m = calculateMetrics(store, dir, { range: '7' });
+    const modelGroup = m.spending.models.find(g => g.name === 'm-inf-only');
+    expect(modelGroup).toBeDefined();
+    expect(modelGroup?.inference.measured).toBe(100_000);
+    const dayVal = modelGroup?.daily?.find(v => v !== null);
+    expect(dayVal).toBe(0.1);
+  });
+
+  test('T113-H15: M07 - intento actual preserva su adapter en spending.adapters', () => {
+    const today = new Date().toISOString().slice(0, 10);
+    const date = `${today}T12:00:00.000Z`;
+    const item = seedItem({ title: 'Change adapter preservado', date });
+    store.beginCostAttempt(item.activity, {
+      id: 'att-m07',
+      rate: costRateAt(dir, date, null),
+      remote: false,
+      runner: null,
+      adapter: 'custom-adapter-m07',
+      legacyCount: 0,
+      startedAt: date,
+    });
+    store.finishCostAttempt('att-m07', { costUsd: 0.20 }, 100);
+
+    const m = calculateMetrics(store, dir, { range: '7' });
+    const adapterGroup = m.spending.adapters.find(g => g.name === 'custom-adapter-m07');
+    expect(adapterGroup).toBeDefined();
+    expect(adapterGroup?.total.measured).toBe(200_000);
+  });
+
+  test('T113-H15: M12 - spending.by.worker agrupa por worker y no por originActorId', () => {
+    const today = new Date().toISOString().slice(0, 10);
+    const date = `${today}T12:00:00.000Z`;
+    const item = seedItem({ title: 'Change worker vs actor', date });
+    store.db.query("UPDATE changes SET origin_source='cli', origin_actor_id='actor-alice' WHERE id=?").run(item.change.id);
+    store.beginCostAttempt(item.activity, {
+      id: 'att-m12',
+      rate: costRateAt(dir, date, null),
+      remote: false,
+      runner: null,
+      adapter: 'claude',
+      legacyCount: 0,
+      startedAt: date,
+      worker: 'investigate',
+    });
+    store.finishCostAttempt('att-m12', { costUsd: 0.25 }, 100);
+
+    const m = calculateMetrics(store, dir, { range: '7' });
+    expect(m.spending.by.worker.find(g => g.name === 'investigate')).toBeDefined();
+    expect(m.spending.by.worker.find(g => g.name === 'actor-alice')).toBeUndefined();
+    expect(m.spending.by.user.find(g => g.name === 'actor-alice')).toBeDefined();
+  });
+
+  test('T113-H15: M13 - spending.by.source agrupa por originSource y no por worker', () => {
+    const today = new Date().toISOString().slice(0, 10);
+    const date = `${today}T12:00:00.000Z`;
+    const item = seedItem({ title: 'Change source vs worker', date });
+    store.db.query("UPDATE changes SET origin_source='cli' WHERE id=?").run(item.change.id);
+    store.beginCostAttempt(item.activity, {
+      id: 'att-m13',
+      rate: costRateAt(dir, date, null),
+      remote: false,
+      runner: null,
+      adapter: 'claude',
+      legacyCount: 0,
+      startedAt: date,
+      worker: 'investigate',
+    });
+    store.finishCostAttempt('att-m13', { costUsd: 0.35 }, 100);
+
+    const m = calculateMetrics(store, dir, { range: '7' });
+    expect(m.spending.by.source.find(g => g.name === 'cli')).toBeDefined();
+    expect(m.spending.by.source.find(g => g.name === 'investigate')).toBeUndefined();
+  });
+
+  test('T113-H15: M17 - la URL del PR en los 20 PR escapa caracteres especiales', () => {
+    const today = new Date().toISOString().slice(0, 10);
+    const date = `${today}T12:00:00.000Z`;
+    const item = seedItem({
+      title: 'Change PR con query params',
+      date,
+      attemptCosts: [0.40],
+      inferenceAttempts: [{ adapter: 'claude', usage: { effectiveModel: 'm1', costUsd: 0.40 } }],
+    });
+    const prUrl = 'https://github.com/org/repo/pull/1?a=1&b=2';
+    store.recordPrOpened(item.change.id, prUrl);
+    store.beginCostAttempt(item.activity, {
+      id: 'att-m17',
+      rate: costRateAt(dir, date, null),
+      remote: false,
+      runner: null,
+      adapter: 'claude',
+      legacyCount: 0,
+      startedAt: date,
+    });
+    store.finishCostAttempt('att-m17', { costUsd: 0.40 }, 100);
+
+    const url = new URL('http://127.0.0.1:4310/metricas?tab=gasto&range=7');
+    const { body } = metricsPage(store, dir, url);
+    const tablePart = body.slice(body.indexOf('<caption>Los 20 PR más caros</caption>'));
+    const tableSection = tablePart.slice(0, tablePart.indexOf('</table>'));
+
+    expect(tableSection).toContain('<a href="https://github.com/org/repo/pull/1?a=1&amp;b=2">https://github.com/org/repo/pull/1?a=1&amp;b=2</a>');
+    expect(tableSection).not.toContain('<a href="https://github.com/org/repo/pull/1?a=1&b=2">');
+  });
+
+  test('T113-H15: M26 - la serie Otros suma los valores de los grupos restantes y no devuelve 0', () => {
+    const today = new Date().toISOString().slice(0, 10);
+    const ws = store.getWorkstream('ws-test');
+    for (let i = 1; i <= 6; i++) {
+      const u = `u-m26-${i}`;
+      const s = store.addSignal(ws.id, `s-${u}`, 'b', { source: 'cli', actorId: u });
+      const c = store.triageSignal(s.id);
+      const a = store.listActivities({ changeId: c.id })[0]!;
+      const date = `${today}T12:00:00.000Z`;
+      store.db.query("UPDATE changes SET created_at=?, status='completed', origin_actor_id=? WHERE id=?").run(date, u, c.id);
+      store.db.query("UPDATE activities SET created_at=?, kind='investigation', status='completed' WHERE id=?").run(date, a.id);
+      store.beginCostAttempt(a, {
+        id: `att-m26-${i}`,
+        rate: costRateAt(dir, date, null),
+        remote: false,
+        runner: null,
+        adapter: 'claude',
+        legacyCount: 0,
+        startedAt: date,
+      });
+      store.finishCostAttempt(`att-m26-${i}`, { costUsd: 2 }, 100);
+    }
+
+    const url = new URL('http://127.0.0.1:4310/metricas?tab=gasto&range=7');
+    const { body } = metricsPage(store, dir, url);
+    const userSection = body.slice(body.indexOf('id="t-spending-user"'));
+    const userCard = userSection.slice(0, userSection.indexOf('</section>'));
+
+    // Con 6 usuarios de 2.00 USD cada uno y MAX_SERIES = 4 (3 con nombre + Otros):
+    // Otros agrupa a los 3 usuarios restantes, por lo que su valor es 6.00 USD (no 0.00 USD)
+    expect(userCard).toContain('6.00 USD');
+    expect(userCard).not.toContain('Otros: 0.00 USD');
+  });
+
+  test('T113-H15: M27 - workerCard tiene stacked: true y apila las series en el gráfico', () => {
+    const today = new Date().toISOString().slice(0, 10);
+    const ws = store.getWorkstream('ws-test');
+    for (const [w, cost] of [['investigate', 10], ['implement', 20]] as const) {
+      const s = store.addSignal(ws.id, `s-${w}`, 'b', { source: 'cli' });
+      const c = store.triageSignal(s.id);
+      const a = store.listActivities({ changeId: c.id })[0]!;
+      const date = `${today}T12:00:00.000Z`;
+      store.db.query("UPDATE changes SET created_at=?, status='completed' WHERE id=?").run(date, c.id);
+      store.db.query("UPDATE activities SET created_at=?, kind='investigation', status='completed' WHERE id=?").run(date, a.id);
+      store.beginCostAttempt(a, {
+        id: `att-m27-${w}`,
+        rate: costRateAt(dir, date, null),
+        remote: false,
+        runner: null,
+        adapter: 'claude',
+        legacyCount: 0,
+        startedAt: date,
+        worker: w,
+      });
+      store.finishCostAttempt(`att-m27-${w}`, { costUsd: cost }, 100);
+    }
+
+    const url = new URL('http://127.0.0.1:4310/metricas?tab=gasto&range=7');
+    const { body } = metricsPage(store, dir, url);
+    const workerCard = body.slice(body.indexOf('id="t-spending-worker"'));
+    const chartSvg = workerCard.slice(0, workerCard.indexOf('</svg>'));
+
+    expect(chartSvg).toContain('50.00 USD');
+  });
+
+  test('T113-H15: M28 - la tabla de modelos usa el campo de inferencia y no el total', () => {
+    const today = new Date().toISOString().slice(0, 10);
+    const date = `${today}T12:00:00.000Z`;
+    const item = seedItem({
+      title: 'Change modelo tabla inferencia',
+      date,
+      attemptCosts: [0.15],
+      inferenceAttempts: [{ adapter: 'claude', usage: { effectiveModel: 'm-table-inf', costUsd: 0.10 } }],
+    });
+    store.beginCostAttempt(item.activity, {
+      id: 'att-m28',
+      rate: { ...costRateAt(dir, date, null), hourlyMicroUsd: 10_000_000 },
+      remote: false,
+      runner: null,
+      adapter: 'claude',
+      legacyCount: 0,
+      startedAt: date,
+    });
+    store.finishCostAttempt('att-m28', { costUsd: 0.10, effectiveModel: 'm-table-inf' }, 3600000);
+
+    const url = new URL('http://127.0.0.1:4310/metricas?tab=gasto&range=7');
+    const { body } = metricsPage(store, dir, url);
+    const modelTable = body.slice(body.indexOf('<caption>Coste por modelo registrado</caption>'));
+    const modelTableSection = modelTable.slice(0, modelTable.indexOf('</table>'));
+
+    expect(modelTableSection).toContain('0.10 USD');
+    expect(modelTableSection).not.toContain('10.10 USD');
+  });
+
+  test('T113-H15: M31 - la tarjeta de fuentes y su tabla formatean etiquetas con SOURCES_LABELS', () => {
+    const today = new Date().toISOString().slice(0, 10);
+    const date = `${today}T12:00:00.000Z`;
+    const ws = store.getWorkstream('ws-test');
+    for (const [source, label] of [['cli', 'CLI'], ['jira', 'Jira']] as const) {
+      const s = store.addSignal(ws.id, `s-${source}`, 'b', { source: source as any });
+      const c = store.triageSignal(s.id);
+      const a = store.listActivities({ changeId: c.id })[0]!;
+      store.db.query("UPDATE changes SET created_at=?, status='completed', origin_source=? WHERE id=?").run(date, source, c.id);
+      store.db.query("UPDATE activities SET created_at=?, kind='investigation', status='completed' WHERE id=?").run(date, a.id);
+      store.beginCostAttempt(a, {
+        id: `att-m31-${source}`,
+        rate: costRateAt(dir, date, null),
+        remote: false,
+        runner: null,
+        adapter: 'claude',
+        legacyCount: 0,
+        startedAt: date,
+      });
+      store.finishCostAttempt(`att-m31-${source}`, { costUsd: 0.10 }, 100);
+    }
+
+    const url = new URL('http://127.0.0.1:4310/metricas?tab=gasto&range=7');
+    const { body } = metricsPage(store, dir, url);
+    const sourceCard = body.slice(body.indexOf('id="t-spending-source"'));
+    const sourceCardSection = sourceCard.slice(0, sourceCard.indexOf('</section>'));
+
+    expect(sourceCardSection).toContain('<span class="chip">CLI: 0.10 USD</span>');
+    expect(sourceCardSection).toContain('<span class="chip">Jira: 0.10 USD</span>');
+    expect(sourceCardSection).toContain('<th scope="col">CLI</th>');
+    expect(sourceCardSection).toContain('<th scope="col">Jira</th>');
+    expect(sourceCardSection).not.toContain('<span class="chip">cli:');
+    expect(sourceCardSection).not.toContain('<span class="chip">jira:');
+    expect(sourceCardSection).not.toContain('<th scope="col">cli</th>');
+    expect(sourceCardSection).not.toContain('<th scope="col">jira</th>');
+
+    const sourceTable = body.slice(body.indexOf('<caption>Coste por fuente del change</caption>'));
+    const sourceTableSection = sourceTable.slice(0, sourceTable.indexOf('</table>'));
+    expect(sourceTableSection).toContain('CLI');
+    expect(sourceTableSection).toContain('Jira');
+  });
 });
