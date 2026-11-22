@@ -40,16 +40,19 @@ test('T111: un hueco corta el trazo; un valor 0 real sí se dibuja', () => {
   const z = card({ ...base, series: [{ label: 'A', values: [0, 0, null, 0] }] });
   expect(z).toContain('<title>2026-11-01 · A: 0</title>'); expect(z).toContain('<svg');
 });
-test('T111: área apilada suma las series; casillas de serie sin JS; tabla plegada', () => {
-  const h = card({ ...base, stacked: true, series: [{ label: 'A', values: [1, 1, 1, 1] }, { label: 'B', values: [2, 2, 2, 2] }] });
-  expect(h).toContain('<title>2026-11-01 · B: 2</title>'); // el valor propio en el tooltip
-  expect(h).toMatch(/<g class="a1"><polygon points="[^"]*"/);
+test('T111-H5: área apilada suma las series; casillas de serie sin JS; tabla plegada', () => {
+  // A=2 y B=1: sin apilar B quedaría por debajo de A; apilada, su borde superior está en 2+1=3, por encima del de A.
+  const h = card({ ...base, stacked: true, series: [{ label: 'A', values: [2, 2, 2, 2] }, { label: 'B', values: [1, 1, 1, 1] }] });
+  expect(h).toContain('<title>2026-11-01 · B: 1</title>'); // el valor propio en el tooltip, no la suma
+  const pts = (g: string) => new RegExp(`<g class="${g}"><polygon points="([^"]*)"`).exec(h)![1]!.split(' ').map(p => Number(p.split(',')[1]));
+  const a = pts('a0'), b = pts('a1');
+  const topA = Math.min(...a), topB = Math.min(...b);
+  expect(topB).toBeLessThan(topA); // 3 > 2
+  // La base de B es el borde superior de A (misma y), no el eje.
+  expect(Math.max(...b)).toBe(topA); expect(Math.max(...a)).toBeGreaterThan(topA);
   expect(h).toContain('id="c-x-0" class="sc sc0" checked'); expect(h).toContain('for="c-x-1"');
   expect(h).not.toContain('<script'); expect(h).toContain('<details class="data"><summary>Tabla de datos · Tabla T</summary>');
   expect(CARD_STYLE).toContain('.sc1:not(:checked)~.plot .a1');
-  // La serie B se apila sobre A: el vértice superior de B está a y(3), el de A a y(1); y(3) < y(1) en pantalla.
-  const ys = (g: string) => [...(new RegExp(`<g class="${g}"><polygon points="([^"]*)"`).exec(h)![1]!.matchAll(/,([\d.]+)/g))].map(m => Number(m[1]));
-  expect(Math.min(...ys('a1'))).toBeLessThan(Math.min(...ys('a0')));
 });
 test('T111: título, series y ayuda se escapan', () => {
   const h = card({ ...base, title: '<img src=x onerror=1>', help: '"><script>1</script>', series: [{ label: '<b>', values: [1, 2, 3, 4] }, { label: 'ok', values: [1, 2, 3, 4] }] });
