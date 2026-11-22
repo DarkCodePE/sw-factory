@@ -1,6 +1,6 @@
 import { expect, test } from 'bun:test';
 import { getAgent, runAgent } from '../src/agents.ts';
-import { parseClaudeStream } from '../src/agent-output.ts';
+import { parseClaudeStream, parseGoogleJsonl } from '../src/agent-output.ts';
 
 const model = 'claude-sonnet-4-6';
 const claude = [
@@ -41,7 +41,6 @@ const native = JSON.stringify({
 for (const [name, stdout, usage] of [
   ['claude', claude.split('\n').at(-1)!, { effectiveModel: model, inputTokens: 3400, outputTokens: 100, cacheReadTokens: 2000, cacheWriteTokens: 400, costUsd: 0.0066 }],
   ['codex', codex, { inputTokens: 120, outputTokens: 10, cacheReadTokens: 20, cacheWriteTokens: 0 }],
-  ['gemini', gemini, { effectiveModel: 'gemini-2.5-flash', inputTokens: 30, outputTokens: 10, cacheReadTokens: 5 }],
   ['agy', agy, { inputTokens: 10418, outputTokens: 589, cacheReadTokens: 8113 }],
   ['native', native, { effectiveModel: 'sin-tarifa', inputTokens: 50, outputTokens: 20, cacheReadTokens: 0 }],
 ] as const) {
@@ -54,6 +53,12 @@ for (const [name, stdout, usage] of [
     if (name === 'codex' || name === 'agy') expect(run.usage).not.toHaveProperty('effectiveModel');
   });
 }
+
+test('T108 H4: el fixture de Gemini conserva el informe y la medición en el parser', () => {
+  expect(parseGoogleJsonl(gemini)).toMatchObject({ text: 'STATUS: done\nInforme', usage: {
+    effectiveModel: 'gemini-2.5-flash', inputTokens: 30, outputTokens: 10, cacheReadTokens: 5,
+  } });
+});
 
 test('T108: el coste declarado tiene prioridad, el cero explícito se conserva y la caché ausente no se factura como cero', async () => {
   const { parseClaudeJson } = await import('../src/agents.ts');
@@ -105,7 +110,7 @@ test('T108: native toma modelo y caché de la respuesta HTTP local, incluso si s
 });
 
 test('T108 H2: rechaza finales duplicados y agy solo acepta el resultado tras init', async () => {
-  const { parseCodexJsonl, parseGoogleJsonl } = await import('../src/agent-output.ts');
+  const { parseCodexJsonl } = await import('../src/agent-output.ts');
   const last = (stream: string) => stream.split('\n').at(-1)!;
   const duplicate = (stream: string) => stream + '\n' + last(stream);
   expect(parseClaudeStream(claude).result?.usage?.effectiveModel).toBe(model);

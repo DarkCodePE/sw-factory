@@ -72,7 +72,6 @@ test('T57 H5a: runAgent pasa el modelo a confineAgent y ANTHROPIC_MODEL no entra
   }
 });
 
-test('Gemini CLI usa JSONL y activa el modo de solo lectura para investigación', () => {
-  expect(argv('gemini', undefined, { readOnly: true })).toEqual(['gemini', '--output-format', 'stream-json', '--approval-mode', 'plan']);
-  expect(argv('gemini')).toEqual(['gemini', '--output-format', 'stream-json']);
+test('T108 H4: Gemini no se puede elegir como adaptador', () => {
+  expect(() => getAgent('gemini')).toThrow('unknown agent');
 });

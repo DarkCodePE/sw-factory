@@ -98,14 +98,6 @@ const agy: AgentAdapter = {
   parse: parseGoogleJsonl,
 };
 
-const gemini: AgentAdapter = {
-  name: 'gemini',
-  promptStdin: true,
-  command: (prompt, options) => ['gemini', '--output-format', 'stream-json',
-    ...(options?.readOnly ? ['--approval-mode', 'plan'] : []), ...(options?.promptStdin ? [] : ['-p', prompt])],
-  parse: parseGoogleJsonl,
-};
-
 /**
  * Factory's droid CLI in airgap mode with a bring-your-own model.
  * Requires FABRICA_DROID_HOME (a home dir whose .factory/settings.json defines customModels)
@@ -163,7 +155,7 @@ const native: AgentAdapter = {
   parse: parseNativeJson,
 };
 
-const ADAPTERS: Record<string, AgentAdapter> = { claude, codex, agy, gemini, droid, native, fake };
+const ADAPTERS: Record<string, AgentAdapter> = { claude, codex, agy, droid, native, fake };
 
 export function getAgent(name: string): AgentAdapter {
   const a = Object.hasOwn(ADAPTERS, name) ? ADAPTERS[name] : undefined;
@@ -296,7 +288,7 @@ export async function runAgent(
     ...(parsed?.usage ? { usage: parsed.usage } : {}),
     stdout,
     // Mantiene el texto decodificado que antes llegaba en stdout junto con las tramas nuevas.
-    ...(parsed && ['codex', 'agy', 'gemini', 'native'].includes(agent.name)
+    ...(parsed && ['codex', 'agy', 'native'].includes(agent.name)
       ? { stdoutForMonitor: rawOutput + '\n' + stdout } : {}),
     stderr,
   };

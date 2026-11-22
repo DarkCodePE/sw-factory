@@ -19,7 +19,6 @@ export const NATIVE_VARS = ['FABRICA_LLM_API_KEY', 'FABRICA_LLM_BASE_URL', 'FABR
 function adapterVars(adapter: string, model?: string): string[] {
   if (adapter === 'claude') return ['ANTHROPIC_API_KEY', 'ANTHROPIC_AUTH_TOKEN', 'ANTHROPIC_BASE_URL', ...(model ? [] : ['ANTHROPIC_MODEL'])];
   if (adapter === 'codex') return ['OPENAI_API_KEY'];
-  if (adapter === 'gemini') return ['GEMINI_API_KEY', 'GOOGLE_API_KEY'];
   if (adapter === 'droid') return ['FACTORY_AIRGAP_ENABLED', 'FACTORY_HOME_OVERRIDE', 'FABRICA_FAKE_SLEEP', 'FABRICA_FAKE_STATUS', 'FABRICA_FAKE_TOUCH'];
   // `native` y `agy` no los pueden declarar (FABRICA_* está prohibido, B10): sin ellos pierden modelo y estado (T72e-H1).
   if (adapter === 'native' || adapter === 'agy') return NATIVE_VARS;
