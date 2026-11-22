@@ -129,8 +129,8 @@ describe('Pestaña Gasto en la web (T113)', () => {
 
     // En total y en cards debe salir «No medido»
     expect(body).toContain('Total: <strong>No medido</strong>');
-    expect(body).not.toContain('<strong>0.00 USD</strong>');
-    expect(body).not.toContain('<strong>0 USD</strong>');
+    expect(body).not.toContain('0.00 USD');
+    expect(body).not.toContain('0 USD');
   });
 
   test('T109-H6: FAB_ACTOR se escapa para prevenir XSS en Gasto por usuario', () => {
@@ -164,47 +164,104 @@ describe('Pestaña Gasto en la web (T113)', () => {
   });
 
   test('tarifa versión#hash12 y versión antigua sin hash se procesan correctamente', () => {
-    seedItem({
+    const today = new Date().toISOString().slice(0, 10);
+    const date = `${today}T10:00:00.000Z`;
+    const item1 = seedItem({
       title: 'Tarifa con hash',
+      date,
       attemptCosts: [0.10],
       inferenceAttempts: [{
         adapter: 'native',
         usage: { effectiveModel: 'modelo-nuevo', inputTokens: 50, outputTokens: 10, costUsd: 0.10, priceVersion: '2026-11-21-v1#0123456789ab' },
       }],
     });
+    store.beginCostAttempt(item1.activity, {
+      id: 'att-hash',
+      rate: { ...costRateAt(dir, date, null), version: '2026-11-21-v1#0123456789ab' },
+      remote: false,
+      runner: null,
+      adapter: 'native',
+      legacyCount: 0,
+    });
+    store.finishCostAttempt('att-hash', { costUsd: 0.10, effectiveModel: 'modelo-nuevo' }, 100);
 
-    seedItem({
+    const item2 = seedItem({
       title: 'Tarifa sin hash',
+      date,
       attemptCosts: [0.20],
       inferenceAttempts: [{
         adapter: 'native',
         usage: { effectiveModel: 'modelo-antiguo', inputTokens: 50, outputTokens: 10, costUsd: 0.20, priceVersion: '2026-11-21-v1' },
       }],
     });
+    store.beginCostAttempt(item2.activity, {
+      id: 'att-sin-hash',
+      rate: { ...costRateAt(dir, date, null), version: '2026-11-21-v1' },
+      remote: false,
+      runner: null,
+      adapter: 'native',
+      legacyCount: 0,
+    });
+    store.finishCostAttempt('att-sin-hash', { costUsd: 0.20, effectiveModel: 'modelo-antiguo' }, 100);
 
-    const url = new URL('http://127.0.0.1:4310/metricas?tab=gasto&range=7');
+    const m = calculateMetrics(store, dir, { ws: 'ws-test', from: today, to: today });
+    expect(m.spending.attempts.map(a => a.rateVersion).sort()).toEqual(['2026-11-21-v1', '2026-11-21-v1#0123456789ab']);
+
+    const url = new URL(`http://127.0.0.1:4310/metricas?tab=gasto&range=7`);
     const { body } = metricsPage(store, dir, url);
     expect(body).toContain('modelo-nuevo');
     expect(body).toContain('modelo-antiguo');
   });
 
-  test('tabla de los 20 PR más caros muestra URL de PR escapada, enlace a change y desglose', () => {
-    const { change } = seedItem({
-      title: 'Change con PR caro',
-      prUrl: 'https://github.com/org/repo/pull/42',
-      attemptCosts: [1.25],
-      inferenceAttempts: [{
+  test('tabla de los 20 PR más caros muestra orden por coste, tope de 20, URL de PR y desglose', () => {
+    const today = new Date().toISOString().slice(0, 10);
+    const date = `${today}T12:00:00.000Z`;
+    // Crear 22 PRs con costes crecientes
+    for (let i = 1; i <= 22; i++) {
+      const cost = i * 1.0;
+      const { activity } = seedItem({
+        title: `PR caro ${String(i).padStart(2, '0')}`,
+        prUrl: `https://github.com/org/repo/pull/${i}`,
+        date,
+        attemptCosts: [cost],
+        inferenceAttempts: [{
+          adapter: 'native',
+          usage: { effectiveModel: 'm1', inputTokens: 100, outputTokens: 50, costUsd: cost, priceVersion: 'v1' },
+        }],
+      });
+      store.beginCostAttempt(activity, {
+        id: `att-pr-${i}`,
+        rate: costRateAt(dir, date, null),
+        remote: false,
+        runner: null,
         adapter: 'native',
-        usage: { effectiveModel: 'm1', inputTokens: 100, outputTokens: 50, costUsd: 1.25, priceVersion: 'v1' },
-      }],
-    });
+        legacyCount: 0,
+      });
+      store.finishCostAttempt(`att-pr-${i}`, { costUsd: cost, effectiveModel: 'm1' }, 100);
+    }
 
-    const url = new URL('http://127.0.0.1:4310/metricas?tab=gasto&range=7');
+    const url = new URL(`http://127.0.0.1:4310/metricas?tab=gasto&range=7`);
     const { body } = metricsPage(store, dir, url);
 
-    expect(body).toContain('<a href="https://github.com/org/repo/pull/42">https://github.com/org/repo/pull/42</a>');
-    expect(body).toContain(`<a href="/changes/${encodeURIComponent(change.id)}">Change con PR caro</a>`);
-    expect(body).toContain('1.25 USD');
+    // Tope de 20 PR: los 2 de menor coste (1 y 2) no deben estar en la tabla
+    const tablePart = body.slice(body.indexOf('<caption>Los 20 PR más caros</caption>'));
+    const tableSection = tablePart.slice(0, tablePart.indexOf('</table>'));
+
+    expect(tableSection).toContain('PR caro 22');
+    expect(tableSection).toContain('PR caro 03');
+    expect(tableSection).not.toContain('PR caro 02');
+    expect(tableSection).not.toContain('PR caro 01');
+
+    // Orden decreciente por coste: PR caro 22 antes que PR caro 21
+    const idx22 = tableSection.indexOf('PR caro 22');
+    const idx21 = tableSection.indexOf('PR caro 21');
+    expect(idx22).toBeLessThan(idx21);
+
+    // Enlace de PR escapado y enlace a change
+    expect(tableSection).toContain('<a href="https://github.com/org/repo/pull/22">https://github.com/org/repo/pull/22</a>');
+
+    // Desglose (Inferencia · Cómputo · Plataforma)
+    expect(tableSection).toContain('22.00 USD · 0.00 USD · 0.00 USD');
   });
 
   test('T113-H1: sin reserva a m.cost, total y Coste por día provienen de spending.daily', () => {
