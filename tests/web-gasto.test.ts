@@ -266,14 +266,13 @@ describe('Pestaña Gasto en la web (T113)', () => {
 
   test('T113-H1: sin reserva a m.cost, total y Coste por día provienen de spending.daily', () => {
     const today = new Date().toISOString().slice(0, 10);
-    // Intento con gasto desconocido en spending
+    // Intento remoto sin la marca remoteDeclared: m.cost.total es 0.50, pero spending es desconocido
     const itemA = seedItem({
       title: 'Change con gasto no medido en spending',
       date: `${today}T10:00:00.000Z`,
       attemptCosts: [0.50],
       inferenceAttempts: [{
         adapter: 'claude',
-        remoteDeclared: true,
         usage: { effectiveModel: 'm-remoto', costUsd: 0.50 },
       }],
     });
@@ -290,21 +289,67 @@ describe('Pestaña Gasto en la web (T113)', () => {
     const url = new URL(`http://127.0.0.1:4310/metricas?tab=gasto&range=7`);
     const { body } = metricsPage(store, dir, url);
 
-    // Sin reserva a m.cost: el total debe ser «No medido» y no caer a ninguna cifra parcial
+    // Sin reserva a m.cost: el total debe ser «No medido» y no caer a 0.50 USD
     expect(body).toContain('Total: <strong>No medido</strong>');
     expect(body).not.toContain('Total: <strong>0.50 USD</strong>');
+    expect(body).toContain('Subtotal medido: <strong>No medido</strong>');
+    expect(body).not.toContain('Subtotal medido: <strong>0.50 USD</strong>');
 
     // Coste por día debe marcar «No medido» en la fecha con intentos no medidos, no 0.50 USD
     expect(body).toContain(`<th scope="row">${today}</th><td>No medido</td>`);
     expect(body).not.toContain(`<th scope="row">${today}</th><td>0.50 USD</td>`);
+    expect(body).not.toContain('0.50 USD');
   });
 
   test('T113-H2: nada no medido sale como 0.00 en desglose ni en ranking de PRs', () => {
-    // Change histórico sin intentos de cómputo ni plataforma
+    const today = new Date().toISOString().slice(0, 10);
+    const date = `${today}T11:00:00.000Z`;
+
+    // 1. Change histórico sin intentos modernos de cómputo ni plataforma
     seedItem({
       title: 'Change histórico sin cómputo',
       attemptCosts: [0.30],
     });
+
+    // 2. Change moderno con cómputo sin tarifa (incompleto: V3-top)
+    const sinTarifa = seedItem({
+      title: 'Change moderno sin tarifa de cómputo',
+      date,
+      attemptCosts: [0.40],
+      inferenceAttempts: [{
+        adapter: 'claude',
+        usage: { effectiveModel: 'm1', costUsd: 0.40 },
+      }],
+    });
+    store.beginCostAttempt(sinTarifa.activity, {
+      id: 'att-sin-tarifa',
+      rate: { ...costRateAt(dir, date, null), hourlyMicroUsd: null },
+      remote: false,
+      runner: null,
+      adapter: 'claude',
+      legacyCount: 0,
+    });
+    store.finishCostAttempt('att-sin-tarifa', { costUsd: 0.40 }, 100);
+
+    // 3. Change moderno completo medido
+    const completo = seedItem({
+      title: 'Change moderno medido completo',
+      date,
+      attemptCosts: [0.45],
+      inferenceAttempts: [{
+        adapter: 'claude',
+        usage: { effectiveModel: 'm1', costUsd: 0.25 },
+      }],
+    });
+    store.beginCostAttempt(completo.activity, {
+      id: 'att-completo',
+      rate: costRateAt(dir, date, null),
+      remote: false,
+      runner: null,
+      adapter: 'claude',
+      legacyCount: 0,
+    });
+    store.finishCostAttempt('att-completo', { costUsd: 0.25 }, 100);
 
     const url = new URL(`http://127.0.0.1:4310/metricas?tab=gasto&range=7`);
     const { body } = metricsPage(store, dir, url);
@@ -312,10 +357,17 @@ describe('Pestaña Gasto en la web (T113)', () => {
     const tablePart = body.slice(body.indexOf('<caption>Los 20 PR más caros</caption>'));
     const tableSection = tablePart.slice(0, tablePart.indexOf('</table>'));
 
-    // Al no tener coste completo medido, queda fuera del ranking de los 20 PR y no sale 0.00 USD
+    // Los incompletos quedan fuera de la tabla
     expect(tableSection).not.toContain('Change histórico sin cómputo');
-    expect(tableSection).not.toContain('0.00 USD');
-    expect(body).not.toContain('· 0.00 USD ·');
+    expect(tableSection).not.toContain('Change moderno sin tarifa de cómputo');
+
+    // El completo sí entra con su desglose exacto
+    expect(tableSection).toContain('Change moderno medido completo');
+    expect(tableSection).toContain('0.25 USD');
+    expect(tableSection).toContain('0.25 USD · 0.00 USD · 0.00 USD');
+
+    // Ningún componente sin medir entra en el desglose de los 20 PR
+    expect(body).not.toContain('· No medido · No medido');
   });
 
   test('T113-H10: en Los 20 PR más caros solo entran changes con coste completo medido (excluye históricos y parciales)', () => {
