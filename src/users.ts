@@ -8,6 +8,8 @@
  *    y aplica `authorize`. Una revocación que gana la escritura impide la mutación.
  *  - `authorize` comprueba `--write` con `ctx.write`; las funciones de este módulo, que son de dominio, pasan `write: true`
  *    y dejan ese filtro al despacho HTTP/CLI.
+ *  - Tras restaurar cualquier copia, el operador llama a `enterRecovery` antes de abrir el frontal (T120): una copia tomada en mitad
+ *    de una recuperación anterior ya trae designado y «sin diario» hechos, y esa designación no debe valer sin un asiento nuevo.
  */
 import { createHash, randomBytes, randomUUID, timingSafeEqual } from 'node:crypto';
 import { appendFileSync, closeSync, existsSync, fsyncSync, openSync, readFileSync, truncateSync } from 'node:fs';
