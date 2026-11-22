@@ -3,7 +3,7 @@ import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { Store } from '../src/store.ts';
-import { acceptInvitation, bootstrapOwner, enterRecovery, inviteUser, issueSession, listSessions, resolvePrincipal, type Principal, type Role } from '../src/users.ts';
+import { acceptInvitation, bootstrapOwner, createUserKey, listUserKeys, enterRecovery, inviteUser, issueSession, listSessions, resolvePrincipal, type Principal, type Role } from '../src/users.ts';
 import { GithubConnector, identityRoutes, validGithubLogin, GITHUB_ISSUER } from '../src/web-identity.ts';
 import { LoginTransactions, PENDING_LOGIN_MAX, csrfToken } from '../src/web-auth.ts';
 import { CLIENT_ID, CLIENT_SECRET, startFakeGithub, type FakeGithub } from './helpers/fake-github.ts';
@@ -12,8 +12,8 @@ const ORIGIN = 'https://fab.test', HOST = 'fab.test', SECRET = 'secreto-de-servi
 let now: number, dir: string, path: string, store: Store, gh: FakeGithub, routes: ReturnType<typeof identityRoutes>;
 const clock = () => new Date(now);
 const open = () => new Store(path, { clock });
-const mount = (write = true) => { routes = identityRoutes({ store, github: new GithubConnector({ clientId: CLIENT_ID, clientSecret: () => CLIENT_SECRET, publicOrigin: ORIGIN,
-  authorizeUrl: `${gh.url}/login/oauth/authorize`, tokenUrl: `${gh.url}/login/oauth/access_token`, apiBase: `${gh.url}/api` }), publicOrigin: ORIGIN, write, secret: SECRET }); };
+const mount = (write = true, timeoutMs?: number) => { routes = identityRoutes({ store, github: new GithubConnector({ clientId: CLIENT_ID, clientSecret: () => CLIENT_SECRET, publicOrigin: ORIGIN,
+  authorizeUrl: `${gh.url}/login/oauth/authorize`, tokenUrl: `${gh.url}/login/oauth/access_token`, apiBase: `${gh.url}/api`, timeoutMs }), publicOrigin: ORIGIN, write, secret: SECRET }); };
 
 beforeEach(() => {
   now = Date.parse('2026-11-22T10:00:00.000Z');
@@ -487,4 +487,70 @@ test('T119b-H9: el token de prelogin caduca a los 5 minutos en servidor y no se 
   const t2 = /name="pre" value="([0-9a-f]+)"/.exec(await future.text())![1]!;
   now -= 10 * 60_000;
   expect((await call('POST', '/auth/start', { cookie: pair(cookieOf(future, '__Host-fab_pre')), form: { pre: t2 }, ip: '10.0.0.4' })).status).toBe(403);
+});
+
+test('T119b-H8: revocar una clave exige --write', async () => {
+  const o = seedOwner(1);
+  const k = createUserKey(store, o, 'ci', 'read', { write: true });
+  mount(false);
+  const s = pair((await login({ id: 1, login: 'd' })).session);
+  const id = listUserKeys(store, o)[0]!.id;
+  expect(k.key).toBeTruthy();
+  expect((await call('POST', `/cuenta/claves/${id}/revocar`, { cookie: s, form: { csrf: csrfFor(s) } })).status).toBe(403);
+  expect(listUserKeys(store, o)[0]!.revokedAt).toBeFalsy();
+});
+
+test('T119b-H8: el prelogin de un navegador no vale con la cookie de otro', async () => {
+  const a = await call('GET', '/login'), b = await call('GET', '/login');
+  const tokenA = /name="pre" value="([0-9a-f]+)"/.exec(await a.text())![1]!;
+  expect((await call('POST', '/auth/start', { cookie: pair(cookieOf(b, '__Host-fab_pre')), form: { pre: tokenA } })).status).toBe(403);
+  expect((await call('POST', '/auth/start', { cookie: pair(cookieOf(a, '__Host-fab_pre')), form: { pre: tokenA } })).status).toBe(303);
+});
+
+test('T119b-H8: 60 invitaciones por minuto en todo el servidor aunque cada invitador esté bajo su tope', async () => {
+  const o = seedOwner(1);
+  const sessions: { s: string; csrf: string }[] = [];
+  for (let i = 0; i < 7; i++) {
+    acceptInvitation(store, { code: invite(o, 100 + i, 'admin'), issuer: GITHUB_ISSUER, subject: String(100 + i), displayName: `a${i}` });
+    const s = pair((await login({ id: 100 + i, login: `a${i}` }, '', `10.8.0.${i}`)).session);
+    sessions.push({ s, csrf: csrfFor(s) });
+  }
+  gh.users.set('ana', { id: 5, login: 'ana' });
+  let n = 0;
+  for (const { s, csrf } of sessions.slice(0, 6)) for (let i = 0; i < 10; i++, n++) expect((await call('POST', '/equipo/invitaciones', { cookie: s, form: { csrf, login: 'ana', role: 'viewer' } })).status).toBe(200);
+  expect(n).toBe(60);
+  gh.calls.length = 0;
+  const r = await call('POST', '/equipo/invitaciones', { cookie: sessions[6]!.s, form: { csrf: sessions[6]!.csrf, login: 'ana', role: 'viewer' } });
+  expect(r.status).toBe(429); expect(gh.calls.length).toBe(0);
+});
+
+test('T119b-H8: formulario de inicio: solo urlencoded, con Content-Length y cuerpo bajo el tope', async () => {
+  const page = await call('GET', '/login'), pre = pair(cookieOf(page, '__Host-fab_pre')), token = /name="pre" value="([0-9a-f]+)"/.exec(await page.text())![1]!;
+  const ok = { cookie: pre };
+  expect((await call('POST', '/auth/start', { ...ok, form: { pre: token }, headers: { 'content-type': 'text/plain' } })).status).toBe(403); // tipo
+  expect((await call('POST', '/auth/start', { ...ok, form: { pre: token }, headers: { 'content-length': '5000' } })).status).toBe(403); // declarado
+  expect((await call('POST', '/auth/start', { ...ok, form: { pre: token, pad: 'x'.repeat(5000) }, ip: '10.0.0.2' })).status).toBe(403); // real
+  expect((await call('POST', '/auth/start', { ...ok, form: { pre: token }, ip: '10.0.0.3' })).status).toBe(303);
+});
+
+test('T119b-H8: un proveedor que no responde corta en el timeout y da la respuesta pública de siempre', async () => {
+  seedOwner(1); mount(true, 30);
+  gh.fail.hangToken = true;
+  const r = await login({ id: 1, login: 'd' });
+  expect(r.res.status).toBe(403);
+});
+
+test('T119b-H8: un ID de GitHub fuera del rango entero seguro no entra aunque exista una cuenta con ese texto', async () => {
+  const o = seedOwner(1);
+  acceptInvitation(store, { code: invite(o, 2 ** 53), issuer: GITHUB_ISSUER, subject: String(2 ** 53), displayName: 'g' });
+  gh.fail.userId = 2 ** 53;
+  expect((await login({ id: 1, login: 'd' })).res.status).toBe(403);
+});
+
+test('T119b-H8: quien ya tiene cuenta y pega un código de invitación entra y no lo gasta', async () => {
+  const o = seedOwner(1);
+  const code = invite(o, 50, 'viewer');
+  const r = await login({ id: 1, login: 'd' }, code);
+  expect(r.session).toBeTruthy();
+  expect(store.db.query('SELECT consumed_at FROM user_invitations').get()).toEqual({ consumed_at: null });
 });
