@@ -11,7 +11,7 @@ import type { Ui } from '../src/web-changes.ts';
 const who = (role: Role, over: Partial<Principal> = {}): Principal =>
   ({ userId: `u-${role}`, role, issuer: 'github', subject: role, displayName: role, via: 'web', recovery: false, ...over });
 const get = (path: string) => new URL(path, 'https://fab.test');
-const status = (role: Role, path: string) => { const d = authorizeRead(who(role), get(path)); return d.ok ? 200 : d.status; };
+const status = (role: Role, path: string): number => { const d = authorizeRead(who(role), get(path)); return d.ok ? 200 : d.status; };
 
 // Una fila por vista y rol (§4.2): O A M V.
 const MATRIX: [string, [number, number, number, number]][] = [
