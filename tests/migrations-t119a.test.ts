@@ -77,3 +77,13 @@ test('el esquema de identidad impide segundo equipo y cambiar su UUID', () => {
   expect(() => s.db.query(`DELETE FROM team`).run()).toThrow();
   s.close();
 });
+
+test('T119a-H6: un lector abre una base de release sin migrar y lista y verifica las claves locales', () => {
+  const path = join(dir, 'ro.db');
+  releaseDb(path);
+  const ro = new Store(path, { readonly: true });
+  try {
+    expect(ro.listApiKeys().map((k) => k.id)).toEqual(['a1', 'b2']);
+    expect(ro.verifyApiKey(`fabk_a1a1a1a1a1a1_${'A'.repeat(43)}`)).toBeNull(); // no lanza «no such column»
+  } finally { ro.close(); }
+});

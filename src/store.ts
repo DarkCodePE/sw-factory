@@ -1753,7 +1753,7 @@ export class Store {
     if (!this.hasApiKeysTable()) return [];
     return this.db.query<ApiKeyMetadata, []>(
       `SELECT id, name, scope, created_at AS createdAt, created_by AS createdBy, revoked_at AS revokedAt
-       FROM api_keys WHERE user_id IS NULL ORDER BY created_at, name`,
+       FROM api_keys WHERE ${this.localKeys()} ORDER BY created_at, name`,
     ).all();
   }
 
@@ -1775,13 +1775,18 @@ export class Store {
     if (!match || !this.hasApiKeysTable()) return null;
     const [, id, secret] = match;
     const row = this.db.query<ApiKeyIdentity & { hash: string }, [string]>(
-      'SELECT id, name, scope, hash FROM api_keys WHERE id = ? AND revoked_at IS NULL AND user_id IS NULL',
+      `SELECT id, name, scope, hash FROM api_keys WHERE id = ? AND revoked_at IS NULL AND ${this.localKeys()}`,
     ).get(id!);
     if (!row) return null;
     const stored = Buffer.from(row.hash);
     const candidate = Buffer.from(createHash('sha256').update(secret!).digest('hex'));
     if (stored.length !== candidate.length || !timingSafeEqual(stored, candidate)) return null;
     return { id: row.id, name: row.name, scope: row.scope };
+  }
+
+  /** Un lector puede abrir una base de release sin migrar (sin `user_id`): entonces todas las claves son locales. */
+  private localKeys(): string {
+    return this.db.query("SELECT 1 FROM pragma_table_info('api_keys') WHERE name = 'user_id'").get() ? 'user_id IS NULL' : '1 = 1';
   }
 
   private hasApiKeysTable(): boolean {
