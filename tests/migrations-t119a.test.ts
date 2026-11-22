@@ -99,6 +99,16 @@ test('T119a-H15: identity_audit solo admite añadir y marcar exported_at', () =>
   s.close();
 });
 
+test('T119a-H18: INSERT OR REPLACE no reescribe un asiento, ni por seq ni por op_id', () => {
+  const s = new Store(join(dir, 'r.db'));
+  s.db.query(`INSERT INTO identity_audit (op_id, at, actor, actor_source, action, result) VALUES ('o1','t','a','cli','x','ok'), ('o2','t','a','cli','y','ok')`).run();
+  expect(() => s.db.query(`INSERT OR REPLACE INTO identity_audit (seq, op_id, at, actor, actor_source, action, result) VALUES (1,'o9','t','forjado','cli','z','ok')`).run()).toThrow(/solo añadir/);
+  expect(() => s.db.query(`INSERT OR REPLACE INTO identity_audit (op_id, at, actor, actor_source, action, result) VALUES ('o2','t','forjado','cli','z','ok')`).run()).toThrow(/solo añadir/);
+  expect(s.db.query('SELECT seq, op_id, action FROM identity_audit ORDER BY seq').all()).toEqual([{ seq: 1, op_id: 'o1', action: 'x' }, { seq: 2, op_id: 'o2', action: 'y' }]);
+  s.db.query(`INSERT INTO identity_audit (op_id, at, actor, actor_source, action, result) VALUES ('o3','t','a','cli','w','ok')`).run(); // añadir sigue valiendo
+  s.close();
+});
+
 test('T119a-H16: bajo el lock se vuelve a comprobar el registro; si otro escritor aplicó el paso entre medias, no se repite', () => {
   const path = join(dir, 'lock.db');
   const a = new Database(path, { strict: true }), b = new Database(path, { strict: true });

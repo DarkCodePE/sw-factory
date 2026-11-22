@@ -107,6 +107,16 @@ CREATE TRIGGER identity_audit_sin_borrado BEFORE DELETE ON identity_audit
   BEGIN SELECT RAISE(ABORT, 'identity_audit es de solo añadir'); END;`);
     },
   },
+  {
+    // `INSERT OR REPLACE` borra la fila vieja sin disparar el trigger de borrado (sin recursive_triggers): se aborta antes, por `seq` o por `op_id`.
+    id: 't119a-005-auditoria-sin-reemplazo',
+    up(db) {
+      db.exec(`
+CREATE TRIGGER identity_audit_sin_reemplazo BEFORE INSERT ON identity_audit
+  WHEN EXISTS (SELECT 1 FROM identity_audit WHERE op_id = NEW.op_id OR seq = NEW.seq)
+  BEGIN SELECT RAISE(ABORT, 'identity_audit es de solo añadir'); END;`);
+    },
+  },
 ];
 
 /** Aplica los pasos pendientes. Cada uno: BEGIN IMMEDIATE, revalida el registro bajo lock, ejecuta y registra; si falla, rollback. */
