@@ -6,7 +6,7 @@ import { join } from 'node:path';
 import { Store } from '../src/store.ts';
 import { costRateAt } from '../src/attempt-cost.ts';
 import { calculateMetrics } from '../src/metrics.ts';
-import { metricsPage } from '../src/web-metrics.ts';
+import { metricsPage, METRICS_STYLE } from '../src/web-metrics.ts';
 
 let dir: string;
 let store: Store;
@@ -523,5 +523,10 @@ describe('Pestaña Gasto en la web (T113)', () => {
     const modelTableSection = modelTable.slice(0, modelTable.indexOf('</table>'));
     expect(modelTableSection).toContain('No medido');
     expect(modelTableSection).not.toContain('Sin dato');
+  });
+
+  test('T113-H9: enlaces de celda en tablas de métricas cumplen altura mínima de 24px para WCAG 2.5.8', () => {
+    // Los estilos de métricas deben asegurar al menos 24px de altura para los enlaces en celdas (td a)
+    expect(METRICS_STYLE).toContain('td a{display:inline-block;min-height:24px;line-height:24px}');
   });
 });
