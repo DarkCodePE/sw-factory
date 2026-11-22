@@ -68,7 +68,7 @@ const GUARDS: Record<string, (input: Raw, store: Store, stateDir: string, id: st
     if (input.state === 'active' && (ws.envAllow === null || ws.mcpAllow === null)) throw bad('El workstream usa el modo anterior de acceso: declara sus nombres antes de activarlo en el servidor.');
     return input;
   },
-  // §4.1: la pregunta de un change de canal solo acepta el circuito del residente; los roles fab no lo sustituyen.
+  // §4.1: la pregunta de un change de canal solo acepta el circuito del residente; los roles de la factoría no lo sustituyen.
   'questions/answer': (input, store, _stateDir, id) => {
     if (!hasAdmission(store)) return input;
     const adm = new AdmissionDb(store);
