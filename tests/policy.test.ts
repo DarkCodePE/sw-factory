@@ -84,3 +84,23 @@ test('T119a-H12: un rol desconocido deniega aunque empiece como uno válido', ()
     expect(authorize({ role: r as Role }, 'session/list', web), r).toEqual({ ok: false, reason: 'role' });
   }
 });
+
+// Roles de cada acción, copiados de §4.1 del diseño (O owner, A admin, M member, V viewer).
+const SECTION_4_1: Record<string, string> = {
+  'api-keys/create': 'OAM', 'api-keys/revoke': 'OAM', 'activities/review': 'OA', 'automejora/save': 'O', 'benchmarks/cancel': 'OA',
+  'changes/suite-task': 'O', 'changes/retry': 'OA', 'changes/note': 'OAM', 'changes/rename': 'OAM', 'changes/cancel': 'OA',
+  'activities/score': 'OA', 'scorers/backfill': 'OA', 'questions/answer': 'OAM', 'signals/create': 'OAM', 'signals/triage': 'OA',
+  'signals/ignore': 'OA', 'automations/create': 'OA', 'automations/update': 'OA', 'automations/delete': 'OA', 'automations/run': 'OA',
+  'automations/enable': 'OA', 'automations/disable': 'OA', 'workstreams/create': 'O', 'workstreams/settings': 'OA', 'workstreams/state': 'OA',
+  'workstreams/adaptador': 'O', 'workstreams/archive': 'OA', 'workstreams/runner': 'O', 'workstreams/acceso': 'O', 'resident/config': 'O',
+  'jira/import': 'OA', 'runners/create': 'O', 'runners/update': 'O', 'runners/delete': 'O', 'runners/check': 'O',
+  'perfiles/importar': 'O', 'definicion/importar': 'O', 'perfiles/guardar': 'O', 'perfiles/asignar': 'O',
+};
+const LETTER: Record<Role, string> = { owner: 'O', admin: 'A', member: 'M', viewer: 'V' };
+
+test('T119a-H9: los roles de cada acción de la web son los de §4.1', () => {
+  expect(Object.keys(SECTION_4_1).sort()).toEqual(Object.keys(ACTION_CAPABILITIES).sort());
+  for (const [cap, letters] of Object.entries(SECTION_4_1)) {
+    expect(who(cap).map((r) => LETTER[r]).join(''), cap).toBe(letters);
+  }
+});
