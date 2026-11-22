@@ -98,3 +98,28 @@ test('T119a-H15: identity_audit solo admite añadir y marcar exported_at', () =>
   expect(s.db.query('SELECT exported_at FROM identity_audit').get()).toEqual({ exported_at: 't2' });
   s.close();
 });
+
+test('T119a-H16: bajo el lock se vuelve a comprobar el registro; si otro escritor aplicó el paso entre medias, no se repite', () => {
+  const path = join(dir, 'lock.db');
+  const a = new Database(path, { strict: true }), b = new Database(path, { strict: true });
+  a.exec('PRAGMA busy_timeout = 5000');
+  b.exec('PRAGMA busy_timeout = 5000');
+  let runs = 0;
+  const step = [{ id: 'x-lock', up: () => { runs++; } }];
+  // `a` comprueba el registro (aún vacío) y, antes de abrir su transacción, `b` aplica el mismo paso.
+  let fired = false;
+  const racing = new Proxy(a, { get(target, prop) {
+    if (prop !== 'query') { const v = Reflect.get(target, prop); return typeof v === 'function' ? v.bind(target) : v; }
+    return (sql: string) => {
+      const q = target.query(sql);
+      if (!fired && sql.startsWith('SELECT 1 FROM schema_migrations')) {
+        return { get: (...args: unknown[]) => { const r = (q.get as (...x: unknown[]) => unknown)(...args); fired = true; applyMigrations(b, 'n', step); return r; }, run: q.run.bind(q) };
+      }
+      return q;
+    };
+  } }) as Database;
+  applyMigrations(racing, 'n', step);
+  expect(runs).toBe(1);
+  expect(ids(a)).toEqual(['x-lock']);
+  a.close(); b.close();
+});

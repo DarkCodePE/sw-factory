@@ -6,7 +6,7 @@ import { Store, StoreError } from '../src/store.ts';
 import {
   acceptInvitation, bootstrapOwner, changeUserRole, createUserKey, disableUser, findUserByIdentity, inviteUser, issueSession,
   listInvitations, listSessions, listUserKeys, listUsers, resolvePrincipal, revokeInvitation, revokeSession, revokeUserKey, runAs,
-  teamId, verifyUserKey, actorOf, serviceActor, audit, consoleActor, type Principal, type Role,
+  teamId, verifyUserKey, actorOf, serviceActor, audit, consoleActor, enterRecovery, type Principal, type Role,
 } from '../src/users.ts';
 
 let now: number;
@@ -361,4 +361,58 @@ test('T119a-H13: --write en las claves, runAs síncrono, auditoría exportada co
   expect(store.db.query(`SELECT action, result, actor FROM identity_audit WHERE op_id = 'op-ajena-1'`).get())
     .toEqual({ action: 'provider.revoke-failed', result: 'error', actor: 'service:channel:c1' });
   expect(() => audit(store, consoleActor('op'), 'otra', null, undefined, 'ok', 'op-ajena-1')).toThrow();
+});
+
+test('T119a-H16: revalidación por clave, sin credencial y con sesión caducada', () => {
+  const o = owner();
+  const m = member(o, '300');
+  const k = createUserKey(store, m, 'rev', 'decide', { write: true });
+  const viaKey = verifyUserKey(store, k.key)!;
+  expect(runAs(store, viaKey, 'changes/note', { write: true }, () => 'ok')).toBe('ok');
+  // Caducada entre resolver y escribir.
+  const short = createUserKey(store, m, 'corta', 'decide', { write: true, expiresAt: new Date(now + 1000).toISOString() });
+  const pShort = verifyUserKey(store, short.key)!;
+  now += 2000;
+  throwsCode(() => runAs(store, pShort, 'changes/note', { write: true }, () => 1), 'unauthorized');
+  // Revocada entre resolver y escribir.
+  revokeUserKey(store, m, k.id, true);
+  throwsCode(() => runAs(store, viaKey, 'changes/note', { write: true }, () => 1), 'unauthorized');
+  // Principal sin sesión ni clave.
+  throwsCode(() => runAs(store, { ...m, sessionId: undefined, keyId: undefined }, 'session/list', { write: false }, () => 1), 'unauthorized');
+  // Sesión caducada entre resolver y escribir.
+  const p = login(m.userId);
+  now += 13 * 3600_000;
+  throwsCode(() => runAs(store, p, 'session/list', { write: false }, () => 1), 'unauthorized');
+});
+
+test('T119a-H16: id correcto con secreto incorrecto no autentica; tope de claves activas por usuario', () => {
+  const o = owner();
+  const k = createUserKey(store, o, 'real', 'read', { write: true });
+  const wrong = k.key.slice(0, -1) + (k.key.endsWith('A') ? 'B' : 'A');
+  expect(verifyUserKey(store, k.key)).not.toBeNull();
+  expect(verifyUserKey(store, wrong)).toBeNull();
+  for (let i = 1; i < 20; i++) createUserKey(store, o, `k${i}`, 'read', { write: true });
+  throwsCode(() => createUserKey(store, o, 'k-extra', 'read', { write: true }), 'limit_reached');
+});
+
+test('T119a-H16: invitaciones con el emisor dado de baja por SQL y las pendientes al entrar en recuperación no se canjean', () => {
+  const o = owner();
+  const a = member(o, '310', 'admin');
+  const inv = inviteUser(store, a, { expectedIssuer: 'github', expectedSubject: '311', role: 'member' });
+  store.db.query('UPDATE users SET disabled_at = ? WHERE id = ?').run(store.now(), a.userId); // sin pasar por disableUser
+  throwsCode(() => acceptInvitation(store, { code: inv.code, issuer: 'github', subject: '311', displayName: 'x' }), 'forbidden');
+  const inv2 = inviteUser(store, o, { expectedIssuer: 'github', expectedSubject: '312', role: 'member' });
+  enterRecovery(store, 'op', 'x', o.userId);
+  throwsCode(() => acceptInvitation(store, { code: inv2.code, issuer: 'github', subject: '312', displayName: 'x' }), 'forbidden');
+});
+
+test('T119a-H16: Store separa claves locales y de usuario en lista, revocación y nombres', () => {
+  const o = owner();
+  const uk = createUserKey(store, o, 'ci', 'read', { write: true });
+  const local = store.createApiKey('ci', 'read'); // mismo nombre que una de usuario: permitido
+  expect(store.listApiKeys().map((k) => k.id)).toEqual([local.id]);
+  expect(() => store.revokeApiKey(uk.id)).toThrow(/no encontrada/);
+  expect(() => store.revokeApiKey('ci')).not.toThrow(); // por nombre: solo la local
+  expect(verifyUserKey(store, uk.key)).not.toBeNull();
+  expect(store.verifyApiKey(local.key)).toBeNull(); // revocada
 });
