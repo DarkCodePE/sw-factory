@@ -206,10 +206,13 @@ export function identityRoutes(opts: IdentityOptions) {
 
     if (path === '/auth/start' && method === 'POST') {
       if (!originOk(req, publicOrigin)) return plain(403, 'Origen no permitido.');
-      const retry = limiter.hit(`ip:${ip}`, LIMITS.ipPerMin) || limiter.hit('starts', LIMITS.globalStartsPerMin);
+      const retry = limiter.hit(`ip:${ip}`, LIMITS.ipPerMin);
       if (retry) return tooMany(retry);
       const form = await formOf(req), nonce = cookieValue(req, PRELOGIN_COOKIE), pre = form?.get('pre');
       if (!form || !nonce || !pre || !constantEqual(pre, preloginToken(secret, nonce))) return plain(403, 'Petición no válida.');
+      // El global cuenta solo los inicios con prelogin válido: los POST basura no lo agotan.
+      const global = limiter.hit('starts', LIMITS.globalStartsPerMin);
+      if (global) return tooMany(global);
       const invitation = form.get('invitation')?.trim() || undefined;
       if (invitation && invitation.length > 200) return plain(400, 'Petición no válida.');
       const tx = logins.start(invitation);
@@ -218,12 +221,15 @@ export function identityRoutes(opts: IdentityOptions) {
     }
 
     if (path === '/auth/callback' && method === 'GET') {
-      const retry = limiter.hit(`ip:${ip}`, LIMITS.ipPerMin) || limiter.hit('exchanges', LIMITS.globalExchangesPerMin);
+      const retry = limiter.hit(`ip:${ip}`, LIMITS.ipPerMin);
       if (retry) return tooMany(retry); // antes de gastar el código ni de salir a GitHub
       const gone = [clearCookie(LOGIN_COOKIE, 'Lax')];
       const code = url.searchParams.get('code');
       const tx = logins.consume(url.searchParams.get('state'), cookieValue(req, LOGIN_COOKIE));
       if (!tx || !code || code.length > 200 || url.searchParams.get('error')) return loginDenied(gone);
+      // El global mide salidas reales a GitHub: solo cuentan los callbacks con transacción válida.
+      const global = limiter.hit('exchanges', LIMITS.globalExchangesPerMin);
+      if (global) return tooMany(global);
       let who: { subject: string; displayName: string };
       try {
         who = await github.identify(code, tx.verifier, () => audit(store, system, 'login.revoke-failed', null, undefined, 'error'));

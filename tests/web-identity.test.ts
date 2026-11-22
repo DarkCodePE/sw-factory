@@ -205,7 +205,8 @@ test('límite global de inicios: 60 por minuto aunque cambie la IP', async () =>
     const r = await call('POST', '/auth/start', { ip, cookie: pair(cookieOf(page, '__Host-fab_pre')), form: { pre: /name="pre" value="([0-9a-f]+)"/.exec(await page.text())![1]! } });
     expect(r.status).toBe(303);
   }
-  const r = await call('POST', '/auth/start', { ip: '10.9.9.9', form: { pre: 'x' } });
+  const page = await call('GET', '/login', { ip: '10.9.9.9' });
+  const r = await call('POST', '/auth/start', { ip: '10.9.9.9', cookie: pair(cookieOf(page, '__Host-fab_pre')), form: { pre: /name="pre" value="([0-9a-f]+)"/.exec(await page.text())![1]! } });
   expect(r.status).toBe(429);
 });
 
@@ -392,4 +393,26 @@ test('T119b-H2: en recuperación restringida el owner designado entra, /cuenta r
   const cb = await call('GET', `/auth/callback?code=${gh.grant({ id: 1, login: 'd' })}&state=${new URL(second.location).searchParams.get('state')}`, { cookie: `${second.loginCookie}; ${s}`, ip: '10.0.0.3' });
   expect(again.res.status).toBe(200); expect(cb.status).toBe(200); expect(cookieOf(cb, '__Host-fab_session')).toBeTruthy();
   expect((await call('POST', '/logout', { cookie: s, form: { csrf: csrfFor(s) } })).status).toBe(403); // revocar sesión no vale en recuperación: es de la política (T119e)
+});
+
+test('T119b-H3: los intentos basura no agotan los presupuestos globales; solo los canjes y los inicios reales', async () => {
+  seedOwner(1);
+  // 100 callbacks y 100 inicios inválidos desde IP distintas: ninguno gasta el global.
+  for (let i = 0; i < 100; i++) {
+    const ip = `10.2.${Math.floor(i / 10)}.${i % 10}`;
+    expect((await call('GET', '/auth/callback?code=x&state=nope', { ip })).status).toBe(403);
+    expect((await call('POST', '/auth/start', { ip, form: { pre: 'x' } })).status).toBe(403);
+  }
+  // Un login legítimo sigue entrando.
+  expect((await login({ id: 1, login: 'd' }, '', '10.3.0.1')).session).toBeTruthy();
+});
+
+test('T119b-H8: 60 canjes por minuto en todo el servidor; el 61 da 429 sin llamar a GitHub', async () => {
+  seedOwner(1);
+  const t = await startLogin('', '10.5.0.2'), state = new URL(t.location).searchParams.get('state')!; // empezada en otra ventana: no gasta los inicios de la siguiente
+  now += 60_000;
+  for (let i = 0; i < 60; i++) expect((await login({ id: 1, login: 'd' }, '', `10.4.${Math.floor(i / 10)}.${i % 10}`)).res.status).toBe(200);
+  gh.calls.length = 0;
+  const r = await call('GET', `/auth/callback?code=${gh.grant({ id: 1, login: 'd' })}&state=${state}`, { cookie: t.loginCookie, ip: '10.5.0.2' });
+  expect(r.status).toBe(429); expect(gh.calls.length).toBe(0);
 });
