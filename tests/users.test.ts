@@ -311,3 +311,16 @@ test('T119a-H5: una invitación pendiente no sobrevive a la degradación ni a la
   throwsCode(() => acceptInvitation(store, { code: inv2.code, issuer: 'github', subject: '205', displayName: 'x' }), 'forbidden');
   expect(findUserByIdentity(store, 'github', '203')).toBeNull();
 });
+
+test('T119a-H7: la caducidad de una clave se normaliza a UTC y no admite fechas pasadas', () => {
+  const o = owner();
+  throwsCode(() => createUserKey(store, o, 'pasada', 'read', new Date(now - 1000).toISOString()), 'invalid_input');
+  throwsCode(() => createUserKey(store, o, 'mala', 'read', 'no-es-fecha'), 'invalid_input');
+  // 12:00 en +05:00 son las 07:00Z, anterior a «ahora» (10:00Z): no se acepta como si fuera futura.
+  throwsCode(() => createUserKey(store, o, 'zona', 'read', '2026-11-22T12:00:00+05:00'), 'invalid_input');
+  // Un formato libre se guarda en ISO y caduca a su hora real (13:00Z).
+  const k = createUserKey(store, o, 'libre', 'read', '2026-11-22T18:00:00+05:00');
+  expect(store.db.query('SELECT expires_at FROM api_keys WHERE id = ?').get(k.id)).toEqual({ expires_at: '2026-11-22T13:00:00.000Z' });
+  now = Date.parse('2026-11-22T13:00:01.000Z');
+  expect(verifyUserKey(store, k.key)).toBeNull();
+});

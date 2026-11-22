@@ -307,14 +307,17 @@ export interface UserKey { id: string; name: string; scope: 'read' | 'decide'; u
 export function createUserKey(store: Store, p: Principal, name: string, scope: 'read' | 'decide', expiresAt?: string): { id: string; key: string } {
   if (typeof name !== 'string' || !/^[a-z0-9][a-z0-9-]{0,40}$/.test(name)) throw new StoreError('invalid_input', 'nombre de clave API inválido');
   if (scope !== 'read' && scope !== 'decide') throw new StoreError('invalid_input', 'ámbito de clave API inválido');
-  if (expiresAt !== undefined && Number.isNaN(Date.parse(expiresAt))) throw new StoreError('invalid_input', 'caducidad inválida');
+  // Se guarda en ISO UTC: la comparación con `store.now()` es de texto y una zona u otro formato la falsearía.
+  const expires = expiresAt === undefined ? null : new Date(expiresAt);
+  if (expires && Number.isNaN(expires.getTime())) throw new StoreError('invalid_input', 'caducidad inválida');
   return runAs(store, p, 'api-key/create', { write: true }, (me) => {
+    if (expires && expires.toISOString() <= store.now()) throw new StoreError('invalid_input', 'la caducidad ya pasó');
     if (store.db.query('SELECT 1 FROM api_keys WHERE user_id = ? AND name = ?').get(me.userId, name)) throw new StoreError('conflict', 'ya tienes una clave con ese nombre');
     const { n } = store.db.query('SELECT COUNT(*) AS n FROM api_keys WHERE user_id = ? AND revoked_at IS NULL').get(me.userId) as { n: number };
     if (n >= API_KEY_ACTIVE_LIMIT) throw new StoreError('limit_reached', `ya hay ${API_KEY_ACTIVE_LIMIT} claves API activas`);
     const id = randomBytes(6).toString('hex'), secret = randomBytes(32).toString('base64url');
     store.db.query(`INSERT INTO api_keys (id, name, scope, hash, created_at, created_by, user_id, expires_at) VALUES (?,?,?,?,?,?,?,?)`)
-      .run(id, name, scope, sha(secret), store.now(), `user:${me.userId}`, me.userId, expiresAt ?? null);
+      .run(id, name, scope, sha(secret), store.now(), `user:${me.userId}`, me.userId, expires?.toISOString() ?? null);
     audit(store, actorOf(me), 'key.create', id, { scope });
     return { id, key: `fabk_${id}_${secret}` };
   });
