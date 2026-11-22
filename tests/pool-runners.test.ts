@@ -436,3 +436,12 @@ test('T109-H1: un cost-rates.json inválido para el pool antes de reclamar y no 
   expect(store.listActivities({ changeId: c.id }).map(a => [a.status, a.retryCount])).toEqual([['pending', 0]]);
   expect(store.getChange(c.id).status).not.toBe('failed');
 });
+
+test('T109-N2: el fichero se rompe con el pool en marcha y el siguiente reclamo no se hace ni gasta reintentos', async () => {
+  const ws = workstream();
+  const c = store.createChange(ws.id, 'fix', 'desc');
+  const log = (m: string) => { if (m.includes('investigation done')) writeFileSync(join(dir, 'cost-rates.json'), 'no es json'); };
+  await expect(runPool(store, opts(ws.id, { log }))).rejects.toThrow();
+  expect(store.listActivities({ changeId: c.id }).map(a => [a.kind, a.status, a.retryCount]))
+    .toEqual([['investigation', 'completed', 0], ['implementation', 'pending', 0]]);
+});
