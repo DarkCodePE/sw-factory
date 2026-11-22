@@ -17,7 +17,7 @@ const mount = (write = true) => { routes = identityRoutes({ store, github: new G
 
 beforeEach(() => {
   now = Date.parse('2026-11-22T10:00:00.000Z');
-  dir = mkdtempSync(join(tmpdir(), 'fab-ident-')); path = join(dir, 'f.db'); store = open(); gh = startFakeGithub(); mount();
+  dir = mkdtempSync(join(tmpdir(), 'fab-ident-')); path = join(dir, 'f.db'); store = open(); gh = startFakeGithub(`${ORIGIN}/auth/callback`); mount();
 });
 afterEach(() => { gh.stop(); store.close(); rmSync(dir, { recursive: true, force: true }); });
 
@@ -48,7 +48,7 @@ async function startLogin(invitation = '', ip = '10.0.0.1') {
 async function login(account: { id: number; login: string }, invitation = '', ip = '10.0.0.1') {
   const s = await startLogin(invitation, ip);
   const state = new URL(s.location).searchParams.get('state')!;
-  const res = await call('GET', `/auth/callback?code=${gh.grant(account)}&state=${state}`, { cookie: s.loginCookie, ip });
+  const res = await call('GET', `/auth/callback?code=${await gh.authorize(s.location, account)}&state=${state}`, { cookie: s.loginCookie, ip });
   return { res, state, loginCookie: s.loginCookie, session: cookieOf(res, '__Host-fab_session') };
 }
 function seedOwner(id = 1): Principal {
@@ -76,7 +76,7 @@ test('login: redirect exacto, scope vacío, PKCE S256, cookie Lax y sesión con 
   expect(lc).toMatch(/Secure/); expect(lc).toMatch(/HttpOnly/); expect(lc).toMatch(/SameSite=Lax/); expect(lc).toMatch(/Path=\//); expect(lc).not.toMatch(/Domain/);
 
   const state = u.searchParams.get('state')!;
-  const cb = await call('GET', `/auth/callback?code=${gh.grant({ id: 1, login: 'duena' })}&state=${state}`, { cookie: s.loginCookie });
+  const cb = await call('GET', `/auth/callback?code=${await gh.authorize(s.location, { id: 1, login: 'duena' })}&state=${state}`, { cookie: s.loginCookie });
   expect(cb.status).toBe(200);
   const sc = cookieOf(cb, '__Host-fab_session')!;
   expect(sc).toMatch(/Secure/); expect(sc).toMatch(/HttpOnly/); expect(sc).toMatch(/SameSite=Strict/); expect(sc).toMatch(/Path=\//); expect(sc).not.toMatch(/Domain/);
@@ -175,7 +175,7 @@ test('rotación: una sesión que llega al callback se revoca y se emite otra', a
   const o = seedOwner(1);
   const s = await startLogin(), state = new URL(s.location).searchParams.get('state')!;
   const old = issueSession(store, o.userId, 'web');
-  const cb = await call('GET', `/auth/callback?code=${gh.grant({ id: 1, login: 'd' })}&state=${state}`, { cookie: `${s.loginCookie}; __Host-fab_session=${old.token}` });
+  const cb = await call('GET', `/auth/callback?code=${await gh.authorize(s.location, { id: 1, login: 'd' })}&state=${state}`, { cookie: `${s.loginCookie}; __Host-fab_session=${old.token}` });
   const fresh = pair(cookieOf(cb, '__Host-fab_session')).split('=')[1]!;
   expect(fresh).not.toBe(old.token);
   expect(resolvePrincipal(store, old.token, 'web')).toBeNull();
@@ -367,7 +367,7 @@ test('T119b-H1: los formularios funcionan con el Origin que pone un navegador se
   const start = await call('POST', '/auth/start', { cookie: pre, form: { pre: token }, origin: browserOrigin(page) });
   expect(start.status).toBe(303);
   const state = new URL(start.headers.get('location')!).searchParams.get('state')!;
-  const cb = await call('GET', `/auth/callback?code=${gh.grant({ id: 1, login: 'd' })}&state=${state}`, { cookie: pair(cookieOf(start, '__Host-fab_login')) });
+  const cb = await call('GET', `/auth/callback?code=${await gh.authorize(start.headers.get('location')!, { id: 1, login: 'd' })}&state=${state}`, { cookie: pair(cookieOf(start, '__Host-fab_login')) });
   // Logout desde /cuenta: igual.
   const s = pair(cookieOf(cb, '__Host-fab_session'));
   const cuenta = await call('GET', '/cuenta', { cookie: s });
@@ -390,7 +390,7 @@ test('T119b-H2: en recuperación restringida el owner designado entra, /cuenta r
   const again = await login({ id: 1, login: 'd' }, '', '10.0.0.2');
   const s = pair(a.session);
   const second = await startLogin('', '10.0.0.3');
-  const cb = await call('GET', `/auth/callback?code=${gh.grant({ id: 1, login: 'd' })}&state=${new URL(second.location).searchParams.get('state')}`, { cookie: `${second.loginCookie}; ${s}`, ip: '10.0.0.3' });
+  const cb = await call('GET', `/auth/callback?code=${await gh.authorize(second.location, { id: 1, login: 'd' })}&state=${new URL(second.location).searchParams.get('state')}`, { cookie: `${second.loginCookie}; ${s}`, ip: '10.0.0.3' });
   expect(again.res.status).toBe(200); expect(cb.status).toBe(200); expect(cookieOf(cb, '__Host-fab_session')).toBeTruthy();
   expect((await call('POST', '/logout', { cookie: s, form: { csrf: csrfFor(s) } })).status).toBe(403); // revocar sesión no vale en recuperación: es de la política (T119e)
 });
@@ -412,7 +412,35 @@ test('T119b-H8: 60 canjes por minuto en todo el servidor; el 61 da 429 sin llama
   const t = await startLogin('', '10.5.0.2'), state = new URL(t.location).searchParams.get('state')!; // empezada en otra ventana: no gasta los inicios de la siguiente
   now += 60_000;
   for (let i = 0; i < 60; i++) expect((await login({ id: 1, login: 'd' }, '', `10.4.${Math.floor(i / 10)}.${i % 10}`)).res.status).toBe(200);
+  const code = await gh.authorize(t.location, { id: 1, login: 'd' });
   gh.calls.length = 0;
-  const r = await call('GET', `/auth/callback?code=${gh.grant({ id: 1, login: 'd' })}&state=${state}`, { cookie: t.loginCookie, ip: '10.5.0.2' });
+  const r = await call('GET', `/auth/callback?code=${code}&state=${state}`, { cookie: t.loginCookie, ip: '10.5.0.2' });
   expect(r.status).toBe(429); expect(gh.calls.length).toBe(0);
+});
+
+test('T119b-H4: el GitHub falso comprueba PKCE y redirect_uri como el real', async () => {
+  const s = await startLogin();
+  const code = await gh.authorize(s.location, { id: 1, login: 'd' });
+  const exchange = (body: Record<string, unknown>) => fetch(`${gh.url}/login/oauth/access_token`, { method: 'POST', headers: { 'content-type': 'application/json' },
+    body: JSON.stringify({ client_id: CLIENT_ID, client_secret: CLIENT_SECRET, code, ...body }) }).then(r => r.json() as Promise<{ access_token?: string }>);
+  const verifier = 'x'.repeat(43), uri = `${ORIGIN}/auth/callback`;
+  expect((await exchange({ code_verifier: verifier, redirect_uri: uri })).access_token).toBeUndefined(); // verificador que no corresponde al challenge
+  expect((await exchange({ code_verifier: 'otro', redirect_uri: `${ORIGIN}/otra` })).access_token).toBeUndefined();
+  // El authorize con otro redirect o sin S256 se rechaza.
+  const bad = new URL(s.location); bad.searchParams.set('redirect_uri', `${ORIGIN}/otra`);
+  expect((await fetch(bad, { redirect: 'manual' })).status).toBe(400);
+  const plainMethod = new URL(s.location); plainMethod.searchParams.set('code_challenge_method', 'plain');
+  expect((await fetch(plainMethod, { redirect: 'manual' })).status).toBe(400);
+});
+
+test('T119b-H4: resolveLogin va con las credenciales de la aplicación y una cuota agotada es «inténtalo más tarde», no «usuario inexistente»', async () => {
+  seedOwner(1);
+  const s = pair((await login({ id: 1, login: 'd' })).session), csrf = csrfFor(s);
+  gh.users.set('ana', { id: 5, login: 'ana' }); gh.calls.length = 0;
+  expect((await call('POST', '/equipo/invitaciones', { cookie: s, form: { csrf, login: 'ana', role: 'member' } })).status).toBe(200);
+  expect(gh.calls.find(c => c.path === '/api/users/ana')!.auth).toBe(`Basic ${Buffer.from(`${CLIENT_ID}:${CLIENT_SECRET}`).toString('base64')}`);
+  gh.fail.quota = true;
+  const r = await call('POST', '/equipo/invitaciones', { cookie: s, form: { csrf, login: 'ana', role: 'member' } });
+  expect(r.status).toBe(503); expect(r.headers.get('retry-after')).toBeTruthy();
+  expect(store.db.query('SELECT COUNT(*) AS n FROM user_invitations').get()).toEqual({ n: 1 });
 });

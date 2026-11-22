@@ -36,6 +36,8 @@ const GH = { authorizeUrl: 'https://github.com/login/oauth/authorize', tokenUrl:
 export const validGithubLogin = (v: unknown): v is string => typeof v === 'string' && /^[A-Za-z0-9](?:[A-Za-z0-9]|-(?=[A-Za-z0-9])){0,38}$/.test(v) && v.length <= 39;
 
 export class GithubError extends Error {}
+/** GitHub respondió con cuota agotada (403/429): se reintenta más tarde, no es un usuario inexistente. */
+export class GithubQuotaError extends GithubError {}
 
 export class GithubConnector {
   readonly redirectUri: string;
@@ -90,10 +92,16 @@ export class GithubConnector {
     if (res.status !== 204) throw new GithubError('revocación rechazada');
   }
 
-  /** Resuelve un login visible a su ID numérico estable. El login debe haberse validado antes: no sale a red con otra cosa. */
+  /**
+   * Resuelve un login visible a su ID numérico estable. El login debe haberse validado antes: no sale a red con otra cosa.
+   * Va con las credenciales de la aplicación (Basic) para no compartir la cuota anónima de GitHub (~60/h por IP) con el resto de la máquina.
+   * [I] No se probó contra GitHub real: si GitHub ignora esta cabecera, la cuota anónima sigue aplicando y se nota como `GithubQuotaError`.
+   */
   async resolveLogin(login: string): Promise<{ subject: string; login: string }> {
     if (!validGithubLogin(login)) throw new GithubError('login no válido');
-    const res = await this.call(`${this.urls.apiBase}/users/${login}`, { headers: { accept: 'application/json' } });
+    const basic = Buffer.from(`${this.cfg.clientId}:${this.cfg.clientSecret()}`).toString('base64');
+    const res = await this.call(`${this.urls.apiBase}/users/${login}`, { headers: { accept: 'application/json', authorization: `Basic ${basic}` } });
+    if (res.status === 403 || res.status === 429) throw new GithubQuotaError('cuota de GitHub agotada');
     if (!res.ok) throw new GithubError('usuario no encontrado');
     const user = await res.json() as { login?: unknown };
     return { subject: GithubConnector.id(user), login: typeof user.login === 'string' ? user.login : login };
@@ -301,7 +309,10 @@ export function identityRoutes(opts: IdentityOptions) {
         const inv = inviteUser(store, g.p, { expectedIssuer: GITHUB_ISSUER, expectedSubject: who.subject, role });
         return page('Invitación creada', `<p>${esc(who.login)} · ID de GitHub ${esc(who.subject)} · rol ${esc(role)}. Caduca ${esc(inv.expiresAt)}.</p>
           <p>Código (se muestra una vez, entrégalo fuera de banda): <code>${esc(inv.code)}</code></p>`);
-      } catch (e) { return e instanceof StoreError ? refused(e) : plain(502, 'No se pudo resolver el usuario.'); }
+      } catch (e) {
+        if (e instanceof GithubQuotaError) return plain(503, 'GitHub no responde ahora. Inténtalo más tarde.', { 'retry-after': '60' });
+        return e instanceof StoreError ? refused(e) : plain(502, 'No se pudo resolver el usuario.');
+      }
     }
 
     return plain(404, 'No encontrado.');
