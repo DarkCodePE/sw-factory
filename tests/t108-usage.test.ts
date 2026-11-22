@@ -123,3 +123,14 @@ test('T108 H2: rechaza finales duplicados y agy solo acepta el resultado tras in
   expect(parseGoogleJsonl(early)).toBeNull();
   expect(parseGoogleJsonl(early + '\n' + agy)).toEqual(parseGoogleJsonl(agy));
 });
+
+test('T108 H7: Codex suma turnos medidos e ignora un cierre sin usage', () => {
+  const completion = JSON.stringify({ type: 'turn.completed', usage: {
+    input_tokens: 30, output_tokens: 7, cached_input_tokens: 5, cache_write_input_tokens: 2,
+  } });
+  const stream = [codex, '{"type":"turn.started"}', completion,
+    '{"type":"turn.started"}', '{"type":"turn.completed"}'].join('\n');
+  const parsed = getAgent('codex').parse?.(stream);
+  expect(parsed?.usage).toEqual({ inputTokens: 150, outputTokens: 17, cacheReadTokens: 25, cacheWriteTokens: 2 });
+  expect(parsed?.text).toBe('STATUS: done\nInforme');
+});

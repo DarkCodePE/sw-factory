@@ -51,7 +51,7 @@ export function parseClaudeStream(stdout: string): { result: AgentOutput | null;
 }
 
 export function parseCodexJsonl(stdout: string): AgentOutput | null {
-  let text = '', structured = false, turnOpen = false, usage: Record<string, unknown> | undefined;
+  let text = '', structured = false, turnOpen = false, usage: AgentUsage | undefined;
   for (const frame of frames(stdout)) {
     if (frame.type === 'thread.started') structured = true;
     if (!structured) continue;
@@ -64,12 +64,20 @@ export function parseCodexJsonl(stdout: string): AgentOutput | null {
     if (frame.type === 'turn.completed') {
       if (!turnOpen) return { text: '' };
       turnOpen = false;
-      usage = record(frame.usage);
+      const counters = record(frame.usage);
+      if (!counters) continue;
+      const measured = {
+        inputTokens: tokenCount(counters.input_tokens), outputTokens: tokenCount(counters.output_tokens),
+        cacheReadTokens: tokenCount(counters.cached_input_tokens), cacheWriteTokens: tokenCount(counters.cache_write_input_tokens),
+      };
+      if (!usage) { usage = measured; continue; }
+      for (const key of ['inputTokens', 'outputTokens', 'cacheReadTokens', 'cacheWriteTokens'] as const) {
+        const total = usage[key], increment = measured[key];
+        usage[key] = total === undefined || increment === undefined ? undefined : tokenCount(total + increment);
+      }
     }
   }
-  return structured ? output(text, { inputTokens: tokenCount(usage?.input_tokens),
-    outputTokens: tokenCount(usage?.output_tokens), cacheReadTokens: tokenCount(usage?.cached_input_tokens),
-    cacheWriteTokens: tokenCount(usage?.cache_write_input_tokens) }) : null;
+  return structured ? output(text, usage) : null;
 }
 
 export function parseGoogleJsonl(stdout: string): AgentOutput | null {
