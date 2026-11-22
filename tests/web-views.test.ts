@@ -5,7 +5,7 @@ import { join } from 'node:path';
 import { Store } from '../src/store.ts';
 import { authorize, READ_CAPABILITIES, ROLES, type Role } from '../src/policy.ts';
 import type { Principal } from '../src/users.ts';
-import { authorizeRead, configViewFor, readCapability, structuredActivityPage, structuredChangePage, structuredSignalsPage, structuredWorkstreamsPage, visiblePaths } from '../src/web-views.ts';
+import { authorizeRead, configViewFor, readCapability, structuredActivityPage, structuredChangePage, structuredSignalsPage, structuredWorkstreamsPage, visiblePaths, PUBLIC_PATHS } from '../src/web-views.ts';
 import type { Ui } from '../src/web-changes.ts';
 import { workstreamsBody } from '../src/web-ws.ts';
 
@@ -69,9 +69,20 @@ test('D-F: web y CLI deciden igual cada lectura y cada rol; toda capacidad de ru
 test('inventario: todo GET literal de web.ts y su lista de activos tiene correspondencia o es un activo público', () => {
   const src = readFileSync(join(import.meta.dir, '../src/web.ts'), 'utf8');
   const literals = [...src.matchAll(/pathname === '(\/[^']*)'/g)].map(m => m[1]!);
-  const publicOnes = new Set(['/auth', '/style.css', '/poll.js', '/definition', '/healthz', '/_test/origin']); // fuera de la sesión o de la lectura
+  const publicOnes = new Set([...PUBLIC_PATHS, '/auth', '/healthz', '/_test/origin']); // fuera de la sesión o de la lectura
   expect(literals.length).toBeGreaterThan(8);
   for (const p of literals) if (!publicOnes.has(p)) expect(readCapability(get(p)), p).not.toBeNull();
+});
+
+test('H3: PUBLIC_PATHS cubre los activos de READ_ASSETS y los de web.ts, y ninguno tiene capacidad', () => {
+  const src = readFileSync(join(import.meta.dir, '../src/web.ts'), 'utf8');
+  const assets = [...src.slice(src.indexOf('const READ_ASSETS')).split('\n]);')[0]!.matchAll(/\['(\/[^']+)', \{/g)].map(m => m[1]!);
+  expect(assets.length).toBe(6);
+  for (const a of [...assets, '/style.css', '/poll.js', '/definition']) expect(PUBLIC_PATHS, a).toContain(a);
+  for (const p of PUBLIC_PATHS) expect(readCapability(get(p)), p).toBeNull(); // se sirven antes de authorizeRead
+  // Rutas por prefijo o regex: una nueva no puede quedar sin capacidad.
+  for (const m of src.matchAll(/pathname\.startsWith\('(\/[^']*)'\)/g)) expect(readCapability(get(`${m[1]!.replace(/\/$/, '')}/x`)), m[1]).not.toBeNull();
+  expect([...src.matchAll(/\.exec\(url\.pathname\)/g)].length).toBe(2); // si aparece otra, revisa ROUTES
 });
 
 test('visiblePaths: el menú del viewer omite configuración y claves; el del owner las lista', () => {

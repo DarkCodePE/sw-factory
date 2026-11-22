@@ -34,6 +34,9 @@ const ROUTES: [RegExp, Cap][] = [
 /** Rutas con vista estructurada para V (§4.2). Una ruta sin ella da 403 a V en vez de servirse tal cual (T119d-H1). */
 const STRUCTURED: RegExp[] = [/^\/(signals|workstreams)$/, /^\/(changes|activities)\/[^/]+$/];
 
+/** Activos y redirecciones que `web.ts` sirve sin `authorizeRead` (van antes: sin ellos las páginas salen sin CSS ni JS). */
+export const PUBLIC_PATHS: readonly string[] = ['/style.css', '/poll.js', '/automation-editor.js', '/metrics.css', '/inbox.js', '/theme.js', '/sidebar.js', '/notify.js', '/definition'];
+
 /** Capacidad que exige un GET, o null si la ruta no está en el inventario. */
 export function readCapability(url: URL): string | null {
   for (const [re, cap] of ROUTES) if (re.test(url.pathname)) return typeof cap === 'function' ? cap(url) : cap;
