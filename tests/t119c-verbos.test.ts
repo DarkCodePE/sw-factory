@@ -121,12 +121,12 @@ test('parseVerb de los verbos nuevos', () => {
 });
 
 // Huecos de test de la segunda pasada (V13, V14, V15, V19, V20): las lecturas redactan secretos, acotan `limit` y no sacan la explicación del juez.
-const SECRET = 'password=SUPER-SECRETO-1234';
+const CANARIO = 'password=SUPER-SECRETO-1234';
 test('lecturas nuevas: redactan un secreto en el título de una señal, en un evento y en el resumen de validación', async () => {
-  c.store.addSignal(ws.slug, `idea ${SECRET}`, 'b');
-  c.store.event(ws.id, 'info', `nota ${SECRET}`);
+  c.store.addSignal(ws.slug, `idea ${CANARIO}`, 'b');
+  c.store.event(ws.id, 'info', `nota ${CANARIO}`);
   const act = c.store.listActivities({ changeId })[0]!.id;
-  c.store.db.query("UPDATE activities SET validator = 'qa', status = 'completed', review_status = 'commented', review_comment = ? WHERE id = ?").run(SECRET, act);
+  c.store.db.query("UPDATE activities SET validator = 'qa', status = 'completed', review_status = 'commented', review_comment = ? WHERE id = ?").run(CANARIO, act);
   for (const path of [`/signals?ws=${ws.slug}`, `/events?ws=${ws.slug}`, `/validate/${changeId}`]) {
     const text = await (await read('owner', path)).text();
     expect([path, text.includes('SUPER-SECRETO')]).toEqual([path, false]);
