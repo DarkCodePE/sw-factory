@@ -109,6 +109,14 @@ test('T119a-H18: INSERT OR REPLACE no reescribe un asiento, ni por seq ni por op
   s.close();
 });
 
+test('M14b: el trigger de solo añadir cubre también detail y object', () => {
+  const s = new Store(join(dir, 'd.db'));
+  s.db.query(`INSERT INTO identity_audit (op_id, at, actor, actor_source, action, object, detail, result) VALUES ('o1','t','a','cli','x','obj','{}','ok')`).run();
+  expect(() => s.db.query(`UPDATE identity_audit SET detail = '{"a":1}'`).run()).toThrow(/solo añadir/);
+  expect(() => s.db.query(`UPDATE identity_audit SET object = 'otro'`).run()).toThrow(/solo añadir/);
+  s.close();
+});
+
 test('T119a-H16: bajo el lock se vuelve a comprobar el registro; si otro escritor aplicó el paso entre medias, no se repite', () => {
   const path = join(dir, 'lock.db');
   const a = new Database(path, { strict: true }), b = new Database(path, { strict: true });
