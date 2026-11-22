@@ -355,23 +355,31 @@ function readJournal(path: string): JournalLine[] {
   return readFileSync(path, 'utf8').split('\n').filter(Boolean).map((l) => JSON.parse(l) as JournalLine);
 }
 
-/** Vuelca los asientos pendientes con secuencia y cadena de hashes. Idempotente: reanuda desde la última secuencia del fichero. */
+/**
+ * Vuelca los asientos pendientes con la secuencia propia del diario y la cadena de hashes. Cada asiento se identifica por su `op_id`,
+ * no por el `seq` local: una base restaurada numera desde el corte y el diario ya va más lejos. Idempotente tras una caída entre
+ * escribir y marcar.
+ */
 export function exportIdentityJournal(store: Store, path: string): { exported: number; lastSeq: number } {
-  const lines = readJournal(path);
-  let last = lines.at(-1)?.seq ?? 0, prev = lines.at(-1)?.hash ?? ZERO, exported = 0;
-  const rows = store.db.query('SELECT * FROM identity_audit ORDER BY seq').all() as Row[];
-  for (const r of rows) {
-    const seq = r.seq as number;
-    if (seq <= last) continue;
-    const body = { seq, opId: r.op_id as string, at: r.at as string, actor: r.actor as string, actorUserId: (r.actor_user_id as string | null) ?? null,
-      actorSource: r.actor_source as string, action: r.action as string, object: (r.object as string | null) ?? null,
-      detail: r.detail ? JSON.parse(r.detail as string) : null, result: r.result as string, prev };
-    const hash = lineHash(body);
-    appendFileSync(path, JSON.stringify({ ...body, hash }) + '\n', { mode: 0o600 });
-    prev = hash; last = seq; exported++;
-  }
-  store.db.query('UPDATE identity_audit SET exported_at = COALESCE(exported_at, ?) WHERE seq <= ?').run(store.now(), last);
-  return { exported, lastSeq: last };
+  return store.withRetry(() => {
+    const lines = readJournal(path);
+    let last = lines.at(-1)?.seq ?? 0, prev = lines.at(-1)?.hash ?? ZERO, exported = 0;
+    const known = new Set(lines.map((l) => l.opId));
+    const mark = store.db.query('UPDATE identity_audit SET exported_at = ? WHERE op_id = ? AND exported_at IS NULL');
+    for (const r of store.db.query('SELECT * FROM identity_audit WHERE exported_at IS NULL ORDER BY seq').all() as Row[]) {
+      const opId = r.op_id as string;
+      if (!known.has(opId)) {
+        const body = { seq: last + 1, opId, at: r.at as string, actor: r.actor as string, actorUserId: (r.actor_user_id as string | null) ?? null,
+          actorSource: r.actor_source as string, action: r.action as string, object: (r.object as string | null) ?? null,
+          detail: r.detail ? JSON.parse(r.detail as string) : null, result: r.result as string, prev };
+        const hash = lineHash(body);
+        appendFileSync(path, JSON.stringify({ ...body, hash }) + '\n', { mode: 0o600 });
+        prev = hash; last = body.seq; exported++;
+      }
+      mark.run(store.now(), opId);
+    }
+    return { exported, lastSeq: last };
+  });
 }
 
 /** Comprueba la cadena y la secuencia. Un hueco o un hash roto no se arreglan solos: lo resuelve una revisión conservadora. */

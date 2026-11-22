@@ -120,3 +120,30 @@ test('un diario con la cadena rota no se aplica; fuera de recuperación tampoco'
   expect(code(() => applyJournalToRestored(store, 'op', j))).toBe('conflict');
   expect(getUser(store, o.id)!.disabledAt).toBeNull();
 });
+
+test('T119a-H1: tras restaurar, los asientos nuevos de la base restaurada llegan al diario y no se marcan sin escribirse', () => {
+  const j = join(dir, 'identity.jsonl');
+  const backup = join(dir, 'backup.db');
+  const o = bootstrapOwner(store, { issuer: 'github', subject: '1', displayName: 'A', operator: 'op' });
+  const owner = login(store, o.id);
+  const first = add(store, owner, 'member');
+  exportIdentityJournal(store, j);
+  store.db.exec('PRAGMA wal_checkpoint(FULL)');
+  copyFileSync(store.dbPath, backup); // corte
+  for (let i = 0; i < 3; i++) add(store, owner, 'viewer'); // el diario llega más lejos que la copia
+  disableUser(store, owner, first);
+  const before = exportIdentityJournal(store, j).lastSeq;
+
+  const restored = new Store(backup);
+  try {
+    enterRecovery(restored, 'op', 'restauración de prueba');
+    const pending = (restored.db.query('SELECT COUNT(*) n FROM identity_audit WHERE exported_at IS NULL').get() as { n: number }).n;
+    expect(pending).toBe(1);
+    const r = exportIdentityJournal(restored, j);
+    expect(r.exported).toBe(1);
+    expect(r.lastSeq).toBe(before + 1);
+    expect(verifyIdentityJournal(j)).toEqual({ ok: true, lastSeq: before + 1, gaps: [], brokenAt: null });
+    expect(readFileSync(j, 'utf8')).toContain('recovery.enter');
+    expect(exportIdentityJournal(restored, j).exported).toBe(0);
+  } finally { restored.close(); }
+});
