@@ -113,6 +113,9 @@ function spending(m: M): string {
     ? `Subtotal medido ${money(measuredUsd)} · ${unknownCount} ${unknownCount === 1 ? 'intento' : 'intentos'} sin coste completo medido`
     : `${unknownCount} intentos sin coste medido`;
 
+  const distinctRates = [...new Set(s.attempts.map(a => a.rateVersion).filter((v): v is string => Boolean(v)))].sort();
+  const rateNote = distinctRates.length ? `Tarifas aplicadas: ${distinctRates.join(', ')}` : undefined;
+
   const costCard = card({
     id: 'cost',
     title: 'Coste por día',
@@ -123,6 +126,7 @@ function spending(m: M): string {
     series: [{ label: 'Coste', values: s.daily.total, missing: i => s.daily.hasAttempts[i] ? 'No medido' : 'Sin datos' }],
     fmt: money,
     tableCaption: 'Coste por día',
+    tableNote: rateNote,
   });
 
   const dimCard = (opts: {

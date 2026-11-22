@@ -430,4 +430,55 @@ describe('Pestaña Gasto en la web (T113)', () => {
     expect(body).not.toContain('0.75 USD');
     expect(body).not.toContain('0,75 USD');
   });
+
+  test('T113-H6: referencia de tarifa versión#hash12 visible en tabla plegada de Coste por día', () => {
+    const today = new Date().toISOString().slice(0, 10);
+    const date = `${today}T10:00:00.000Z`;
+    const item1 = seedItem({
+      title: 'Tarifa con hash',
+      date,
+      attemptCosts: [0.10],
+      inferenceAttempts: [{
+        adapter: 'native',
+        usage: { effectiveModel: 'modelo-nuevo', costUsd: 0.10 },
+      }],
+    });
+    store.beginCostAttempt(item1.activity, {
+      id: 'att-h6-1',
+      rate: { ...costRateAt(dir, date, null), version: 'v2#0123456789ab' },
+      remote: false,
+      runner: null,
+      adapter: 'native',
+      legacyCount: 0,
+    });
+    store.finishCostAttempt('att-h6-1', { costUsd: 0.10, effectiveModel: 'modelo-nuevo' }, 100);
+
+    const item2 = seedItem({
+      title: 'Tarifa sin hash',
+      date,
+      attemptCosts: [0.20],
+      inferenceAttempts: [{
+        adapter: 'native',
+        usage: { effectiveModel: 'modelo-antiguo', costUsd: 0.20 },
+      }],
+    });
+    store.beginCostAttempt(item2.activity, {
+      id: 'att-h6-2',
+      rate: { ...costRateAt(dir, date, null), version: 'v1' },
+      remote: false,
+      runner: null,
+      adapter: 'native',
+      legacyCount: 0,
+    });
+    store.finishCostAttempt('att-h6-2', { costUsd: 0.20, effectiveModel: 'modelo-antiguo' }, 100);
+
+    const url = new URL(`http://127.0.0.1:4310/metricas?tab=gasto&range=7`);
+    const { body } = metricsPage(store, dir, url);
+
+    const costCard = body.slice(body.indexOf('aria-labelledby="t-cost"'));
+    const costCardSection = costCard.slice(0, costCard.indexOf('</section>'));
+
+    // Opción A mínima: una línea en la tabla plegada de Coste por día con las referencias distintas del rango
+    expect(costCardSection).toContain('Tarifas aplicadas: v1, v2#0123456789ab');
+  });
 });
