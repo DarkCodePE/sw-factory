@@ -41,8 +41,9 @@ await send({ v: 1, type: 'accepted', jobId: job.jobId });
 if (scenario === 'lost-accepted') process.exit(0);
 const log = (s: string) => send({ v: 1, type: 'log', data: Buffer.from(s).toString('base64') });
 await log('trabajando');
-if (scenario === 'timed' || scenario === 'lost-after-execution') {
+if (scenario === 'timed' || scenario === 'lost-after-execution' || scenario === 'double-end') {
   await log('');
+  if (scenario === 'double-end') await log('');
   if (scenario === 'lost-after-execution') process.exit(0);
   await send({ ...base, usage: { costUsd: 0.123, effectiveModel: 'modelo-remoto' }, durationMs: 123_456 });
   process.exit(0);
