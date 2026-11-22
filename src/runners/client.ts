@@ -25,7 +25,7 @@ export interface RemoteJob {
   prompt: string; repo: string; worktree: string; head: string; base: string; timeoutMs: number; repoKey: string;
   /** Tope de ida en MiB del runner (`--max-bundle-mb`); el del protocolo (512 MiB) manda si es menor. */
   maxBundleMb?: number;
-  signal?: AbortSignal; onSpawn?: (pgid: number) => void;
+  signal?: AbortSignal; onSpawn?: (pgid: number) => void; onDispatch?: () => void;
 }
 export interface Declared { fabSha: string; agentSha256: string | null; sandbox: string }
 export interface RemoteDeps {
@@ -193,6 +193,8 @@ export async function runRemoteAgent(runner: RemoteRunner, job: RemoteJob, trans
     const maxBundleBytes = Math.min((job.maxBundleMb ?? Infinity) * 1024 * 1024, LIMITS.jobBundleBytes);
     try { decodeLine(jobLine.trimEnd(), ['job'], 'home', { maxBundleBytes }); } catch (e) { throw new RunnerError('RUNNER_REFUSED', `encargo inválido: ${(e as Error).message}`); }
     // Si el runner contesta `error` y cierra a mitad, la escritura falla: lo que cuenta es lo que dijo.
+    // Desde el envío, si se pierde la conexión puede haber inferencia sin contadores.
+    job.onDispatch?.();
     try { await sendJob(s, jobLine, prompt, bundle.path); } catch {}
     discardBundle(bundle); // ya salió: no se retiene hasta 512 MiB mientras corre el agente
 

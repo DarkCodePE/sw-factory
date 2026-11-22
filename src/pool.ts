@@ -252,7 +252,8 @@ export async function processActivity(
         usage: readUsage(previous.usage), durationMs: tokenCount(previous.durationMs),
         ...(previous.runner?.kind === 'ssh' ? { remoteDeclared: true as const } : {}),
       } : {});
-    attemptCosts.push(null);
+    // Durante la preparación se sabe que aún no hubo gasto de inferencia.
+    attemptCosts.push(0);
     inferenceAttempts.push({});
     const pendingEvidence = { isolation: opts.confine ? 'bwrap-allowlist' : isolationFor(adapter), workerReport: null, attemptCosts, inferenceAttempts };
     // Un fallo de preparación no reutiliza el resultado de un intento anterior.
@@ -434,12 +435,20 @@ export async function processActivity(
     const savePending = () => atomicEvidence(meta, JSON.stringify({ ...pendingEvidence, ...provenance, ...accessMeta, ...runnerMeta }));
     inferenceAttempts[inferenceAttempts.length - 1] = attempt;
     savePending();
+    const markLaunched = () => {
+      attemptCosts[attemptCosts.length - 1] = null;
+      savePending();
+    };
+    const onSpawn = (pgid: number) => {
+      markLaunched();
+      store.setActivityAgentPgid(a.id, pgid);
+    };
     const saveAttempt = (result: AgentRun) => {
       const usage = readUsage(result.usage);
       const cleanUsage = usage && access.decl && usage.effectiveModel
         ? { ...usage, effectiveModel: modelId(scrubValues(usage.effectiveModel, scrub)) } : usage;
       const entry: InferenceAttempt = { ...attempt, usage: cleanUsage, durationMs: tokenCount(result.durationMs) };
-      attemptCosts[attemptCosts.length - 1] = cleanUsage?.costUsd ?? null;
+      attemptCosts[attemptCosts.length - 1] = cleanUsage?.costUsd ?? (attemptCosts.at(-1) === 0 ? 0 : null);
       inferenceAttempts[inferenceAttempts.length - 1] = entry;
     };
     const crash = (point: CrashPoint) => opts.crash?.(point);
@@ -452,11 +461,11 @@ export async function processActivity(
         claudeProjects: join(resolve(opts.stateDir), 'live', change.id.slice(0, 8), 'claude-projects'),
         mcpConfigDir: join(resolve(opts.stateDir), 'live', change.id.slice(0, 8), 'mcp'),
         capturePath: confine ? activityLog(opts.stateDir, change.id, a.id) : undefined,
-        onSpawn: pgid => store.setActivityAgentPgid(a.id, pgid), crash,
+        onSpawn, crash,
         templates: profile.worker, branch, factoryCommits: agent.factoryCommits,
         onAttemptStart: () => {
           if (turnCount++ > 0) {
-            attemptCosts.push(null);
+            attemptCosts.push(0);
             inferenceAttempts.push(attempt);
             savePending();
           }
@@ -499,6 +508,7 @@ export async function processActivity(
             ...(typeof remote.options.maxBundleMb === 'number' ? { maxBundleMb: remote.options.maxBundleMb } : {}),
             repoKey: createHash('sha256').update(ws.id).digest('hex'), signal: abortController.signal,
             onSpawn: pgid => store.setActivityAgentPgid(a.id, pgid),
+            onDispatch: markLaunched,
           }, opts.runnerTransport, opts.runnerDeps);
           const { declared, ...rest } = done;
           run = rest;
@@ -509,6 +519,10 @@ export async function processActivity(
           if (!(err instanceof RunnerError)) throw err;
           // R9: ningún fallo del runner vuelve a local. Solo códigos y nombres a la base y al log; nunca texto libre del runner.
           if (abortController.signal.aborted || store.isTerminalChange(store.getChange(change.id).status)) { store.releaseActivity(a.id, workerId); return; }
+          if (err.code === 'RUNNER_REFUSED') {
+            attemptCosts[attemptCosts.length - 1] = 0;
+            savePending();
+          }
           if (err.code === 'RUNNER_BUSY') {
             attemptCosts.pop();
             inferenceAttempts.pop();
@@ -530,9 +544,7 @@ export async function processActivity(
         capturePath: confine ? activityLog(opts.stateDir, change.id, a.id) : undefined,
         readOnly,
         signal: abortController.signal,
-        onSpawn: (pgid) => {
-          store.setActivityAgentPgid(a.id, pgid);
-        },
+        onSpawn,
       });
     }
 

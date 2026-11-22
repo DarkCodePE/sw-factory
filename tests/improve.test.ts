@@ -139,7 +139,7 @@ for (const missing of [false, true]) test(`pool conserva coste de ambos intentos
     const evidence = JSON.parse(readFileSync(join(runDirectory(dir, ch.id), `${activity.id}.json`), 'utf8'));
     expect(evidence.attemptCosts).toEqual([missing ? null : 0.25, 0.5]);
     expect(evidence.usage.costUsd).toBe(0.5);
-    expect(costsAtLaunch).toEqual([null, null]);
+    expect(costsAtLaunch).toEqual([0, 0]);
     const others = store.listActivities({ changeId: ch.id }).filter(a => a.id !== activity.id);
     for (const a of others) writeFileSync(join(runDirectory(dir, ch.id), `${a.id}.json`), JSON.stringify({ usage: { costUsd: 0.1 } }));
     if (missing) expect(armCost(store, dir, ch.id)).toBeNull();
@@ -528,8 +528,8 @@ test('un intento que falla antes de lanzar el agente descarta la evidencia anter
   expect(store.getActivity(activity.id).status).toBe('blocked');
   expect(store.getActivity(activity.id).error).toContain('WORKTREE_NEEDS_REPAIR:');
   expect(armWorkerReport(store, dir, change.id)).toBeNull();
-  expect(JSON.parse(readFileSync(join(run, `${activity.id}.json`), 'utf8')).attemptCosts).toEqual([0.25, null]);
-  expect(armCost(store, dir, change.id)).toBeNull();
+  expect(JSON.parse(readFileSync(join(run, `${activity.id}.json`), 'utf8')).attemptCosts).toEqual([0.25, 0]);
+  expect(armCost(store, dir, change.id)).toBe(0.25);
 });
 
 test('T102-H6: el brazo con runner por rol devuelve un diagnóstico antes de clonar', async () => {
