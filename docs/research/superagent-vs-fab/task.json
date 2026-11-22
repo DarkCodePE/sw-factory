@@ -1970,7 +1970,7 @@
       "acceptance": "Cada tarjeta cuadra con la suma de intentos del rango. Lo «No medido» se cuenta aparte, sin sumar como 0.",
       "estimate": "2 d",
       "risk": "bajo",
-      "status": "pending",
+      "status": "done",
       "depends_on": [
         "T109",
         "T110",
@@ -1979,7 +1979,8 @@
       "covers": [
         "Spending: todas las tarjetas"
       ],
-      "pr": null
+      "pr": null,
+      "note": "Pestaña Gasto sobre spending (T109): «No medido» nunca 0, sin reserva a cost (retirado), tarjetas por worker, modelo, usuario y fuente con tabla plegada, tarifas del rango visibles (H6 A), los 20 PR más caros solo con coste completo (H10 A). Cierra I-H1, T109-H6 e IE2O1-H1..H4. Dos pasadas de Fable."
     },
     {
       "id": "T114",
