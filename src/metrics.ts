@@ -110,7 +110,10 @@ export function calculateMetrics(store: Store, stateDir: string, options: { ws?:
   }));
   const events = new Map(store.metricsEvents(cohort.changes.map(c => c.id), until).map(e => [e.changeId, e]));
   const values: number[][] = [[], [], [], []];
-  const kickoffPr: number[] = [], prMerge: number[] = [];
+  const kickoffPr: number[] = [], prMerge: number[] = [], kickoffMerge: number[] = [];
+  const prInteractions: Array<{ day: string; total: number }> = [];
+  // Runs de la cohorte; el rol es el de la activity (validador o tipo). T110 lo sustituirá por el rol atribuido al intento.
+  const runList: Array<{ day: string; role: string }> = [];
   const kinds: string[] = [], adapters = new Map<string, CostGroup>(), models = new Map<string, CostGroup>();
   const sources = new Map<string, CostGroup>(), actors = new Map<string, CostGroup>();
   const humans: Array<{ id: string; title: string; reviews: number; answers: number; retries: number; total: number }> = [];
@@ -129,7 +132,8 @@ export function calculateMetrics(store: Store, stateDir: string, options: { ws?:
     const prAt = e?.prOpenedAt ? Date.parse(e.prOpenedAt) : NaN;
     const mergeAt = e?.mergedAt ? Date.parse(e.mergedAt) : NaN;
     const createdMs = Date.parse(c.createdAt);
-    if (Number.isFinite(prAt) && prAt >= createdMs && prAt <= now) kickoffPr.push(prAt - createdMs);
+    if (Number.isFinite(prAt) && prAt >= createdMs && prAt <= now) { kickoffPr.push(prAt - createdMs); prInteractions.push({ day: new Date(prAt).toISOString().slice(0, 10), total: (e?.reviews ?? 0) + (e?.answers ?? 0) + (e?.retries ?? 0) }); }
+    if (Number.isFinite(prAt) && Number.isFinite(mergeAt) && mergeAt >= createdMs && mergeAt <= now) kickoffMerge.push(mergeAt - createdMs);
     if (Number.isFinite(prAt) && Number.isFinite(mergeAt) && mergeAt >= prAt && mergeAt <= now) prMerge.push(mergeAt - prAt);
 
     const reviews = e?.reviews ?? 0, answers = e?.answers ?? 0, retries = e?.retries ?? 0;
@@ -145,7 +149,9 @@ export function calculateMetrics(store: Store, stateDir: string, options: { ws?:
 
     for (const a of acts) {
       if (Date.parse(a.createdAt) > now) continue;
-      kinds.push(a.validator ? `validador:${a.validator}` : a.kind);
+      const role = a.validator ? `validador:${a.validator}` : a.kind;
+      kinds.push(role);
+      runList.push({ day: a.createdAt.slice(0, 10), role });
       let meta: Record<string, unknown> | null = null;
       try { meta = activityMetadata(stateDir, a); } catch { /* Fallo cerrado del lector compartido. */ }
       if (roleOf(a) && a.createdAt <= until && (!since || a.createdAt >= since)) {
@@ -244,15 +250,31 @@ export function calculateMetrics(store: Store, stateDir: string, options: { ws?:
     });
   }
 
+  // La revisión humana del PR no se mide (hace falta la API SDLC de solo lectura): sus dos tramos salen sin muestras, nunca 0.
   const prCycles = [
+    { name: 'Kickoff → merge', ...distribution(kickoffMerge) },
     { name: 'Kickoff → PR', ...distribution(kickoffPr) },
     { name: 'PR → primera revisión humana', ...distribution([]) },
+    { name: 'Primera revisión humana → merge', ...distribution([]) },
     { name: 'PR → merge', ...distribution(prMerge) },
   ];
 
+  // Interacciones humanas por PR: media sobre los changes con PR; la serie agrupa por el día en que se abrió el PR.
+  const prTotal = prInteractions.reduce((s, x) => s + x.total, 0);
+  const interactionsPerPr = { mean: prInteractions.length ? prTotal / prInteractions.length : null, prs: prInteractions.length,
+    daily: days.map(day => { const xs = prInteractions.filter(x => x.day === day); return xs.length ? xs.reduce((s, x) => s + x.total, 0) / xs.length : null; }) };
+
+  // Runs por día dentro de las fechas de las series; un día sin runs es un hueco (null), igual que el resto de series.
+  const inWindow = runList.filter(r => days.includes(r.day));
+  const perDay = (pick: (r: typeof runList[number]) => boolean) => days.map(day => { const n = inWindow.filter(r => r.day === day && pick(r)).length; return n || null; });
+  const runRoles = [...inWindow.reduce((m, r) => m.set(r.role, (m.get(r.role) ?? 0) + 1), new Map<string, number>())]
+    .sort(([a, x], [b, y]) => y - x || a.localeCompare(b)).map(([name, total]) => ({ name, total, daily: perDay(r => r.role === name) }));
+  // Raíz frente a subagentes queda fuera hasta T110: parent_activity_id encadena pasos del flujo, no subagentes (verif T112-H1).
+  const runs = { total: inWindow.length, roles: runRoles };
+
   return { count: cohort.changes.length, omitted: cohort.total - cohort.changes.length, since, until,
     cycles: ['Primera activity', 'Primera revisión pedida', 'Primera decisión humana', 'Primer estado terminal registrado'].map((name, i) => ({ name, ...distribution(values[i]!) })),
-    prCycles,
+    prCycles, interactionsPerPr, runs,
     humans, states: counts(cohort.changes.map(c => c.status)), kinds: counts(kinds),
     daily: { days, changes: dailyChanges, costs: dailyCosts, interventions: dailyInterventions, prs: dailyPrs },
     spending: {

@@ -23,6 +23,7 @@ import { noteForm } from './web-note-form.ts';
 import type { WebAuth } from './web-auth.ts';
 import { PROFILE_BODY_LIMIT, ProfileInputError, checkProfileFields, profileAction } from './web-profile.ts';
 import { enqueueBackfill, enqueueManual, ensureSchema, previewBackfill } from './scorers.ts';
+import { createScorer, scorerFromForm } from './web-scorers.ts';
 import { archiveWorkstream, createWorkstream, workstreamSettings, workstreamState, wsFields } from './web-ws.ts';
 import { accessInput, setAccess } from './web-access.ts';
 import { JIRA_IMPORT_PATH, JIRA_MESSAGES, residentChanges, residentInput, type jiraImportAction } from './web-entrada.ts';
@@ -328,6 +329,17 @@ export const ACTIONS: Record<string, Action | CheckAction | WebResponseAction | 
       if (previewBackfill(store, stateDir, ws.id, opts).runs !== Number(input.expected)) throw new StoreError('conflict', 'la vista previa cambió');
       enqueueBackfill(store, stateDir, ws.id, opts);
       store.event(ws.id, 'info', `${input.expected} puntuaciones encoladas (rango pasado${input.scorer ? `, juez ${input.scorer}` : ''})`);
+    },
+  },
+  // T114: «Añadir juez». Guarda un perfil nuevo con el juez; asignarlo es del dueño (D-H), así que la API con clave no lo expone.
+  'scorers/create': {
+    api: false,
+    path: /^\/(scorers)\/nuevo$/,
+    input: raw => { for (const k of ['rubric', 'classes']) limit(text(raw, k), 4096); return Object.fromEntries(['ws', 'name', 'scope', 'rubric', 'classes', 'passing', 'sampling', 'harness'].map(k => [k, text(raw, k)])); },
+    run: (store, _id, input, out, _actor, stateDir) => {
+      out.destination = '/metricas?tab=jueces';
+      const { slug, digest, created } = asInput(() => createScorer(store, stateDir, scorerFromForm(input)));
+      out.destination = `/perfiles?${new URLSearchParams({ ws: slug, digest, nuevo: created ? '1' : '0' })}`;
     },
   },
   'questions/answer': {

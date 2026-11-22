@@ -1,4 +1,5 @@
 import type { Store } from './store.ts';
+import { resolveProfile } from './profile.ts';
 import { calculateMetrics, validateDay, type MetricsRange } from './metrics.ts';
 import { scorersPanel, sinceOf, type RangeSel } from './web-scorers.ts';
 import { CARD_STYLE, card, esc, statCard, table } from './web-cards.ts';
@@ -26,35 +27,64 @@ function selection(url: URL): RangeSel {
   return { ws, range, from, to, since: from ? `${from}T00:00:00.000Z` : range === 'custom' || range === 'all' ? undefined : sinceOf(range), until: to ? `${to}T23:59:59.999Z` : undefined };
 }
 const query = (r: RangeSel, tab: string) => `?${new URLSearchParams({ tab, ...(r.ws && { ws: r.ws }), range: r.range, ...(r.from && { from: r.from }), ...(r.to && { to: r.to }) })}`;
+/** «Puesta en marcha» (T114): pasos del alta que se comprueban en el Store, sin estado propio; cada pendiente enlaza a donde se resuelve. */
+function setup(store: Store, stateDir: string): string {
+  const wss = store.listWorkstreams().filter(w => w.state !== 'archived');
+  const scorers = wss.some(w => { try { return Object.keys(resolveProfile(stateDir, w.profile).profile.scorers ?? {}).length > 0; } catch { return false; } });
+  const steps: Array<[string, boolean, string]> = [
+    ['Crear un workstream', wss.length > 0, '/workstreams/nuevo'], ['Activar un workstream', wss.some(w => w.state === 'active'), '/workstreams'],
+    ['Asignar un perfil', wss.some(w => w.profile !== null), '/perfiles'], ['Definir un juez', scorers, '/metricas?tab=jueces'],
+    ['Crear el primer change', store.db.query('SELECT 1 FROM changes LIMIT 1').get() !== null, '/changes'],
+  ];
+  const done = steps.filter(x => x[1]).length;
+  return `<details class="setup"><summary>Puesta en marcha · ${done} de ${steps.length}</summary><div><ol>${steps.map(([label, ok, href]) => `<li>${ok ? `${label}: Hecho` : `<a href="${href}">${label}</a>: Pendiente`}</li>`).join('')}</ol></div></details>`;
+}
 const tabs = (active: string, r: RangeSel) => `<nav aria-label="Secciones de métricas" class="tabs">${TABS.map(([id, label]) => `<a href="/metricas${esc(query(r, id))}"${active === id ? ' aria-current="page"' : ''}>${label}</a>`).join(' ')}</nav>`;
-const filters = (store: Store, tab: string, r: RangeSel, what: string, scorer?: string) => `<form action="/metricas" method="get" class="filters"><input type="hidden" name="tab" value="${tab}">${scorer ? `<input type="hidden" name="scorer" value="${esc(scorer)}">` : ''}<label>Workstream<select name="ws"><option value="">Todos</option>${store.listWorkstreams().map(w => `<option value="${esc(w.slug)}"${r.ws === w.id || r.ws === w.slug ? ' selected' : ''}>${esc(w.slug)}</option>`).join('')}</select></label><label>${what}<select name="range">${RANGES.map(([v, l]) => `<option value="${v}"${r.range === v ? ' selected' : ''}>${l}</option>`).join('')}</select></label><label>Desde<input name="from" type="date" value="${esc(r.from ?? '')}"></label><label>Hasta<input name="to" type="date" value="${esc(r.to ?? '')}"></label><button type="submit">Actualizar</button></form>`;
+const filters = (store: Store, tab: string, r: RangeSel, what: string, scorer?: string, extra = '') => `<form action="/metricas" method="get" class="filters"><input type="hidden" name="tab" value="${tab}">${scorer ? `<input type="hidden" name="scorer" value="${esc(scorer)}">` : ''}<label>Workstream<select name="ws"><option value="">Todos</option>${store.listWorkstreams().map(w => `<option value="${esc(w.slug)}"${r.ws === w.id || r.ws === w.slug ? ' selected' : ''}>${esc(w.slug)}</option>`).join('')}</select></label><label>${what}<select name="range">${RANGES.map(([v, l]) => `<option value="${v}"${r.range === v ? ' selected' : ''}>${l}</option>`).join('')}</select></label><label>Desde<input name="from" type="date" value="${esc(r.from ?? '')}"></label><label>Hasta<input name="to" type="date" value="${esc(r.to ?? '')}"></label>${extra}<button type="submit">Actualizar</button></form>`;
+
+// Runs por rol del worker o por raíz frente a subagentes (T112). Valor inválido: 400, como el rango.
+const RUNS_BY = [['rol', 'Rol']] as const; // la partición raíz/subagentes vuelve con T110 (verif T112-H1)
+const runsMode = (url: URL) => { const v = url.searchParams.get('runs') ?? 'rol'; if (!RUNS_BY.some(([id]) => id === v)) throw new URIError('Agrupación de runs inválida'); return v as 'rol'; };
+const runsSelect = (mode: string) => `<label>Runs por<select name="runs">${RUNS_BY.map(([v, l]) => `<option value="${v}"${mode === v ? ' selected' : ''}>${l}</option>`).join('')}</select></label>`;
 
 export function metricsPage(store: Store, stateDir: string, url: URL, csrf?: string): { title: string; body: string } {
   const r = selection(url), t = url.searchParams.get('tab');
-  if (t === 'jueces') return { title: 'Métricas · Jueces', body: tabs('jueces', r) + filters(store, 'jueces', r, 'Puntuaciones creadas en', url.searchParams.get('scorer') || undefined) + scorersPanel(store, stateDir, url, r, csrf) };
+  const bar = (tab: string) => `<div class="topbar">${tabs(tab, r)}${setup(store, stateDir)}</div>`;
+  if (t === 'jueces') return { title: 'Métricas · Jueces', body: bar('jueces') + filters(store, 'jueces', r, 'Puntuaciones creadas en', url.searchParams.get('scorer') || undefined) + scorersPanel(store, stateDir, url, r, csrf) };
   const gasto = t === 'gasto';
   const m = calculateMetrics(store, stateDir, { ws: r.ws, range: r.range as MetricsRange, from: r.from, to: r.to });
   const lead = `<p class="muted">${m.count} changes · Calculado: <time>${esc(m.until)}</time>. El rango selecciona changes por fecha de creación; sus métricas incluyen todo su recorrido registrado hasta esta consulta.</p>${m.omitted ? `<p class="notice">Cálculo limitado a los 1000 changes más recientes. Se omiten ${m.omitted} changes; todos los resultados corresponden a la selección limitada.</p>` : ''}${r.range === 'all' ? '<p class="notice">Las series temporales diarias de «Todo el historial» muestran como máximo los últimos 90 días.</p>' : ''}`;
-  const head = tabs(gasto ? 'gasto' : 'productividad', r) + filters(store, gasto ? 'gasto' : 'productividad', r, 'Changes creados en') + lead;
-  return gasto ? { title: 'Métricas · Gasto', body: head + spending(m) } : { title: 'Métricas', body: head + productivity(m, r.range) };
+  const mode = runsMode(url);
+  const head = bar(gasto ? 'gasto' : 'productividad') + filters(store, gasto ? 'gasto' : 'productividad', r, 'Changes creados en', undefined, gasto ? '' : runsSelect(mode)) + lead;
+  return gasto ? { title: 'Métricas · Gasto', body: head + spending(m) } : { title: 'Métricas', body: head + productivity(m, r.range, mode) };
 }
 type M = ReturnType<typeof calculateMetrics>;
 const num = (v: number | null) => v === null ? 'No medido' : String(v);
 const sum = (v: Array<number | null>) => v.some(x => x !== null) ? v.reduce<number>((a, x) => a + (x ?? 0), 0) : null;
 const link = (c: { id: string; title: string }) => `<a href="/changes/${encodeURIComponent(c.id)}">${esc(c.title)}</a>`;
 
-function productivity(m: M, range: string): string {
+function productivity(m: M, range: string, runsBy: 'rol'): string {
   const scope = range === 'all' ? 'en los últimos 90 días' : 'en el rango';
   const d = m.daily, ch = sum(d.changes), op = sum(d.prs.map(p => p.opened)), mg = sum(d.prs.map(p => p.merged)), iv = sum(d.interventions);
   const int = (n: number) => String(n);
   const cycleRow = (c: M['cycles'][number]) => [esc(c.name), duration(c.median), duration(c.p90), String(c.samples), String(m.count - c.samples)];
   const cells = m.prCycles.map(c => ({ label: c.name, value: duration(c.median), sub: c.samples ? `p90 ${duration(c.p90)} · ${c.samples} muestras` : 'Sin muestras' }));
+  const dec = (n: number) => n.toLocaleString('es', { maximumFractionDigits: 2 });
+  const ipp = m.interactionsPerPr, runs = m.runs;
+  // Con más de cuatro roles, los tres mayores y «Otros» (la tarjeta admite cuatro series); la suma por día se conserva.
+  const roleSeries = runs.roles.length <= 4 ? runs.roles : [...runs.roles.slice(0, 3), { name: 'Otros', daily: runs.roles[0]!.daily.map((_, i) => { const xs = runs.roles.slice(3).map(r => r.daily[i] ?? 0); const t = xs.reduce((a, x) => a + x, 0); return t || null; }) }];
+  const runSeries = roleSeries.map(r => ({ label: r.name, values: r.daily }));
   const cycleHead = ['Hito', 'Mediana', 'p90', 'Muestras', 'No medido'];
   const cards = [
     statCard({ id: 'pr-cycles', title: 'Tiempo de ciclo con PR (mediana)', help: 'Mediana del tiempo entre hitos de un change con PR. «No medido» si ningún change llegó al segundo hito; nunca se sustituye por 0.', cells,
       tableCaption: 'Tramos del ciclo con PR', tableHtml: table('Tramos del ciclo con PR', cycleHead.map((h, i) => i === 0 ? 'Tramo' : h), m.prCycles.map(cycleRow)) }),
+    card({ id: 'interacciones', title: 'Interacciones humanas por PR', help: 'Media de decisiones de revisión, respuestas y reintentos humanos de los changes que abrieron PR; la serie agrupa por el día en que se abrió el PR. Sin PR abierto es «No medido», no 0.', figure: ipp.mean === null ? 'No medido' : dec(ipp.mean),
+      sub: `${ipp.prs} PR${ipp.prs === 1 ? '' : 's'} ${scope}`, days: d.days, series: [{ label: 'Interacciones por PR', values: ipp.daily }], fmt: dec, tableCaption: 'Interacciones humanas por PR y día' }),
     card({ id: 'prs', title: 'Pull requests', help: 'PRs abiertos y fusionados por día, según los eventos pr_opened y merge_completed. Un día sin eventos es un hueco, no un cero.', figure: num(op), sub: `${mg ?? 0} fusionados ${scope}`, days: d.days,
       series: [{ label: 'Abiertos', values: d.prs.map(p => p.opened) }, { label: 'Fusionados', values: d.prs.map(p => p.merged) }], fmt: int, integer: true, tableCaption: 'PRs abiertos y fusionados por día' }),
+    card({ id: 'runs', title: 'Runs totales', help: 'Activities creadas cada día (workers y validadores), apiladas por rol. Se cuentan las de los changes de la selección; un día sin runs es un hueco.',
+      figure: runs.total ? String(runs.total) : 'No medido', sub: runs.total ? scope : undefined, days: d.days, series: runSeries, stacked: true, fmt: int, integer: true,
+      tableCaption: 'Runs por día · rol' }),
     card({ id: 'changes', title: 'Changes creados', help: 'Changes creados por día dentro del rango. Un día sin changes es un hueco.', figure: m.count ? String(m.count) : 'No medido', sub: 'en el rango', days: d.days, series: [{ label: 'Changes', values: d.changes }], fmt: int, integer: true, tableCaption: 'Changes creados por día' }),
     card({ id: 'humans', title: 'Intervenciones humanas', help: 'Decisiones de revisión, respuestas y reintentos explícitos observados en events, por día. Cero no garantiza que el registro histórico esté completo.', figure: num(iv), sub: scope, days: d.days, series: [{ label: 'Intervenciones', values: d.interventions }], fmt: int, integer: true, tableCaption: 'Intervenciones humanas por día' }),
   ];
