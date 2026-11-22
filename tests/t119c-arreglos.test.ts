@@ -11,7 +11,8 @@ import { csrfToken } from '../src/web-auth.ts';
 import { runnerCheckAction } from '../src/web-runner-check.ts';
 import { jiraImportAction } from '../src/web-entrada.ts';
 import { cloud, ORIGIN, SECRET, type Cloud } from './helpers/cloud.ts';
-import { disableUser, resolvePrincipal, type Principal } from '../src/users.ts';
+import { disableUser, issueSession, resolvePrincipal, type Principal } from '../src/users.ts';
+import { defaultProfile } from '../src/profile.ts';
 import { previewResolveWork } from '../src/users-work.ts';
 import { Store } from '../src/store.ts';
 import { notesBlock } from '../src/prompts.ts';
@@ -163,4 +164,25 @@ test('T119c-H7: una acción sin su confirmación o con un campo vacío da 400 co
   const empty = await cli(c.tokens.cli.member, { op: 'changes/note', id: changeId, fields: { body: '' } });
   expect(empty.status).toBe(400);
   expect(((await empty.json()) as { error: { message: string } }).error.message).not.toBe('invalid_input');
+});
+
+// ---- H8: la revisión de una importación se liga a usuario y sesión y caduca ----------
+
+test('T119c-H8: la revisión de una importación no vale para otra sesión ni pasados 10 min', async () => {
+  let now = Date.now();
+  const routes = cliRoutes({ stateDir: c.stateDir, publicOrigin: ORIGIN, write: true, secret: SECRET, clock: () => now });
+  const send = (token: string, body: Record<string, unknown>) => routes.handle(new Request(`${ORIGIN}/cli/v1/commands`, { method: 'POST', body: JSON.stringify(body),
+    headers: { host: HOST, authorization: `Bearer ${token}`, 'content-type': 'application/json' } }), '203.0.113.7').then(r => r!);
+  const p = defaultProfile();
+  const file = { name: 'perfil.json', base64: Buffer.from(JSON.stringify({ ...p, worker: { ...p.worker, investigate: p.worker.investigate + '\nRegla importada.' } })).toString('base64') };
+  const cmd = (confirm?: string) => ({ op: 'perfiles/importar', fields: { ws: ws.slug }, file, ...(confirm ? { confirm } : {}) });
+  const own = c.tokens.cli.owner, other = issueSession(c.store, c.web.owner.userId, 'cli').token; // mismo usuario, otra sesión
+  const pre = await send(own, cmd()), body = await pre.json() as { data?: { revision: string } };
+  expect([pre.status, JSON.stringify(body)]).toEqual([200, expect.any(String)]);
+  const revision = body.data!.revision;
+  expect((await send(other, cmd(revision))).status).toBe(409);
+  now += 10 * 60_000 + 1;
+  expect((await send(own, cmd(revision))).status).toBe(409);
+  now -= 10 * 60_000 + 1;
+  expect((await send(own, cmd(revision))).status).toBe(200);
 });

@@ -29,6 +29,7 @@ import { GITHUB_ISSUER, validGithubLogin, GithubQuotaError } from './web-identit
 import { LIMITS } from './web-auth.ts';
 
 export const PAIR_TTL_MS = 5 * 60_000;
+export const IMPORT_SEAL_TTL_MS = 10 * 60_000;
 export const PAIR_PENDING_MAX = 1000;
 export const PAIR_ATTEMPTS_PER_CODE = 5;
 export const PAIR_PER_FLOW_PER_MIN = 5;
@@ -263,9 +264,10 @@ export function cliRoutes(opts: CliRoutesOptions) {
       if (op === 'runners/check') { const r = await runnerCheck(id, () => {}); return { status: r.status, text: (await r.text()).replace(/<[^>]*>/g, ' ').replace(/\s+/g, ' ').trim().slice(0, 2000) }; }
       let attachment;
       if (cmd.file) {
-        if (op !== 'changes/note') throw new StoreError('invalid_input', 'esta operación no admite fichero');
+        if (op !== 'changes/note' && !Object.hasOwn(IMPORT_OPS, op)) throw new StoreError('invalid_input', 'esta operación no admite fichero');
         attachment = { name: cmd.file.name, bytes: new Uint8Array(Buffer.from(cmd.file.base64, 'base64')) };
-        const invalid = validateNoteAttachment(attachment);
+        // Los límites de una nota no valen para un paquete de importación: lo valida su propio parser.
+        const invalid = op === 'changes/note' ? validateNoteAttachment(attachment) : null;
         if (invalid) throw new StoreError('invalid_input', invalid);
       }
       if (Object.hasOwn(IMPORT_OPS, op)) {
@@ -274,10 +276,13 @@ export function cliRoutes(opts: CliRoutesOptions) {
         if (!cmd.file) throw new StoreError('invalid_input', 'falta el paquete');
         if (kind === 'definition') fields.repo = repoByAlias(opts.stateDir, fields.repo ?? ''); // alias del inventario → ruta real
         const target = kind === 'profile' ? [fields.ws ?? ''] : [fields.repo ?? '', fields.slug ?? ''];
-        const revision = seal(kind, attachment!.bytes, ...target);
-        if (cmd.confirm === undefined) return { preview: { kind, bytes: attachment!.bytes.byteLength, target }, revision };
-        if (cmd.confirm !== revision) throw new StoreError('conflict', 'la revisión no coincide: repite la vista previa');
-        const input = { ...fields, payload: Buffer.from(attachment!.bytes).toString('base64'), digest: revision, confirm: 'yes' };
+        // La revisión se liga al usuario y a la sesión y caduca; `base` es el sello que la acción comprueba al importar.
+        const base = seal(kind, attachment!.bytes, ...target);
+        const bound = (exp: number) => seal(kind, attachment!.bytes, 'cli', p.userId, p.sessionId ?? '', String(exp), ...target);
+        if (cmd.confirm === undefined) { const exp = clock() + IMPORT_SEAL_TTL_MS; return { preview: { kind, bytes: attachment!.bytes.byteLength, target }, revision: `${exp}.${bound(exp)}` }; }
+        const [exp, given] = cmd.confirm.split('.'), expNum = Number(exp);
+        if (!Number.isSafeInteger(expNum) || expNum <= clock() || !given || !constantEqual(given, bound(expNum))) throw new StoreError('conflict', 'la revisión no coincide o caducó: repite la vista previa');
+        const input = { ...fields, payload: Buffer.from(attachment!.bytes).toString('base64'), digest: base, confirm: 'yes' };
         return result(await performAction(opts.stateDir, op, id, input, who, undefined, { server: true }));
       }
       return result(await performAction(opts.stateDir, op, id, fields, who, attachment, { server: true }));
