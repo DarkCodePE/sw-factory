@@ -1,5 +1,6 @@
 // Superficie local de lectura. Las decisiones del ciclo pertenecen al Store.
-import { join } from 'node:path';
+import { join, dirname } from 'node:path';
+import { existsSync, unlinkSync, chmodSync, mkdirSync } from 'node:fs';
 import { parseArgs } from 'node:util';
 import { Store, StoreError, type Activity } from './store.ts';
 import { ChangeStatus } from './enums.ts';
@@ -36,6 +37,13 @@ import { webhooksPage } from './web-webhooks.ts';
 import { jiraImportAction } from './web-entrada.ts';
 import type { TicketGateway } from './connectors/types.ts';
 import { definitionPage } from './web-definition.ts';
+import {
+  validateServerConfig,
+  isAuthorizedHost,
+  isAuthorizedOrigin,
+  SERVER_SECURITY_HEADERS,
+  type ServerTlsConfig,
+} from './web-server.ts';
 
 const escape = (value: unknown): string => redact(String(value ?? '')).replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[c]!);
 const enc = encodeURIComponent;
@@ -153,7 +161,17 @@ const KNOWN_BACK = /^\/(?:activities\/[\w-]+|changes(?:\/[\w-]+)?|workstreams|au
 
 const loopback = (port: number) => [`127.0.0.1:${port}`, `localhost:${port}`];
 
-export function startWeb(stateDir: string, port = 4310, options: { write?: boolean; clock?: () => Date; runnerCheck?: RunnerCheckOptions; jira?: TicketGateway } = {}) {
+export function startWeb(stateDir: string, port = 4310, options: {
+  write?: boolean;
+  clock?: () => Date;
+  runnerCheck?: RunnerCheckOptions;
+  jira?: TicketGateway;
+  server?: boolean;
+  publicOrigin?: string;
+  socketPath?: string;
+  tls?: ServerTlsConfig;
+  fixtureTestOrigin?: boolean;
+} = {}) {
   const auth = options.write ? new WebAuth() : undefined;
   const keyUsage = new ApiKeyUsage(options.clock);
   const runnerCheck = runnerCheckAction(stateDir, options.runnerCheck);
@@ -161,14 +179,62 @@ export function startWeb(stateDir: string, port = 4310, options: { write?: boole
   const openStore = () => new Store(join(stateDir, 'fabrica.db'), { readonly: true });
   const initial = openStore();
   try { initial.listWorkstreams(); } finally { initial.close(); }
+
+  const validated = options.server ? validateServerConfig(options) : undefined;
+  const canonicalHost = validated?.canonicalHost;
+
+  let serveOptions: Record<string, unknown>;
+  if (options.server && options.socketPath) {
+    mkdirSync(dirname(options.socketPath), { recursive: true });
+    if (existsSync(options.socketPath)) {
+      try { unlinkSync(options.socketPath); } catch { /* ignore */ }
+    }
+    serveOptions = { unix: options.socketPath, ...(auth ? { maxRequestBodySize: PROFILE_BODY_LIMIT } : {}) };
+  } else if (options.server && options.tls) {
+    serveOptions = {
+      port,
+      tls: {
+        cert: Bun.file(options.tls.cert),
+        key: Bun.file(options.tls.key),
+        ca: options.tls.ca ? Bun.file(options.tls.ca) : undefined,
+        requestCert: options.tls.requestCert ?? true,
+        rejectUnauthorized: options.tls.rejectUnauthorized ?? true,
+      },
+      ...(auth ? { maxRequestBodySize: PROFILE_BODY_LIMIT } : {})
+    };
+  } else {
+    serveOptions = { hostname: '127.0.0.1', port, ...(auth ? { maxRequestBodySize: PROFILE_BODY_LIMIT } : {}) };
+  }
+
   let server: ReturnType<typeof Bun.serve>;
   // Verifica la base antes de escuchar y vuelve a abrirla en cada petición.
-  server = Bun.serve({ hostname: '127.0.0.1', port, ...(auth ? { maxRequestBodySize: PROFILE_BODY_LIMIT } : {}), async fetch(req) {
-      const respond = (body: string, status = 200, type = 'text/html; charset=utf-8') => new Response(req.method === 'HEAD' ? null : body, { status, headers: { ...HEADERS, ...(auth?.sessionCsrf(req) ? { 'Referrer-Policy': 'same-origin' } : {}), 'Content-Type': type, ...(status === 405 ? { Allow: 'GET, HEAD' } : {}) } });
+  server = Bun.serve({
+    ...serveOptions,
+    async fetch(req) {
+      const respHeaders = options.server ? SERVER_SECURITY_HEADERS : HEADERS;
+      const respond = (body: string, status = 200, type = 'text/html; charset=utf-8') => new Response(req.method === 'HEAD' ? null : body, { status, headers: { ...respHeaders, ...(auth?.sessionCsrf(req) ? { 'Referrer-Policy': 'same-origin' } : {}), 'Content-Type': type, ...(status === 405 ? { Allow: 'GET, HEAD' } : {}) } });
       const url = new URL(req.url);
-      // Con escritura, las rutas con sesión solo se sirven en el host único; la API con clave no usa cookie y conserva loopback.
-      const hosts = auth ? [`${auth.host}:${server.port}`, ...(isApiPath(url.pathname) ? loopback(server.port!) : [])] : loopback(server.port!);
-      if (!hosts.includes(req.headers.get('host') ?? '')) return respond('Acceso denegado', 403, 'text/plain; charset=utf-8');
+
+      if (options.server) {
+        if (!isAuthorizedHost(req.headers.get('host'), canonicalHost!)) return respond('Acceso denegado: Host no autorizado', 403, 'text/plain; charset=utf-8');
+        if (req.method === 'POST' && !isAuthorizedOrigin(req.headers.get('origin'), validated!.publicOrigin)) {
+          return respond('Acceso denegado: Origin ausente o ajeno', 403, 'text/plain; charset=utf-8');
+        }
+      } else {
+        const hosts = auth ? [`${auth.host}:${server.port}`, ...(isApiPath(url.pathname) ? loopback(server.port!) : [])] : loopback(server.port!);
+        if (!hosts.includes(req.headers.get('host') ?? '')) return respond('Acceso denegado', 403, 'text/plain; charset=utf-8');
+      }
+
+      if (url.pathname === '/healthz') {
+        if (req.method !== 'GET' && req.method !== 'HEAD') return respond('Método no permitido', 405, 'text/plain; charset=utf-8');
+        return respond('ok', 200, 'text/plain; charset=utf-8');
+      }
+
+      if (options.fixtureTestOrigin && url.pathname === '/_test/origin') {
+        if (req.method !== 'POST') return respond('Método no permitido', 405, 'text/plain; charset=utf-8');
+        return new Response(null, { status: 204, headers: { ...respHeaders } });
+      }
+
       if (isApiPath(url.pathname)) return handleApi(req, url, openStore, auth ? { stateDir } : undefined, keyUsage);
       const isMetrics = url.pathname === '/metricas';
       const isConfig = url.pathname === '/config';
@@ -189,6 +255,15 @@ export function startWeb(stateDir: string, port = 4310, options: { write?: boole
       const isWebhooks = url.pathname === '/webhooks';
       const readAsset = READ_ASSETS.get(url.pathname);
       const readOnlyRoute = isFlow || isMetrics || isConfig || isApiKeys || isExperiments || isAutomationEditor || isRunners || isWebhooks || isDefinition || readAsset !== undefined;
+
+      if (options.server) {
+        const isStaticAsset = url.pathname === '/style.css' || url.pathname === '/poll.js' || readAsset !== undefined;
+        const hasSession = !!auth?.sessionCsrf(req);
+        if (!isStaticAsset && !hasSession) {
+          return respond('Se requiere sesión autenticada en modo servidor.', 401, 'text/plain; charset=utf-8');
+        }
+      }
+
       const shell = (store: Store, content: { title: string; body: string }, nav: URL = url, still = manual) => {
         const workstreams = store.listWorkstreams();
         const inboxStatuses = store.inbox().map(a => a.reviewStatus === 'awaiting' ? 'awaiting' : a.status);
@@ -196,9 +271,9 @@ export function startWeb(stateDir: string, port = 4310, options: { write?: boole
       };
       if (req.method === 'POST' && auth && !readOnlyRoute) {
         let response: Response;
-        try { response = await webAction(req, stateDir, server.port!, auth, keyUsage, runnerCheck, () => server.timeout(req, 35), jiraImport); }
+        try { response = await webAction(req, stateDir, server.port ?? 0, auth, keyUsage, runnerCheck, () => server.timeout(req, 35), jiraImport); }
         catch { return respond('No se pudo registrar la acción.', 500, 'text/plain; charset=utf-8'); }
-        for (const [key, value] of Object.entries(HEADERS)) if (!response.headers.has(key)) response.headers.set(key, value);
+        for (const [key, value] of Object.entries(respHeaders)) if (!response.headers.has(key)) response.headers.set(key, value);
         // El editor de automations ya devuelve su propia página HTML de error (T86): no se envuelve de nuevo.
         if (response.status >= 400 && !response.headers.get('Content-Type')?.startsWith('text/html')) return actionErrorPage(response, req, url, openStore, shell);
         return response;
@@ -211,11 +286,11 @@ export function startWeb(stateDir: string, port = 4310, options: { write?: boole
         if (url.pathname === '/auth' && auth) {
           if (req.method !== 'GET') return respond('Método no permitido', 405);
           const response = auth.exchange(url.searchParams.get('token') ?? '');
-          for (const [key, value] of Object.entries(HEADERS)) response.headers.set(key, value);
+          for (const [key, value] of Object.entries(respHeaders)) response.headers.set(key, value);
           return response;
         }
         if (url.pathname === '/style.css') return respond(WEB_STYLE + WEB_ACTION_STYLE + FLOW_STYLE + THEME_STYLE + SIDEBAR_STYLE + AUTOMATION_EDITOR_STYLE + '.count{font-size:13px;margin-left:6px}.bulk{display:flex;gap:8px;flex-wrap:wrap;margin:12px 0}.links{margin:8px 0}', 200, 'text/css; charset=utf-8');
-        if (url.pathname === '/definition') return new Response(null, { status: 301, headers: { Location: `/definicion${url.search}`, ...HEADERS } });
+        if (url.pathname === '/definition') return new Response(null, { status: 301, headers: { Location: `/definicion${url.search}`, ...respHeaders } });
         if (url.pathname === '/poll.js') return respond(POLL, 200, 'text/javascript; charset=utf-8');
         if (readAsset) return respond(readAsset.body, 200, readAsset.type);
         const csrf = auth?.sessionCsrf(req);
@@ -243,26 +318,103 @@ export function startWeb(stateDir: string, port = 4310, options: { write?: boole
         if (error instanceof URIError) return respond('Ruta inválida', 400, 'text/plain; charset=utf-8');
         return respond('No se pudo leer el estado de la fábrica.', 500, 'text/plain; charset=utf-8');
       } finally { store?.close(); }
-    } });
-  return { port: server.port!, host: auth?.host, loginUrl: auth?.loginUrl(server.port!), stop(force = false) { server.stop(force); } };
+    }
+  });
+
+  if (options.server && options.socketPath) {
+    try { chmodSync(options.socketPath, 0o660); } catch { /* ignore */ }
+  }
+
+  return {
+    port: server.port ?? 0,
+    host: auth?.host,
+    canonicalHost,
+    publicOrigin: validated?.publicOrigin,
+    socketPath: options.socketPath,
+    loginUrl: auth?.loginUrl(server.port ?? 0),
+    stop(force = false) {
+      server.stop(force);
+      if (options.socketPath && existsSync(options.socketPath)) {
+        try { unlinkSync(options.socketPath); } catch { /* ignore */ }
+      }
+    }
+  };
 }
 
 const WRITE_WARNING = 'La sesión de escritura solo se sirve en el host fab-<aleatorio>.localhost de este arranque: abre el enlace tal cual, no sustituyas el host.';
 
 export async function webMain(args: string[], stateDir: string, resolve?: Parameters<typeof assertLoopback>[1]): Promise<number> {
   try {
-    const { values } = parseArgs({ args, options: { port: { type: 'string' }, write: { type: 'boolean' }, help: { type: 'boolean', short: 'h' } } });
-    if (values.help) { console.log('fab web [--port 4310] [--write] · web local, solo lectura por defecto; estado en FABRICA_HOME'); console.log(WRITE_WARNING); return 0; }
+    const { values } = parseArgs({
+      args,
+      options: {
+        port: { type: 'string' },
+        write: { type: 'boolean' },
+        server: { type: 'boolean' },
+        'public-origin': { type: 'string' },
+        socket: { type: 'string' },
+        'tls-cert': { type: 'string' },
+        'tls-key': { type: 'string' },
+        'tls-ca': { type: 'string' },
+        help: { type: 'boolean', short: 'h' }
+      }
+    });
+    if (values.help) {
+      console.log('fab web [--port 4310] [--write] [--server] [--public-origin <url>] [--socket <path>] · web local o servidor seguro; estado en FABRICA_HOME');
+      console.log(WRITE_WARNING);
+      return 0;
+    }
     const port = values.port === undefined ? 4310 : Number(values.port);
     if (!Number.isInteger(port) || port < 0 || port > 65535) throw new Error('Puerto inválido (0–65535)');
+
+    if (values.server) {
+      const publicOrigin = values['public-origin'] ?? process.env.FAB_PUBLIC_ORIGIN;
+      if (!publicOrigin) {
+        console.error('fab web: el modo servidor requiere --public-origin https://<host> (o variable FAB_PUBLIC_ORIGIN).');
+        return 1;
+      }
+      if (!publicOrigin.startsWith('https://')) {
+        console.error('fab web: el modo servidor requiere publicOrigin con HTTPS (ej. https://fab.ejemplo.com).');
+        return 1;
+      }
+      const socketPath = values.socket ?? process.env.FAB_SOCKET ?? (!values['tls-cert'] ? '/run/fab/fab.sock' : undefined);
+      const tlsCert = values['tls-cert'] ?? process.env.FAB_TLS_CERT;
+      const tlsKey = values['tls-key'] ?? process.env.FAB_TLS_KEY;
+      const tlsCa = values['tls-ca'] ?? process.env.FAB_TLS_CA;
+      const tls = tlsCert && tlsKey ? { cert: tlsCert, key: tlsKey, ca: tlsCa } : undefined;
+
+      const server = startWeb(stateDir, port, {
+        write: values.write,
+        server: true,
+        publicOrigin,
+        socketPath,
+        tls,
+      });
+
+      console.log(`fab web --server · ${publicOrigin} · transporte: ${socketPath ? `socket unix ${socketPath}` : 'mTLS'} · ${values.write ? 'escritura habilitada' : 'solo lectura'}`);
+      await new Promise<void>(res => {
+        const done = () => { process.off('SIGINT', done); process.off('SIGTERM', done); server.stop(true); res(); };
+        process.once('SIGINT', done); process.once('SIGTERM', done);
+      });
+      return 0;
+    }
+
     const server = startWeb(stateDir, port, { write: values.write });
     if (server.host) try { await assertLoopback(server.host, resolve); } catch (e) { server.stop(true); throw e; }
     console.log(`fab web · ${server.loginUrl ?? `http://127.0.0.1:${server.port}`} · ${values.write ? 'escritura habilitada; enlace de un solo uso' : 'solo lectura'}`);
     if (values.write) console.log(WRITE_WARNING);
-    await new Promise<void>(resolve => {
-      const done = () => { process.off('SIGINT', done); process.off('SIGTERM', done); server.stop(true); resolve(); };
+    await new Promise<void>(res => {
+      const done = () => { process.off('SIGINT', done); process.off('SIGTERM', done); server.stop(true); res(); };
       process.once('SIGINT', done); process.once('SIGTERM', done);
     });
     return 0;
-  } catch (e) { if (e instanceof Error && e.message.includes('no resuelve a loopback')) { console.error(`fab web: ${e.message}`); return 1; } console.error('fab web: no se pudo abrir la web. Comprueba el puerto y que FABRICA_HOME contenga una base fab existente.'); return 1; }
+  } catch (e) {
+    if (e instanceof Error && e.message.includes('no resuelve a loopback')) { console.error(`fab web: ${e.message}`); return 1; }
+    if (e instanceof Error && (e.message.includes('publicOrigin') || e.message.includes('modo servidor') || e.message.includes('TLS'))) {
+      console.error(`fab web: ${e.message}`);
+      return 1;
+    }
+    console.error('fab web: no se pudo abrir la web. Comprueba el puerto y que FABRICA_HOME contenga una base fab existente.');
+    return 1;
+  }
 }
