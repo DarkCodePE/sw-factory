@@ -2,6 +2,8 @@ import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { record, tokenCount, usd } from './inference-usage.ts';
 import { isRunnerName } from './runners/name.ts';
+import type { OriginSource } from './store.ts';
+import type { Role } from './profile.ts';
 
 export const MICRO_USD_PER_USD = 1_000_000;
 export const DEFAULT_MILLI_CREDITS_PER_USD = 100_000;
@@ -102,6 +104,11 @@ export interface CostAttemptStart {
 }
 
 export interface CostAttempt extends CostAttemptStart {
+  attributed: boolean;
+  worker: Role | null;
+  originActorId: string | null;
+  originSource: OriginSource | null;
+  prUrl: string | null;
   closedAt: string | null;
   effectiveModel: string | null;
   inferenceMicroUsd: number | null;

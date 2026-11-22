@@ -116,6 +116,8 @@ El dueño puede añadir versiones en un array JSON en `cost-rates.json` del dire
 
 Por defecto, la tarifa local y la de plataforma son cero. El mapa SSH contiene tarifas horarias por nombre de runner. Una entrada ausente o un intervalo ausente deja el cómputo sin medir. Un componente desconocido deja el total sin medir. El redondeo a céntimos ocurre al presentar el importe. La unidad de C2 equivale a 100 000 milésimas de crédito por USD.
 
+El intento conserva el rol que ejecutó y el origen de la señal que se convirtió en change. El usuario que hace triage, revisa o reintenta puede ser otro. Las fuentes desatendidas y las claves de API sin usuario asociado conservan un actor ausente. El PR se consulta desde el vínculo del change, por lo que también agrupa gastos de antes de la publicación. Los intentos nuevos sin enlace van a «Sin PR». Los intentos históricos sin atribución van a «Sin dato». Las métricas de gasto agrupan el mismo conjunto de intentos por worker, usuario, fuente y PR.
+
 ## Lectura de la evidencia
 
 | Necesito saber… | Dónde |

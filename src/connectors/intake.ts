@@ -43,7 +43,7 @@ export async function importIssue(store: Store, links: ChangeLinkStore, tickets:
     let signalId = prior?.signalId;
     if (!signalId) {
       const signal = issueToSignal(issue);
-      signalId = store.addSignal(ws.id, signal.title, signal.body).id;
+      signalId = store.addSignal(ws.id, signal.title, signal.body, { source: 'jira' }).id;
       links.recordImport(opts.key, signalId, issue.ref.url);
     }
     const change = opts.triage ? store.triageSignal(signalId) : undefined;

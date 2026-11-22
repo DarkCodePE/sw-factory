@@ -452,7 +452,7 @@ export async function processActivity(
       const startedAt = store.now();
       store.beginCostAttempt(a, {
         id, startedAt, rate: costRateAt(opts.stateDir, startedAt, remote?.name ?? null),
-        remote: !!remote, runner: runner?.name ?? null, adapter, legacyCount,
+        remote: !!remote, runner: runner?.name ?? null, adapter, legacyCount, worker: role,
       });
     };
     const saveAttempt = (result: AgentRun) => {

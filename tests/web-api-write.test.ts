@@ -32,6 +32,15 @@ test('nota con clave decide: 200 y evento con actor api:<name>', async () => {
   expect((store.db.query("SELECT COUNT(*) AS n FROM events WHERE actor='api:agente'").get() as { n: number }).n).toBeGreaterThan(0);
 });
 
+test('T110: el origen API viene de la petición autenticada y no de sus campos', async () => {
+  expect((await post('/signals', { workstream: 'prueba', title: 'señal API', source: 'web', actorId: 'otro' })).status).toBe(200);
+  const [signal] = store.listSignals('prueba', 'new');
+  expect(signal?.source).toBe('api');
+  expect((await post(`/signals/${signal!.id}/triage`, {})).status).toBe(200);
+  const [triaged] = store.listSignals('prueba', 'triaged');
+  expect(store.getChangeOrigin(triaged!.changeId!)).toEqual({ source: 'api', actorId: null });
+});
+
 test('A7: sin --write, clave decide da 405 y no cambia nada', async () => {
   boot(false);
   expect((await post(`/changes/${change}/note`, { body: 'x' })).status).toBe(405);

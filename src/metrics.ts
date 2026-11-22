@@ -18,7 +18,9 @@ function addCost(groups: Map<string, CostGroup>, name: string, value: number | n
   g.total = g.unknown ? null : g.measured; groups.set(name, g);
 }
 type SpendAmounts = Record<'inferenceMicroUsd' | 'computeMicroUsd' | 'platformMicroUsd' | 'totalMicroUsd', number | null>;
-export type SpendAttempt = SpendAmounts & Pick<CostAttempt, 'changeId' | 'startedAt' | 'effectiveModel'> & { id: string | null };
+export type SpendAttempt = SpendAmounts & Pick<CostAttempt,
+  'changeId' | 'startedAt' | 'effectiveModel' | 'worker' | 'originActorId' | 'originSource' | 'prUrl' | 'attributed'
+> & { id: string | null };
 
 const SPEND_FIELDS = ['inferenceMicroUsd', 'computeMicroUsd', 'platformMicroUsd', 'totalMicroUsd'] as const;
 
@@ -34,6 +36,17 @@ export function summarizeSpending(attempts: readonly SpendAttempt[]) {
     return { measured: known, unknown, total: unknown ? null : known };
   });
   return { inference: totals[0]!, compute: totals[1]!, platform: totals[2]!, total: totals[3]! };
+}
+
+function groupSpending(attempts: SpendAttempt[], key: (attempt: SpendAttempt) => string | null) {
+  const groups = new Map<string | null, SpendAttempt[]>();
+  for (const attempt of attempts) {
+    const name = key(attempt);
+    const group = groups.get(name);
+    if (group) group.push(attempt);
+    else groups.set(name, [attempt]);
+  }
+  return [...groups].map(([key, group]) => ({ key, name: key ?? 'Sin dato', ...summarizeSpending(group) }));
 }
 
 const counts = (values: string[]): [string, number][] => [...values.reduce((m, v) => m.set(v, (m.get(v) ?? 0) + 1), new Map<string, number>())].sort(([a], [b]) => a.localeCompare(b));
@@ -90,6 +103,8 @@ export function calculateMetrics(store: Store, stateDir: string, options: { ws?:
   const currentActivities = new Set(costAttempts.map(attempt => attempt.activityId));
   const spendAttempts: SpendAttempt[] = costAttempts.map(attempt => ({
     id: attempt.id, changeId: attempt.changeId, startedAt: attempt.startedAt, effectiveModel: attempt.effectiveModel,
+    attributed: attempt.attributed, worker: attempt.worker, originActorId: attempt.originActorId,
+    originSource: attempt.originSource, prUrl: attempt.prUrl,
     inferenceMicroUsd: attempt.inferenceBasis === 'runner_declared' ? null : attempt.inferenceMicroUsd,
     computeMicroUsd: attempt.computeMicroUsd, platformMicroUsd: attempt.platformMicroUsd, totalMicroUsd: attempt.totalMicroUsd,
   }));
@@ -137,9 +152,11 @@ export function calculateMetrics(store: Store, stateDir: string, options: { ws?:
         const legacyCount = tokenCount(meta?.costLegacyCount);
         if (legacyCount !== undefined || !currentActivities.has(a.id) && (meta || a.retryCount > 0 || store.isTerminal(a.status))) {
           const legacy = activityInference(a, meta).slice(0, legacyCount);
-          for (const attempt of legacy) spendAttempts.push({
+          const historicalCosts = Array.isArray(meta?.attemptCosts) ? meta.attemptCosts : [];
+          for (const [index, attempt] of legacy.entries()) spendAttempts.push({
             id: null, changeId: a.changeId, startedAt: a.createdAt, effectiveModel: attempt.usage?.effectiveModel ?? null,
-            inferenceMicroUsd: attempt.remoteDeclared ? null : usdToMicro(attempt.costUsd),
+            attributed: false, worker: null, originActorId: null, originSource: null, prUrl: null,
+            inferenceMicroUsd: attempt.remoteDeclared ? null : usdToMicro(index in historicalCosts ? historicalCosts[index] : attempt.costUsd),
             computeMicroUsd: null, platformMicroUsd: null, totalMicroUsd: null,
           });
         }
@@ -238,7 +255,15 @@ export function calculateMetrics(store: Store, stateDir: string, options: { ws?:
     prCycles,
     humans, states: counts(cohort.changes.map(c => c.status)), kinds: counts(kinds),
     daily: { days, changes: dailyChanges, costs: dailyCosts, interventions: dailyInterventions, prs: dailyPrs },
-    spending: { attempts: spendAttempts, ...summarizeSpending(spendAttempts) },
+    spending: {
+      attempts: spendAttempts, ...summarizeSpending(spendAttempts),
+      by: {
+        worker: groupSpending(spendAttempts, a => a.worker),
+        user: groupSpending(spendAttempts, a => a.originActorId),
+        source: groupSpending(spendAttempts, a => a.originSource),
+        pr: groupSpending(spendAttempts, a => a.attributed ? a.prUrl ?? 'Sin PR' : null),
+      },
+    },
     cost: { total: unknownChanges ? null : measured, measured, unknownChanges,
       top: measuredCosts.sort((a, b) => b.cost - a.cost || a.id.localeCompare(b.id)).slice(0, 10),
       adapters: [...adapters.values()], models: [...models.values()],
