@@ -215,6 +215,13 @@ test('T119c-H12: el mensaje de error del servidor se imprime sin caracteres de c
   expect(errs.at(-1)).toContain('linea falsa');
 });
 
+test('T119c-H12 (formato): tampoco salen los caracteres de formato (cambio de dirección, ancho cero)', async () => {
+  await login();
+  const hostile = (async () => new Response(JSON.stringify({ ok: false, error: { code: 'x', message: 'a\u202Eb\u200Bc\u2066d' } }), { status: 409 })) as unknown as typeof fetch;
+  expect(await remoteMain(['prod', 'ws', 'list'], deps({ fetch: hostile }))).toBe(1);
+  expect(errs.at(-1)).not.toMatch(/[\u200B\u202E\u2066]/);
+});
+
 test('T119c-H15: un 429 con Retry-After enorme no hace dormir más de lo que queda del plazo del pareo', async () => {
   expect(await run('remote', 'add', 'prod', ORIGIN)).toBe(0);
   const slept: number[] = [];

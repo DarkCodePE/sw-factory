@@ -119,3 +119,30 @@ test('parseVerb de los verbos nuevos', () => {
   expect(parseVerb(['runner', 'disable', 'r1']).verb.op).toBe('runner/disable');
   expect(parseVerb(['ws', 'access', 'nube']).fields.what).toBe('ws access');
 });
+
+// Huecos de test de la segunda pasada (V13, V14, V15, V19, V20): las lecturas redactan secretos, acotan `limit` y no sacan la explicación del juez.
+const SECRET = 'password=SUPER-SECRETO-1234';
+test('lecturas nuevas: redactan un secreto en el título de una señal, en un evento y en el resumen de validación', async () => {
+  c.store.addSignal(ws.slug, `idea ${SECRET}`, 'b');
+  c.store.event(ws.id, 'info', `nota ${SECRET}`);
+  const act = c.store.listActivities({ changeId })[0]!.id;
+  c.store.db.query("UPDATE activities SET validator = 'qa', status = 'completed', review_status = 'commented', review_comment = ? WHERE id = ?").run(SECRET, act);
+  for (const path of [`/signals?ws=${ws.slug}`, `/events?ws=${ws.slug}`, `/validate/${changeId}`]) {
+    const text = await (await read('owner', path)).text();
+    expect([path, text.includes('SUPER-SECRETO')]).toEqual([path, false]);
+  }
+});
+
+test('events: limit fuera de 1..200 o no entero es 400', async () => {
+  for (const limit of ['0', '201', '1e2', '-1', 'x']) expect([limit, (await read('owner', `/events?ws=${ws.slug}&limit=${limit}`)).status]).toEqual([limit, 400]);
+  expect((await read('owner', `/events?ws=${ws.slug}&limit=200`)).status).toBe(200);
+});
+
+test('scores: la explicación del juez (rationale) y el error no salen por la lectura', async () => {
+  (await import('../src/scorers.ts')).ensureSchema(c.store.db);
+  const act = c.store.listActivities({ changeId })[0]!.id;
+  c.store.db.query("INSERT INTO scores(id, scorer, profile_digest, scope, subject_activity_id, change_id, workstream_id, origin, status, rationale, error, created_at) VALUES ('s1','qa','d','change',?,?,?,'manual','done','MARCA-EXPLICACION','MARCA-ERROR','2026-01-01')").run(act, changeId, ws.id);
+  const text = await (await read('owner', `/scores?ws=${ws.slug}`)).text();
+  expect(text).toContain('"id":"s1"');
+  expect(text).not.toContain('MARCA-');
+});

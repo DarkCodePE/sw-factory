@@ -181,6 +181,9 @@ test('T119c-H8: la revisión de una importación no vale para otra sesión ni pa
   expect([pre.status, JSON.stringify(body)]).toEqual([200, expect.any(String)]);
   const revision = body.data!.revision;
   expect((await send(other, cmd(revision))).status).toBe(409);
+  // La caducidad va firmada: alargarla a mano invalida la revisión.
+  const [exp, firma] = revision.split('.');
+  expect((await send(own, cmd(`${Number(exp) + 3_600_000}.${firma}`))).status).toBe(409);
   now += 10 * 60_000 + 1;
   expect((await send(own, cmd(revision))).status).toBe(409);
   now -= 10 * 60_000 + 1;
