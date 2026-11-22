@@ -14,7 +14,7 @@ import {
   revokeUserKey, changeUserRole, disableUser, type Principal, type Role,
 } from './users.ts';
 import { authorize } from './policy.ts';
-import { ACTIONS, performAction } from './web-actions.ts';
+import { ACTIONS, InputError, performAction } from './web-actions.ts';
 import { route } from './web-api.ts';
 import { constantEqual, cookieValue, csrfToken, originOk, RateLimiter, SESSION_COOKIE } from './web-auth.ts';
 import { jiraImportAction } from './web-entrada.ts';
@@ -236,6 +236,8 @@ export function cliRoutes(opts: CliRoutesOptions) {
       catch (e) {
         if (e instanceof StoreError) return fail(STATUS[e.code] ?? 500, e.code, e.code === 'forbidden' || e.code === 'unauthorized' ? 'no autorizado' : e.message);
         if (e instanceof Response) return e;
+        // Un campo que falta o una confirmación ausente es del cliente: 4xx con su explicación, no un 500.
+        if (e instanceof InputError) return fail(e.status >= 400 && e.status < 500 ? e.status : 400, 'invalid_input', e.message);
         return fail(500, 'error', 'error interno');
       }
     } finally { store.close(); }
@@ -309,7 +311,7 @@ export function cliRoutes(opts: CliRoutesOptions) {
   const CONFLICTS = ['conflict', 'invalid_transition', 'limit_reached', 'workstream_busy'];
   const result = (out: { destination: string; result: string }) => {
     if (out.result === 'ok' || out.result.startsWith('skipped_')) return { destination: out.destination, result: out.result };
-    if (out.result === 'forbidden' || out.result === 'unauthorized' || out.result === 'not_found' || out.result === 'invalid_input') throw new StoreError(out.result, out.result === 'forbidden' || out.result === 'unauthorized' ? 'no autorizado' : out.result);
+    if (out.result === 'forbidden' || out.result === 'unauthorized' || out.result === 'not_found' || out.result === 'invalid_input') throw new StoreError(out.result, out.result === 'forbidden' || out.result === 'unauthorized' ? 'no autorizado' : out.result === 'invalid_input' ? 'revisa los campos de la acción (alguno falta o no es válido)' : out.result);
     if (CONFLICTS.includes(out.result)) throw new StoreError('conflict', out.result);
     throw new Error(out.result);
   };

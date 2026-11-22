@@ -153,3 +153,14 @@ test('T119c-H5b: un POST directo con confirm=yes no aprueba sin pasar por la pá
   expect(await (await form('owner', { code, confirm: 'yes' })).text()).toContain('Terminal autorizada');   // ya vio el paso 1
   expect((await exchange()).status).toBe(200);
 });
+
+// ---- H7: InputError por CLI ---------------------------------------------------------
+
+test('T119c-H7: una acción sin su confirmación o con un campo vacío da 400 con su explicación, no 500', async () => {
+  const noConfirm = await cli(c.tokens.cli.owner, { op: 'changes/cancel', id: changeId, fields: {} });
+  expect(noConfirm.status).toBe(400);
+  expect(((await noConfirm.json()) as { error: { code: string; message: string } }).error).toMatchObject({ code: 'invalid_input', message: expect.stringMatching(/\S{6,}/) });
+  const empty = await cli(c.tokens.cli.member, { op: 'changes/note', id: changeId, fields: { body: '' } });
+  expect(empty.status).toBe(400);
+  expect(((await empty.json()) as { error: { message: string } }).error.message).not.toBe('invalid_input');
+});
