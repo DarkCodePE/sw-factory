@@ -139,7 +139,7 @@ for (const missing of [false, true]) test(`pool conserva coste de ambos intentos
     const evidence = JSON.parse(readFileSync(join(runDirectory(dir, ch.id), `${activity.id}.json`), 'utf8'));
     expect(evidence.attemptCosts).toEqual([missing ? null : 0.25, 0.5]);
     expect(evidence.usage.costUsd).toBe(0.5);
-    expect(costsAtLaunch).toEqual([null, null]);
+    expect(costsAtLaunch).toEqual([0, 0]);
     const others = store.listActivities({ changeId: ch.id }).filter(a => a.id !== activity.id);
     for (const a of others) writeFileSync(join(runDirectory(dir, ch.id), `${a.id}.json`), JSON.stringify({ usage: { costUsd: 0.1 } }));
     if (missing) expect(armCost(store, dir, ch.id)).toBeNull();

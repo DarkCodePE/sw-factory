@@ -1,6 +1,7 @@
 // Protocolo v1 de los runners remotos (T74 §4.2). Puro: sin E/S ni git.
 // Todo lo que llega del otro lado es dato no confiable: cada campo se valida y una violación lanza ProtocolError.
 import { boundedAgentOutput } from '../agents.ts';
+import { modelId, readUsage, tokenCount, type AgentUsage } from '../inference-usage.ts';
 import { MODEL_RE } from '../profile.ts';
 import { CONFINABLE_AGENTS } from '../sandbox/confine.ts';
 
@@ -22,7 +23,7 @@ export const LIMITS = {
 };
 
 export type ErrorCode = (typeof ERROR_CODES)[number];
-export interface Usage { costUsd: number; inputTokens: number; outputTokens: number }
+export type Usage = AgentUsage;
 export type Message =
   | { v: 1; type: 'hello'; repoKey: string }
   | { v: 1; type: 'hello'; have: string[]; fabSha: string; sandbox: string; agents: Record<string, { sha256: string }> }
@@ -68,10 +69,16 @@ const nonNeg = (x: unknown, f: string): number => (typeof x === 'number' && Numb
 function usage(x: unknown): Usage | null {
   if (x === null) return null;
   if (!isObj(x)) return fail('usage inválido');
-  keys(x, ['costUsd', 'inputTokens', 'outputTokens'], 'usage');
-  const u = { costUsd: nonNeg(x.costUsd, 'usage.costUsd'), inputTokens: nonNeg(x.inputTokens, 'usage.inputTokens'), outputTokens: nonNeg(x.outputTokens, 'usage.outputTokens') };
+  const counts = ['inputTokens', 'outputTokens', 'cacheReadTokens', 'cacheWriteTokens'] as const;
+  const allowed = ['costUsd', 'effectiveModel', 'priceVersion', ...counts];
+  if (!Object.keys(x).every(key => allowed.includes(key))) return fail('usage: clave desconocida');
+  if ('costUsd' in x) nonNeg(x.costUsd, 'usage.costUsd');
+  if ('effectiveModel' in x && !modelId(x.effectiveModel)) return fail('usage.effectiveModel inválido');
+  for (const key of counts) if (key in x && tokenCount(x[key]) === undefined) return fail(`usage.${key} inválido`);
+  const u = readUsage(x);
+  if (!u || ('priceVersion' in x && !u.priceVersion)) return fail('usage incompleto');
   const max = LIMITS.usageMax;
-  return u.costUsd > max.costUsd || u.inputTokens > max.tokens || u.outputTokens > max.tokens ? null : u;
+  return (u.costUsd ?? 0) > max.costUsd || counts.some(key => (u[key] ?? 0) > max.tokens) ? null : u;
 }
 
 function agents(x: unknown): Record<string, { sha256: string }> {

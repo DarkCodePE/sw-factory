@@ -1,3 +1,4 @@
+import type { AgentUsage } from '../inference-usage.ts';
 export type Autonomy = 'off' | 'low' | 'medium' | 'high';
 export type InteractionMode = 'auto' | 'spec' | 'mission';
 export interface ToolCall {
@@ -22,6 +23,7 @@ export interface ModelTurn {
   toolCalls: ToolCall[];
   finishReason: string;
   usage?: { inputTokens: number; outputTokens: number };
+  inference?: AgentUsage;
 }
 export interface ModelRequest {
   messages: Message[];
@@ -145,6 +147,7 @@ export interface AgentResult {
   toolCalls: number;
   durationMs: number;
   usage: { inputTokens: number; outputTokens: number };
+  inference?: AgentUsage;
   error?: { type: 'program' | 'provider' | 'limit' | 'timeout' | 'aborted' | 'session'; message: string };
   mission?: { missionId: string; state: import('./mission-contract.ts').MissionState['state']; directory: string; completed: number; total: number; snapshot: import('./mission-contract.ts').MissionProgressSnapshot };
 }

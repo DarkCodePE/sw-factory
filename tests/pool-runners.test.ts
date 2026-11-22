@@ -49,6 +49,7 @@ test('runner ssh: investigación e implementación completas, commit importado y
     const m = meta(c.id, a.id);
     expect(m.runner).toMatchObject({ name: 'torre', kind: 'ssh', declared: { fabSha: 'fake123', sandbox: 'bwrap' } });
     expect(m.runner.jobId).toBe(`${a.id}-1`);
+    expect(m.inferenceAttempts).toMatchObject([{ remoteDeclared: true }]);
     expect(m.isolation).toContain('no verificado');
   }
   const branch = store.getChange(c.id).branch!;

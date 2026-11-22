@@ -366,7 +366,12 @@ async function recorrido(login: string) {
 
   await flujo('páginas de solo lectura: métricas, configuración, flujo, experimentos y turnos', async () => {
     abrir('/metricas'); assert(paginaTexto().includes('Tiempo de ciclo'), 'métricas'); foto('metricas');
-    abrir('/metricas?range=all&ws=plataforma'); assert(paginaTexto().includes('Coste'), 'métricas filtradas');
+    abrir('/metricas?tab=gasto&range=all&ws=plataforma'); assert(paginaTexto().includes('Coste'), 'métricas filtradas');
+    // T111: una captura por pestaña, con el mismo rango y workstream; cada una con sus tarjetas y sin JS de página.
+    for (const [tab, texto] of [['productividad', 'Pull requests'], ['gasto', 'Coste por día'], ['jueces', 'Los jueces clasifican']]) {
+      abrir(`/metricas?tab=${tab}&range=30&ws=plataforma`); assert(paginaTexto().includes(texto), `pestaña ${tab}`);
+      assert(Number(ab('get', 'count', 'nav.tabs a')) === 3, `tres pestañas en ${tab}`); foto(`metricas-${tab}`);
+    }
     abrir('/config'); assert(paginaTexto().includes('Configuración'), 'configuración'); foto('config');
     abrir('/flujo?ws=plataforma'); assert(paginaTexto().includes('Flujo'), 'flujo'); eq(ab('get', 'count', 'svg.flow'), '1', 'diagrama del flujo'); foto('flujo');
     abrir('/experimentos'); assert(paginaTexto().includes('perfil-e2e'), 'lista de experimentos'); foto('experimentos');

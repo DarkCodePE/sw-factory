@@ -1,3 +1,4 @@
+import { readInferenceAttempts, readUsage, tokenCount, usd, type InferenceAttempt } from './inference-usage.ts';
 // Lectura de evidencia histórica: nunca crea directorios ni ejecuta git.
 import { closeSync, constants, fstatSync, lstatSync, openSync, readFileSync, readSync, realpathSync } from 'node:fs';
 import { isAbsolute, join, relative, resolve, sep } from 'node:path';
@@ -86,7 +87,7 @@ function redactLogValue(value: unknown, depth = 0): unknown {
   if (!value || typeof value !== 'object') return value;
   return Object.fromEntries(Object.entries(value).map(([key, item]) => [
     redactForWeb(key),
-    typeof item === 'number' && /^(?:input|output|cache_creation_input|cache_read_input)_tokens$/.test(key) ? item
+    typeof item === 'number' && /^(?:(?:input|output|cache_creation_input|cache_read_input|cached_input|cache_write_input|cache_read|thinking|total)_tokens|(?:input|output|cacheRead|cacheWrite)Tokens)$/.test(key) ? item
       : SECRET_KEY.test(key) ? '[REDACTED]' : redactLogValue(item, depth + 1),
   ]));
 }
@@ -220,7 +221,19 @@ export function activityCosts(a: Activity, meta: Record<string, unknown> | null)
   const costs = meta.attemptCosts ?? (a.retryCount === 0 ? [(meta.usage as { costUsd?: unknown } | undefined)?.costUsd] : null);
   const attempts = Math.max(1, a.retryCount + (a.status === 'failed' ? 0 : 1));
   if (!Array.isArray(costs) || costs.length < attempts) return null;
-  return costs.map(c => typeof c === 'number' && Number.isFinite(c) ? c : null);
+  return costs.map(c => usd(c) ?? null);
+}
+
+export function activityInference(a: Activity, meta: Record<string, unknown> | null): (InferenceAttempt & { costUsd: number | null })[] {
+  const attempts = readInferenceAttempts(meta?.inferenceAttempts);
+  const costs = activityCosts(a, meta);
+  const count = Math.max(attempts?.length ?? 0, costs?.length ?? 0, a.retryCount + (a.status === 'failed' ? 0 : 1), 1);
+  return Array.from({ length: count }, (_, i) => ({
+    ...(attempts?.[i] ?? (i === count - 1 && !attempts
+      ? { durationMs: tokenCount(meta?.durationMs), usage: readUsage(meta?.usage) }
+      : {})),
+    costUsd: costs?.[i] ?? null,
+  }));
 }
 
 export function changeCost(store: Store, stateDir: string, changeId: string): number | null {

@@ -14,9 +14,10 @@ const NAMES_LIMIT = 2048;
 const REJECT = 'Escribe solo nombres, uno por línea: un valor pegado se rechaza y no se guarda.';
 
 /** Valida el formulario. Cualquier línea con `=`, espacios internos o más de 64 caracteres parece un valor y aborta sin repetirla. */
-export function accessInput(raw: Record<string, string | undefined>): Record<string, string> {
+export function accessInput(raw: Record<string, string | undefined>, options?: { server?: boolean }): Record<string, string> {
   const kind = raw.kind as Kind, mode = raw.mode ?? '';
   if (!ACCESS_KINDS.includes(kind) || (mode !== 'declared' && mode !== 'legacy')) throw new StoreError('invalid_input', 'Elige env o mcp y un modo válido.');
+  if (options?.server && mode === 'legacy') throw new StoreError('invalid_input', 'El modo servidor exige modo declarado (no se permite legacy).');
   const text = raw.names ?? '';
   if (Buffer.byteLength(text) > NAMES_LIMIT) throw new StoreError('invalid_input', REJECT);
   const names = text.split(/\r?\n/).map(l => l.trim()).filter(Boolean);
@@ -27,7 +28,8 @@ export function accessInput(raw: Record<string, string | undefined>): Record<str
 }
 
 /** Mismas guardas que `fab ws env|mcp`: el Store valida los nombres; para MCP además deben estar en el registro. */
-export function setAccess(store: Store, stateDir: string, id: string, input: Record<string, string | undefined>): void {
+export function setAccess(store: Store, stateDir: string, id: string, input: Record<string, string | undefined>, options?: { server?: boolean }): void {
+  if (options?.server && input.mode === 'legacy') throw new StoreError('invalid_input', 'El modo servidor exige modo declarado (no se permite legacy).');
   const names = input.mode === 'legacy' ? null : (input.names ? input.names.split('\n') : []);
   // T103-H13: desde el modo anterior, «Declarado» vacío corta todas las variables o MCP de los workers: se pide confirmación.
   const ws = store.getWorkstream(id), current = input.kind === 'env' ? ws.envAllow : ws.mcpAllow;

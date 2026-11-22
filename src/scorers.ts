@@ -190,10 +190,10 @@ export function enqueueBackfill(store: Store, stateDir: string, wsId: string, op
 
 // ---- T65: consultas de solo lectura para la web (no crean la tabla) ------------------------------
 
-export interface ScoreFilter { wsId?: string; since?: string; scorer?: string }
+export interface ScoreFilter { wsId?: string; since?: string; until?: string; scorer?: string }
 const where = (f: ScoreFilter, extra = '') => {
-  const c = [extra, f.wsId && 'workstream_id = $ws', f.since && 'created_at >= $since', f.scorer && 'scorer = $scorer'].filter(Boolean);
-  return { sql: c.length ? `WHERE ${c.join(' AND ')}` : '', p: { ...(f.wsId && { ws: f.wsId }), ...(f.since && { since: f.since }), ...(f.scorer && { scorer: f.scorer }) } as Record<string, string> };
+  const c = [extra, f.wsId && 'workstream_id = $ws', f.since && 'created_at >= $since', f.until && 'created_at <= $until', f.scorer && 'scorer = $scorer'].filter(Boolean);
+  return { sql: c.length ? `WHERE ${c.join(' AND ')}` : '', p: { ...(f.wsId && { ws: f.wsId }), ...(f.since && { since: f.since }), ...(f.until && { until: f.until }), ...(f.scorer && { scorer: f.scorer }) } as Record<string, string> };
 };
 
 export interface ScorerSummary { scorer: string; profileDigest: string; scope: string; done: number; failed: number; pending: number; passed: number; costUsd: number | null; unmeasured: number }
@@ -210,7 +210,7 @@ export function scorerSummary(db: Database, f: ScoreFilter = {}): ScorerSummary[
 export function passByDay(db: Database, f: ScoreFilter = {}): { day: string; scorer: string; done: number; passed: number }[] {
   if (!hasScores(db)) return [];
   const w = where(f, "status = 'done' AND passed IS NOT NULL");
-  return db.query(`SELECT substr(COALESCE(finished_at, created_at), 1, 10) AS day, scorer, COUNT(*) AS done, SUM(passed) AS passed
+  return db.query(`SELECT substr(created_at, 1, 10) AS day, scorer, COUNT(*) AS done, SUM(passed) AS passed
     FROM scores ${w.sql} GROUP BY day, scorer ORDER BY day DESC, scorer`).all(w.p as never) as never;
 }
 

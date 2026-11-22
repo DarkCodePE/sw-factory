@@ -96,7 +96,7 @@ test('result: tipos, rangos y coherencia del bundle', () => {
     usageNaN: { usage: { costUsd: 1, inputTokens: null, outputTokens: 1 } },
     usageInf: { usage: { costUsd: 1e999, inputTokens: 1, outputTokens: 1 } },
     usageExtra: { usage: { costUsd: 1, inputTokens: 1, outputTokens: 1, x: 1 } },
-    usageFalta: { usage: { costUsd: 1, inputTokens: 1 } },
+    usageVacio: { usage: {} },
     output: { output: 5 }, headCorto: { head: 'abc' },
     bundleAlto: { bundleBytes: LIMITS.resultBundleBytes + 1 },
     ceroConHead: { bundleBytes: 0 }, // 0 bytes pero head presente
@@ -161,4 +161,17 @@ test('H7: un uso declarado absurdo se descarta (No medido) y los límites exacto
 
 test('H1: result_rejected es un código de error válido', () => {
   expect(LIMITS.errorCodes).toContain('result_rejected');
+});
+
+test('T108: el runner puede declarar caché sin un precio ni un modelo efectivo', () => {
+  const usage = { inputTokens: 42, outputTokens: 12, cacheReadTokens: 4, cacheWriteTokens: 0 };
+  expect(runner({ ...result, usage })).toMatchObject({ usage });
+  expect(runner({ ...result, usage: { costUsd: 0.4 } })).toMatchObject({ usage: { costUsd: 0.4 } });
+  bad(() => runner({ ...result, usage: { ...usage, effectiveModel: '<script>' } }));
+  bad(() => runner({ ...result, usage: { ...usage, cacheReadTokens: 0.5 } }));
+});
+
+test('T108 H5: el modelo efectivo con sufijo de contexto llega del runner', () => {
+  const usage = { effectiveModel: 'claude-sonnet-4-6[1m]', inputTokens: 42 };
+  expect(runner({ ...result, usage })).toMatchObject({ usage });
 });
