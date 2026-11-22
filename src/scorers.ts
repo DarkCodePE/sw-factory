@@ -206,6 +206,17 @@ export function scorerSummary(db: Database, f: ScoreFilter = {}): ScorerSummary[
     FROM scores ${w.sql} GROUP BY scorer, profile_digest ORDER BY scorer, profile_digest`).all(w.p as never) as ScorerSummary[]);
 }
 
+/** Rol (validador o tipo) de la activity de cada puntuación, por juez y de más a menos usado: los roles que el juez ha juzgado. */
+export function scorerRoles(db: Database, f: ScoreFilter = {}): Map<string, string[]> {
+  const out = new Map<string, string[]>();
+  if (!hasScores(db)) return out;
+  const w = where(f);
+  const rows = db.query(`SELECT s.scorer AS scorer, CASE WHEN a.validator IS NOT NULL THEN 'validador:' || a.validator ELSE a.kind END AS role, COUNT(*) AS n
+    FROM (SELECT scorer, subject_activity_id FROM scores ${w.sql}) s JOIN activities a ON a.id = s.subject_activity_id GROUP BY s.scorer, role ORDER BY s.scorer, n DESC, role`).all(w.p as never) as Array<{ scorer: string; role: string }>;
+  for (const r of rows) out.set(r.scorer, [...(out.get(r.scorer) ?? []), r.role]);
+  return out;
+}
+
 /** Aprobadas y puntuadas por día y juez. Solo cuentan las filas `done` con veredicto. */
 export function passByDay(db: Database, f: ScoreFilter = {}): { day: string; scorer: string; done: number; passed: number }[] {
   if (!hasScores(db)) return [];

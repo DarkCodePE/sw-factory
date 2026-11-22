@@ -13,7 +13,7 @@ export function table(caption: string, headers: string[], rows: string[][]) {
 export interface CardSeries { label: string; values: Array<number | null>; /** Texto de la tabla en un hueco; por defecto «Sin datos». */ missing?: (i: number) => string }
 export interface CardOpts {
   id: string; title: string; help: string; /** Cifra destacada ya formateada («No medido» si no hay). */ figure: string; sub?: string;
-  days: string[]; series: CardSeries[]; stacked?: boolean; fmt: (n: number) => string; integer?: boolean; tableCaption: string;
+  days: string[]; series: CardSeries[]; stacked?: boolean; fmt: (n: number) => string; integer?: boolean; tableCaption: string; /** HTML ya escapado bajo el gráfico (p. ej. etiquetas). */ footer?: string;
 }
 
 const MAX_SERIES = 4;
@@ -69,7 +69,7 @@ export function card(o: CardOpts): string {
   const has = ss.some(s => s.values.some(v => v !== null));
   const legend = ss.length > 1 || o.stacked ? ss.map((s, j) => `<input type="checkbox" id="c-${id}-${j}" class="sc sc${j}" checked><label for="c-${id}-${j}"><span class="sw sw${j}" aria-hidden="true"></span>${esc(s.label)}</label>`).join('') : '';
   const rows = o.days.map((d, i) => [esc(d), ...ss.map(s => { const v = s.values[i] ?? null; return v === null ? esc(s.missing?.(i) ?? 'Sin datos') : esc(o.fmt(v)); })]);
-  return `<section class="card" aria-labelledby="t-${id}">${head(id, o.title, o.help)}<p class="fig">${esc(o.figure)}</p>${o.sub ? `<p class="sub">${esc(o.sub)}</p>` : ''}<div class="chart">${has ? `${legend}${plot({ ...o, series: ss })}` : '<p class="empty">No medido: no hay datos en este rango.</p>'}</div>${folded(o.tableCaption, table(o.tableCaption, ['Fecha', ...ss.map(s => s.label)], rows))}</section>`;
+  return `<section class="card" aria-labelledby="t-${id}">${head(id, o.title, o.help)}<p class="fig">${esc(o.figure)}</p>${o.sub ? `<p class="sub">${esc(o.sub)}</p>` : ''}<div class="chart">${has ? `${legend}${plot({ ...o, series: ss })}` : '<p class="empty">No medido: no hay datos en este rango.</p>'}</div>${o.footer ? `<div class="chips">${o.footer}</div>` : ''}${folded(o.tableCaption, table(o.tableCaption, ['Fecha', ...ss.map(s => s.label)], rows))}</section>`;
 }
 
 /** Tarjeta de cifras (p. ej. tiempos de ciclo): una cifra grande por celda, «No medido» si falta. */
@@ -94,6 +94,10 @@ nav.tabs{display:flex;flex-wrap:wrap;gap:8px;margin:0 0 24px}nav.tabs a{display:
 .card .chart label{min-height:24px;display:inline-flex;align-items:center;gap:6px;font-size:14px;cursor:pointer}.card .chart input{min-height:auto;width:18px;height:18px;accent-color:var(--accent)}
 .sw{display:inline-block;width:14px;height:4px;border-radius:2px}.sw0{background:var(--s0)}.sw1{background:var(--s1)}.sw2{background:var(--s2)}.sw3{background:var(--s3)}
 .sc0:not(:checked)~.plot .a0,.sc1:not(:checked)~.plot .a1,.sc2:not(:checked)~.plot .a2,.sc3:not(:checked)~.plot .a3{display:none}
+.chips{display:flex;flex-wrap:wrap;gap:6px;margin-top:10px}.chip{padding:2px 10px;border:1px solid var(--line);border-radius:999px;background:var(--panel);font-size:13px}
+.card.add{border-style:dashed;display:flex;flex-direction:column;justify-content:center}.card.add>summary,.card.add>details>summary{font-weight:600}.card.add label{display:block;margin-top:8px}.card.add textarea,.card.add input:not([type=hidden]),.card.add select{width:100%;box-sizing:border-box}
+.topbar{display:flex;flex-wrap:wrap;align-items:flex-start;justify-content:space-between;gap:12px}.topbar nav.tabs{margin-bottom:12px}
+details.setup{position:relative;margin:0}details.setup>summary{display:inline-block;padding:8px 18px;min-height:44px;line-height:26px;box-sizing:border-box;border:1px solid var(--line);border-radius:6px;font-weight:600;cursor:pointer;color:var(--text);list-style:none}details.setup>summary::-webkit-details-marker{display:none}details.setup[open]>div{position:absolute;right:0;z-index:4;width:min(360px,90vw);margin-top:6px;padding:12px 16px;background:var(--panel);border:1px solid var(--line);border-radius:8px}details.setup ol{margin:0;padding-left:22px}details.setup li{margin:6px 0}
 .cells{display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));margin-top:8px}.cell{padding:14px 12px;border-top:1px solid var(--line)}
 .card details{margin:12px 0 0}.card details.help{margin:0;position:relative}.help summary{padding:0;min-width:24px;min-height:24px;width:24px;height:24px;line-height:22px;text-align:center;border:1px solid var(--muted);border-radius:50%;color:var(--muted);font-size:13px;list-style:none}.help summary::-webkit-details-marker{display:none}.help p{position:absolute;z-index:3;left:0;top:28px;width:min(280px,70vw);margin:0;padding:10px 12px;background:var(--panel);border:1px solid var(--line);border-radius:6px;font-size:13px;color:var(--text)}
 .card .data summary{padding:4px 0;font-size:14px}.card .table-wrap{max-height:320px}.card caption{padding-top:8px}`;

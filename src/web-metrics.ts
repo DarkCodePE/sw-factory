@@ -1,4 +1,5 @@
 import type { Store } from './store.ts';
+import { resolveProfile } from './profile.ts';
 import { calculateMetrics, validateDay, type MetricsRange } from './metrics.ts';
 import { scorersPanel, sinceOf, type RangeSel } from './web-scorers.ts';
 import { CARD_STYLE, card, esc, statCard, table } from './web-cards.ts';
@@ -26,6 +27,18 @@ function selection(url: URL): RangeSel {
   return { ws, range, from, to, since: from ? `${from}T00:00:00.000Z` : range === 'custom' || range === 'all' ? undefined : sinceOf(range), until: to ? `${to}T23:59:59.999Z` : undefined };
 }
 const query = (r: RangeSel, tab: string) => `?${new URLSearchParams({ tab, ...(r.ws && { ws: r.ws }), range: r.range, ...(r.from && { from: r.from }), ...(r.to && { to: r.to }) })}`;
+/** «Puesta en marcha» (T114): pasos del alta que se comprueban en el Store, sin estado propio; cada pendiente enlaza a donde se resuelve. */
+function setup(store: Store, stateDir: string): string {
+  const wss = store.listWorkstreams().filter(w => w.state !== 'archived');
+  const scorers = wss.some(w => { try { return Object.keys(resolveProfile(stateDir, w.profile).profile.scorers ?? {}).length > 0; } catch { return false; } });
+  const steps: Array<[string, boolean, string]> = [
+    ['Crear un workstream', wss.length > 0, '/workstreams/nuevo'], ['Activar un workstream', wss.some(w => w.state === 'active'), '/workstreams'],
+    ['Asignar un perfil', wss.some(w => w.profile !== null), '/perfiles'], ['Definir un juez', scorers, '/metricas?tab=jueces'],
+    ['Crear el primer change', store.db.query('SELECT 1 FROM changes LIMIT 1').get() !== null, '/changes'],
+  ];
+  const done = steps.filter(x => x[1]).length;
+  return `<details class="setup"><summary>Puesta en marcha · ${done} de ${steps.length}</summary><div><ol>${steps.map(([label, ok, href]) => `<li>${ok ? `${label}: Hecho` : `<a href="${href}">${label}</a>: Pendiente`}</li>`).join('')}</ol></div></details>`;
+}
 const tabs = (active: string, r: RangeSel) => `<nav aria-label="Secciones de métricas" class="tabs">${TABS.map(([id, label]) => `<a href="/metricas${esc(query(r, id))}"${active === id ? ' aria-current="page"' : ''}>${label}</a>`).join(' ')}</nav>`;
 const filters = (store: Store, tab: string, r: RangeSel, what: string, scorer?: string, extra = '') => `<form action="/metricas" method="get" class="filters"><input type="hidden" name="tab" value="${tab}">${scorer ? `<input type="hidden" name="scorer" value="${esc(scorer)}">` : ''}<label>Workstream<select name="ws"><option value="">Todos</option>${store.listWorkstreams().map(w => `<option value="${esc(w.slug)}"${r.ws === w.id || r.ws === w.slug ? ' selected' : ''}>${esc(w.slug)}</option>`).join('')}</select></label><label>${what}<select name="range">${RANGES.map(([v, l]) => `<option value="${v}"${r.range === v ? ' selected' : ''}>${l}</option>`).join('')}</select></label><label>Desde<input name="from" type="date" value="${esc(r.from ?? '')}"></label><label>Hasta<input name="to" type="date" value="${esc(r.to ?? '')}"></label>${extra}<button type="submit">Actualizar</button></form>`;
 
@@ -36,12 +49,13 @@ const runsSelect = (mode: string) => `<label>Runs por<select name="runs">${RUNS_
 
 export function metricsPage(store: Store, stateDir: string, url: URL, csrf?: string): { title: string; body: string } {
   const r = selection(url), t = url.searchParams.get('tab');
-  if (t === 'jueces') return { title: 'Métricas · Jueces', body: tabs('jueces', r) + filters(store, 'jueces', r, 'Puntuaciones creadas en', url.searchParams.get('scorer') || undefined) + scorersPanel(store, stateDir, url, r, csrf) };
+  const bar = (tab: string) => `<div class="topbar">${tabs(tab, r)}${setup(store, stateDir)}</div>`;
+  if (t === 'jueces') return { title: 'Métricas · Jueces', body: bar('jueces') + filters(store, 'jueces', r, 'Puntuaciones creadas en', url.searchParams.get('scorer') || undefined) + scorersPanel(store, stateDir, url, r, csrf) };
   const gasto = t === 'gasto';
   const m = calculateMetrics(store, stateDir, { ws: r.ws, range: r.range as MetricsRange, from: r.from, to: r.to });
   const lead = `<p class="muted">${m.count} changes · Calculado: <time>${esc(m.until)}</time>. El rango selecciona changes por fecha de creación; sus métricas incluyen todo su recorrido registrado hasta esta consulta.</p>${m.omitted ? `<p class="notice">Cálculo limitado a los 1000 changes más recientes. Se omiten ${m.omitted} changes; todos los resultados corresponden a la selección limitada.</p>` : ''}${r.range === 'all' ? '<p class="notice">Las series temporales diarias de «Todo el historial» muestran como máximo los últimos 90 días.</p>' : ''}`;
   const mode = runsMode(url);
-  const head = tabs(gasto ? 'gasto' : 'productividad', r) + filters(store, gasto ? 'gasto' : 'productividad', r, 'Changes creados en', undefined, gasto ? '' : runsSelect(mode)) + lead;
+  const head = bar(gasto ? 'gasto' : 'productividad') + filters(store, gasto ? 'gasto' : 'productividad', r, 'Changes creados en', undefined, gasto ? '' : runsSelect(mode)) + lead;
   return gasto ? { title: 'Métricas · Gasto', body: head + spending(m) } : { title: 'Métricas', body: head + productivity(m, r.range, mode) };
 }
 type M = ReturnType<typeof calculateMetrics>;
