@@ -192,7 +192,10 @@ test('T119c-H8: la revisión de una importación no vale para otra sesión ni pa
 test('T119c-H9: resolve-work no salta --write aunque el llamador no pase por la guarda de web-cli', async () => {
   disableUser(c.store, c.web.owner, c.web.member.userId);
   expect(() => previewResolveWork(c.store, c.web.owner, c.web.member.userId, false)).toThrow();
-  await expect(resolveWork(c.store, c.web.owner, c.web.member.userId, { cancel: true }, 'r', 'x', '00000000-0000-0000-0000-000000000000', false)).rejects.toThrow();
+  // Con la revisión válida de la vista previa: lo único que puede negarlo es `write`.
+  const { revision } = previewResolveWork(c.store, c.web.owner, c.web.member.userId, true);
+  await expect(resolveWork(c.store, c.web.owner, c.web.member.userId, { cancel: true }, 'r', revision, '00000000-0000-0000-0000-000000000000', false)).rejects.toMatchObject({ code: 'forbidden' });
+  expect(c.store.getChange(changeId).status).not.toBe('canceled');
   expect(previewResolveWork(c.store, c.web.owner, c.web.member.userId, true).userId).toBe(c.web.member.userId);
 });
 
