@@ -224,3 +224,17 @@ test('T119c-H13: events y validate status no dan a un viewer el motivo de un blo
   expect(await send('owner', `/validate/${changeId}`)).toContain('MARCA-VALIDADOR');
   expect(await send('viewer', `/events?ws=${ws.slug}`)).toContain('"message":"blocked"');
 });
+
+// ---- H16: la revisión de una importación es de un solo uso ------------------------------------------------
+
+test('T119c-H16: la misma revisión de importación no se acepta dos veces', async () => {
+  const routes = cliRoutes({ stateDir: c.stateDir, publicOrigin: ORIGIN, write: true, secret: SECRET });
+  const send = (body: Record<string, unknown>) => routes.handle(new Request(`${ORIGIN}/cli/v1/commands`, { method: 'POST', body: JSON.stringify(body),
+    headers: { host: HOST, authorization: `Bearer ${c.tokens.cli.owner}`, 'content-type': 'application/json' } }), '203.0.113.7').then(r => r!);
+  const p = defaultProfile();
+  const file = { name: 'perfil.json', base64: Buffer.from(JSON.stringify({ ...p, worker: { ...p.worker, investigate: p.worker.investigate + '\nOtra.' } })).toString('base64') };
+  const cmd = (confirm?: string) => ({ op: 'perfiles/importar', fields: { ws: ws.slug }, file, ...(confirm ? { confirm } : {}) });
+  const { data: { revision } } = await (await send(cmd())).json() as { data: { revision: string } };
+  expect((await send(cmd(revision))).status).toBe(200);
+  expect((await send(cmd(revision))).status).toBe(409);
+});

@@ -166,6 +166,8 @@ export function cliRoutes(opts: CliRoutesOptions) {
   const limiter = opts.limiter ?? new RateLimiter(clock), pairings = new CliPairings(clock);
   const runnerCheck = opts.runnerCheck ?? runnerCheckAction(opts.stateDir);
   const jira = opts.jiraImport ?? jiraImportAction(opts.stateDir);
+  /** Revisiones de importación ya gastadas, hasta su caducidad (§4: confirmación de un uso). En memoria: un reinicio del servidor ya las invalida por la caducidad corta. */
+  const spent = new Map<string, number>();
   const open = () => new Store(join(opts.stateDir, 'fabrica.db'), { clock: () => new Date(clock()) });
 
   const webSession = (store: Store, req: Request): Principal | null => { const t = cookieValue(req, SESSION_COOKIE); return t ? resolvePrincipal(store, t, 'web') : null; };
@@ -294,6 +296,9 @@ export function cliRoutes(opts: CliRoutesOptions) {
         if (cmd.confirm === undefined) { const exp = clock() + IMPORT_SEAL_TTL_MS; return { preview: { kind, bytes: attachment!.bytes.byteLength, target }, revision: `${exp}.${bound(exp)}` }; }
         const [exp, given] = cmd.confirm.split('.'), expNum = Number(exp);
         if (!Number.isSafeInteger(expNum) || expNum <= clock() || !given || !constantEqual(given, bound(expNum))) throw new StoreError('conflict', 'la revisión no coincide o caducó: repite la vista previa');
+        for (const [k, until] of spent) if (until <= clock()) spent.delete(k);
+        if (spent.has(cmd.confirm)) throw new StoreError('conflict', 'la revisión ya se usó: repite la vista previa');
+        spent.set(cmd.confirm, expNum);
         const input = { ...fields, payload: Buffer.from(attachment!.bytes).toString('base64'), digest: base, confirm: 'yes' };
         return result(await performAction(opts.stateDir, op, id, input, who, undefined, { server: true }));
       }
