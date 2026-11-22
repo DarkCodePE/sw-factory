@@ -48,7 +48,8 @@ test('runner ssh: investigación e implementación completas, commit importado y
     expect(store.getActivity(a.id).runner).toBe('torre');
     const m = meta(c.id, a.id);
     expect(m.runner).toMatchObject({ name: 'torre', kind: 'ssh', declared: { fabSha: 'fake123', sandbox: 'bwrap' } });
-    expect(m.runner.jobId).toBe(`${a.id}-1`);
+    expect(m.runner.jobId).toBe(store.listCostAttempts([c.id]).find(attempt => attempt.activityId === a.id)?.id);
+    expect(m.runner.jobId).toMatch(/^[a-f0-9-]{36}$/);
     expect(m.inferenceAttempts).toMatchObject([{ remoteDeclared: true }]);
     expect(m.isolation).toContain('no verificado');
   }
@@ -57,6 +58,30 @@ test('runner ssh: investigación e implementación completas, commit importado y
   const events = store.listEvents(ws.id).map(e => String(e.message));
   expect(events.some(m => m.startsWith('encargo enviado al runner torre ('))).toBe(true);
   expect(events.some(m => /^resultado del runner torre importado \([0-9a-f]{8}\)$/.test(m))).toBe(true);
+});
+
+test.each([
+  ['timed', 3500, 123_000],
+  ['lost-after-execution', 3500, null],
+  ['lost-accepted', null, null],
+  ['no-change', null, null],
+] as const)('T109: SSH usa el intervalo de casa (%s)', async (scenario, compute, inference) => {
+  const ws = workstream();
+  store.setWorkstreamRunner(ws.id, 'torre');
+  const c = store.createChange(ws.id, 'fix', 'desc');
+  writeFileSync(join(dir, 'cost-rates.json'), JSON.stringify([{
+    version: 'ssh-v1', effectiveFrom: '2020-01-01T00:00:00.000Z',
+    localHourlyMicroUsd: 0, runnerHourlyMicroUsd: { torre: 3_600_000 }, platformMicroUsd: 400,
+  }]));
+  let tick = 0;
+  const a = store.claimActivity(ws.id, 'cost-worker')!;
+  await processActivity(store, a, 'cost-worker', opts(ws.id, {
+    runnerTransport: fake(scenario), runnerDeps: { monotonicNow: () => 200 + tick++ * 3500 },
+  }));
+  expect(store.listCostAttempts([c.id])).toMatchObject([{
+    computeDurationMs: compute, computeMicroUsd: compute, inferenceMicroUsd: inference,
+    inferenceBasis: inference === null ? null : 'runner_declared', platformMicroUsd: 400, totalMicroUsd: null,
+  }]);
 });
 
 test('sin runner o con runner local sin confinar: nada cambia (ni runner en la actividad ni sesión remota)', async () => {

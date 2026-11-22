@@ -39,6 +39,7 @@ export interface LiveTurn {
   /** Valores entregados, por nombre: se limpian de la salida del turno (S6). */
   scrub?: Record<string, string>;
   onSpawn?: (pgid: number) => void;
+  onExecutionEnd?: (durationMs: number) => void;
   /**
    * Called synchronously for each valid report before the tool answers the agent (T16). It persists the report
    * (e.g. `ReportStore.recorder`); if it throws, the agent receives the error and the report is NOT accepted.

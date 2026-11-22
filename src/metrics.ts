@@ -1,6 +1,9 @@
 // Agregados de lectura sobre una cohorte explícita. null siempre significa desconocido.
 import type { Store } from './store.ts';
 import { activityCosts, activityInference, activityMetadata, changeCost } from './evidence.ts';
+import { usdToMicro, type CostAttempt } from './attempt-cost.ts';
+import { tokenCount } from './inference-usage.ts';
+import { roleOf } from './profile.ts';
 export const METRICS_LIMIT = 1000;
 export type MetricsRange = '7' | '30' | '90' | 'all' | 'custom';
 export function distribution(values: number[]) {
@@ -14,6 +17,25 @@ function addCost(groups: Map<string, CostGroup>, name: string, value: number | n
   if (value === null) g.unknown++; else g.measured = (g.measured ?? 0) + value;
   g.total = g.unknown ? null : g.measured; groups.set(name, g);
 }
+type SpendAmounts = Record<'inferenceMicroUsd' | 'computeMicroUsd' | 'platformMicroUsd' | 'totalMicroUsd', number | null>;
+export type SpendAttempt = SpendAmounts & Pick<CostAttempt, 'changeId' | 'startedAt' | 'effectiveModel'> & { id: string | null };
+
+const SPEND_FIELDS = ['inferenceMicroUsd', 'computeMicroUsd', 'platformMicroUsd', 'totalMicroUsd'] as const;
+
+export function summarizeSpending(attempts: readonly SpendAttempt[]) {
+  const totals = SPEND_FIELDS.map(key => {
+    let measured = 0n, measuredCount = 0;
+    for (const attempt of attempts) {
+      const value = attempt[key];
+      if (value !== null) { measured += BigInt(value); measuredCount++; }
+    }
+    const known = measuredCount && measured <= BigInt(Number.MAX_SAFE_INTEGER) ? Number(measured) : null;
+    const unknown = attempts.length - measuredCount;
+    return { measured: known, unknown, total: unknown ? null : known };
+  });
+  return { inference: totals[0]!, compute: totals[1]!, platform: totals[2]!, total: totals[3]! };
+}
+
 const counts = (values: string[]): [string, number][] => [...values.reduce((m, v) => m.set(v, (m.get(v) ?? 0) + 1), new Map<string, number>())].sort(([a], [b]) => a.localeCompare(b));
 const textField = (v: unknown) => typeof v === 'string' && v.trim() ? v : 'No medido';
 const DAY = /^\d{4}-\d{2}-\d{2}$/;
@@ -62,6 +84,15 @@ export function calculateMetrics(store: Store, stateDir: string, options: { ws?:
   }
 
   const cohort = store.metricsCohort(options.ws, since, until, METRICS_LIMIT);
+  const costAttempts = store.listCostAttempts(null, {
+    since, until, workstreamId: options.ws ? store.getWorkstream(options.ws).id : undefined,
+  });
+  const currentActivities = new Set(costAttempts.map(attempt => attempt.activityId));
+  const spendAttempts: SpendAttempt[] = costAttempts.map(attempt => ({
+    id: attempt.id, changeId: attempt.changeId, startedAt: attempt.startedAt, effectiveModel: attempt.effectiveModel,
+    inferenceMicroUsd: attempt.inferenceBasis === 'runner_declared' ? null : attempt.inferenceMicroUsd,
+    computeMicroUsd: attempt.computeMicroUsd, platformMicroUsd: attempt.platformMicroUsd, totalMicroUsd: attempt.totalMicroUsd,
+  }));
   const events = new Map(store.metricsEvents(cohort.changes.map(c => c.id), until).map(e => [e.changeId, e]));
   const values: number[][] = [[], [], [], []];
   const kickoffPr: number[] = [], prMerge: number[] = [];
@@ -102,6 +133,17 @@ export function calculateMetrics(store: Store, stateDir: string, options: { ws?:
       kinds.push(a.validator ? `validador:${a.validator}` : a.kind);
       let meta: Record<string, unknown> | null = null;
       try { meta = activityMetadata(stateDir, a); } catch { /* Fallo cerrado del lector compartido. */ }
+      if (roleOf(a) && a.createdAt <= until && (!since || a.createdAt >= since)) {
+        const legacyCount = tokenCount(meta?.costLegacyCount);
+        if (legacyCount !== undefined || !currentActivities.has(a.id) && (meta || a.retryCount > 0 || store.isTerminal(a.status))) {
+          const legacy = activityInference(a, meta).slice(0, legacyCount);
+          for (const attempt of legacy) spendAttempts.push({
+            id: null, changeId: a.changeId, startedAt: a.createdAt, effectiveModel: attempt.usage?.effectiveModel ?? null,
+            inferenceMicroUsd: attempt.remoteDeclared ? null : usdToMicro(attempt.costUsd),
+            computeMicroUsd: null, platformMicroUsd: null, totalMicroUsd: null,
+          });
+        }
+      }
       if (Array.isArray(meta?.inferenceAttempts)) {
         for (const attempt of activityInference(a, meta)) {
           addCost(adapters, textField(attempt.adapter), attempt.costUsd);
@@ -196,6 +238,7 @@ export function calculateMetrics(store: Store, stateDir: string, options: { ws?:
     prCycles,
     humans, states: counts(cohort.changes.map(c => c.status)), kinds: counts(kinds),
     daily: { days, changes: dailyChanges, costs: dailyCosts, interventions: dailyInterventions, prs: dailyPrs },
+    spending: { attempts: spendAttempts, ...summarizeSpending(spendAttempts) },
     cost: { total: unknownChanges ? null : measured, measured, unknownChanges,
       top: measuredCosts.sort((a, b) => b.cost - a.cost || a.id.localeCompare(b.id)).slice(0, 10),
       adapters: [...adapters.values()], models: [...models.values()],

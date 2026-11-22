@@ -7,6 +7,7 @@ import { existsSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { join, resolve } from 'node:path';
 import { selfCommand } from './self.ts';
 import { activityLog, atomicEvidence, gitEvidence, isolationFor, readEgressProbe, runDirectory, writeManifest } from './manifest.ts';
+import { costRateAt } from './attempt-cost.ts';
 import { modelId, readInferenceAttempts, readUsage, tokenCount, type InferenceAttempt } from './inference-usage.ts';
 import { verifyAgentStart, type AgentStartCheck } from './agents-verify.ts';
 import { getAgent, MCP_AGENTS, runAgent, type AgentAdapter, type AgentRun } from './agents.ts';
@@ -255,10 +256,11 @@ export async function processActivity(
     // Ambos historiales se indexan por intento. Los huecos históricos conservan su posición.
     while (inferenceAttempts.length < attemptCosts.length) inferenceAttempts.push({});
     while (attemptCosts.length < inferenceAttempts.length) attemptCosts.push(null);
+    const legacyCount = tokenCount(previous?.costLegacyCount) ?? inferenceAttempts.length;
     // Durante la preparación se sabe que aún no hubo gasto de inferencia.
     attemptCosts.push(0);
     inferenceAttempts.push({});
-    const pendingEvidence = { isolation: opts.confine ? 'bwrap-allowlist' : isolationFor(adapter), workerReport: null, attemptCosts, inferenceAttempts };
+    const pendingEvidence = { isolation: opts.confine ? 'bwrap-allowlist' : isolationFor(adapter), workerReport: null, attemptCosts, inferenceAttempts, costLegacyCount: legacyCount };
     // Un fallo de preparación no reutiliza el resultado de un intento anterior.
     atomicEvidence(meta, JSON.stringify(pendingEvidence));
     if (runnerProblem) {
@@ -446,6 +448,13 @@ export async function processActivity(
       markLaunched();
       store.setActivityAgentPgid(a.id, pgid);
     };
+    const beginCost = (id: string) => {
+      const startedAt = store.now();
+      store.beginCostAttempt(a, {
+        id, startedAt, rate: costRateAt(opts.stateDir, startedAt, remote?.name ?? null),
+        remote: !!remote, runner: runner?.name ?? null, adapter, legacyCount,
+      });
+    };
     const saveAttempt = (result: AgentRun) => {
       const usage = readUsage(result.usage);
       const cleanUsage = usage && access.decl && usage.effectiveModel
@@ -453,6 +462,7 @@ export async function processActivity(
       const entry: InferenceAttempt = { ...attempt, usage: cleanUsage, durationMs: tokenCount(result.durationMs) };
       attemptCosts[attemptCosts.length - 1] = cleanUsage?.costUsd ?? (attemptCosts.at(-1) === 0 ? 0 : null);
       inferenceAttempts[inferenceAttempts.length - 1] = entry;
+      return cleanUsage;
     };
     const crash = (point: CrashPoint) => opts.crash?.(point);
     let outcome: LiveOutcome | undefined;
@@ -466,14 +476,18 @@ export async function processActivity(
         capturePath: confine ? activityLog(opts.stateDir, change.id, a.id) : undefined,
         onSpawn, crash,
         templates: profile.worker, branch, factoryCommits: agent.factoryCommits,
-        onAttemptStart: () => {
+        onAttemptStart: id => {
           if (turnCount++ > 0) {
             attemptCosts.push(0);
             inferenceAttempts.push(attempt);
             savePending();
           }
+          beginCost(id);
         },
-        onAttemptEnd: result => { saveAttempt(result); savePending(); },
+        onAttemptEnd: (id, result, executionMs) => {
+          store.finishCostAttempt(id, result ? saveAttempt(result) : undefined, executionMs);
+          savePending();
+        },
         mcpServers: access.servers, envDecl: access.decl, scrub: access.decl ? scrub : undefined,
       }));
       if (!turnCount && attemptCosts.length > 1) {
@@ -484,8 +498,8 @@ export async function processActivity(
       if (!confine) atomicEvidence(activityLog(opts.stateDir, change.id, a.id), `${run.stdout ?? ''}${run.stderr ?? ''}`);
     } else {
       let turnPrompt = prompt;
+      const attemptId = randomUUID();
       if (role === 'investigate' || role === 'implement') {
-        const attemptId = randomUUID();
         const delivery = reserveTurnPrompt(store, a, attemptId, {
           cwd: path, remote: !!remote, confine, adapter, promptStdin: agent.promptStdin,
           persistentMounts: [join(resolve(opts.stateDir), 'live')],
@@ -496,7 +510,7 @@ export async function processActivity(
       if (remote) {
         const head = gitEvidence(path, 'rev-parse', 'HEAD');
         if (!head) throw new Error('no se pudo leer HEAD del worktree');
-        const attempt = a.retryCount + 1, jobId = `${a.id}-${attempt}`;
+        const attempt = a.retryCount + 1, jobId = attemptId;
         // La reserva protege la configuración. Una pausa todavía puede llegar mientras se prepara el turno.
         const current = store.findRunner(remote.name);
         if (!current?.enabled) {
@@ -504,21 +518,31 @@ export async function processActivity(
           return;
         }
         store.event(ws.id, 'info', `encargo enviado al runner ${remote.name} (${jobId})`, change.id, a.id);
+        let accepted = false;
+        let executionMs: number | undefined;
         try {
           const done = await runRemoteAgent({ name: remote.name, target: remote.target! }, {
-            activityId: a.id, attempt, adapter, model, readOnly, expectChanges: !a.validator && a.kind === 'implementation',
+            activityId: a.id, attempt, attemptId, adapter, model, readOnly, expectChanges: !a.validator && a.kind === 'implementation',
             prompt: turnPrompt, repo: ws.repo, worktree: path, head, base: baseSha, timeoutMs: turnTimeoutMs(opts) ?? 20 * 60_000,
             ...(typeof remote.options.maxBundleMb === 'number' ? { maxBundleMb: remote.options.maxBundleMb } : {}),
             repoKey: createHash('sha256').update(ws.id).digest('hex'), signal: abortController.signal,
             onSpawn: pgid => store.setActivityAgentPgid(a.id, pgid),
-            onDispatch: markLaunched,
+            onDispatch: () => { beginCost(attemptId); markLaunched(); },
+            onAccepted: () => { accepted = true; },
+            onExecutionEnd: duration => { executionMs = duration; },
           }, opts.runnerTransport, opts.runnerDeps);
           const { declared, ...rest } = done;
           run = rest;
+          store.finishCostAttempt(attemptId, saveAttempt(run), executionMs);
           runnerMeta = { runner: { name: remote.name, kind: remote.kind, jobId, declared } };
           const after = gitEvidence(path, 'rev-parse', 'HEAD');
           if (after && after !== head) store.event(ws.id, 'info', `resultado del runner ${remote.name} importado (${after.slice(0, 8)})`, change.id, a.id);
         } catch (err) {
+          if (!accepted && err instanceof RunnerError && (err.code === 'RUNNER_BUSY' || err.code === 'RUNNER_REFUSED')) {
+            store.discardUnstartedCostAttempt(attemptId);
+          } else {
+            store.finishCostAttempt(attemptId, undefined, executionMs);
+          }
           if (!(err instanceof RunnerError)) throw err;
           // R9: ningún fallo del runner vuelve a local. Solo códigos y nombres a la base y al log; nunca texto libre del runner.
           if (abortController.signal.aborted || store.isTerminalChange(store.getChange(change.id).status)) { store.releaseActivity(a.id, workerId); return; }
@@ -540,15 +564,28 @@ export async function processActivity(
           log(`[${workerId}] ${a.validator ?? a.kind} runner ${remote.name}: ${err.code}`);
           return;
         }
-      } else run = await runAgent(confine ? agent : captureAgent, turnPrompt, path, turnTimeoutMs(opts), {
-        confine,
-        model: model ?? undefined,
-        envDecl: access.decl, scrub, mcpConfig: mcpConfigPath,
-        capturePath: confine ? activityLog(opts.stateDir, change.id, a.id) : undefined,
-        readOnly,
-        signal: abortController.signal,
-        onSpawn,
-      });
+      } else {
+        let spawned = false;
+        let executionMs: number | undefined;
+        try {
+          run = await runAgent(confine ? agent : captureAgent, turnPrompt, path, turnTimeoutMs(opts), {
+            confine,
+            model: model ?? undefined,
+            envDecl: access.decl, scrub, mcpConfig: mcpConfigPath,
+            capturePath: confine ? activityLog(opts.stateDir, change.id, a.id) : undefined,
+            readOnly,
+            signal: abortController.signal,
+            beforeSpawn: () => beginCost(attemptId),
+            onExecutionEnd: ms => { executionMs = ms; },
+            onSpawn: pgid => { spawned = true; onSpawn(pgid); },
+          });
+        } catch (error) {
+          if (spawned) store.finishCostAttempt(attemptId, undefined, executionMs);
+          else store.discardUnstartedCostAttempt(attemptId);
+          throw error;
+        }
+        store.finishCostAttempt(attemptId, saveAttempt(run), run.executionMs);
+      }
     }
 
     // S6: nada de lo que la fab guarda de la ejecución lleva un valor entregado (los backends vivos y falsos no pasan por runAgent).
@@ -556,10 +593,9 @@ export async function processActivity(
       const clean = (t: string) => scrubValues(t, scrub);
       run = { ...run, output: clean(run.output), status: { ...run.status, reason: clean(run.status.reason) }, ...(run.stdout !== undefined ? { stdout: clean(run.stdout) } : {}), ...(run.stdoutForMonitor !== undefined ? { stdoutForMonitor: clean(run.stdoutForMonitor) } : {}), ...(run.stderr !== undefined ? { stderr: clean(run.stderr) } : {}) };
     }
-    if (!live) saveAttempt(run);
     atomicEvidence(meta, JSON.stringify({
       ...provenance, ...accessMeta, ...runnerMeta, isolation: remote ? 'remote: declarado por el runner, no verificado' : confine ? 'bwrap-allowlist' : isolationFor(provenance.adapter ?? adapter), durationMs: run.durationMs, exitCode: run.exitCode, usage: inferenceAttempts.at(-1)?.usage ?? null,
-      attemptCosts, inferenceAttempts,
+      attemptCosts, inferenceAttempts, costLegacyCount: legacyCount,
       egressProbe: adapter === 'native' ? readEgressProbe(probeFile) : null,
       // Keep only a declared final worker report, independently of later block/failure decisions; never diagnostics or an earlier attempt.
       workerReport: !a.validator && !abortController.signal.aborted && run.status.kind !== 'missing' ? run.output : null,

@@ -43,6 +43,8 @@ import {
 import { DEFAULT_PROTECTED_PATHS, validateProtectedPatterns, type GateSnapshot } from './validators/integrity.ts';
 import { verifierArgv } from './agent/mission-evidence.ts';
 import { parseVerdict } from './validators/verdict.ts';
+import { completeCost, computeMicroUsd, usdToMicro, type CostAttempt, type CostAttemptStart, type CostRate } from './attempt-cost.ts';
+import { readUsage, tokenCount, type AgentUsage } from './inference-usage.ts';
 
 // Local extensions keep this task within the store ownership boundary.
 export type ActivityKind = BaseActivityKind | 'gates';
@@ -713,6 +715,47 @@ export class Store {
     this.db
       .query(`UPDATE activities SET lease_expires_at = ? WHERE status = 'in_progress' AND lease_expires_at IS NULL`)
       .run(migrationTtl);
+    this.migrateSchema('t109-cost-attempts', [], () => this.db.exec(`
+CREATE TABLE cost_attempts (
+  id TEXT PRIMARY KEY,
+  activity_id TEXT NOT NULL REFERENCES activities(id),
+  change_id TEXT NOT NULL REFERENCES changes(id),
+  workstream_id TEXT NOT NULL REFERENCES workstreams(id),
+  started_at TEXT NOT NULL,
+  closed_at TEXT,
+  adapter TEXT NOT NULL,
+  runner TEXT,
+  remote INTEGER NOT NULL CHECK (remote IN (0,1)),
+  legacy_count INTEGER NOT NULL,
+  rate_version TEXT NOT NULL,
+  rate_effective_from TEXT NOT NULL,
+  hourly_micro_usd INTEGER,
+  platform_micro_usd INTEGER NOT NULL,
+  effective_model TEXT,
+  inference_micro_usd INTEGER,
+  inference_basis TEXT,
+  inference_version TEXT,
+  compute_duration_ms INTEGER,
+  compute_micro_usd INTEGER
+);
+CREATE INDEX idx_cost_attempts_change ON cost_attempts(change_id, started_at, id);
+CREATE INDEX idx_cost_attempts_started ON cost_attempts(started_at);
+CREATE INDEX idx_cost_attempts_workstream ON cost_attempts(workstream_id, started_at);
+`));
+  }
+
+  /** Pasos de esquema con ID estable. DDL y registro se confirman en la misma transacción. */
+  private migrateSchema(id: string, requires: string[], migrate: () => void): void {
+    this.withRetry(() => {
+      this.db.exec('CREATE TABLE IF NOT EXISTS schema_migrations (id TEXT PRIMARY KEY, applied_at TEXT NOT NULL)');
+      const applied = this.db.query('SELECT 1 FROM schema_migrations WHERE id = ?');
+      if (applied.get(id)) return;
+      for (const dependency of requires) {
+        if (!applied.get(dependency)) throw new Error(`falta la migración ${dependency} para ${id}`);
+      }
+      migrate();
+      this.db.query('INSERT INTO schema_migrations (id, applied_at) VALUES (?, ?)').run(id, this.now());
+    });
   }
 
   private addColumn(table: string, column: string, ddl: string): void {
@@ -1129,6 +1172,61 @@ export class Store {
       this.event(ws.id, 'info', `runner: ${ws.runner ?? 'ninguno'} -> ${name ?? 'ninguno'}${warn}`);
       return toWorkstream(updated);
     }).immediate());
+  }
+
+  beginCostAttempt(a: Activity, input: { id: string; rate: CostRate; remote: boolean; runner: string | null; adapter: string; legacyCount: number; startedAt?: string }): void {
+    const { id, rate, runner, adapter, remote, legacyCount } = input;
+    this.withRetry(() => {
+      this.db.query(`INSERT INTO cost_attempts (
+        id, activity_id, change_id, workstream_id, started_at, adapter, runner, remote,
+        legacy_count, rate_version, rate_effective_from, hourly_micro_usd, platform_micro_usd
+      ) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)`).run(
+        id, a.id, a.changeId, a.workstreamId, input.startedAt ?? this.now(), adapter, runner, Number(remote),
+        legacyCount, rate.version, rate.effectiveFrom, rate.hourlyMicroUsd, rate.platformMicroUsd,
+      );
+    });
+  }
+
+  finishCostAttempt(id: string, evidence: AgentUsage | undefined, durationMs: number | undefined): void {
+    const usage = readUsage(evidence);
+    const inference = usdToMicro(usage?.costUsd);
+    const duration = tokenCount(durationMs);
+    this.withRetry(() => {
+      const row = this.db.query<{ remote: number; hourly: number | null }, [string]>(
+        'SELECT remote, hourly_micro_usd AS hourly FROM cost_attempts WHERE id = ? AND closed_at IS NULL',
+      ).get(id);
+      if (!row) return;
+      const basis = inference === null ? null : row.remote ? 'runner_declared' : usage?.priceVersion ? 'catalog' : 'provider_reported';
+      this.db.query(`UPDATE cost_attempts SET closed_at = ?, effective_model = ?, inference_micro_usd = ?,
+        inference_basis = ?, inference_version = ?, compute_duration_ms = ?, compute_micro_usd = ? WHERE id = ?`)
+        .run(this.now(), usage?.effectiveModel ?? null, inference, basis, inference === null ? null : usage?.priceVersion ?? null,
+          duration ?? null, computeMicroUsd(row.hourly, duration), id);
+    });
+  }
+
+  /** La casa tiene prueba de rechazo antes de ejecutar. Una pérdida de conexión conserva el intento. */
+  discardUnstartedCostAttempt(id: string): void {
+    this.withRetry(() => this.db.query('DELETE FROM cost_attempts WHERE id = ? AND closed_at IS NULL').run(id));
+  }
+
+  listCostAttempts(changeIds: string[] | null, filters: { since?: string | null; until?: string; workstreamId?: string } = {}): CostAttempt[] {
+    if (changeIds?.length === 0 || !this.db.query("SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'cost_attempts'").get()) return [];
+    const { since, until, workstreamId } = filters;
+    const rows = this.db.query(`SELECT id, activity_id AS activityId, change_id AS changeId, workstream_id AS workstreamId,
+      started_at AS startedAt, closed_at AS closedAt, adapter, runner, remote, legacy_count AS legacyCount,
+      rate_version AS rateVersion, rate_effective_from AS rateEffectiveFrom, hourly_micro_usd AS hourlyMicroUsd,
+      platform_micro_usd AS platformMicroUsd, effective_model AS effectiveModel, inference_micro_usd AS inferenceMicroUsd,
+      inference_basis AS inferenceBasis, inference_version AS inferenceVersion, compute_duration_ms AS computeDurationMs,
+      compute_micro_usd AS computeMicroUsd FROM cost_attempts WHERE 1
+      ${changeIds ? `AND change_id IN (${changeIds.map(() => '?').join(',')})` : ''}
+      ${workstreamId ? 'AND workstream_id = ?' : ''}
+      ${since ? 'AND started_at >= ?' : ''} ${until ? 'AND started_at <= ?' : ''} ORDER BY started_at, rowid`)
+      .all(...(changeIds ?? []), ...(workstreamId ? [workstreamId] : []), ...(since ? [since] : []), ...(until ? [until] : [])) as
+      (Omit<CostAttemptStart, 'remote'> & Omit<CostAttempt, keyof CostAttemptStart | 'totalMicroUsd'> & { remote: number })[];
+    return rows.map(row => ({ ...row, remote: !!row.remote,
+      totalMicroUsd: row.closedAt === null || row.remote ? null :
+        completeCost(row.inferenceMicroUsd, row.computeMicroUsd, row.platformMicroUsd),
+    }));
   }
 
   // ---- signals -----------------------------------------------------------

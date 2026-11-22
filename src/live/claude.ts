@@ -79,7 +79,7 @@ export const claudeLive: LiveBackend = {
       let run;
       try {
         run = await runAgent(adapter, turn.prompt, turn.cwd, turn.timeoutMs, {
-          confine: turn.confine, model: turn.model, claudeProjects: turn.claudeProjects, mcpConfig: path, envDecl: turn.envDecl, scrub: turn.scrub, capturePath: turn.capturePath, signal: turn.signal, onSpawn: turn.onSpawn,
+          confine: turn.confine, model: turn.model, claudeProjects: turn.claudeProjects, mcpConfig: path, envDecl: turn.envDecl, scrub: turn.scrub, capturePath: turn.capturePath, signal: turn.signal, onSpawn: turn.onSpawn, onExecutionEnd: turn.onExecutionEnd,
         });
       } catch (e) {
         if (turn.sessionId && NOT_FOUND.test((e as Error).message)) throw new SessionNotFoundError(sessionId, (e as Error).message);

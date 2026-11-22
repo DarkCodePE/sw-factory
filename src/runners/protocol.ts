@@ -53,6 +53,8 @@ const JOB_ID = /^[A-Za-z0-9_-]{1,80}$/;
 const HEX40 = /^[0-9a-f]{40}$/;
 const HEX64 = /^[0-9a-f]{64}$/;
 const TOKEN = /^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$/;
+// El marco log vacío marca execution-ended en v1. El emisor nunca lo usa para stdout/stderr.
+export const EXECUTION_ENDED_LOG = '';
 const B64 = /^(?:[A-Za-z0-9+/]{4})*(?:[A-Za-z0-9+/]{2}==|[A-Za-z0-9+/]{3}=)?$/;
 
 const isObj = (x: unknown): x is Record<string, unknown> => typeof x === 'object' && x !== null && !Array.isArray(x);
