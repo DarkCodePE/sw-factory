@@ -170,3 +170,53 @@ test('T65-H3: tasa «No medido» sin ejecuciones hechas, aprobada nula, rango en
   expect(p).toContain('name="ws" value="ws"');
   expect(p).toMatch(/name="since" value="\d{4}-\d{2}-\d{2}T/);
 });
+test('T111: una tarjeta por juez con la tasa de aprobado por día; el día sin puntuaciones es hueco y el rango personalizado filtra', async () => {
+  const { digest, impls } = seed(3);
+  insertScore(digest, impls[0]!, { passed: 1, at: '2026-11-17T10:00:00.000Z' }); insertScore(digest, impls[1]!, { passed: 0, label: 'mal', at: '2026-11-17T11:00:00.000Z' });
+  insertScore(digest, impls[2]!, { passed: 1, at: '2026-11-19T10:00:00.000Z' });
+  server = startWeb(dir, 0);
+  const h = await html('/metricas?tab=jueces&from=2026-11-17&to=2026-11-19');
+  expect(h).toContain('<section class="card"'); expect(h).toContain('<p class="fig">67 %</p>'); expect(h).toContain('<p class="sub">67 % (2/3)</p>');
+  expect(h).toContain('<title>2026-11-17 · Aprobadas: 50 %</title>'); expect(h).toContain('<title>2026-11-19 · Aprobadas: 100 %</title>');
+  expect(h).not.toContain('2026-11-18 · Aprobadas'); expect(h).toContain('<td>Sin datos</td>');
+  const only = await html('/metricas?tab=jueces&from=2026-11-18&to=2026-11-19');
+  expect(only).toContain('<p class="fig">100 %</p>'); expect(only).toContain('<p class="sub">100 % (1/1)</p>');
+  expect(await html('/metricas?tab=jueces&from=2026-11-20&to=2026-11-21')).toContain('No hay puntuaciones en este rango.');
+});
+test('T111-H4: cambiar el rango en Jueces conserva el juez elegido', async () => {
+  const { digest, impls } = seed(1); insertScore(digest, impls[0]!);
+  server = startWeb(dir, 0);
+  expect(await html('/metricas?tab=jueces&range=all&scorer=calidad')).toContain('<input type="hidden" name="scorer" value="calidad">');
+  expect(await html('/metricas?tab=jueces&range=all')).not.toContain('name="scorer" value=');
+  expect(await html('/metricas?tab=jueces&scorer=%22%3E%3Cb%3E')).not.toContain('<b>');
+});
+test('T111-H7: el tope de 366 días vale también en Jueces (borde exacto 366 pasa, 367 da 400)', async () => {
+  seed(1); server = startWeb(dir, 0);
+  for (const tab of ['productividad', 'gasto', 'jueces']) {
+    expect((await fetch(url(`/metricas?tab=${tab}&from=2025-01-01&to=2025-12-31`))).status).toBe(200); // 365
+    expect((await fetch(url(`/metricas?tab=${tab}&from=2024-01-01&to=2024-12-31`))).status).toBe(200); // 366 (bisiesto)
+    expect((await fetch(url(`/metricas?tab=${tab}&from=2024-01-01&to=2025-01-01`))).status).toBe(400); // 367
+  }
+});
+test('T111-H8: la tasa por día agrupa por la fecha con la que se filtra (creada), no por la de fin', async () => {
+  const { digest, impls } = seed(1);
+  insertScore(digest, impls[0]!, { at: '2026-11-19T23:30:00.000Z' });
+  store.db.query("UPDATE scores SET finished_at='2026-11-20T00:30:00.000Z'").run();
+  server = startWeb(dir, 0);
+  const h = await html('/metricas?tab=jueces&from=2026-11-18&to=2026-11-19');
+  expect(h).toContain('<title>2026-11-19 · Aprobadas: 100 %</title>');
+  expect(h).not.toContain('2026-11-20');
+});
+test('T111-H6: cableado de Jueces: fecha inválida, until, formulario, vista previa y enlaces llevan el rango', async () => {
+  const { digest, impls } = seed(2);
+  insertScore(digest, impls[0]!, { at: '2026-11-19T10:00:00.000Z' }); insertScore(digest, impls[1]!, { at: '2026-11-21T10:00:00.000Z' });
+  server = startWeb(dir, 0);
+  expect((await fetch(url('/metricas?tab=jueces&from=2026-02-31&to=2026-03-02'))).status).toBe(400); // M8
+  const h = await html('/metricas?tab=jueces&ws=ws&from=2026-11-18&to=2026-11-19');
+  expect(h).toContain('100 % (1/1)'); expect(h).not.toContain('2026-11-21T10'); // M11: until
+  expect(h).toMatch(/<form action="\/metricas" method="get" class="filters"><input type="hidden" name="tab" value="jueces">/); // M20
+  expect(h).toContain('href="?tab=jueces&amp;scorer=calidad&amp;ws=ws&amp;range=custom&amp;from=2026-11-18&amp;to=2026-11-19"'); // M27
+  const prev = await html('/metricas?tab=jueces&ws=ws&from=2026-11-18&to=2026-11-19&preview=1');
+  expect(prev).toContain('<input type="hidden" name="from" value="2026-11-18"><input type="hidden" name="to" value="2026-11-19">'); // M25
+  expect(prev).toContain('<input type="hidden" name="range" value="custom">');
+});

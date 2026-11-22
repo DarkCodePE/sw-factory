@@ -62,6 +62,9 @@ test('entradas inválidas fallan sin crear nada y sin imprimir clave', async () 
 
 test('el secreto no queda en ningún fichero de stateDir', async () => {
   const h = home();
-  const secret = (await fab(h, 'create', '--name', 'ci', '--scope', 'read')).out.match(KEY)![0]!.split('_')[2]!;
+  // El secreto es base64url y puede contener «_»: se toma todo lo que sigue al prefijo `fabk_` y al id, no split('_').
+  const key = (await fab(h, 'create', '--name', 'ci', '--scope', 'read')).out.match(KEY)![0]!;
+  const secret = key.slice('fabk_'.length + 12 + 1);
+  expect(secret.length).toBe(43);
   for (const f of readdirSync(h)) expect(readFileSync(join(h, f)).includes(secret)).toBe(false);
 });
