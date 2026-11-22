@@ -1,6 +1,6 @@
 // Superficie local de lectura. Las decisiones del ciclo pertenecen al Store.
 import { join, dirname } from 'node:path';
-import { existsSync, unlinkSync, chmodSync, mkdirSync, statSync } from 'node:fs';
+import { existsSync, unlinkSync, chmodSync, mkdirSync, readFileSync, statSync } from 'node:fs';
 import { spawnSync } from 'node:child_process';
 import { randomBytes } from 'node:crypto';
 import { isIP } from 'node:net';
@@ -27,6 +27,7 @@ import { metricsPage, METRICS_STYLE } from './web-metrics.ts';
 import { WebAuth, assertLoopback, RateLimiter, csrfToken } from './web-auth.ts';
 import { GithubConnector, identityRoutes } from './web-identity.ts';
 import { cliRoutes } from './web-cli.ts';
+import { isBootstrapped } from './users.ts';
 import { recoveryRoutes } from './web-recovery.ts';
 import { PUBLIC_PATHS, authorizeRead, serverConfigPage, serverWebhooksPage, structuredActivityPage, structuredChangePage, structuredSignalsPage, structuredWorkstreamsPage, visiblePaths } from './web-views.ts';
 import { attemptSection } from './web-attempts.ts';
@@ -602,12 +603,26 @@ export async function webMain(args: string[], stateDir: string, resolve?: Parame
         return 1;
       }
 
+      // Credenciales por referencia (D-K): el secreto de la aplicación de GitHub y el secreto de servicio se leen de ficheros
+      // (credenciales de systemd o secretos de Docker), nunca de argv ni de la base.
+      const credDir = process.env.CREDENTIALS_DIRECTORY;
+      const clientId = process.env.FAB_GITHUB_CLIENT_ID;
+      const clientSecretFile = process.env.FAB_GITHUB_CLIENT_SECRET_FILE ?? (credDir ? join(credDir, 'github-client-secret') : undefined);
+      const serviceSecretFile = process.env.FAB_SERVICE_SECRET_FILE ?? (credDir && existsSync(join(credDir, 'service-secret')) ? join(credDir, 'service-secret') : undefined);
+      if (!clientId || !clientSecretFile || !existsSync(clientSecretFile)) {
+        console.error('fab web: el modo servidor requiere FAB_GITHUB_CLIENT_ID y el secreto de la aplicación en FAB_GITHUB_CLIENT_SECRET_FILE (o la credencial github-client-secret).');
+        return 1;
+      }
+      const boot = new Store(join(stateDir, 'fabrica.db'));
+      try { if (!isBootstrapped(boot)) { console.error('fab web: el modo servidor exige el bootstrap del primer owner por consola (§2).'); return 1; } } finally { boot.close(); }
       const server = startWeb(stateDir, port, {
         write: values.write,
         server: true,
         publicOrigin,
         socketPath,
         tls,
+        github: new GithubConnector({ clientId, clientSecret: () => readFileSync(clientSecretFile, 'utf8').trim(), publicOrigin }),
+        secret: serviceSecretFile ? readFileSync(serviceSecretFile, 'utf8').trim() : undefined,
       });
 
       console.log(`fab web --server · ${publicOrigin} · transporte: ${socketPath ? `socket unix ${socketPath}` : 'mTLS'} · ${values.write ? 'escritura habilitada' : 'solo lectura'}`);
