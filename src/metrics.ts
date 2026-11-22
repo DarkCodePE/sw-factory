@@ -46,6 +46,7 @@ export interface SpendGroup {
   platform: { measured: number | null; unknown: number; total: number | null };
   total: { measured: number | null; unknown: number; total: number | null };
   daily?: Array<number | null>;
+  dailyHasAttempts?: boolean[];
 }
 
 function groupSpending(
@@ -69,11 +70,15 @@ function groupSpending(
       if (dayAttempts.some(a => a[amountField] === null)) return null;
       return dayAttempts.reduce((sum, a) => sum + (a[amountField] ?? 0), 0) / 1_000_000;
     }) : undefined;
+    const dailyHasAttempts = days ? days.map(day =>
+      groupAttempts.some(a => a.startedAt?.slice(0, 10) === day)
+    ) : undefined;
     return {
       key: groupKey,
       name: groupKey ?? 'Sin dato',
       ...summary,
       daily,
+      dailyHasAttempts,
     };
   });
 }

@@ -163,14 +163,17 @@ function spending(m: M): string {
           values: g.daily ?? d.days.map(() => null),
         });
       }
+      const otrosGroups = sorted.slice(3);
       const otrosDaily: Array<number | null> = d.days.map((_, i) => {
-        const vals = sorted.slice(3).map(g => g.daily?.[i]);
-        if (vals.every(v => v === null || v === undefined)) return null;
-        return vals.reduce<number>((sum, v) => sum + (v ?? 0), 0);
+        if (otrosGroups.some(g => g.dailyHasAttempts?.[i] && g.daily?.[i] === null)) return null;
+        const vals = otrosGroups.map(g => g.daily?.[i]).filter((v): v is number => v !== null && v !== undefined);
+        if (!vals.length) return null;
+        return vals.reduce((sum, v) => sum + v, 0);
       });
       series.push({
         label: 'Otros',
         values: otrosDaily,
+        missing: i => otrosGroups.some(g => g.dailyHasAttempts?.[i]) ? 'No medido' : 'Sin datos',
       });
     }
 

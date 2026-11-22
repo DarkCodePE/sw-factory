@@ -256,4 +256,52 @@ describe('Pestaña Gasto en la web (T113)', () => {
     expect(body).not.toContain('0.30 USD · 0.00 USD · 0.00 USD');
     expect(body).not.toContain('· 0.00 USD ·');
   });
+
+  test('T113-H3: la serie Otros en tarjeta por dimensión es null si algún grupo del resto es desconocido ese día', () => {
+    const today = new Date().toISOString().slice(0, 10);
+    const ws = store.getWorkstream('ws-test');
+    const users = ['usr-1', 'usr-2', 'usr-3', 'usr-4', 'usr-5'];
+    for (const [i, u] of users.entries()) {
+      const s = store.addSignal(ws.id, `signal-${u}`, 'b', { source: 'cli', actorId: u });
+      const c = store.triageSignal(s.id);
+      const a = store.listActivities({ changeId: c.id })[0]!;
+      const isUnknown = u === 'usr-5';
+      const date = `${today}T11:00:00.000Z`;
+      store.db.query("UPDATE changes SET created_at=?, status='completed' WHERE id=?").run(date, c.id);
+      store.db.query("UPDATE activities SET created_at=?, started_at=?, completed_at=?, kind='investigation', status='completed' WHERE id=?").run(date, date, date, a.id);
+      const runDir = join(dir, 'runs', c.id);
+      mkdirSync(runDir, { recursive: true });
+      writeFileSync(join(runDir, `${a.id}.json`), JSON.stringify({
+        attemptCosts: [5 - i],
+        durationMs: 60000,
+        isolation: { adapter: 'native' },
+        inferenceAttempts: isUnknown ? undefined : [{
+          adapter: 'native',
+          usage: { effectiveModel: 'm1', costUsd: 5 - i },
+        }],
+      }));
+
+      store.beginCostAttempt(a, {
+        id: `att-${u}`,
+        rate: costRateAt(dir, date, isUnknown ? 'torre' : null),
+        remote: isUnknown,
+        runner: isUnknown ? 'torre' : null,
+        adapter: 'native',
+        legacyCount: 0,
+      });
+      store.finishCostAttempt(`att-${u}`, { costUsd: 5 - i }, 100);
+    }
+
+    const url = new URL(`http://127.0.0.1:4310/metricas?tab=gasto&range=7`);
+    const { body } = metricsPage(store, dir, url);
+
+    // En la tarjeta de usuarios, usr-4 y usr-5 quedan en «Otros».
+    // Como usr-5 no está medido, Otros para today no debe sumar parcialmente (p. ej. 2.00 USD), sino «No medido»
+    const userCard = body.slice(body.indexOf('aria-labelledby="t-spending-user"'));
+    const userCardSection = userCard.slice(0, userCard.indexOf('</section>'));
+
+    expect(userCardSection).toContain('Otros');
+    expect(userCardSection).toContain(`<th scope="row">${today}</th><td>5.00 USD</td><td>4.00 USD</td><td>3.00 USD</td><td>No medido</td>`);
+    expect(userCardSection).not.toContain(`<th scope="row">${today}</th><td>5.00 USD</td><td>4.00 USD</td><td>3.00 USD</td><td>2.00 USD</td>`);
+  });
 });
