@@ -120,3 +120,8 @@ test('T112-H3: un merge sin pr_opened no cuenta en «Kickoff → merge» (es la 
   const t = calculateMetrics(store, dir, { range: '7', now }).prCycles.find(x => x.name === 'Kickoff → merge')!;
   expect(t).toMatchObject({ median: null, samples: 0 });
 });
+
+test('T114-H5: sin runs, la tarjeta dice «No medido» y no lleva subtítulo', () => {
+  const h = card(metricsPage(store, dir, new URL('http://127.0.0.1:4310/metricas?from=2026-11-15&to=2026-11-21')).body, 'runs');
+  expect(h).toContain('<p class="fig">No medido</p>'); expect(h).not.toContain('class="sub"');
+});
