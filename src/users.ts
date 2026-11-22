@@ -48,6 +48,8 @@ export const serviceActor = (kind: 'pool' | 'runner' | 'channel', id: string): A
 
 type Row = Record<string, unknown>;
 const sha = (s: string) => createHash('sha256').update(s).digest('hex');
+/** Dominio propio: un binario anterior calcula sha256(secreto) y nunca coincide, tampoco cambiando el prefijo (D-R2 A). */
+const userKeyDigest = (secret: string) => sha(`fabu:${secret}`);
 const sameDigest = (a: string, b: string) => a.length === b.length && timingSafeEqual(Buffer.from(a), Buffer.from(b));
 const iso = (store: Store, plusMs = 0) => new Date(store.clock().getTime() + plusMs).toISOString();
 
@@ -325,7 +327,7 @@ export function createUserKey(store: Store, p: Principal, name: string, scope: '
     if (n >= API_KEY_ACTIVE_LIMIT) throw new StoreError('limit_reached', `ya hay ${API_KEY_ACTIVE_LIMIT} claves API activas`);
     const id = randomBytes(6).toString('hex'), secret = randomBytes(32).toString('base64url');
     store.db.query(`INSERT INTO api_keys (id, name, scope, hash, created_at, created_by, user_id, expires_at) VALUES (?,?,?,?,?,?,?,?)`)
-      .run(id, name, scope, sha(secret), store.now(), `user:${me.userId}`, me.userId, expires?.toISOString() ?? null);
+      .run(id, name, scope, userKeyDigest(secret), store.now(), `user:${me.userId}`, me.userId, expires?.toISOString() ?? null);
     audit(store, actorOf(me), 'key.create', id, { scope });
     return { id, key: `fabu_${id}_${secret}` }; // prefijo propio: un binario anterior (`fabk_`) no la reconoce como clave local
   });
@@ -358,7 +360,7 @@ export function verifyUserKey(store: Store, key: string): Principal | null {
   const m = /^fabu_([a-f0-9]{12})_([A-Za-z0-9_-]{43})$/.exec(key);
   if (!m) return null;
   const k = store.db.query('SELECT * FROM api_keys WHERE id = ? AND user_id IS NOT NULL AND revoked_at IS NULL').get(m[1]!) as Row | null;
-  if (!k || (k.expires_at && (k.expires_at as string) <= store.now()) || !sameDigest(k.hash as string, sha(m[2]!))) return null;
+  if (!k || (k.expires_at && (k.expires_at as string) <= store.now()) || !sameDigest(k.hash as string, userKeyDigest(m[2]!))) return null;
   const u = getUser(store, k.user_id as string);
   if (!u || u.disabledAt || u.role === 'viewer') return null;
   const recovery = recoveryRestricted(store);

@@ -328,6 +328,17 @@ test('T119a-H7: la caducidad de una clave se normaliza a UTC y no admite fechas 
   expect(verifyUserKey(store, k.key)).toBeNull();
 });
 
+test('T119a-H17: el digest de una clave de usuario tiene dominio propio: sha256(secreto) de un binario anterior no la reconoce', () => {
+  const o = owner();
+  const k = createUserKey(store, o, 'dominio', 'decide', { write: true });
+  const secret = k.key.split('_').slice(2).join('_');
+  const h = (x: string) => new Bun.CryptoHasher('sha256').update(x).digest('hex');
+  const stored = (store.db.query('SELECT hash FROM api_keys WHERE id = ?').get(k.id) as { hash: string }).hash;
+  expect(stored).toBe(h(`fabu:${secret}`));
+  expect(stored).not.toBe(h(secret)); // lo que compararía un binario anterior con `fabk_<id>_<secreto>`
+  expect(store.verifyApiKey(`fabk_${k.id}_${secret}`)).toBeNull();
+});
+
 test('T119a-H11: las claves de usuario llevan prefijo propio y no valen como claves locales ni al revés', () => {
   const o = owner();
   const k = createUserKey(store, o, 'prefijo', 'decide', { write: true });
