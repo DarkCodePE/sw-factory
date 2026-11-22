@@ -13,8 +13,22 @@ import { validateServerConfig, isAuthorizedHost, isAuthorizedOrigin } from '../s
 describe('T118a: Modo servidor, frontera HTTP y arranque', () => {
   let tempDir: string;
   let stateDir: string;
+  let savedEnv: Record<string, string | undefined>;
 
   beforeEach(() => {
+    savedEnv = {
+      FAB_PUBLIC_ORIGIN: process.env.FAB_PUBLIC_ORIGIN,
+      FAB_SOCKET: process.env.FAB_SOCKET,
+      FAB_TLS_CERT: process.env.FAB_TLS_CERT,
+      FAB_TLS_KEY: process.env.FAB_TLS_KEY,
+      FAB_TLS_CA: process.env.FAB_TLS_CA,
+    };
+    delete process.env.FAB_PUBLIC_ORIGIN;
+    delete process.env.FAB_SOCKET;
+    delete process.env.FAB_TLS_CERT;
+    delete process.env.FAB_TLS_KEY;
+    delete process.env.FAB_TLS_CA;
+
     tempDir = join(tmpdir(), `fab-t118-test-${Date.now()}-${Math.random().toString(36).slice(2)}`);
     stateDir = join(tempDir, 'state');
     mkdirSync(stateDir, { recursive: true });
@@ -26,6 +40,10 @@ describe('T118a: Modo servidor, frontera HTTP y arranque', () => {
   });
 
   afterEach(() => {
+    for (const [k, v] of Object.entries(savedEnv)) {
+      if (v === undefined) delete process.env[k];
+      else process.env[k] = v;
+    }
     try {
       rmSync(tempDir, { recursive: true, force: true });
     } catch { /* ignore */ }
@@ -764,5 +782,17 @@ uQAwb1guU1AUR6nVZtdFNQM9kVZ98hOcE9GUPLNEWYbELrBmbFfLChpyQQU=
     expect(localInstance.loginUrl).toContain('fab-');
     expect(localInstance.loginUrl).toContain('token=');
     localInstance.stop(true);
+  });
+
+  test('T118-H15: Aislamiento estricto de variables de entorno y ausencia de aserciones de tiempo fijo', async () => {
+    // 1. Sin variables de entorno ambientales, --server falla si no se le pasa origen
+    expect(process.env.FAB_PUBLIC_ORIGIN).toBeUndefined();
+    const codeNoOrigin = await webMain(['--server'], stateDir);
+    expect(codeNoOrigin).toBe(1);
+
+    // 2. Con FAB_PUBLIC_ORIGIN en entorno, lo toma correctamente
+    process.env.FAB_PUBLIC_ORIGIN = 'https://fab.env-test.com';
+    const codeWithEnvOrigin = await webMain(['--server', '--tls-cert', '/tmp/falsa.crt'], stateDir);
+    expect(codeWithEnvOrigin).toBe(1); // Falla por TLS incompleto, no por origen
   });
 });
