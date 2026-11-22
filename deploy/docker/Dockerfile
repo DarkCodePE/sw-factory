@@ -8,8 +8,9 @@ RUN mkdir -p /var/lib/fab /etc/fab/certs && \
     chown -R bun:bun /app /var/lib/fab /etc/fab/certs
 
 # Copia de dependencias e instalación
-COPY package.json tsconfig.json ./
-RUN bun install --production
+COPY package.json bun.lock tsconfig.json ./
+COPY scripts/ scripts/
+RUN bun install --production --frozen-lockfile
 
 # Copia de código fuente
 COPY src/ ./src/

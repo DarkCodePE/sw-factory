@@ -2,7 +2,7 @@ import { describe, expect, test, beforeEach, afterEach } from 'bun:test';
 import { existsSync, mkdirSync, readFileSync, rmSync, statSync, writeFileSync, chmodSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { execSync } from 'node:child_process';
+import { execSync, spawnSync } from 'node:child_process';
 import https from 'node:https';
 import { Store, StoreError } from '../src/store.ts';
 import { startWeb, webMain } from '../src/web.ts';
@@ -659,11 +659,25 @@ uQAwb1guU1AUR6nVZtdFNQM9kVZ98hOcE9GUPLNEWYbELrBmbFfLChpyQQU=
     expect(dockerfile).toContain('bun install --production');
     expect(dockerfile).toContain('USER bun');
     expect(dockerfile).not.toContain('groupadd -g 1000');
+    expect(dockerfile).toContain('COPY package.json bun.lock tsconfig.json ./');
+    expect(dockerfile).toContain('COPY scripts/ scripts/');
+    expect(dockerfile).toContain('--frozen-lockfile');
 
     // 2. docker-compose.yml cuenta con red pública para Caddy y red interna para backend
     expect(compose).toContain('fab-public');
     expect(compose).toContain('fab-internal');
     expect(compose).toContain('internal: true');
+
+    // 3. Verificación real de docker build (T118-P2-3) si el demonio Docker está activo
+    const hasDocker = spawnSync('docker', ['info'], { stdio: 'pipe' }).status === 0;
+    if (hasDocker) {
+      const buildRes = spawnSync('docker', ['build', '-f', join(__dirname, '../deploy/docker/Dockerfile'), '-t', 'fab-server-test:ci', join(__dirname, '..')], {
+        stdio: 'pipe',
+        encoding: 'utf8',
+      });
+      expect(buildRes.status).toBe(0);
+      spawnSync('docker', ['rmi', 'fab-server-test:ci'], { stdio: 'pipe' });
+    }
   });
 
   test('T118-H8: Rechazo estricto de publicOrigin no canónico', () => {
