@@ -1886,7 +1886,7 @@
       "covers": [
         "Spending: Cost per PR con desglose Compute/Platform/Inference"
       ],
-      "pr": "integ/etapa2-ola2",
+      "pr": "#96",
       "note": "Tres componentes por intento en micro-USD, tarifas versionadas con hash (versión#hash12). Dos pasadas de Fable.",
       "followups": [
         "N1: un cost-rates.json que se rompe entre el reclamo y el lanzamiento gasta un reintento por worker (decisión del dueño: A, anotado; B sería reencolar sin gastar)",
@@ -1912,7 +1912,7 @@
       "covers": [
         "Spending: por fuente, por usuario, por worker"
       ],
-      "pr": "integ/etapa2-ola2",
+      "pr": "#96",
       "note": "Atribución por worker, usuario, fuente y PR. La fuente webhook se quitó: nada la asignaba.",
       "followups": [
         "T119: pasar el usuario de sesión por signalOrigin (hoy la web usa el usuario del sistema; I-H3)",
@@ -1954,7 +1954,7 @@
       "covers": [
         "Productivity: tiempo de ciclo, interacciones por PR, total runs por worker"
       ],
-      "pr": "integ/etapa2-ola2",
+      "pr": "#96",
       "note": "Parcial (decisión T112-H1 A): runs por rol, interacciones por PR y ciclo kickoff→merge. Falta la partición raíz/subagentes y el rol por intento, que T110 no trae.",
       "followups": [
         "Partición raíz/subagentes y rol por intento (I-H2: los comentarios que dicen que vuelven con T110 están obsoletos)"
@@ -2000,7 +2000,7 @@
         "Scorers en el dashboard",
         "Setup"
       ],
-      "pr": "integ/etapa2-ola2",
+      "pr": "#96",
       "note": "Jueces y puesta en marcha en la pestaña de métricas."
     },
     {
