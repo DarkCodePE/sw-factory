@@ -81,3 +81,6 @@ test('T111: con cero datos las pestañas dicen «No medido» y no dibujan gráfi
 test('T111-H2: la cifra de la tarjeta es la que pasa quien llama, aunque la serie esté vacía', () => {
   expect(card({ ...base, figure: '7', series: [{ label: 'A', values: [null, null, null, null] }] })).toContain('<p class="fig">7</p>');
 });
+test('T111-H3: el gráfico no crece sin tope (el texto de los ejes no supera al del título)', () => {
+  expect(CARD_STYLE).toMatch(/\.card \.plot\{max-width:560px\}/);
+});

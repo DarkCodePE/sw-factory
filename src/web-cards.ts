@@ -90,7 +90,7 @@ nav.tabs{display:flex;flex-wrap:wrap;gap:8px;margin:0 0 24px}nav.tabs a{display:
 .cards{display:grid;grid-template-columns:repeat(auto-fit,minmax(min(100%,420px),1fr));gap:20px;margin:24px 0}
 .cards section.card{margin-top:0}.card{border:1px solid var(--line);border-radius:8px;padding:16px 18px;background:var(--bg);min-width:0}.card header{display:flex;align-items:center;gap:8px}.card h2{margin:0;font-size:15px;font-weight:600}
 .card .fig{margin:4px 0 0;font-size:32px;font-weight:700;line-height:1.2;font-variant-numeric:tabular-nums}.card .sub{margin:0;color:var(--muted);font-size:14px}.card .lbl{margin:0;color:var(--muted);font-size:13px;font-weight:600}
-.card .chart{display:flex;flex-wrap:wrap;align-items:center;gap:6px 14px;margin-top:8px}.card .chart svg{flex-basis:100%;margin-top:4px}.card .chart .empty{padding:36px 0}
+.card .chart{display:flex;flex-wrap:wrap;align-items:center;gap:6px 14px;margin-top:8px}.card .chart svg{flex-basis:100%;margin-top:4px}.card .chart .empty{padding:36px 0}.card .plot{max-width:560px}
 .card .chart label{display:inline-flex;align-items:center;gap:6px;font-size:14px;cursor:pointer}.card .chart input{min-height:auto;width:18px;height:18px;accent-color:var(--accent)}
 .sw{display:inline-block;width:14px;height:4px;border-radius:2px}.sw0{background:var(--s0)}.sw1{background:var(--s1)}.sw2{background:var(--s2)}.sw3{background:var(--s3)}
 .sc0:not(:checked)~.plot .a0,.sc1:not(:checked)~.plot .a1,.sc2:not(:checked)~.plot .a2,.sc3:not(:checked)~.plot .a3{display:none}
