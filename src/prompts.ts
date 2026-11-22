@@ -27,7 +27,7 @@ ${text}
 UNTRUSTED ${nonce}>>>`;
 }
 
-type PromptNote = HistoricalNoteBody & Pick<ReservedChangeNote, 'attachment' | 'attachmentBytes'>;
+type PromptNote = HistoricalNoteBody & Pick<ReservedChangeNote, 'attachment' | 'attachmentBytes' | 'actorUserId' | 'actorRole'>;
 
 export function notesBlock(notes: PromptNote[], nonce?: string): string {
   if (!notes.length) return '';
@@ -35,7 +35,9 @@ export function notesBlock(notes: PromptNote[], nonce?: string): string {
     const file = note.attachment && note.attachmentBytes
       ? { name: JSON.stringify(note.attachment.name).replace(/</g, '\\u003c').replace(/>/g, '\\u003e'), text: decodeNoteAttachment(note.attachmentBytes) }
       : undefined;
-    return { line: `[${note.createdAt}] ${note.body}`, file };
+    // T119c §4.3: en nube el actor y su rol salen de metadata verificada, nunca del texto; el nombre visible no entra.
+    const by = note.actorUserId ? ` [user:${note.actorUserId} role:${note.actorRole ?? 'unknown'}]` : '';
+    return { line: `[${note.createdAt}]${by} ${note.body}`, file };
   });
   const data = entries.flatMap(({ line, file }) => file ? [line, file.name, file.text] : [line]);
   const nextMarker = (proposed: string = randomUUID()) => {

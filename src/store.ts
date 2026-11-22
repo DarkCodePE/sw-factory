@@ -251,10 +251,13 @@ export interface ChangeNote {
   attemptId: string | null;
   deliveredAt: string | null;
   attachment?: NoteAttachmentMeta;
+  /** T119c: usuario y rol verificados al escribir la nota en nube. Ausentes en notas históricas o de consola. */
+  actorUserId?: string | null;
+  actorRole?: string | null;
 }
 
 export interface ReservedChangeNote extends ChangeNote { attachmentBytes?: Uint8Array }
-export type HistoricalNoteBody = Pick<ChangeNote, 'id' | 'body' | 'createdAt'>;
+export type HistoricalNoteBody = Pick<ChangeNote, 'id' | 'body' | 'createdAt'> & Partial<Pick<ChangeNote, 'actorUserId' | 'actorRole'>>;
 type NoteDelivery = (NoteAttachmentTarget & { fits?: (notes: ReservedChangeNote[]) => boolean })
   | { blockedBy: 'remote' | 'transport' };
 const PLAIN_NOTE = '(attachment_name IS NULL AND attachment_bytes IS NULL)';
@@ -530,6 +533,7 @@ function toChangeNote(r: Row): ChangeNote {
     activityId: r.activity_id as string | null,
     attemptId: r.attempt_id as string | null,
     deliveredAt: r.delivered_at as string | null,
+    ...(typeof r.actor_user_id === 'string' ? { actorUserId: r.actor_user_id, actorRole: (r.actor_role as string | null) ?? null } : {}),
     ...(typeof r.attachment_name === 'string' && typeof r.attachment_size === 'number'
       ? { attachment: { name: r.attachment_name, size: r.attachment_size } } : {}),
   };
@@ -635,6 +639,9 @@ function openReadonlyDatabase(path: string): Database {
   } finally { closeSync(fd); }
 }
 
+/** Actor estable (ID de usuario o servicio) y, si es un usuario, su rol verificado. */
+export interface StoreActor { actor: string; userId: string | null; source: string; role?: string }
+
 export class Store {
   readonly db: Database;
   readonly stateDir: string | undefined;
@@ -642,6 +649,11 @@ export class Store {
   readonly clock: () => Date;
   readonly dbPath: string;
   private readonly readonly: boolean;
+  #actor: StoreActor | undefined;
+
+  /** Fija quién actúa en este Store (T119c): lo usan los eventos, las notas y los `created_by`. Sin él manda `FAB_ACTOR`/usuario del SO. */
+  asActor(actor: StoreActor | undefined): this { this.#actor = actor; return this; }
+  actorName(): string { return this.#actor?.actor ?? process.env.FAB_ACTOR ?? userInfo().username; }
 
   constructor(path: string, options?: StoreOptions) {
     this.stateDir = path === ':memory:' ? undefined : dirname(resolve(path));
@@ -684,6 +696,10 @@ export class Store {
   private migrate(): void {
     this.addColumn('change_notes', 'attachment_name', 'TEXT');
     this.addColumn('change_notes', 'attachment_bytes', 'BLOB');
+    // T119c: usuario y rol verificados de cada nota y responsable vigente de un change (`user resolve-work`). Nulos en filas históricas.
+    this.addColumn('change_notes', 'actor_user_id', 'TEXT');
+    this.addColumn('change_notes', 'actor_role', 'TEXT');
+    this.addColumn('changes', 'responsible_user_id', 'TEXT');
     this.addColumn('activities', 'validator', 'TEXT');
     this.addColumn('workstreams', 'verify', 'TEXT');
     this.addColumn('workstreams', 'verify_setup', 'TEXT');
@@ -965,7 +981,7 @@ export class Store {
       this.#checkRunnerUnused(i.name);
       const row = this.db.query(
         `INSERT INTO runners (name, kind, target, options, enabled, created_at, created_by) VALUES (?,?,?,?,1,?,?) RETURNING *`,
-      ).get(i.name, i.kind, i.kind === 'ssh' ? i.target! : null, JSON.stringify(options), this.now(), process.env.FAB_ACTOR ?? userInfo().username) as Row;
+      ).get(i.name, i.kind, i.kind === 'ssh' ? i.target! : null, JSON.stringify(options), this.now(), this.actorName()) as Row;
       return toRunner(row);
     }).immediate());
   }
@@ -1204,7 +1220,7 @@ export class Store {
       const row = this.db.query(
         `INSERT INTO automations (id, workstream_id, name, cron, title, body, created_at, created_by)
          VALUES (?,?,?,?,?,?,?,?) RETURNING *`,
-      ).get(randomUUID(), ws.id, name, cron, title, body, this.now(), process.env.FAB_ACTOR ?? userInfo().username) as Row;
+      ).get(randomUUID(), ws.id, name, cron, title, body, this.now(), this.actorName()) as Row;
       this.event(ws.id, 'info', `automation ${name} creada (${cron})`);
       return toAutomation(row);
     });
@@ -1616,11 +1632,13 @@ export class Store {
       }
 
       const id = randomUUID();
-      const actor = process.env.FAB_ACTOR ?? userInfo().username;
+      const actor = this.actorName();
       const createdAt = this.now();
       const meta = attachment && { name: attachment.name, size: attachment.bytes.byteLength };
-      this.db.query(`INSERT INTO change_notes (id, change_id, body, actor, created_at, attachment_name, attachment_bytes)
-        VALUES (?,?,?,?,?,?,?)`).run(id, changeId, body, actor, createdAt, attachment?.name ?? null, attachment?.bytes ?? null);
+      // T119c: usuario y rol verificados, fuera del texto; el rol queda el de este momento aunque luego cambie.
+      this.db.query(`INSERT INTO change_notes (id, change_id, body, actor, created_at, attachment_name, attachment_bytes, actor_user_id, actor_role)
+        VALUES (?,?,?,?,?,?,?,?,?)`).run(id, changeId, body, actor, createdAt, attachment?.name ?? null, attachment?.bytes ?? null,
+        this.#actor?.userId ?? null, this.#actor?.userId ? this.#actor.role ?? null : null);
       this.event(change.workstreamId, 'info', `nota del dueño registrada (${id.slice(0, 8)}, ${bytes} bytes${meta ? `, adjunto de ${meta.size} bytes` : ''})`, changeId);
       return { id, changeId, body, actor, createdAt, activityId: null, attemptId: null, deliveredAt: null, ...(meta && { attachment: meta }) };
     });
@@ -1630,15 +1648,15 @@ export class Store {
     // Una apertura de solo lectura puede encontrar una base anterior a las notas.
     if (!this.db.query("SELECT 1 FROM sqlite_schema WHERE type = 'table' AND name = 'change_notes'").get()) return [];
     const columns = new Set(this.db.query<{ name: string }, []>('PRAGMA table_info(change_notes)').all().map(col => col.name));
-    const attachment = columns.has('attachment_name') && columns.has('attachment_bytes')
-      ? ', attachment_name, length(attachment_bytes) AS attachment_size' : '';
+    const attachment = (columns.has('attachment_name') && columns.has('attachment_bytes')
+      ? ', attachment_name, length(attachment_bytes) AS attachment_size' : '') + (columns.has('actor_user_id') ? ', actor_user_id, actor_role' : '');
     const rows = this.db.query<Row, [string]>(`SELECT id, change_id, body, actor, created_at, activity_id, attempt_id, delivered_at
       ${attachment} FROM change_notes WHERE change_id = ? ORDER BY created_at, rowid`).all(changeId);
     return rows.map(toChangeNote);
   }
 
   listHistoricalNoteBodies(changeId: string): HistoricalNoteBody[] {
-    return this.db.query<HistoricalNoteBody, [string]>(`SELECT id, body, created_at AS createdAt
+    return this.db.query<HistoricalNoteBody, [string]>(`SELECT id, body, created_at AS createdAt, actor_user_id AS actorUserId, actor_role AS actorRole
       FROM change_notes WHERE change_id = ? AND (${PLAIN_NOTE} OR delivered_at IS NOT NULL)
       ORDER BY created_at, rowid`).all(changeId);
   }
@@ -1744,7 +1762,7 @@ export class Store {
       const hash = createHash('sha256').update(secret).digest('hex');
       this.db.query(
         `INSERT INTO api_keys (id, name, scope, hash, created_at, created_by) VALUES (?,?,?,?,?,?)`,
-      ).run(id, name, scope, hash, this.now(), process.env.FAB_ACTOR ?? userInfo().username);
+      ).run(id, name, scope, hash, this.now(), this.actorName());
       return { id, key: `fabk_${id}_${secret}` };
     });
   }
@@ -2500,11 +2518,12 @@ export class Store {
   /** `actor` explícito (T119a): ID estable del usuario/servicio y su origen; sin él, el actor sigue saliendo del entorno como antes. */
   event(workstreamId: string, severity: 'info' | 'warning' | 'error', message: string, changeId?: string, activityId?: string,
     actor?: { actor: string; userId: string | null; source: string }): void {
+    const who = actor ?? this.#actor;
     this.withRetry(() => {
       this.db
         .query('INSERT INTO events (workstream_id, change_id, activity_id, severity, message, created_at, actor, actor_user_id, actor_source) VALUES (?,?,?,?,?,?,?,?,?)')
         .run(workstreamId, changeId ?? null, activityId ?? null, severity, message, this.now(),
-          actor?.actor ?? process.env.FAB_ACTOR ?? userInfo().username, actor?.userId ?? null, actor?.source ?? null);
+          who?.actor ?? process.env.FAB_ACTOR ?? userInfo().username, who?.userId ?? null, who?.source ?? null);
     });
     if (changeId && (isTerminalChange(this.getChange(changeId).status) ||
         activityId && this.isTerminal(this.getActivity(activityId).status))) writeManifest(this, changeId);
