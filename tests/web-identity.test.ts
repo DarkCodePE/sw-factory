@@ -1,0 +1,358 @@
+import { afterEach, beforeEach, expect, test } from 'bun:test';
+import { mkdtempSync, rmSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
+import { Store } from '../src/store.ts';
+import { acceptInvitation, bootstrapOwner, inviteUser, issueSession, listSessions, resolvePrincipal, type Principal, type Role } from '../src/users.ts';
+import { GithubConnector, identityRoutes, validGithubLogin, GITHUB_ISSUER } from '../src/web-identity.ts';
+import { LoginTransactions, PENDING_LOGIN_MAX, csrfToken } from '../src/web-auth.ts';
+import { CLIENT_ID, CLIENT_SECRET, startFakeGithub, type FakeGithub } from './helpers/fake-github.ts';
+
+const ORIGIN = 'https://fab.test', HOST = 'fab.test', SECRET = 'secreto-de-servicio';
+let now: number, dir: string, path: string, store: Store, gh: FakeGithub, routes: ReturnType<typeof identityRoutes>;
+const clock = () => new Date(now);
+const open = () => new Store(path, { clock });
+const mount = (write = true) => { routes = identityRoutes({ store, github: new GithubConnector({ clientId: CLIENT_ID, clientSecret: () => CLIENT_SECRET, publicOrigin: ORIGIN,
+  authorizeUrl: `${gh.url}/login/oauth/authorize`, tokenUrl: `${gh.url}/login/oauth/access_token`, apiBase: `${gh.url}/api` }), publicOrigin: ORIGIN, write, secret: SECRET }); };
+
+beforeEach(() => {
+  now = Date.parse('2026-11-22T10:00:00.000Z');
+  dir = mkdtempSync(join(tmpdir(), 'fab-ident-')); path = join(dir, 'f.db'); store = open(); gh = startFakeGithub(); mount();
+});
+afterEach(() => { gh.stop(); store.close(); rmSync(dir, { recursive: true, force: true }); });
+
+interface Call { cookie?: string; origin?: string | null; form?: Record<string, string>; ip?: string; host?: string; headers?: Record<string, string> }
+async function call(method: string, p: string, o: Call = {}): Promise<Response> {
+  const headers: Record<string, string> = { host: o.host ?? HOST, ...o.headers };
+  if (o.cookie) headers.cookie = o.cookie;
+  if (o.origin !== null && method === 'POST') headers.origin = o.origin ?? ORIGIN;
+  let body: string | undefined;
+  if (o.form) { body = new URLSearchParams(o.form).toString(); headers['content-type'] = 'application/x-www-form-urlencoded'; }
+  const res = await routes.handle(new Request(`${ORIGIN}${p}`, { method, headers, body, redirect: 'manual' }), o.ip ?? '10.0.0.1');
+  return res ?? new Response('sin ruta', { status: 599 });
+}
+const setCookies = (r: Response) => r.headers.getSetCookie();
+const cookieOf = (r: Response, name: string) => setCookies(r).find(c => c.startsWith(`${name}=`));
+const pair = (c: string | undefined) => c!.split(';')[0]!;
+
+/** El navegador: /login → POST /auth/start. Devuelve el `state` y la cookie de login. */
+async function startLogin(invitation = '', ip = '10.0.0.1') {
+  const page = await call('GET', '/login', { ip });
+  const pre = pair(cookieOf(page, '__Host-fab_pre')), token = /name="pre" value="([0-9a-f]+)"/.exec(await page.text())![1]!;
+  const res = await call('POST', '/auth/start', { cookie: pre, form: { pre: token, invitation }, ip });
+  return { res, location: res.headers.get('location') ?? '', loginCookie: pair(cookieOf(res, '__Host-fab_login')) };
+}
+/** Login completo contra el GitHub falso. */
+async function login(account: { id: number; login: string }, invitation = '', ip = '10.0.0.1') {
+  const s = await startLogin(invitation, ip);
+  const state = new URL(s.location).searchParams.get('state')!;
+  const res = await call('GET', `/auth/callback?code=${gh.grant(account)}&state=${state}`, { cookie: s.loginCookie, ip });
+  return { res, state, loginCookie: s.loginCookie, session: cookieOf(res, '__Host-fab_session') };
+}
+function seedOwner(id = 1): Principal {
+  const u = bootstrapOwner(store, { issuer: GITHUB_ISSUER, subject: String(id), displayName: 'Dueña', operator: 'op' });
+  return resolvePrincipal(store, issueSession(store, u.id, 'web').token, 'web')!;
+}
+function invite(by: Principal, id: number, role: Role = 'member') {
+  const inv = inviteUser(store, by, { expectedIssuer: GITHUB_ISSUER, expectedSubject: String(id), role });
+  return inv.code;
+}
+const csrfFor = (cookie: string) => csrfToken(SECRET, routes.principalOf(new Request(ORIGIN, { headers: { cookie } }))!.sessionId!);
+
+test('login: redirect exacto, scope vacío, PKCE S256, cookie Lax y sesión con los atributos de §3.1', async () => {
+  seedOwner(1);
+  const s = await startLogin();
+  expect(s.res.status).toBe(303);
+  const u = new URL(s.location);
+  expect(u.origin + u.pathname).toBe(`${gh.url}/login/oauth/authorize`);
+  expect(u.searchParams.get('redirect_uri')).toBe(`${ORIGIN}/auth/callback`);
+  expect(u.searchParams.get('scope')).toBe('');
+  expect(u.searchParams.get('code_challenge_method')).toBe('S256');
+  expect(u.searchParams.get('client_id')).toBe(CLIENT_ID);
+  expect(u.searchParams.has('client_secret')).toBe(false);
+  const lc = cookieOf(s.res, '__Host-fab_login')!;
+  expect(lc).toMatch(/Secure/); expect(lc).toMatch(/HttpOnly/); expect(lc).toMatch(/SameSite=Lax/); expect(lc).toMatch(/Path=\//); expect(lc).not.toMatch(/Domain/);
+
+  const state = u.searchParams.get('state')!;
+  const cb = await call('GET', `/auth/callback?code=${gh.grant({ id: 1, login: 'duena' })}&state=${state}`, { cookie: s.loginCookie });
+  expect(cb.status).toBe(200);
+  const sc = cookieOf(cb, '__Host-fab_session')!;
+  expect(sc).toMatch(/Secure/); expect(sc).toMatch(/HttpOnly/); expect(sc).toMatch(/SameSite=Strict/); expect(sc).toMatch(/Path=\//); expect(sc).not.toMatch(/Domain/);
+  expect(cookieOf(cb, '__Host-fab_login')).toMatch(/Max-Age=0/);
+  expect(cb.headers.get('cache-control')).toBe('no-store'); expect(cb.headers.get('referrer-policy')).toBe('no-referrer');
+  const p = resolvePrincipal(store, pair(sc).split('=')[1]!, 'web')!;
+  expect(p.role).toBe('owner'); expect(p.via).toBe('web');
+  // PKCE: GitHub recibió el verificador y el redirect exacto.
+  const exchange = gh.calls.find(c => c.path === '/login/oauth/access_token')!;
+  expect(exchange.body?.redirect_uri).toBe(`${ORIGIN}/auth/callback`);
+  expect(typeof exchange.body?.code_verifier).toBe('string');
+});
+
+test('el token del proveedor se revoca siempre: al entrar y también cuando se deniega el alta', async () => {
+  seedOwner(1);
+  await login({ id: 1, login: 'duena' });
+  expect(gh.tokensRevoked.length).toBe(1);
+  const denied = await login({ id: 99, login: 'extrano' }); // sin cuenta ni invitación
+  expect(denied.res.status).toBe(403);
+  expect(gh.tokensRevoked.length).toBe(2);
+});
+
+test('un fallo al revocar se audita sin el valor del token y no tumba el login', async () => {
+  seedOwner(1);
+  gh.fail.revoke = true;
+  const r = await login({ id: 1, login: 'duena' });
+  expect(r.session).toBeTruthy();
+  const rows = store.db.query(`SELECT * FROM identity_audit WHERE action = 'login.revoke-failed'`).all() as { result: string; detail: string | null }[];
+  expect(rows.length).toBe(1); expect(rows[0]!.result).toBe('error');
+  expect(JSON.stringify(store.db.query('SELECT * FROM identity_audit').all())).not.toContain('gho_');
+});
+
+test('identidad por ID numérico: cambiar el login visible conserva la cuenta; un ID no numérico no entra', async () => {
+  const o = seedOwner(1);
+  const a = await login({ id: 1, login: 'duena' }), b = await login({ id: 1, login: 'duena-renombrada' });
+  expect(a.session && b.session).toBeTruthy();
+  expect(resolvePrincipal(store, pair(b.session).split('=')[1]!, 'web')!.userId).toBe(o.userId);
+  // Cuentas con sujeto «0» y «-1» existen: un ID no positivo del proveedor no debe llegar a ellas.
+  for (const sub of ['0', '-1']) acceptInvitation(store, { code: invite(o, Number(sub)), issuer: GITHUB_ISSUER, subject: sub, displayName: sub });
+  for (const bad of ['1', 1.5, -1, null, 0]) { now += 60_000; gh.fail.userId = bad; expect((await login({ id: 1, login: 'duena' })).res.status).toBe(403); }
+});
+
+test('state de un solo uso, ligado al navegador, y caducidad de 5 minutos', async () => {
+  seedOwner(1);
+  const s = await startLogin(), state = new URL(s.location).searchParams.get('state')!;
+  const other = await startLogin(); // otro navegador
+  // El state de uno con la cookie de otro no sirve, y además se consume.
+  expect((await call('GET', `/auth/callback?code=${gh.grant({ id: 1, login: 'd' })}&state=${state}`, { cookie: other.loginCookie })).status).toBe(403);
+  expect((await call('GET', `/auth/callback?code=${gh.grant({ id: 1, login: 'd' })}&state=${state}`, { cookie: s.loginCookie })).status).toBe(403);
+  // Sin cookie, sin state y state inventado.
+  const t = await startLogin(), st = new URL(t.location).searchParams.get('state')!;
+  expect((await call('GET', `/auth/callback?code=x&state=${st}`)).status).toBe(403);
+  expect((await call('GET', `/auth/callback?code=x`, { cookie: t.loginCookie })).status).toBe(403);
+  expect((await call('GET', `/auth/callback?code=x&state=nope`, { cookie: t.loginCookie })).status).toBe(403);
+  // Caducado.
+  const u = await startLogin(), su = new URL(u.location).searchParams.get('state')!;
+  now += 5 * 60_000 + 1;
+  expect((await call('GET', `/auth/callback?code=${gh.grant({ id: 1, login: 'd' })}&state=${su}`, { cookie: u.loginCookie })).status).toBe(403);
+  // Ninguna de las fallidas llegó a canjear nada.
+  expect(gh.calls.filter(c => c.path === '/login/oauth/access_token').length).toBe(0);
+});
+
+test('invitación: se canjea con el código y el ID verificado; otro sujeto, segundo uso o sin código no crean cuenta', async () => {
+  const o = seedOwner(1);
+  const c = invite(o, 10, 'viewer');
+  expect((await login({ id: 11, login: 'otro' }, c)).res.status).toBe(403); // otro sujeto
+  expect((await login({ id: 10, login: 'ana' })).res.status).toBe(403); // sin código
+  const ok = await login({ id: 10, login: 'ana' }, c);
+  expect(ok.session).toBeTruthy();
+  expect(resolvePrincipal(store, pair(ok.session).split('=')[1]!, 'web')!.role).toBe('viewer');
+  const again = await login({ id: 12, login: 'tercero' }, c);
+  expect(again.res.status).toBe(403);
+  expect(store.db.query('SELECT COUNT(*) AS n FROM users').get()).toEqual({ n: 2 });
+  // El código viaja con la transacción, no en la URL de GitHub.
+  expect((await startLogin(c)).location).not.toContain(c);
+});
+
+test('cuenta desconocida, dada de baja y proveedor caído dan la misma respuesta pública', async () => {
+  const o = seedOwner(1);
+  const u = acceptInvitation(store, { code: invite(o, 5), issuer: GITHUB_ISSUER, subject: '5', displayName: 'x' });
+  store.db.query('UPDATE users SET disabled_at = ? WHERE id = ?').run(store.now(), u.id);
+  const unknown = await login({ id: 77, login: 'nadie' }), disabled = await login({ id: 5, login: 'x' });
+  gh.fail.token = true; const down = await login({ id: 1, login: 'duena' });
+  const bodies = await Promise.all([unknown.res, disabled.res, down.res].map(async r => [r.status, await r.text()]));
+  expect(bodies[0]).toEqual(bodies[1]); expect(bodies[0]).toEqual(bodies[2]); expect(bodies[0]![0]).toBe(403);
+});
+
+test('GitHub no se sigue por redirecciones', async () => {
+  seedOwner(1);
+  gh.fail.redirectUser = true;
+  expect((await login({ id: 1, login: 'd' })).res.status).toBe(403);
+  expect(gh.calls.some(c => c.path === '/elsewhere')).toBe(false);
+});
+
+test('rotación: una sesión que llega al callback se revoca y se emite otra', async () => {
+  const o = seedOwner(1);
+  const s = await startLogin(), state = new URL(s.location).searchParams.get('state')!;
+  const old = issueSession(store, o.userId, 'web');
+  const cb = await call('GET', `/auth/callback?code=${gh.grant({ id: 1, login: 'd' })}&state=${state}`, { cookie: `${s.loginCookie}; __Host-fab_session=${old.token}` });
+  const fresh = pair(cookieOf(cb, '__Host-fab_session')).split('=')[1]!;
+  expect(fresh).not.toBe(old.token);
+  expect(resolvePrincipal(store, old.token, 'web')).toBeNull();
+  expect(resolvePrincipal(store, fresh, 'web')).not.toBeNull();
+});
+
+test('límites: la petición sobre el umbral da 429 con Retry-After antes de llamar a GitHub; los headers del cliente no lo cambian', async () => {
+  seedOwner(1);
+  for (let i = 0; i < 10; i++) await call('GET', '/auth/callback?code=x&state=y', { headers: { 'x-forwarded-for': `1.1.1.${i}` } });
+  const r = await call('GET', `/auth/callback?code=${gh.grant({ id: 1, login: 'd' })}&state=y`, { headers: { 'x-forwarded-for': '9.9.9.9', 'x-real-ip': '8.8.8.8' } });
+  expect(r.status).toBe(429); expect(Number(r.headers.get('retry-after'))).toBeGreaterThan(0);
+  expect(gh.calls.length).toBe(0);
+  const page = await call('GET', '/login', { ip: '10.0.0.1' });
+  const start = await call('POST', '/auth/start', { ip: '10.0.0.1', cookie: pair(cookieOf(page, '__Host-fab_pre')), form: { pre: 'x' } });
+  expect(start.status).toBe(429);
+  now += 60_000; // otra ventana
+  expect((await call('GET', '/auth/callback?code=x&state=y')).status).toBe(403);
+  // Los inicios cuentan por la IP que pone quien monta las rutas, no por una cabecera del cliente.
+  for (let i = 0; i < 10; i++) await call('POST', '/auth/start', { ip: '10.7.7.7', form: { pre: 'x' }, headers: { 'x-forwarded-for': `2.2.2.${i}` } });
+  expect((await call('POST', '/auth/start', { ip: '10.7.7.7', form: { pre: 'x' }, headers: { 'x-forwarded-for': '3.3.3.3' } })).status).toBe(429);
+});
+
+test('límite global de inicios: 60 por minuto aunque cambie la IP', async () => {
+  for (let i = 0; i < 60; i++) {
+    const ip = `10.1.${Math.floor(i / 10)}.${i % 10}`;
+    const page = await call('GET', '/login', { ip });
+    const r = await call('POST', '/auth/start', { ip, cookie: pair(cookieOf(page, '__Host-fab_pre')), form: { pre: /name="pre" value="([0-9a-f]+)"/.exec(await page.text())![1]! } });
+    expect(r.status).toBe(303);
+  }
+  const r = await call('POST', '/auth/start', { ip: '10.9.9.9', form: { pre: 'x' } });
+  expect(r.status).toBe(429);
+});
+
+test('el almacén de transacciones pendientes está acotado', () => {
+  const t = new LoginTransactions(() => now);
+  for (let i = 0; i < PENDING_LOGIN_MAX; i++) expect(t.start()).not.toBeNull();
+  expect(t.start()).toBeNull();
+  now += 5 * 60_000 + 1; // las caducadas liberan sitio
+  expect(t.start()).not.toBeNull();
+});
+
+test('inicio de login: Origin exacto y token de prelogin ligado al navegador', async () => {
+  const page = await call('GET', '/login'), pre = pair(cookieOf(page, '__Host-fab_pre')), token = /name="pre" value="([0-9a-f]+)"/.exec(await page.text())![1]!;
+  const ok = { cookie: pre, form: { pre: token } };
+  expect((await call('POST', '/auth/start', { ...ok, origin: null })).status).toBe(403);
+  expect((await call('POST', '/auth/start', { ...ok, origin: 'https://evil.test' })).status).toBe(403);
+  expect((await call('POST', '/auth/start', { form: { pre: token } })).status).toBe(403); // sin la cookie del navegador
+  expect((await call('POST', '/auth/start', { cookie: pre, form: { pre: 'f'.repeat(64) } })).status).toBe(403);
+  expect((await call('POST', '/auth/start', ok)).status).toBe(303);
+});
+
+test('Host ajeno y rutas ajenas', async () => {
+  expect((await call('GET', '/login', { host: 'evil.test' })).status).toBe(403);
+  expect(await routes.handle(new Request(`${ORIGIN}/ws`, { headers: { host: HOST } }), 'ip')).toBeNull();
+  expect(await routes.handle(new Request(`${ORIGIN}/auth?token=abc`, { headers: { host: HOST } }), 'ip')).toBeNull(); // el enlace local no existe en servidor
+});
+
+test('logout y revocación: Origin, CSRF de la sesión y persistencia tras reabrir el Store', async () => {
+  seedOwner(1);
+  const a = pair((await login({ id: 1, login: 'd' })).session), b = pair((await login({ id: 1, login: 'd' })).session);
+  const csrfA = csrfFor(a), csrfB = csrfFor(b);
+  expect(csrfA).not.toBe(csrfB);
+  const bad: Call[] = [{ origin: null, form: { csrf: csrfA } }, { origin: 'https://evil.test', form: { csrf: csrfA } }, { form: { csrf: csrfB } }, { form: { csrf: 'x' } }, { form: {} }];
+  for (const o of bad) expect((await call('POST', '/logout', { cookie: a, ...o })).status).toBe(403);
+  expect((await call('POST', '/logout', { form: { csrf: csrfA } })).status).toBe(401); // sin sesión
+  expect(routes.principalOf(new Request(ORIGIN, { headers: { cookie: a } }))).not.toBeNull();
+  const out = await call('POST', '/logout', { cookie: a, form: { csrf: csrfA } });
+  expect(out.status).toBe(303); expect(cookieOf(out, '__Host-fab_session')).toMatch(/Max-Age=0/);
+  store.close(); store = open(); mount();
+  expect(routes.principalOf(new Request(ORIGIN, { headers: { cookie: a } }))).toBeNull();
+  expect((await call('POST', '/logout', { cookie: a, form: { csrf: csrfA } })).status).toBe(401);
+  expect(routes.principalOf(new Request(ORIGIN, { headers: { cookie: b } }))).not.toBeNull(); // la otra sigue
+});
+
+test('una cookie repetida o un token de otra superficie no autentican', async () => {
+  const o = seedOwner(1);
+  const web = pair((await login({ id: 1, login: 'd' })).session);
+  expect(routes.principalOf(new Request(ORIGIN, { headers: { cookie: `${web}; ${web}` } }))).toBeNull();
+  const cli = issueSession(store, o.userId, 'cli').token;
+  expect((await call('GET', '/cuenta', { cookie: `__Host-fab_session=${cli}` })).status).toBe(303);
+});
+
+test('cuenta: sesiones propias, nunca las de otro usuario, y revocar una propia', async () => {
+  const o = seedOwner(1);
+  const m = acceptInvitation(store, { code: invite(o, 2), issuer: GITHUB_ISSUER, subject: '2', displayName: 'Mía' });
+  const mine = pair((await login({ id: 2, login: 'mia' })).session);
+  const mine2 = pair((await login({ id: 2, login: 'mia' })).session);
+  const ownerSessionId = listSessions(store, o)[0]!.id;
+  const html = await (await call('GET', '/cuenta', { cookie: mine })).text();
+  expect(html).toContain('rol member'); expect(html).not.toContain(ownerSessionId);
+  expect(html.match(/\/cuenta\/sesiones\/[a-f0-9]{12}\/revocar/g)!.length).toBe(2);
+  // Revocar la sesión de otro usuario no la toca.
+  const csrf = csrfFor(mine);
+  expect((await call('POST', `/cuenta/sesiones/${ownerSessionId}/revocar`, { cookie: mine, form: { csrf } })).status).toBe(400);
+  expect(listSessions(store, o).some(s => s.id === ownerSessionId)).toBe(true);
+  // Revocar la otra mía: 303 a /cuenta; la actual sigue.
+  const otherId = routes.principalOf(new Request(ORIGIN, { headers: { cookie: mine2 } }))!.sessionId!;
+  const r = await call('POST', `/cuenta/sesiones/${otherId}/revocar`, { cookie: mine, form: { csrf } });
+  expect(r.headers.get('location')).toBe('/cuenta');
+  expect(routes.principalOf(new Request(ORIGIN, { headers: { cookie: mine2 } }))).toBeNull();
+  expect(routes.principalOf(new Request(ORIGIN, { headers: { cookie: mine } }))).not.toBeNull();
+  expect(m.id).toBeTruthy();
+  // Cerrar la sesión actual desde la lista limpia la cookie y vuelve al login.
+  const cur = routes.principalOf(new Request(ORIGIN, { headers: { cookie: mine } }))!.sessionId!;
+  const out = await call('POST', `/cuenta/sesiones/${cur}/revocar`, { cookie: mine, form: { csrf } });
+  expect(out.headers.get('location')).toBe('/login'); expect(cookieOf(out, '__Host-fab_session')).toMatch(/Max-Age=0/);
+});
+
+test('D-2: viewer sin claves ni sección de claves; member crea y revoca las suyas y el valor sale una vez', async () => {
+  const o = seedOwner(1);
+  acceptInvitation(store, { code: invite(o, 3, 'viewer'), issuer: GITHUB_ISSUER, subject: '3', displayName: 'V' });
+  acceptInvitation(store, { code: invite(o, 4, 'member'), issuer: GITHUB_ISSUER, subject: '4', displayName: 'M' });
+  const v = pair((await login({ id: 3, login: 'v' })).session), m = pair((await login({ id: 4, login: 'm' })).session);
+  const vPage = await (await call('GET', '/cuenta', { cookie: v })).text();
+  expect(vPage).not.toContain('Claves de API'); expect(vPage).toContain('/logout');
+  expect((await call('POST', '/cuenta/claves', { cookie: v, form: { csrf: csrfFor(v), name: 'k', scope: 'read' } })).status).toBe(403);
+  const made = await call('POST', '/cuenta/claves', { cookie: m, form: { csrf: csrfFor(m), name: 'ci', scope: 'read' } });
+  const key = /fabu_[a-f0-9]{12}_[A-Za-z0-9_-]{43}/.exec(await made.text())![0];
+  expect(made.status).toBe(200);
+  const listed = await (await call('GET', '/cuenta', { cookie: m })).text();
+  expect(listed).toContain('>ci<'); expect(listed).not.toContain(key);
+  const id = /\/cuenta\/claves\/([a-f0-9]{12})\/revocar/.exec(listed)![1]!;
+  expect((await call('POST', `/cuenta/claves/${id}/revocar`, { cookie: v, form: { csrf: csrfFor(v) } })).status).toBe(403); // la de otro
+  expect((await call('POST', `/cuenta/claves/${id}/revocar`, { cookie: m, form: { csrf: csrfFor(m) } })).status).toBe(303);
+  expect(await (await call('GET', '/cuenta', { cookie: m })).text()).toContain('revocada');
+});
+
+test('sin --write no se emiten claves ni se invita; login, logout y sesiones siguen', async () => {
+  seedOwner(1); mount(false);
+  const s = pair((await login({ id: 1, login: 'd' })).session), csrf = csrfFor(s);
+  expect((await call('POST', '/cuenta/claves', { cookie: s, form: { csrf, name: 'k', scope: 'read' } })).status).toBe(403);
+  gh.users.set('ana', { id: 5, login: 'ana' });
+  expect((await call('POST', '/equipo/invitaciones', { cookie: s, form: { csrf, login: 'ana', role: 'member' } })).status).toBe(403);
+  expect((await call('POST', '/logout', { cookie: s, form: { csrf } })).status).toBe(303);
+});
+
+test('invitar por login: valida el formato antes de la red, aplica la política antes de la cuota y muestra el ID numérico', async () => {
+  const o = seedOwner(1);
+  const s = pair((await login({ id: 1, login: 'd' })).session), csrf = csrfFor(s);
+  gh.users.set('ana-b', { id: 777, login: 'Ana-B' });
+  gh.calls.length = 0;
+  for (const bad of ['', 'a/b', '-a', 'a-', 'a--b', 'a b', '../x', 'x'.repeat(40), 'é']) {
+    expect((await call('POST', '/equipo/invitaciones', { cookie: s, form: { csrf, login: bad, role: 'member' } })).status).toBe(400);
+  }
+  expect(gh.calls.length).toBe(0);
+  expect(validGithubLogin('a'.repeat(39))).toBe(true);
+  // owner no se invita (se promueve).
+  expect((await call('POST', '/equipo/invitaciones', { cookie: s, form: { csrf, login: 'ana-b', role: 'owner' } })).status).toBe(400);
+  const ok = await call('POST', '/equipo/invitaciones', { cookie: s, form: { csrf, login: 'ana-b', role: 'member' } });
+  const html = await ok.text();
+  expect(ok.status).toBe(200); expect(html).toContain('777'); expect(html).toContain('Ana-B');
+  const codeIn = /<code>([^<]+)<\/code>/.exec(html)![1]!;
+  const inv = store.db.query('SELECT expected_issuer, expected_subject FROM user_invitations').get() as { expected_issuer: string; expected_subject: string };
+  expect(inv).toEqual({ expected_issuer: GITHUB_ISSUER, expected_subject: '777' });
+  // Y esa invitación se canjea con el ID numérico, no con el login.
+  expect((await login({ id: 777, login: 'renombrado' }, codeIn)).session).toBeTruthy();
+});
+
+test('invitar: un member no llega a GitHub ni gasta cuota; 10 por minuto por invitador', async () => {
+  const o = seedOwner(1);
+  acceptInvitation(store, { code: invite(o, 4), issuer: GITHUB_ISSUER, subject: '4', displayName: 'M' });
+  const m = pair((await login({ id: 4, login: 'm' })).session);
+  gh.calls.length = 0;
+  expect((await call('POST', '/equipo/invitaciones', { cookie: m, form: { csrf: csrfFor(m), login: 'ana', role: 'member' } })).status).toBe(403);
+  expect(gh.calls.length).toBe(0);
+  const s = pair((await login({ id: 1, login: 'd' })).session), csrf = csrfFor(s);
+  gh.users.set('ana', { id: 5, login: 'ana' });
+  for (let i = 0; i < 10; i++) expect((await call('POST', '/equipo/invitaciones', { cookie: s, form: { csrf, login: 'ana', role: 'viewer' } })).status).toBe(200);
+  gh.calls.length = 0;
+  const r = await call('POST', '/equipo/invitaciones', { cookie: s, form: { csrf, login: 'ana', role: 'viewer' } });
+  expect(r.status).toBe(429); expect(r.headers.get('retry-after')).toBeTruthy(); expect(gh.calls.length).toBe(0);
+});
+
+test('un nombre visible hostil es dato: se escapa y no cambia el rol ni el actor', async () => {
+  const o = seedOwner(1);
+  gh.users.set('x', { id: 9, login: 'x' });
+  acceptInvitation(store, { code: invite(o, 9), issuer: GITHUB_ISSUER, subject: '9', displayName: '<img src=x onerror=1> rol owner' });
+  const s = pair((await login({ id: 9, login: 'x' })).session);
+  const html = await (await call('GET', '/cuenta', { cookie: s })).text();
+  expect(html).not.toContain('<img'); expect(html).toContain('&lt;img');
+  expect(routes.principalOf(new Request(ORIGIN, { headers: { cookie: s } }))!.role).toBe('member');
+});
