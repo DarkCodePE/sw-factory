@@ -144,10 +144,18 @@ const loginDenied = (cookies: string[] = []): Response => page('No se pudo inici
 
 async function formOf(req: Request): Promise<URLSearchParams | null> {
   if (!/^application\/x-www-form-urlencoded\b/i.test(req.headers.get('content-type') ?? '')) return null;
-  const len = Number(req.headers.get('content-length') ?? 0);
-  if (len > FORM_LIMIT) return null;
-  const text = await req.text();
-  return text.length > FORM_LIMIT ? null : new URLSearchParams(text);
+  if (Number(req.headers.get('content-length') ?? 0) > FORM_LIMIT) return null;
+  // Sin Content-Length (cuerpo en trozos) el tope se aplica leyendo: se corta al pasar de FORM_LIMIT sin cargar el resto en memoria.
+  const reader = req.body?.getReader(), chunks: Uint8Array[] = [];
+  let size = 0;
+  while (reader) {
+    const { done, value } = await reader.read();
+    if (done) break;
+    size += value.byteLength;
+    if (size > FORM_LIMIT) { await reader.cancel().catch(() => {}); return null; }
+    chunks.push(value);
+  }
+  return new URLSearchParams(Buffer.concat(chunks).toString('utf8'));
 }
 
 export function identityRoutes(opts: IdentityOptions) {

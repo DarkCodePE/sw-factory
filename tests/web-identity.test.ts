@@ -454,3 +454,13 @@ test('T119b-H5: un rol inválido no gasta cuota ni llega a GitHub', async () => 
   // La cuota (10/min) sigue intacta tras 36 intentos inválidos.
   expect((await call('POST', '/equipo/invitaciones', { cookie: s, form: { csrf, login: 'ana', role: 'admin' } })).status).toBe(200);
 });
+
+test('T119b-H6: un cuerpo en trozos sin Content-Length se corta al pasar del tope, sin leerlo entero', async () => {
+  const page = await call('GET', '/login'), pre = pair(cookieOf(page, '__Host-fab_pre'));
+  let pulled = 0;
+  const body = new ReadableStream<Uint8Array>({ pull(c) { if (++pulled > 1000) return c.close(); c.enqueue(new Uint8Array(1024).fill(97)); } });
+  const res = await routes.handle(new Request(`${ORIGIN}/auth/start`, { method: 'POST', body, duplex: 'half',
+    headers: { host: HOST, origin: ORIGIN, cookie: pre, 'content-type': 'application/x-www-form-urlencoded' } } as RequestInit), '10.0.0.1');
+  expect(res!.status).toBe(403);
+  expect(pulled).toBeLessThan(20); // 4 KiB de tope: no se leyó el megabyte
+});
