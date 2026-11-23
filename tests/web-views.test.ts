@@ -126,7 +126,7 @@ function seed() {
 test('V: el change estructurado trae título y estado, sin notas ni resultado, y escapa el título', () => {
   const { c } = seed();
   const html = structuredChangePage(store, ui, c.id).body;
-  expect(html).toContain('uno');
+  expect(html).toContain('href="/workstreams"'); expect(html).not.toContain('/changes?'); // el viewer no tiene /changes
   expect(html).not.toContain('NOTA-SECRETA'); expect(html).not.toContain('RESULTADO-DE-WORKER'); expect(html).not.toContain('COMENTARIO');
   for (const t of ['DESCRIPCION-CANARIO', 'EVENTO-CANARIO', 'Coste', 'USD']) expect(html, t).not.toContain(t);
   expect(structuredChangePage(store, ui, c.id).title).toBe('Cambio <b>'); // el título lo escapa quien pinta la plantilla

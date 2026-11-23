@@ -74,6 +74,18 @@ test('la barra lleva el enlace Cuenta para todos los roles (T119e-H4)', async ()
   }
 });
 
+test('el viewer navega solo por enlaces que abren: nada apunta a /changes, y desde Workstreams llega a cada change y a su activity (T119e-H5)', async () => {
+  const w = await (await s.call('/workstreams', { as: 'viewer' })).text();
+  expect(w).not.toContain('href="/changes?'); expect(w).not.toContain('href="/changes"');
+  expect(w).toContain(`href="/changes/${s.changeId}"`); expect(w).toContain('cambio uno');
+  const c = await (await s.call(`/changes/${s.changeId}`, { as: 'viewer' })).text();
+  expect(c).not.toContain('href="/changes?'); expect(c).toContain(`href="/activities/${s.activityId}"`);
+  const a = await (await s.call(`/activities/${s.activityId}`, { as: 'viewer' })).text();
+  expect(a).toContain(`href="/changes/${s.changeId}"`);
+  for (const href of [...w.matchAll(/<main.*?<\/main>/gs)].flatMap(m => [...m[0].matchAll(/href="([^"]+)"/g)].map(x => x[1]!)))
+    expect([href, (await s.call(href, { as: 'viewer' })).status]).toEqual([href, 200]);
+});
+
 test('/config: el admin no ve credenciales del host ni la ruta; el owner ve los indicadores', async () => {
   process.env.JIRA_HOSTNAME = 'j.invalid';
   try {

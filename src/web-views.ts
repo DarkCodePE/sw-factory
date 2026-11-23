@@ -79,9 +79,12 @@ export function structuredSignalsPage(store: Store, ui: Ui): { title: string; bo
   return { title: 'Señales', body: `<p class="intro">Entradas nuevas a la espera de triaje.</p>${rows ? `<ul class="workstreams">${rows}</ul>` : '<p class="empty">No hay señales nuevas.</p>'}<p class="muted">Tu rol ve el título, no la descripción.</p>` };
 }
 
-/** Workstreams para viewer: nombre y estado, sin objetivo, ruta del repo ni ajustes. */
+/** Workstreams para viewer: nombre y estado, sin objetivo, ruta del repo ni ajustes; sus changes (título y estado) enlazan a la vista del change, porque /changes le da 403. */
 export function structuredWorkstreamsPage(store: Store, ui: Ui): { title: string; body: string } {
-  const rows = store.listWorkstreams().map(w => `<li><h2><a href="/changes?ws=${encodeURIComponent(w.slug)}">${ui.escape(w.slug)}</a> ${ui.badge(w.state)}</h2></li>`).join('');
+  const rows = store.listWorkstreams().map(w => {
+    const changes = store.listChanges(w.id).map(c => `<li><a href="/changes/${encodeURIComponent(c.id)}">${ui.escape(c.title)}</a> ${ui.badge(c.status)}</li>`).join('');
+    return `<li><h2>${ui.escape(w.slug)} ${ui.badge(w.state)}</h2>${changes ? `<ul>${changes}</ul>` : ''}</li>`;
+  }).join('');
   return { title: 'Workstreams', body: `<ul class="workstreams">${rows}</ul>${rows ? '' : '<p class="empty">No hay workstreams.</p>'}` };
 }
 
@@ -96,7 +99,7 @@ function activityRow(ui: Ui, a: Activity): string {
 export function structuredChangePage(store: Store, ui: Ui, id: string): { title: string; body: string } {
   const c = store.getChange(id), e = ui.escape;
   const activities = store.listActivities({ changeId: id });
-  return { title: c.title, body: `<p><a href="/changes?ws=${encodeURIComponent(store.getWorkstream(c.workstreamId).slug)}">Volver a changes</a></p><div class="summary">${ui.badge(c.status)}<span>Rama: ${e(c.branch ?? 'No asignada')}</span></div><h2>Activities</h2>${activities.length ? `<ul>${activities.map(a => activityRow(ui, a)).join('')}</ul>` : '<p class="empty">Este change todavía no tiene activities.</p>'}` };
+  return { title: c.title, body: `<p><a href="/workstreams">Volver a workstreams</a></p><div class="summary">${ui.badge(c.status)}<span>Rama: ${e(c.branch ?? 'No asignada')}</span></div><h2>Activities</h2>${activities.length ? `<ul>${activities.map(a => activityRow(ui, a)).join('')}</ul>` : '<p class="empty">Este change todavía no tiene activities.</p>'}` };
 }
 
 /** Activity para viewer: veredicto (estado) y fechas; ni comentario, ni resultado, ni error, ni logs, ni diff. */
