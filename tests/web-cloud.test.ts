@@ -190,3 +190,15 @@ test('la página local de claves (por nombre) no se sirve en servidor: las clave
   }
   expect((await s.call(path, { as: 'viewer' })).status).toBe(403);
 });
+
+// El navegador real lo descubrió: con `form-action 'self'`, Chrome bloquea la redirección de /auth/start hacia GitHub (e2e de nube).
+test('la CSP de /login admite en form-action solo el origen de autorización de GitHub; el resto de páginas, solo self', async () => {
+  const login = (await s.call('/login')).headers.get('content-security-policy')!;
+  expect(login).toContain(`form-action 'self' ${new URL(s.gh.url).origin};`);
+  expect(login).toContain("frame-ancestors 'none'");
+  for (const p of ['/style.css', '/healthz']) expect((await s.call(p)).headers.get('content-security-policy')).toContain("form-action 'self';");
+  expect((await s.call('/signals', { as: 'owner' })).headers.get('content-security-policy')).toContain("form-action 'self';");
+  const page = await (await s.call('/login')).text();
+  expect(page).toContain('<link rel="stylesheet" href="/style.css">'); // style-src 'self' no admite estilos en línea
+  expect(page).not.toContain('<style>');
+});

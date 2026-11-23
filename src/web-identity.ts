@@ -10,7 +10,7 @@ import { StoreError, type Store } from './store.ts';
 import { acceptInvitation, audit, findUserByIdentity, inviteUser, issueSession, listSessions, listUserKeys, createUserKey, resolvePrincipal,
   revokeSession, revokeUserKey, type Principal, type Role } from './users.ts';
 import { authorize } from './policy.ts';
-import { WEB_STYLE } from './web-style.ts';
+import { SERVER_SECURITY_HEADERS } from './web-server.ts';
 import { LIMITS, LOGIN_COOKIE, LoginTransactions, PRELOGIN_COOKIE, RateLimiter, SESSION_COOKIE, clearCookie, constantEqual, cookieValue, csrfToken,
   originOk, preloginOk, preloginToken, setCookie } from './web-auth.ts';
 
@@ -55,6 +55,9 @@ export class GithubConnector {
     this.redirectUri = `${checkPublicOrigin(cfg.publicOrigin)}/auth/callback`;
     this.urls = { authorizeUrl: cfg.authorizeUrl ?? GH.authorizeUrl, tokenUrl: cfg.tokenUrl ?? GH.tokenUrl, apiBase: cfg.apiBase ?? GH.apiBase };
   }
+
+  /** Origen al que `/auth/start` redirige: la CSP de `/login` lo admite en `form-action` (Chrome aplica `form-action` también a las redirecciones). */
+  get authorizeOrigin(): string { return new URL(this.urls.authorizeUrl).origin; }
 
   /** Scope vacío (el token no opera repositorios) y PKCE S256 como defensa adicional. */
   authorizeUrl(tx: { state: string; verifier: string }): string {
@@ -139,7 +142,7 @@ export function page(title: string, body: string, status = 200, cookies: string[
   // una página con formulario usa `same-origin` (el referente no sale de fab). Sin formulario, `no-referrer`.
   const h = new Headers({ 'content-type': 'text/html; charset=utf-8', 'cache-control': 'no-store', 'referrer-policy': body.includes('<form') ? 'same-origin' : 'no-referrer' });
   for (const c of cookies) h.append('set-cookie', c);
-  return new Response(`<!doctype html><html lang="es"><head><meta charset="utf-8"><title>${esc(title)}</title>${extraHead}<style>${WEB_STYLE}</style></head><body><main><h1>${esc(title)}</h1>${body}</main></body></html>`, { status, headers: h });
+  return new Response(`<!doctype html><html lang="es"><head><meta charset="utf-8"><title>${esc(title)}</title>${extraHead}<link rel="stylesheet" href="/style.css"></head><body><main><h1>${esc(title)}</h1>${body}</main></body></html>`, { status, headers: h });
 }
 export const redirect = (to: string, cookies: string[] = []): Response => {
   const h = new Headers({ location: to, 'cache-control': 'no-store', 'referrer-policy': 'no-referrer' });
@@ -226,9 +229,12 @@ export function identityRoutes(opts: IdentityOptions) {
 
     if (path === '/login' && method === 'GET') {
       const nonce = randomBytes(16).toString('hex');
-      return page('Entrar', `<form method="post" action="/auth/start"><input type="hidden" name="pre" value="${preloginToken(secret, nonce, clock())}">
+      const res = page('Entrar', `<form method="post" action="/auth/start"><input type="hidden" name="pre" value="${preloginToken(secret, nonce, clock())}">
         <label>Código de invitación (si tienes uno) <input name="invitation" maxlength="200" autocomplete="off"></label><button>Entrar con GitHub</button></form>`,
       200, [setCookie(PRELOGIN_COOKIE, nonce, 'Strict', 300)]);
+      // `form-action 'self'` también vale para la redirección que sigue al envío: sin admitir el origen de GitHub, Chrome bloquea el inicio de sesión.
+      res.headers.set('content-security-policy', SERVER_SECURITY_HEADERS['Content-Security-Policy']!.replace("form-action 'self'", `form-action 'self' ${github.authorizeOrigin}`));
+      return res;
     }
 
     if (path === '/auth/start' && method === 'POST') {
