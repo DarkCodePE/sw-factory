@@ -14,7 +14,7 @@ export function issueToSignal(issue: TicketIssue): { title: string; body: string
 }
 
 export async function importIssue(store: Store, links: ChangeLinkStore, tickets: TicketGateway,
-  opts: { workstream: string; key: string; triage: boolean }): Promise<{ signalId: string; changeId?: string; reused: boolean }> {
+  opts: { workstream: string; key: string; triage: boolean; /** Se ejecuta dentro de la transacción local, tras la lectura externa (T119c: revalida identidad y rol). */ guard?: () => void }): Promise<{ signalId: string; changeId?: string; reused: boolean }> {
   validateJiraKey(opts.key);
   const ws = store.getWorkstream(opts.workstream);
   function existing() {
@@ -38,6 +38,7 @@ export async function importIssue(store: Store, links: ChangeLinkStore, tickets:
   const issue = await tickets.getIssue(opts.key);
   if (issue.ref.system !== 'jira' || issue.ref.key !== opts.key) throw new Error('La HU recibida no coincide con la solicitada');
   return store.withRetry(() => store.db.transaction(() => {
+    opts.guard?.();
     const prior = existing();
     if (prior?.changeId) { links.setSource(prior.changeId, issue.ref); return prior; }
     let signalId = prior?.signalId;

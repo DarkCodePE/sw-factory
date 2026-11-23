@@ -15,6 +15,10 @@ RuntimeDirectoryMode=0770
 Environment="FABRICA_HOME=/var/lib/fab"
 Environment="FAB_PUBLIC_ORIGIN=https://fab.ejemplo.com"
 Environment="FAB_SOCKET=/run/fab/fab.sock"
+# Identidad (T119): aplicación OAuth de GitHub. Los secretos van como credenciales de systemd (D-K), nunca en argv ni en la base.
+Environment="FAB_GITHUB_CLIENT_ID=REEMPLAZA-CON-EL-ID-DE-LA-APLICACION"
+LoadCredential=github-client-secret:/etc/fab/github-client-secret
+LoadCredential=service-secret:/etc/fab/service-secret
 
 # Comando de arranque: escucha exclusivamente en socket Unix con permisos 0660 (D-4 Opción A)
 ExecStart=/usr/local/bin/bun run /opt/fab/src/cli.ts web --server --socket /run/fab/fab.sock --public-origin https://fab.ejemplo.com

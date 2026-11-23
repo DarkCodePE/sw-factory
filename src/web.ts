@@ -1,7 +1,9 @@
 // Superficie local de lectura. Las decisiones del ciclo pertenecen al Store.
 import { join, dirname } from 'node:path';
-import { existsSync, unlinkSync, chmodSync, mkdirSync, statSync } from 'node:fs';
+import { existsSync, unlinkSync, chmodSync, mkdirSync, readFileSync, statSync } from 'node:fs';
 import { spawnSync } from 'node:child_process';
+import { randomBytes } from 'node:crypto';
+import { isIP } from 'node:net';
 import { parseArgs } from 'node:util';
 import { Store, StoreError, type Activity } from './store.ts';
 import { ChangeStatus } from './enums.ts';
@@ -22,7 +24,12 @@ import { THEME_JS, THEME_STYLE, themeControl } from './web-theme.ts';
 import { SIDEBAR_JS, SIDEBAR_STYLE, sidebarNav } from './web-sidebar.ts';
 import { activityScores } from './web-scorers.ts';
 import { metricsPage, METRICS_STYLE } from './web-metrics.ts';
-import { WebAuth, assertLoopback } from './web-auth.ts';
+import { WebAuth, assertLoopback, RateLimiter, csrfToken } from './web-auth.ts';
+import { GithubConnector, identityRoutes } from './web-identity.ts';
+import { cliRoutes } from './web-cli.ts';
+import { isBootstrapped } from './users.ts';
+import { recoveryRoutes } from './web-recovery.ts';
+import { PUBLIC_PATHS, authorizeRead, serverConfigPage, serverWebhooksPage, structuredActivityPage, structuredChangePage, structuredSignalsPage, structuredWorkstreamsPage, visiblePaths } from './web-views.ts';
 import { attemptSection } from './web-attempts.ts';
 import { changeTurnSections, notesSection, turnEvidenceRoute } from './web-turns.ts';
 import { activityLogSection, transcriptSection } from './web-transcript.ts';
@@ -30,10 +37,10 @@ import { signalsView } from './web-signals.ts';
 import { AUTOMATION_EDIT_ROUTE, AUTOMATION_EDITOR_JS, AUTOMATION_EDITOR_STYLE, automationEditor, automationsView } from './web-automations.ts';
 import { workstreamsBody, wizardPage } from './web-ws.ts';
 import { changeStages } from './flow.ts';
-import { actionForms, actionNotice, webAction } from './web-actions.ts';
+import { actionForms, actionNotice, serverWebAction, webAction } from './web-actions.ts';
 import { WEB_ACTION_STYLE } from './web-actions-style.ts';
 import { API_KEYS_PATH, ApiKeyUsage, apiKeysPage } from './web-api-keys.ts';
-import { handleApi, isApiPath } from './web-api.ts';
+import { handleApi, handleServerApi, isApiPath } from './web-api.ts';
 import { FLOW_STYLE, flowPage } from './web-flow.ts';
 import { webhooksPage } from './web-webhooks.ts';
 import { jiraImportAction } from './web-entrada.ts';
@@ -64,6 +71,7 @@ const READ_ASSETS = new Map([
   ['/sidebar.js', { body: SIDEBAR_JS, type: 'text/javascript; charset=utf-8' }],
   ['/notify.js', { body: NOTIFY, type: 'text/javascript; charset=utf-8' }],
 ]);
+const STYLE_CSS = WEB_STYLE + WEB_ACTION_STYLE + FLOW_STYLE + THEME_STYLE + SIDEBAR_STYLE + AUTOMATION_EDITOR_STYLE + '.count{font-size:13px;margin-left:6px}.bulk{display:flex;gap:8px;flex-wrap:wrap;margin:12px 0}.links{margin:8px 0}';
 const HEADERS = {
   'Content-Security-Policy': "default-src 'none'; script-src 'self'; style-src 'self'; connect-src 'self'; img-src 'none'; font-src 'none'; base-uri 'none'; form-action 'self'; frame-ancestors 'none'",
   'X-Content-Type-Options': 'nosniff', 'Cache-Control': 'no-store', 'Referrer-Policy': 'no-referrer',
@@ -137,6 +145,63 @@ function page(store: Store, stateDir: string, url: URL, csrf?: string): { title:
   return { title: `Activity · ${a.validator ?? a.kind}`, body: `<p><a href="/changes/${enc(c.id)}">${escape(c.title)}</a></p><div class="summary">${badge(a.status)} ${a.reviewStatus ? badge(a.reviewStatus) : ''}<span>${escape(a.id)}</span>${copyButton(ui, a.id)}${roleLink(ui, a, store.getWorkstream(c.workstreamId).slug, 'Ver el rol en Perfiles')}</div>${actionForms(store, url, csrf)}${activityScores(store, stateDir, a, csrf)}${attemptSection(a, meta, ui)}<h2>Veredicto y resultado</h2><p>Validador: ${escape(a.validator ?? (a.kind === 'gates' ? 'gate' : 'No aplica'))} · Revisión: ${escape(labels[a.reviewStatus ?? ''] ?? a.reviewStatus ?? 'Sin veredicto')}</p><pre tabindex="0">${escape([a.reviewComment, a.result, a.error].filter(Boolean).join('\n') || 'Sin resultado registrado.')}</pre>${activityLogSection(stateDir, c.id, a.id, url, ui)}${evidence(stateDir, c.id, `${a.id}.json`, 'Metadata de ejecución')}${evidence(stateDir, c.id, 'run.json', 'run.json')}${evidence(stateDir, c.id, 'diff.patch', 'Diff')}` };
 }
 
+function flagsOf(url: URL) {
+  const isMetrics = url.pathname === '/metricas';
+  const isConfig = url.pathname === '/config';
+  const isRunners = url.pathname === '/config/runners';
+  const isFlow = url.pathname === '/flujo';
+  const isApiKeys = url.pathname === API_KEYS_PATH;
+  const isProfiles = url.pathname === '/perfiles';
+  const isDefinition = url.pathname === '/definicion';
+  const isAutoImprove = url.pathname === '/automejora';
+  const automationEdit = AUTOMATION_EDIT_ROUTE.exec(url.pathname);
+  const automationCreate = url.pathname === '/automations/nueva';
+  const isAutomationEditor = automationCreate || !!automationEdit;
+  const manual = isConfig || isProfiles || isDefinition || isAutoImprove || isApiKeys || isAutomationEditor || isRunners; // sin sondeo: no pisar lo que se escribe
+  const isExperiments = url.pathname === '/experimentos' || url.pathname.startsWith('/experimentos/');
+  const isBenchmarks = url.pathname === '/benchmarks' || url.pathname.startsWith('/benchmarks/');
+  const isWebhooks = url.pathname === '/webhooks';
+  const readAsset = READ_ASSETS.get(url.pathname);
+  const readOnlyRoute = isFlow || isMetrics || isConfig || isApiKeys || isExperiments || isAutomationEditor || isRunners || isWebhooks || isDefinition || readAsset !== undefined;
+  return { isMetrics, isConfig, isRunners, isFlow, isApiKeys, isProfiles, isDefinition, isAutoImprove, automationEdit, automationCreate, isAutomationEditor, manual, isExperiments, isBenchmarks, isWebhooks, readAsset, readOnlyRoute };
+}
+type Flags = ReturnType<typeof flagsOf>;
+
+function shellHtml(store: Store, content: { title: string; body: string }, nav: URL, still: boolean, f: Flags, label: string): string {
+  const { isMetrics, isConfig, isRunners, isFlow, isApiKeys, isProfiles, isDefinition, isAutoImprove, isAutomationEditor, isExperiments, isBenchmarks, isWebhooks } = f;
+    const workstreams = store.listWorkstreams();
+    const inboxStatuses = store.inbox().map(a => a.reviewStatus === 'awaiting' ? 'awaiting' : a.status);
+    return `<!doctype html><html lang="es"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><title>${escape(content.title)} · fab</title><link rel="stylesheet" href="/style.css"><script src="/theme.js"></script><script src="/sidebar.js" defer></script>${isMetrics ? '<link rel="stylesheet" href="/metrics.css">' : isAutomationEditor ? '<script src="/automation-editor.js" defer></script>' : still ? '' : '<script src="/poll.js" defer></script><script src="/inbox.js" defer></script><script src="/notify.js" defer></script>'}</head><body><a class="skip" href="#contenido">Saltar al contenido</a><aside><a class="brand" href="/">fab<span>Fábrica local</span></a><nav aria-label="Navegación principal"><a href="/"${nav.pathname === '/' ? ' aria-current="page"' : ''}>Bandeja${inboxStatuses.length ? ` <strong class="count" aria-label="${inboxStatuses.length} en la bandeja">${inboxStatuses.length}</strong>` : ''}</a><a href="/changes"${nav.pathname.startsWith('/changes') ? ' aria-current="page"' : ''}>Changes</a><a href="/signals"${nav.pathname === '/signals' ? ' aria-current="page"' : ''}>Señales</a><a href="/automations"${(nav.pathname === '/automations' || isAutomationEditor) ? ' aria-current="page"' : ''}>Automations</a><a href="/workstreams"${nav.pathname === '/workstreams' ? ' aria-current="page"' : ''}>Workstreams</a><a href="/flujo"${isFlow ? ' aria-current="page"' : ''}>Flujo</a><a href="/metricas"${isMetrics ? ' aria-current="page"' : ''}>Métricas</a><a href="/config"${isConfig || isApiKeys || isRunners ? ' aria-current="page"' : ''}>Configuración</a><a href="/definicion"${isDefinition ? ' aria-current="page"' : ''}>Definición</a><a href="/perfiles"${isProfiles ? ' aria-current="page"' : ''}>Perfiles</a><a href="/experimentos"${isExperiments ? ' aria-current="page"' : ''}>Experimentos</a><a href="/webhooks"${isWebhooks ? ' aria-current="page"' : ''}>Webhooks</a><a href="/benchmarks"${isBenchmarks ? ' aria-current="page"' : ''}>Benchmarks</a><a href="/automejora"${isAutoImprove ? ' aria-current="page"' : ''}>Automejora</a></nav>${sidebarNav(workstreams, escape)}<p class="local">${label}${isMetrics ? '<br>Actualización manual' : still ? '' : '<br>Actualización cada 2 s'}</p>${themeControl}${isMetrics || still ? '' : `<button type="button" id="${NOTIFY_ID}" hidden>Avisos: no</button>`}</aside><main id="contenido" data-inbox="${isRunners ? '' : escape(JSON.stringify(inboxCounts(inboxStatuses, labels)))}"><header><h1>${escape(content.title)}</h1></header>${content.body}</main></body></html>`;
+  }
+
+/** IP del cliente según el proxy autenticado (Caddy la emite en `X-Fab-Client-IP` y descarta `X-Forwarded-*`). Sin ella, un único cubo compartido. */
+const clientIp = (req: Request): string => { const v = req.headers.get('x-fab-client-ip')?.trim() ?? ''; return isIP(v) ? v : 'desconocida'; };
+
+/** Avisos de formulario por sesión, con caducidad y tope (§3.1): un POST deja su resultado para el siguiente GET de esa ruta. */
+class Notices {
+  private map = new Map<string, { path: string; result: string; at: number }>();
+  constructor(private now: () => number, private ttlMs = 5 * 60_000, private max = 1000) {}
+  put(session: string, path: string, result: string): void {
+    this.map.delete(session);
+    if (this.map.size >= this.max) this.map.delete(this.map.keys().next().value!);
+    this.map.set(session, { path, result, at: this.now() });
+  }
+  take(session: string, path: string): string | undefined {
+    const n = this.map.get(session);
+    if (!n || n.path !== path) return;
+    this.map.delete(session);
+    return this.now() - n.at <= this.ttlMs ? n.result : undefined;
+  }
+}
+
+/** Quita del menú los enlaces que darían 403 (`visiblePaths`). */
+const filterNav = (html: string, allowed: (path: string) => boolean): string => {
+  // «Cuenta» (sesiones, claves, CLI) es de todos los roles y no pertenece al menú de negocio (T119e-H4).
+  const out = html.replace(/<nav aria-label="Navegación principal">.*?<\/nav>/s, nav => nav.replace(/<a href="(\/[^"]*)"[^>]*>.*?<\/a>/gs, (a, path) => allowed(path) ? a : '').replace('</nav>', `<a href="/cuenta">Cuenta</a></nav>`));
+  // La barra de workstreams enlaza a /changes?ws=…: sin acceso a /changes (viewer) no se ofrece.
+  return allowed('/changes') ? out : out.replace(/<nav aria-label="Workstreams" class="ws-nav">.*?<\/nav>/s, '');
+};
+
 /** Un error de acción se muestra en la plantilla normal, con menú y enlace de vuelta a la página de origen (T78). */
 async function actionErrorPage(response: Response, req: Request, url: URL, openStore: () => Store, shell: (s: Store, c: { title: string; body: string }, nav: URL, still: boolean) => string): Promise<Response> {
   const message = await response.text();
@@ -170,6 +235,10 @@ export function startWeb(stateDir: string, port = 4310, options: {
   socketPath?: string;
   tls?: ServerTlsConfig;
   fixtureTestOrigin?: boolean;
+  /** Servidor: conector de identidad (T119b). Sin él no hay login y toda ruta de negocio da 401. */
+  github?: GithubConnector;
+  /** Servidor: secreto de servicio del CSRF y del prelogin; por defecto aleatorio por arranque. */
+  secret?: string;
 } = {}) {
   const auth = options.write && !options.server ? new WebAuth() : undefined;
   const keyUsage = new ApiKeyUsage(options.clock);
@@ -226,7 +295,7 @@ export function startWeb(stateDir: string, port = 4310, options: {
       try { unlinkSync(options.socketPath); } catch { /* ignore */ }
     }
     prevUmask = process.umask(0o007);
-    serveOptions = { unix: options.socketPath, ...(auth ? { maxRequestBodySize: PROFILE_BODY_LIMIT } : {}) };
+    serveOptions = { unix: options.socketPath, ...(auth || options.server ? { maxRequestBodySize: PROFILE_BODY_LIMIT } : {}) };
   } else if (options.server && options.tls) {
     serveOptions = {
       port,
@@ -237,10 +306,122 @@ export function startWeb(stateDir: string, port = 4310, options: {
         requestCert: true,
         rejectUnauthorized: true,
       },
-      ...(auth ? { maxRequestBodySize: PROFILE_BODY_LIMIT } : {})
+      ...(auth || options.server ? { maxRequestBodySize: PROFILE_BODY_LIMIT } : {})
     };
   } else {
-    serveOptions = { hostname: '127.0.0.1', port, ...(auth ? { maxRequestBodySize: PROFILE_BODY_LIMIT } : {}) };
+    serveOptions = { hostname: '127.0.0.1', port, ...(auth || options.server ? { maxRequestBodySize: PROFILE_BODY_LIMIT } : {}) };
+  }
+
+  // ---- modo servidor: un único punto de despacho (T119e) ----
+  const secret = options.secret ?? randomBytes(32).toString('hex');
+  const clockMs = () => (options.clock ?? (() => new Date()))().getTime();
+  const notices = new Notices(clockMs);
+  const keyStore = options.server && options.github ? new Store(join(stateDir, 'fabrica.db'), { clock: options.clock }) : undefined;
+  const limiter = new RateLimiter(clockMs);
+  const identity = keyStore && options.github ? identityRoutes({ store: keyStore, github: options.github, publicOrigin: validated!.publicOrigin, write: !!options.write, secret, limiter }) : undefined;
+  const cli = options.server ? cliRoutes({ stateDir, publicOrigin: validated!.publicOrigin, write: !!options.write, secret, clock: clockMs, limiter,
+    resolveLogin: options.github ? login => options.github!.resolveLogin(login) : undefined, runnerCheck, jiraImport }) : undefined;
+  const recovery = keyStore ? recoveryRoutes({ store: keyStore, publicOrigin: validated!.publicOrigin, secret }) : undefined;
+  const MENU = ['/', '/changes', '/signals', '/automations', '/workstreams', '/flujo', '/metricas', '/config', '/definicion', '/perfiles', '/experimentos', '/webhooks', '/benchmarks', '/automejora'];
+
+  /**
+   * Orden (§3.1/§7): identidad, API de usuario, CLI remota, activos públicos, `principalOf`, recuperación restringida, POST de negocio
+   * (`serverWebAction`, que autoriza con `runAs`) y, para los GET, `authorizeRead` antes de abrir el Store.
+   */
+  async function serverFetch(req: Request, url: URL, ip: string, respHeaders: Record<string, string>,
+    respond: (body: string, status?: number, type?: string) => Response): Promise<Response> {
+    const stamp = (r: Response): Response => { for (const [k, v] of Object.entries(respHeaders)) if (!r.headers.has(k)) r.headers.set(k, v); return r; };
+    const deny = (status: number, text: string) => respond(text, status, 'text/plain; charset=utf-8');
+    const path = url.pathname;
+    const identified = identity ? await identity.handle(req, ip) : null;
+    if (identified) return stamp(identified);
+    if (isApiPath(path)) return stamp(await handleServerApi(req, url, stateDir, !!options.write, keyUsage));
+    const remote = cli ? await cli.handle(req, ip) : null;
+    if (remote) return stamp(remote);
+
+    if (PUBLIC_PATHS.includes(path)) {
+      if (req.method !== 'GET' && req.method !== 'HEAD') return deny(405, 'Método no permitido');
+      if (path === '/style.css') return respond(STYLE_CSS, 200, 'text/css; charset=utf-8');
+      if (path === '/poll.js') return respond(POLL, 200, 'text/javascript; charset=utf-8');
+      if (path === '/definition') return stamp(new Response(null, { status: 301, headers: { Location: `/definicion${url.search}` } }));
+      const asset = READ_ASSETS.get(path);
+      if (asset) return respond(asset.body, 200, asset.type);
+    }
+
+    const principal = identity?.principalOf(req) ?? undefined;
+    if (!principal) {
+      if ((req.method === 'GET' || req.method === 'HEAD') && /\btext\/html\b/.test(req.headers.get('accept') ?? '')) return stamp(new Response(null, { status: 303, headers: { Location: '/login' } }));
+      return deny(401, 'Se requiere sesión autenticada en modo servidor.');
+    }
+    if (principal.recovery) {
+      const screen = await recovery!.handle(req, principal);
+      if (screen) return stamp(screen);
+      if ((req.method === 'GET' || req.method === 'HEAD') && /\btext\/html\b/.test(req.headers.get('accept') ?? '')) return stamp(new Response(null, { status: 303, headers: { Location: '/recuperacion' } }));
+      return deny(403, 'Recuperación en curso: solo el owner designado confirma la lista en /recuperacion.');
+    }
+
+    // Con `no-referrer` el navegador manda `Origin: null` en un POST de formulario del mismo origen y `originOk` lo rechazaría (T119b-H1):
+    // una página con formulario sale con `same-origin`.
+    const sendHtml = (body: string): Response => { const r = respond(body); if (body.includes('<form')) r.headers.set('Referrer-Policy', 'same-origin'); return r; };
+    const f = flagsOf(url);
+    const label = options.write && principal.role !== 'viewer' ? 'Escritura habilitada' : 'Solo lectura';
+    const visible = new Set(visiblePaths(principal, MENU)), allowed = (p: string) => visible.has(p);
+    const shell = (store: Store, content: { title: string; body: string }, nav: URL = url, still = f.manual) =>
+      filterNav(shellHtml(store, content, nav, still, f, label), allowed);
+
+    if (req.method === 'POST') {
+      let response: Response;
+      try {
+        response = await serverWebAction(req, stateDir, { principal, write: !!options.write, publicOrigin: validated!.publicOrigin, secret,
+          remember: (p, r) => notices.put(principal.sessionId!, p, r) }, runnerCheck, () => server.timeout(req, 35), jiraImport);
+      } catch { return deny(500, 'No se pudo registrar la acción.'); }
+      stamp(response);
+      if (response.status >= 400 && !response.headers.get('Content-Type')?.startsWith('text/html')) return actionErrorPage(response, req, url, openStore, shell);
+      return response;
+    }
+    if (req.method !== 'GET' && req.method !== 'HEAD') return deny(405, 'Método no permitido');
+
+    if (principal.role === 'viewer' && path === '/') return stamp(new Response(null, { status: 303, headers: { Location: '/workstreams' } }));
+    const decision = authorizeRead(principal, url);
+    if (!decision.ok) return deny(decision.status, decision.status === 404 ? 'Página no encontrada' : 'No autorizado');
+    if (f.isApiKeys) return stamp(new Response(null, { status: 303, headers: { Location: '/cuenta' } })); // las claves de usuario se gestionan en /cuenta
+    const structured = decision.projection === 'structured';
+    const csrf = options.write && principal.role !== 'viewer' ? csrfToken(secret, principal.sessionId!) : undefined;
+    if ((f.isAutomationEditor || f.isRunners) && !csrf) return deny(403, 'El servidor está en solo lectura.');
+
+    let store: Store | undefined;
+    try {
+      store = openStore();
+      const turn = turnEvidenceRoute(store.db, stateDir, path);
+      if (turn?.kind === 'log') {
+        const log = turn.log;
+        return respond(log ? log.text + (log.truncated ? '\n[log recortado a 256 KiB]' : '') : 'Log no disponible', log ? 200 : 404, 'text/plain; charset=utf-8');
+      }
+      if (turn) {
+        if (!turn.found) return deny(404, 'Registro no encontrado');
+        return sendHtml(shell(store, { title: 'Turno', body: `<p><a href="/changes/${enc(turn.changeId)}">Volver al change</a></p>` + transcriptSection(turn.log, url, ui) }));
+      }
+      const id = /^\/(changes|activities)\/([^/]+)$/.exec(path);
+      const content = f.isAutomationEditor ? automationEditor(store, csrf!, {
+        automation: f.automationEdit ? store.getAutomation(f.automationEdit[1]!) : undefined,
+        values: f.automationCreate ? { ws: url.searchParams.get('ws') ?? undefined } : undefined,
+      }) : f.isMetrics ? metricsPage(store, stateDir, url, csrf) : f.isConfig ? await serverConfigPage(principal, store, stateDir, url, escape, csrf)
+        : f.isRunners ? runnersPage(store, csrf!, url.searchParams.get('editar')) : f.isProfiles ? profilesPage(store, stateDir, url, escape, csrf)
+        : f.isAutoImprove ? autoImprovePage(store, stateDir, url, escape, csrf) : f.isExperiments ? experimentsPage(store.db, path)
+        : f.isBenchmarks ? benchmarksPage(store, url, escape, csrf) : f.isFlow ? flowPage(store, url, escape)
+        : f.isWebhooks ? serverWebhooksPage(principal, store, url, escape) : f.isDefinition ? definitionPage(store, stateDir, url, escape, csrf)
+        : path === '/signals' ? (structured ? structuredSignalsPage(store, ui) : signalsView(store, escape, csrf))
+        : path === '/workstreams' ? (structured ? structuredWorkstreamsPage(store, ui) : { title: 'Workstreams', body: workstreamsBody(store, ui, csrf, true) })
+        : id && structured ? (id[1] === 'changes' ? structuredChangePage(store, ui, decodeURIComponent(id[2]!)) : structuredActivityPage(store, ui, decodeURIComponent(id[2]!)))
+        : page(store, stateDir, url, csrf);
+      if (!content) return deny(404, 'Página no encontrada');
+      content.body = actionNotice(req.method === 'GET' ? notices.take(principal.sessionId!, path) : undefined) + content.body; // un HEAD no consume el aviso (H6)
+      return sendHtml(shell(store, content));
+    } catch (error) {
+      if (error instanceof StoreError && error.code === 'not_found') return deny(404, 'Registro no encontrado');
+      if (error instanceof URIError) return deny(400, 'Ruta inválida');
+      return deny(500, 'No se pudo leer el estado de la fábrica.');
+    } finally { store?.close(); }
   }
 
   let server: ReturnType<typeof Bun.serve>;
@@ -248,6 +429,8 @@ export function startWeb(stateDir: string, port = 4310, options: {
     // Verifica la base antes de escuchar y vuelve a abrirla en cada petición.
     server = Bun.serve({
     ...serveOptions,
+    // Una excepción no capturada sale con las cabeceras de seguridad y sin detalle (T119e-H9).
+    ...(options.server ? { error: () => new Response('Error interno', { status: 500, headers: { ...SERVER_SECURITY_HEADERS, 'Content-Type': 'text/plain; charset=utf-8' } }) } : {}),
     async fetch(req) {
       const respHeaders = options.server ? SERVER_SECURITY_HEADERS : HEADERS;
       const respond = (body: string, status = 200, type = 'text/html; charset=utf-8') => new Response(req.method === 'HEAD' ? null : body, { status, headers: { ...respHeaders, ...(auth?.sessionCsrf(req) ? { 'Referrer-Policy': 'same-origin' } : {}), 'Content-Type': type, ...(status === 405 ? { Allow: 'GET, HEAD' } : {}) } });
@@ -255,7 +438,8 @@ export function startWeb(stateDir: string, port = 4310, options: {
 
       if (options.server) {
         if (!isAuthorizedHost(req.headers.get('host'), canonicalHost!)) return respond('Acceso denegado: Host no autorizado', 403, 'text/plain; charset=utf-8');
-        if (req.method === 'POST' && !isAuthorizedOrigin(req.headers.get('origin'), validated!.publicOrigin)) {
+        // Origin protege los POST con cookie; la API de usuario y la CLI remota autentican con bearer (sin cookies, sin Origin de navegador).
+        if (req.method === 'POST' && !isApiPath(url.pathname) && !/^\/cli\/v1\//.test(url.pathname) && !isAuthorizedOrigin(req.headers.get('origin'), validated!.publicOrigin)) {
           return respond('Acceso denegado: Origin ausente o ajeno', 403, 'text/plain; charset=utf-8');
         }
       } else {
@@ -273,44 +457,16 @@ export function startWeb(stateDir: string, port = 4310, options: {
         return new Response(null, { status: 204, headers: { ...respHeaders } });
       }
 
-      if (options.server && isApiPath(url.pathname)) {
-        return respond('Se requiere autenticación de usuario en modo servidor.', 401, 'text/plain; charset=utf-8');
-      }
+      if (options.server) return serverFetch(req, url, clientIp(req), respHeaders, respond);
 
       if (isApiPath(url.pathname)) return handleApi(req, url, openStore, auth ? { stateDir } : undefined, keyUsage);
-      const isMetrics = url.pathname === '/metricas';
-      const isConfig = url.pathname === '/config';
-      const isRunners = url.pathname === '/config/runners';
+      const f = flagsOf(url);
+      const { isMetrics, isConfig, isRunners, isFlow, isApiKeys, isProfiles, isDefinition, isAutoImprove, automationEdit, automationCreate, isAutomationEditor, manual, isExperiments, isBenchmarks, isWebhooks, readAsset, readOnlyRoute } = f;
       const csrf = auth?.sessionCsrf(req);
-      const isFlow = url.pathname === '/flujo';
-      const isApiKeys = url.pathname === API_KEYS_PATH;
       const keysCsrf = isApiKeys ? auth?.sessionCsrf(req) : undefined;
-      const isProfiles = url.pathname === '/perfiles';
-      const isDefinition = url.pathname === '/definicion';
-      const isAutoImprove = url.pathname === '/automejora';
-      const automationEdit = AUTOMATION_EDIT_ROUTE.exec(url.pathname);
-      const automationCreate = url.pathname === '/automations/nueva';
-      const isAutomationEditor = automationCreate || !!automationEdit;
-      const manual = isConfig || isProfiles || isDefinition || isAutoImprove || isApiKeys || isAutomationEditor || isRunners; // sin sondeo: no pisar lo que se escribe
-      const isExperiments = url.pathname === '/experimentos' || url.pathname.startsWith('/experimentos/');
-      const isBenchmarks = url.pathname === '/benchmarks' || url.pathname.startsWith('/benchmarks/');
-      const isWebhooks = url.pathname === '/webhooks';
-      const readAsset = READ_ASSETS.get(url.pathname);
-      const readOnlyRoute = isFlow || isMetrics || isConfig || isApiKeys || isExperiments || isAutomationEditor || isRunners || isWebhooks || isDefinition || readAsset !== undefined;
 
-      if (options.server) {
-        const isStaticAsset = url.pathname === '/style.css' || url.pathname === '/poll.js' || readAsset !== undefined;
-        const hasSession = !!auth?.sessionCsrf(req);
-        if (!isStaticAsset && !hasSession) {
-          return respond('Se requiere sesión autenticada en modo servidor.', 401, 'text/plain; charset=utf-8');
-        }
-      }
-
-      const shell = (store: Store, content: { title: string; body: string }, nav: URL = url, still = manual) => {
-        const workstreams = store.listWorkstreams();
-        const inboxStatuses = store.inbox().map(a => a.reviewStatus === 'awaiting' ? 'awaiting' : a.status);
-        return `<!doctype html><html lang="es"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><title>${escape(content.title)} · fab</title><link rel="stylesheet" href="/style.css"><script src="/theme.js"></script><script src="/sidebar.js" defer></script>${isMetrics ? '<link rel="stylesheet" href="/metrics.css">' : isAutomationEditor ? '<script src="/automation-editor.js" defer></script>' : still ? '' : '<script src="/poll.js" defer></script><script src="/inbox.js" defer></script><script src="/notify.js" defer></script>'}</head><body><a class="skip" href="#contenido">Saltar al contenido</a><aside><a class="brand" href="/">fab<span>Fábrica local</span></a><nav aria-label="Navegación principal"><a href="/"${nav.pathname === '/' ? ' aria-current="page"' : ''}>Bandeja${inboxStatuses.length ? ` <strong class="count" aria-label="${inboxStatuses.length} en la bandeja">${inboxStatuses.length}</strong>` : ''}</a><a href="/changes"${nav.pathname.startsWith('/changes') ? ' aria-current="page"' : ''}>Changes</a><a href="/signals"${nav.pathname === '/signals' ? ' aria-current="page"' : ''}>Señales</a><a href="/automations"${(nav.pathname === '/automations' || isAutomationEditor) ? ' aria-current="page"' : ''}>Automations</a><a href="/workstreams"${nav.pathname === '/workstreams' ? ' aria-current="page"' : ''}>Workstreams</a><a href="/flujo"${isFlow ? ' aria-current="page"' : ''}>Flujo</a><a href="/metricas"${isMetrics ? ' aria-current="page"' : ''}>Métricas</a><a href="/config"${isConfig || isApiKeys || isRunners ? ' aria-current="page"' : ''}>Configuración</a><a href="/definicion"${isDefinition ? ' aria-current="page"' : ''}>Definición</a><a href="/perfiles"${isProfiles ? ' aria-current="page"' : ''}>Perfiles</a><a href="/experimentos"${isExperiments ? ' aria-current="page"' : ''}>Experimentos</a><a href="/webhooks"${isWebhooks ? ' aria-current="page"' : ''}>Webhooks</a><a href="/benchmarks"${isBenchmarks ? ' aria-current="page"' : ''}>Benchmarks</a><a href="/automejora"${isAutoImprove ? ' aria-current="page"' : ''}>Automejora</a></nav>${sidebarNav(workstreams, escape)}<p class="local">${auth ? (auth.sessionCsrf(req) ? 'Escritura habilitada' : 'Escritura: abre el enlace de la terminal') : 'Solo lectura'}${isMetrics ? '<br>Actualización manual' : still ? '' : '<br>Actualización cada 2 s'}</p>${themeControl}${isMetrics || still ? '' : `<button type="button" id="${NOTIFY_ID}" hidden>Avisos: no</button>`}</aside><main id="contenido" data-inbox="${isRunners ? '' : escape(JSON.stringify(inboxCounts(inboxStatuses, labels)))}"><header><h1>${escape(content.title)}</h1></header>${content.body}</main></body></html>`;
-      };
+      const shell = (store: Store, content: { title: string; body: string }, nav: URL = url, still = manual) =>
+        shellHtml(store, content, nav, still, f, auth ? (auth.sessionCsrf(req) ? 'Escritura habilitada' : 'Escritura: abre el enlace de la terminal') : 'Solo lectura');
       if (req.method === 'POST' && auth && !readOnlyRoute) {
         let response: Response;
         try { response = await webAction(req, stateDir, server.port ?? 0, auth, keyUsage, runnerCheck, () => server.timeout(req, 35), jiraImport, { server: options.server }); }
@@ -331,7 +487,7 @@ export function startWeb(stateDir: string, port = 4310, options: {
           for (const [key, value] of Object.entries(respHeaders)) response.headers.set(key, value);
           return response;
         }
-        if (url.pathname === '/style.css') return respond(WEB_STYLE + WEB_ACTION_STYLE + FLOW_STYLE + THEME_STYLE + SIDEBAR_STYLE + AUTOMATION_EDITOR_STYLE + '.count{font-size:13px;margin-left:6px}.bulk{display:flex;gap:8px;flex-wrap:wrap;margin:12px 0}.links{margin:8px 0}', 200, 'text/css; charset=utf-8');
+        if (url.pathname === '/style.css') return respond(STYLE_CSS, 200, 'text/css; charset=utf-8');
         if (url.pathname === '/definition') return new Response(null, { status: 301, headers: { Location: `/definicion${url.search}`, ...respHeaders } });
         if (url.pathname === '/poll.js') return respond(POLL, 200, 'text/javascript; charset=utf-8');
         if (readAsset) return respond(readAsset.body, 200, readAsset.type);
@@ -453,12 +609,35 @@ export async function webMain(args: string[], stateDir: string, resolve?: Parame
         return 1;
       }
 
+      // Credenciales por referencia (D-K): el secreto de la aplicación de GitHub y el secreto de servicio se leen de ficheros
+      // (credenciales de systemd o secretos de Docker), nunca de argv ni de la base.
+      const credDir = process.env.CREDENTIALS_DIRECTORY;
+      const clientId = process.env.FAB_GITHUB_CLIENT_ID;
+      const clientSecretFile = process.env.FAB_GITHUB_CLIENT_SECRET_FILE ?? (credDir ? join(credDir, 'github-client-secret') : undefined);
+      const serviceSecretFile = process.env.FAB_SERVICE_SECRET_FILE ?? (credDir && existsSync(join(credDir, 'service-secret')) ? join(credDir, 'service-secret') : undefined);
+      if (!clientId || !clientSecretFile || !existsSync(clientSecretFile) || !readFileSync(clientSecretFile, 'utf8').trim()) {
+        console.error('fab web: el modo servidor requiere FAB_GITHUB_CLIENT_ID y el secreto de la aplicación en FAB_GITHUB_CLIENT_SECRET_FILE (o la credencial github-client-secret).');
+        return 1;
+      }
+      // Un secreto de servicio vacío o corto haría calculable el CSRF y la firma del prelogin: se rechaza (T119e-H2).
+      if (serviceSecretFile && !existsSync(serviceSecretFile)) { console.error(`fab web: no existe el fichero del secreto de servicio (FAB_SERVICE_SECRET_FILE=${serviceSecretFile}).`); return 1; }
+      const serviceSecret = serviceSecretFile ? readFileSync(serviceSecretFile, 'utf8').trim() : undefined;
+      if (serviceSecret !== undefined && serviceSecret.length < 32) {
+        console.error('fab web: el secreto de servicio (FAB_SERVICE_SECRET_FILE o la credencial service-secret) debe tener al menos 32 caracteres.');
+        return 1;
+      }
+      // Solo lectura: el control no crea ni migra la base (T119e-H7). Sin base o con una anterior, no hay bootstrap.
+      let bootstrapped = false;
+      try { const boot = new Store(join(stateDir, 'fabrica.db'), { readonly: true }); try { bootstrapped = isBootstrapped(boot); } finally { boot.close(); } } catch { /* sin base legible */ }
+      if (!bootstrapped) { console.error('fab web: el modo servidor exige el bootstrap del primer owner por consola (§2).'); return 1; }
       const server = startWeb(stateDir, port, {
         write: values.write,
         server: true,
         publicOrigin,
         socketPath,
         tls,
+        github: new GithubConnector({ clientId, clientSecret: () => readFileSync(clientSecretFile, 'utf8').trim(), publicOrigin }),
+        secret: serviceSecret,
       });
 
       console.log(`fab web --server · ${publicOrigin} · transporte: ${socketPath ? `socket unix ${socketPath}` : 'mTLS'} · ${values.write ? 'escritura habilitada' : 'solo lectura'}`);

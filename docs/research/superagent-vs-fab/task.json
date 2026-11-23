@@ -1970,7 +1970,7 @@
       "acceptance": "Cada tarjeta cuadra con la suma de intentos del rango. Lo «No medido» se cuenta aparte, sin sumar como 0.",
       "estimate": "2 d",
       "risk": "bajo",
-      "status": "pending",
+      "status": "done",
       "depends_on": [
         "T109",
         "T110",
@@ -1979,7 +1979,8 @@
       "covers": [
         "Spending: todas las tarjetas"
       ],
-      "pr": null
+      "pr": "#97",
+      "note": "Pestaña Gasto sobre spending (T109): «No medido» nunca 0, sin reserva a cost (retirado), tarjetas por worker, modelo, usuario y fuente con tabla plegada, tarifas del rango visibles (H6 A), los 20 PR más caros solo con coste completo (H10 A). Cierra I-H1, T109-H6 e IE2O1-H1..H4. Dos pasadas de Fable."
     },
     {
       "id": "T114",
@@ -2088,7 +2089,7 @@
       "acceptance": "Matriz de permisos rol × acción con tests. Un viewer no puede ninguna acción. Cerrar la sesión invalida en servidor. Sin secretos en el repo; el client secret de OIDC va solo por nombre (D-K).",
       "estimate": "3-4 d",
       "risk": "alto",
-      "status": "pending",
+      "status": "partial",
       "depends_on": [
         "T118"
       ],
@@ -2096,7 +2097,16 @@
         "Equipo y usuarios",
         "Spending: por usuario"
       ],
-      "pr": null
+      "pr": "#98",
+      "note": "Usuarios, roles, login GitHub (OAuth+PKCE), sesiones web y CLI, claves fabu_ por usuario, política por rol y vía en las 37 acciones, vistas por rol, CLI remota con pareo, recuperación restringida con owner designado y diario de identidad. Subtareas T119a–e, cada una verificada por Fable (dos pasadas donde hubo altos). Decisiones D-1..D-4, D-R1, D-R2 y las de cada verificación en A.",
+      "followups": [
+        "fab user bootstrap y fab user recover por consola, y GET /equipo: bloquean el piloto en VM (T120)",
+        "Prueba con GitHub real, Caddy real y mTLS con navegador (falta proveedor de VM del dueño)",
+        "Eventos con código estructurado y texto libre aparte (T119c-H13 opción C), por si las vistas lo necesitan",
+        "Exigir enterRecovery tras toda restauración en código, no solo en el contrato (T119a-H20)",
+        "HMAC o ancla externa del diario de identidad: hoy la cadena da integridad, no autenticidad",
+        "Vistas estructuradas para viewer de /, /changes, /flujo, /metricas y demás (hoy 403)"
+      ]
     }
   ]
 }

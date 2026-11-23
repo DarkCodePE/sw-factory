@@ -15,6 +15,7 @@ import { dirname, resolve } from 'node:path';
 import { gitEvidence, writeManifest } from './manifest.ts';
 import { redact, redactField } from './evidence.ts';
 import { lastDue, parseCron } from './cron.ts';
+import { applyMigrations } from './migrations.ts';
 import {
   assertNoteAttachmentMounts, assertPrivateNoteDatabase, NOTE_ATTACHMENT_HISTORY_MAX, NOTE_ATTACHMENT_MAX,
   NOTE_ATTACHMENT_REMOTE, NOTE_ATTACHMENT_WAIT, noteAttachmentInventory, validateNoteAttachment, type NoteAttachment, type NoteAttachmentMeta, type NoteAttachmentTarget, type NoteAttachmentWait,
@@ -274,10 +275,13 @@ export interface ChangeNote {
   attemptId: string | null;
   deliveredAt: string | null;
   attachment?: NoteAttachmentMeta;
+  /** T119c: usuario y rol verificados al escribir la nota en nube. Ausentes en notas históricas o de consola. */
+  actorUserId?: string | null;
+  actorRole?: string | null;
 }
 
 export interface ReservedChangeNote extends ChangeNote { attachmentBytes?: Uint8Array }
-export type HistoricalNoteBody = Pick<ChangeNote, 'id' | 'body' | 'createdAt'>;
+export type HistoricalNoteBody = Pick<ChangeNote, 'id' | 'body' | 'createdAt'> & Partial<Pick<ChangeNote, 'actorUserId' | 'actorRole'>>;
 type NoteDelivery = (NoteAttachmentTarget & { fits?: (notes: ReservedChangeNote[]) => boolean })
   | { blockedBy: 'remote' | 'transport' };
 const PLAIN_NOTE = '(attachment_name IS NULL AND attachment_bytes IS NULL)';
@@ -319,7 +323,7 @@ export interface Activity {
 
 export class StoreError extends Error {
   constructor(
-    readonly code: 'not_found' | 'invalid_transition' | 'conflict' | 'limit_reached' | 'invalid_input',
+    readonly code: 'not_found' | 'invalid_transition' | 'conflict' | 'limit_reached' | 'invalid_input' | 'forbidden' | 'unauthorized',
     message: string
   ) {
     super(message);
@@ -388,7 +392,9 @@ CREATE TABLE IF NOT EXISTS change_notes (
   created_at TEXT NOT NULL,
   activity_id TEXT,
   attempt_id TEXT,
-  delivered_at TEXT);
+  delivered_at TEXT,
+  actor_user_id TEXT,
+  actor_role TEXT);
 CREATE INDEX IF NOT EXISTS idx_change_notes_pending ON change_notes(change_id, delivered_at);
 CREATE TABLE IF NOT EXISTS activities (
   id TEXT PRIMARY KEY, workstream_id TEXT NOT NULL REFERENCES workstreams(id) ON DELETE CASCADE,
@@ -553,6 +559,7 @@ function toChangeNote(r: Row): ChangeNote {
     activityId: r.activity_id as string | null,
     attemptId: r.attempt_id as string | null,
     deliveredAt: r.delivered_at as string | null,
+    ...(typeof r.actor_user_id === 'string' ? { actorUserId: r.actor_user_id, actorRole: (r.actor_role as string | null) ?? null } : {}),
     ...(typeof r.attachment_name === 'string' && typeof r.attachment_size === 'number'
       ? { attachment: { name: r.attachment_name, size: r.attachment_size } } : {}),
   };
@@ -658,6 +665,9 @@ function openReadonlyDatabase(path: string): Database {
   } finally { closeSync(fd); }
 }
 
+/** Actor estable (ID de usuario o servicio) y, si es un usuario, su rol verificado. */
+export interface StoreActor { actor: string; userId: string | null; source: string; role?: string }
+
 export class Store {
   readonly db: Database;
   readonly stateDir: string | undefined;
@@ -665,6 +675,11 @@ export class Store {
   readonly clock: () => Date;
   readonly dbPath: string;
   private readonly readonly: boolean;
+  #actor: StoreActor | undefined;
+
+  /** Fija quién actúa en este Store (T119c): lo usan los eventos, las notas y los `created_by`. Sin él manda `FAB_ACTOR`/usuario del SO. */
+  asActor(actor: StoreActor | undefined): this { this.#actor = actor; return this; }
+  actorName(): string { return this.#actor?.actor ?? process.env.FAB_ACTOR ?? userInfo().username; }
 
   constructor(path: string, options?: StoreOptions) {
     this.stateDir = path === ':memory:' ? undefined : dirname(resolve(path));
@@ -737,57 +752,7 @@ export class Store {
     this.db
       .query(`UPDATE activities SET lease_expires_at = ? WHERE status = 'in_progress' AND lease_expires_at IS NULL`)
       .run(migrationTtl);
-    this.migrateSchema('t109-cost-attempts', [], () => this.db.exec(`
-CREATE TABLE cost_attempts (
-  id TEXT PRIMARY KEY,
-  activity_id TEXT NOT NULL REFERENCES activities(id),
-  change_id TEXT NOT NULL REFERENCES changes(id),
-  workstream_id TEXT NOT NULL REFERENCES workstreams(id),
-  started_at TEXT NOT NULL,
-  closed_at TEXT,
-  adapter TEXT NOT NULL,
-  runner TEXT,
-  remote INTEGER NOT NULL CHECK (remote IN (0,1)),
-  legacy_count INTEGER NOT NULL,
-  rate_version TEXT NOT NULL,
-  rate_effective_from TEXT NOT NULL,
-  hourly_micro_usd INTEGER,
-  platform_micro_usd INTEGER NOT NULL,
-  effective_model TEXT,
-  inference_micro_usd INTEGER,
-  inference_basis TEXT,
-  inference_version TEXT,
-  compute_duration_ms INTEGER,
-  compute_micro_usd INTEGER
-);
-CREATE INDEX idx_cost_attempts_change ON cost_attempts(change_id, started_at, id);
-CREATE INDEX idx_cost_attempts_started ON cost_attempts(started_at);
-CREATE INDEX idx_cost_attempts_workstream ON cost_attempts(workstream_id, started_at);
-`));
-    this.migrateSchema('t110-cost-attribution', ['t109-cost-attempts'], () => this.db.exec(`
-      ALTER TABLE signals ADD COLUMN origin_actor_id TEXT;
-      ALTER TABLE changes ADD COLUMN origin_source TEXT;
-      ALTER TABLE changes ADD COLUMN origin_actor_id TEXT;
-      ALTER TABLE cost_attempts ADD COLUMN attributed INTEGER NOT NULL DEFAULT 0 CHECK (attributed IN (0,1));
-      ALTER TABLE cost_attempts ADD COLUMN worker TEXT;
-      ALTER TABLE cost_attempts ADD COLUMN origin_source TEXT;
-      ALTER TABLE cost_attempts ADD COLUMN origin_actor_id TEXT;
-      CREATE INDEX idx_events_pr_opened ON events(change_id, id DESC) WHERE message GLOB 'pr_opened: https://*';
-    `));
-  }
-
-  /** Pasos de esquema con ID estable. DDL y registro se confirman en la misma transacción. */
-  private migrateSchema(id: string, requires: string[], migrate: () => void): void {
-    this.withRetry(() => {
-      this.db.exec('CREATE TABLE IF NOT EXISTS schema_migrations (id TEXT PRIMARY KEY, applied_at TEXT NOT NULL)');
-      const applied = this.db.query('SELECT 1 FROM schema_migrations WHERE id = ?');
-      if (applied.get(id)) return;
-      for (const dependency of requires) {
-        if (!applied.get(dependency)) throw new Error(`falta la migración ${dependency} para ${id}`);
-      }
-      migrate();
-      this.db.query('INSERT INTO schema_migrations (id, applied_at) VALUES (?, ?)').run(id, this.now());
-    });
+    applyMigrations(this.db, this.now());
   }
 
   private addColumn(table: string, column: string, ddl: string): void {
@@ -1038,7 +1003,7 @@ CREATE INDEX idx_cost_attempts_workstream ON cost_attempts(workstream_id, starte
       this.#checkRunnerUnused(i.name);
       const row = this.db.query(
         `INSERT INTO runners (name, kind, target, options, enabled, created_at, created_by) VALUES (?,?,?,?,1,?,?) RETURNING *`,
-      ).get(i.name, i.kind, i.kind === 'ssh' ? i.target! : null, JSON.stringify(options), this.now(), process.env.FAB_ACTOR ?? userInfo().username) as Row;
+      ).get(i.name, i.kind, i.kind === 'ssh' ? i.target! : null, JSON.stringify(options), this.now(), this.actorName()) as Row;
       return toRunner(row);
     }).immediate());
   }
@@ -1282,10 +1247,12 @@ CREATE INDEX idx_cost_attempts_workstream ON cost_attempts(workstream_id, starte
   }
 
   #insertSignal(workstreamId: string, title: string, body: string, source: string | null, actorId: string | null = null): Signal {
-    const row = this.db.query<Row, [string, string, string, string, string, string | null, string | null]>(
-      `INSERT INTO signals (id, workstream_id, title, body, status, change_id, created_at, source, origin_actor_id)
-       VALUES (?,?,?,?,'new',NULL,?,?,?) RETURNING *`,
-    ).get(randomUUID(), workstreamId, title, body, this.now(), source, actorId)!;
+    // Servidor: el originador es el usuario de sesión (no se acepta otro); origin_actor_id lo refleja y origin_user_id lo hereda el change al triar (T119c-H3).
+    const userId = this.#actor?.userId ?? null;
+    const row = this.db.query<Row, [string, string, string, string, string, string | null, string | null, string | null]>(
+      `INSERT INTO signals (id, workstream_id, title, body, status, change_id, created_at, source, origin_actor_id, origin_user_id)
+       VALUES (?,?,?,?,'new',NULL,?,?,?,?) RETURNING *`,
+    ).get(randomUUID(), workstreamId, title, body, this.now(), source, userId ?? actorId, userId)!;
     return toSignal(row);
   }
 
@@ -1310,6 +1277,8 @@ CREATE INDEX idx_cost_attempts_workstream ON cost_attempts(workstream_id, starte
         const source = signal.source?.startsWith('automation:') ? 'automation' : originSource(signal.source);
         const origin = source ? { source, actorId: (s.origin_actor_id as string | null) ?? null } : undefined;
         const change = this.createChange(signal.workstreamId, opts.title ?? signal.title, opts.description ?? signal.body, origin);
+        // El responsable es quien originó la señal, no quien la tria (T119c-H3).
+        if (typeof s.origin_user_id === 'string') this.db.query('UPDATE changes SET responsible_user_id = ? WHERE id = ?').run(s.origin_user_id, change.id);
         this.db
           .query(`UPDATE signals SET status = 'triaged', change_id = ? WHERE id = ? AND status = 'new'`)
           .run(change.id, signalId);
@@ -1344,7 +1313,7 @@ CREATE INDEX idx_cost_attempts_workstream ON cost_attempts(workstream_id, starte
       const row = this.db.query(
         `INSERT INTO automations (id, workstream_id, name, cron, title, body, created_at, created_by)
          VALUES (?,?,?,?,?,?,?,?) RETURNING *`,
-      ).get(randomUUID(), ws.id, name, cron, title, body, this.now(), process.env.FAB_ACTOR ?? userInfo().username) as Row;
+      ).get(randomUUID(), ws.id, name, cron, title, body, this.now(), this.actorName()) as Row;
       this.event(ws.id, 'info', `automation ${name} creada (${cron})`);
       return toAutomation(row);
     });
@@ -1762,12 +1731,14 @@ CREATE INDEX idx_cost_attempts_workstream ON cost_attempts(workstream_id, starte
       }
 
       const id = randomUUID();
-      const actor = process.env.FAB_ACTOR ?? userInfo().username;
+      const actor = this.actorName();
       const createdAt = this.now();
       const meta = attachment && { name: attachment.name, size: attachment.bytes.byteLength };
-      this.db.query(`INSERT INTO change_notes (id, change_id, body, actor, created_at, attachment_name, attachment_bytes)
-        VALUES (?,?,?,?,?,?,?)`).run(id, changeId, body, actor, createdAt, attachment?.name ?? null, attachment?.bytes ?? null);
-      this.event(change.workstreamId, 'info', `nota del dueño registrada (${id.slice(0, 8)}, ${bytes} bytes${meta ? `, adjunto de ${meta.size} bytes` : ''})`, changeId);
+      // T119c: usuario y rol verificados, fuera del texto; el rol queda el de este momento aunque luego cambie.
+      this.db.query(`INSERT INTO change_notes (id, change_id, body, actor, created_at, attachment_name, attachment_bytes, actor_user_id, actor_role)
+        VALUES (?,?,?,?,?,?,?,?,?)`).run(id, changeId, body, actor, createdAt, attachment?.name ?? null, attachment?.bytes ?? null,
+        this.#actor?.userId ?? null, this.#actor?.userId ? this.#actor.role ?? null : null);
+      this.event(change.workstreamId, 'info', `nota registrada (${id.slice(0, 8)}, ${bytes} bytes${meta ? `, adjunto de ${meta.size} bytes` : ''})`, changeId);
       return { id, changeId, body, actor, createdAt, activityId: null, attemptId: null, deliveredAt: null, ...(meta && { attachment: meta }) };
     });
   }
@@ -1776,15 +1747,15 @@ CREATE INDEX idx_cost_attempts_workstream ON cost_attempts(workstream_id, starte
     // Una apertura de solo lectura puede encontrar una base anterior a las notas.
     if (!this.db.query("SELECT 1 FROM sqlite_schema WHERE type = 'table' AND name = 'change_notes'").get()) return [];
     const columns = new Set(this.db.query<{ name: string }, []>('PRAGMA table_info(change_notes)').all().map(col => col.name));
-    const attachment = columns.has('attachment_name') && columns.has('attachment_bytes')
-      ? ', attachment_name, length(attachment_bytes) AS attachment_size' : '';
+    const attachment = (columns.has('attachment_name') && columns.has('attachment_bytes')
+      ? ', attachment_name, length(attachment_bytes) AS attachment_size' : '') + (columns.has('actor_user_id') ? ', actor_user_id, actor_role' : '');
     const rows = this.db.query<Row, [string]>(`SELECT id, change_id, body, actor, created_at, activity_id, attempt_id, delivered_at
       ${attachment} FROM change_notes WHERE change_id = ? ORDER BY created_at, rowid`).all(changeId);
     return rows.map(toChangeNote);
   }
 
   listHistoricalNoteBodies(changeId: string): HistoricalNoteBody[] {
-    return this.db.query<HistoricalNoteBody, [string]>(`SELECT id, body, created_at AS createdAt
+    return this.db.query<HistoricalNoteBody, [string]>(`SELECT id, body, created_at AS createdAt, actor_user_id AS actorUserId, actor_role AS actorRole
       FROM change_notes WHERE change_id = ? AND (${PLAIN_NOTE} OR delivered_at IS NOT NULL)
       ORDER BY created_at, rowid`).all(changeId);
   }
@@ -1876,11 +1847,11 @@ CREATE INDEX idx_cost_attempts_workstream ON cost_attempts(workstream_id, starte
       throw new StoreError('invalid_input', 'ámbito de clave API inválido');
     }
     return this.withRetry(() => {
-      if (this.db.query('SELECT 1 FROM api_keys WHERE name = ?').get(name)) {
+      if (this.db.query('SELECT 1 FROM api_keys WHERE name = ? AND user_id IS NULL').get(name)) {
         throw new StoreError('conflict', 'ya existe una clave API con ese nombre');
       }
       const { count } = this.db.query<{ count: number }, []>(
-        'SELECT COUNT(*) AS count FROM api_keys WHERE revoked_at IS NULL',
+        'SELECT COUNT(*) AS count FROM api_keys WHERE revoked_at IS NULL AND user_id IS NULL',
       ).get()!;
       if (count >= API_KEY_ACTIVE_LIMIT) {
         throw new StoreError('limit_reached', `ya hay ${API_KEY_ACTIVE_LIMIT} claves API activas`);
@@ -1890,7 +1861,7 @@ CREATE INDEX idx_cost_attempts_workstream ON cost_attempts(workstream_id, starte
       const hash = createHash('sha256').update(secret).digest('hex');
       this.db.query(
         `INSERT INTO api_keys (id, name, scope, hash, created_at, created_by) VALUES (?,?,?,?,?,?)`,
-      ).run(id, name, scope, hash, this.now(), process.env.FAB_ACTOR ?? userInfo().username);
+      ).run(id, name, scope, hash, this.now(), this.actorName());
       return { id, key: `fabk_${id}_${secret}` };
     });
   }
@@ -1899,7 +1870,7 @@ CREATE INDEX idx_cost_attempts_workstream ON cost_attempts(workstream_id, starte
     if (!this.hasApiKeysTable()) return [];
     return this.db.query<ApiKeyMetadata, []>(
       `SELECT id, name, scope, created_at AS createdAt, created_by AS createdBy, revoked_at AS revokedAt
-       FROM api_keys ORDER BY created_at, name`,
+       FROM api_keys WHERE ${this.localKeys()} ORDER BY created_at, name`,
     ).all();
   }
 
@@ -1910,7 +1881,7 @@ CREATE INDEX idx_cost_attempts_workstream ON cost_attempts(workstream_id, starte
       const name = typeof target === 'string' ? target : null;
       const { changes } = this.db.query(
         `UPDATE api_keys SET revoked_at = COALESCE(revoked_at, ?)
-         WHERE id = (SELECT id FROM api_keys WHERE id = ? OR name = ? ORDER BY (id = ?) DESC LIMIT 1)`,
+         WHERE id = (SELECT id FROM api_keys WHERE user_id IS NULL AND (id = ? OR name = ?) ORDER BY (id = ?) DESC LIMIT 1)`,
       ).run(this.now(), id, name, id);
       if (changes === 0) throw new StoreError('not_found', 'clave API no encontrada');
     });
@@ -1921,13 +1892,18 @@ CREATE INDEX idx_cost_attempts_workstream ON cost_attempts(workstream_id, starte
     if (!match || !this.hasApiKeysTable()) return null;
     const [, id, secret] = match;
     const row = this.db.query<ApiKeyIdentity & { hash: string }, [string]>(
-      'SELECT id, name, scope, hash FROM api_keys WHERE id = ? AND revoked_at IS NULL',
+      `SELECT id, name, scope, hash FROM api_keys WHERE id = ? AND revoked_at IS NULL AND ${this.localKeys()}`,
     ).get(id!);
     if (!row) return null;
     const stored = Buffer.from(row.hash);
     const candidate = Buffer.from(createHash('sha256').update(secret!).digest('hex'));
     if (stored.length !== candidate.length || !timingSafeEqual(stored, candidate)) return null;
     return { id: row.id, name: row.name, scope: row.scope };
+  }
+
+  /** Un lector puede abrir una base de release sin migrar (sin `user_id`): entonces todas las claves son locales. */
+  private localKeys(): string {
+    return this.db.query("SELECT 1 FROM pragma_table_info('api_keys') WHERE name = 'user_id'").get() ? 'user_id IS NULL' : '1 = 1';
   }
 
   private hasApiKeysTable(): boolean {
@@ -2638,11 +2614,15 @@ CREATE INDEX idx_cost_attempts_workstream ON cost_attempts(workstream_id, starte
 
   // ---- events ------------------------------------------------------------
 
-  event(workstreamId: string, severity: 'info' | 'warning' | 'error', message: string, changeId?: string, activityId?: string): void {
+  /** `actor` explícito (T119a): ID estable del usuario/servicio y su origen; sin él, el actor sigue saliendo del entorno como antes. */
+  event(workstreamId: string, severity: 'info' | 'warning' | 'error', message: string, changeId?: string, activityId?: string,
+    actor?: { actor: string; userId: string | null; source: string }): void {
+    const who = actor ?? this.#actor;
     this.withRetry(() => {
       this.db
-        .query('INSERT INTO events (workstream_id, change_id, activity_id, severity, message, created_at, actor) VALUES (?,?,?,?,?,?,?)')
-        .run(workstreamId, changeId ?? null, activityId ?? null, severity, message, this.now(), process.env.FAB_ACTOR ?? userInfo().username);
+        .query('INSERT INTO events (workstream_id, change_id, activity_id, severity, message, created_at, actor, actor_user_id, actor_source) VALUES (?,?,?,?,?,?,?,?,?)')
+        .run(workstreamId, changeId ?? null, activityId ?? null, severity, message, this.now(),
+          who?.actor ?? process.env.FAB_ACTOR ?? userInfo().username, who?.userId ?? null, who?.source ?? null);
     });
     if (changeId && (isTerminalChange(this.getChange(changeId).status) ||
         activityId && this.isTerminal(this.getActivity(activityId).status))) writeManifest(this, changeId);

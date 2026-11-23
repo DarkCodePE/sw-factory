@@ -49,6 +49,7 @@ import { mergeRecoverably } from './validators/publish.ts';
 import { ensureStateDir } from './state-dir.ts';
 import { NOTE_ATTACHMENT_MAX } from './note-attachments.ts';
 import { DEFAULT_DIGEST, resolveProfile } from './profile.ts';
+import { remoteMain } from './remote.ts';
 
 // Bun's native console bypasses fd-backed Writable queues. For pipes/files,
 // proxies force console output through queues we can drain before exit.
@@ -81,6 +82,8 @@ const HELP = `fab — agente de código y fábrica de software local
   fab mcp list [--settings f]  listar servidores (sin --settings: registro mcp-servers.json)
   fab --cwd <path> [prompt]     conversación, --use-spec o --mission --auto high
   fab web [--port 4310] [--write] [--server] [--public-origin <url>] [--socket <path>]  web local en 127.0.0.1 o modo servidor seguro; con --write habilita las acciones (enlace de un solo uso en local); --port 0 elige un puerto libre
+  fab remote add <alias> <https://host> | list | rm <alias>   servidores remotos; el alias fija el host
+  fab --remote <alias> login | logout | <verbo> …              CLI contra un servidor en modo servidor: pareo con código en la web, sesión de 1 h, sin argv ni rutas del servidor
   fab --version
   fab agents verify [--pin]         pines sha256 de los binarios claude, codex, agy, droid; --pin guarda pines y mide versión (--version con entorno mínimo)
   fab update [--channel stable|prerelease] [--check]
@@ -141,7 +144,7 @@ const HELP = `fab — agente de código y fábrica de software local
   fab worktree repair <changeId> [--discard]  repara preparación; conserva la rama
   fab retry <changeId>          re-encola un bloqueo, fallo o validador agotado
   fab reject <changeId>         cancela el change y borra su worktree
-  fab note <changeId> <texto> [--file <fichero>]   nota del dueño: se entrega al empezar el siguiente turno de trabajo; no lanza ni interrumpe nada
+  fab note <changeId> <texto> [--file <fichero>]   nota para el siguiente turno: se entrega al empezar el siguiente turno de trabajo; no lanza ni interrumpe nada
   fab events <slug>
   fab exec [prompt]             agente propio; fab exec --help para opciones
   fab doctor                    estado del sandbox, del runtime de Script y de la búsqueda
@@ -177,6 +180,9 @@ function waitingQuestion(store: Store, activityId: string): string {
 }
 
 async function main(argv: string[]): Promise<number> {
+  // T119c: la CLI remota habla con un servidor fijado por alias. Un verbo desconocido da error: nunca cae al chat ni a un comando local.
+  if (argv[0] === '--remote') { ensureStateDir(STATE_DIR); return remoteMain(argv.slice(1), { stateDir: STATE_DIR }); }
+  if (argv[0] === 'remote') { ensureStateDir(STATE_DIR); return remoteMain(argv, { stateDir: STATE_DIR }); }
   if (argv[0] === 'web') return webMain(argv.slice(1), STATE_DIR);
   if (argv[0] === 'jira' || argv[0] === 'pr') return connectorsMain(argv[0], argv.slice(1));
   if (argv[0] === 'agents') return agentsMain(argv.slice(1));

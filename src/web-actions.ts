@@ -34,6 +34,10 @@ import { result as inertPage, RUNNER_CHECK_PATH, type runnerCheckAction } from '
 import { scheduleExpr } from './cron.ts';
 import { IMPORT_DEFINITION_PATH, IMPORT_FIELDS, IMPORT_FORM_LIMIT, IMPORT_PROFILE_PATH, IMPORT_UPLOAD_LIMIT, importConfirm, importInput, importPreview, type ImportKind } from './web-import.ts';
 import { automationEditor, automationEditorPath, automationErrorDocument } from './web-automations.ts';
+import { csrfToken, constantEqual, originOk } from './web-auth.ts';
+import { actorOf } from './users.ts';
+import { inActor, isServer, preauthorize, type ServerWho, type Who } from './web-who.ts';
+import { repoByAlias, serverGuard } from './web-server-guards.ts';
 
 // Cancelar vale para todo change que no haya terminado bien o por decisión: igual que `fab reject`, también limpia failed, blocked y quarantined.
 const FINAL_STATUSES = ['completed', 'canceled', 'declined'];
@@ -47,6 +51,7 @@ const messages: Record<string, string> = {
   not_found: 'not_found: no se encontró el registro.', invalid_input: 'invalid_input: revisa los datos de la acción.',
   workstream_busy: 'El workstream tiene trabajo vivo. Reintenta cuando termine el turno o se resuelva la espera o reanudación.',
   error: 'No se pudo registrar la acción. Revisa el estado antes de volver a intentarlo.',
+  forbidden: 'forbidden: tu rol o esta vía no permite la acción.', unauthorized: 'unauthorized: la sesión ya no es válida.',
   ...JIRA_MESSAGES,
 };
 const runnerErrors: Record<string, string> = {
@@ -544,10 +549,14 @@ export const ACTIONS: Record<string, Action | CheckAction | WebResponseAction | 
 };
 
 /** Abre el Store escritor, fija el actor y ejecuta una acción. Lanza InputError si la entrada no vale; el resto de fallos van en `result`. */
-export async function performAction(stateDir: string, name: string, id: string, rawInput: Raw, actor: string, attachment?: NoteAttachment, options?: ActionOptions): Promise<Outcome> {
+export async function performAction(stateDir: string, name: string, id: string, rawInput: Raw, who: Who, attachment?: NoteAttachment, options?: ActionOptions): Promise<Outcome> {
   const action = ACTIONS[name];
   if (!action || !('run' in action)) throw new InputError(404, 'Acción no encontrada.');
-  const input = action.input(rawInput, options);
+  // T119c: en servidor toda acción pasa por `runAs` con el principal verificado, y el modo declarado es obligatorio.
+  const actor = isServer(who) ? actorOf(who.principal).actor : who;
+  if (isServer(who)) options = { ...options, server: true };
+  // En servidor la política va antes que la validación del formulario: un rol sin permiso no aprende nada de los campos.
+  let input: Raw = isServer(who) ? {} : action.input(rawInput, options);
   const out: Outcome = { destination: '/', result: 'ok' };
   if (attachment) {
     // T96-H4: un estado no apto se rechaza antes de abrir el escritor (que ya tocaría la base y su WAL).
@@ -558,10 +567,10 @@ export async function performAction(stateDir: string, name: string, id: string, 
   try {
     store = new Store(join(stateDir, 'fabrica.db'));
     const writer = store;
-    // FAB_ACTOR es el patrón del Store. El tramo es síncrono: ningún await expone el actor a otra petición.
-    const previous = process.env.FAB_ACTOR; process.env.FAB_ACTOR = actor;
-    try { writer.withRetry(() => action.run(writer, id, input, out, actor, stateDir, attachment, options)); }
-    finally { if (previous === undefined) delete process.env.FAB_ACTOR; else process.env.FAB_ACTOR = previous; }
+    inActor(writer, who, name, () => {
+      if (isServer(who)) input = serverGuard(name, action.input(rawInput, options) as Record<string, string>, writer, stateDir, id) as Raw;
+      action.run(writer, id, input, out, actor, stateDir, attachment, options);
+    });
     if (out.repo) { await writer.waitForRelease(id); await removeWorktree(out.repo, stateDir, id); }
   } catch (error) {
     if (error instanceof InputError) throw error;
@@ -677,6 +686,40 @@ export async function webAction(req: Request, stateDir: string, port: number, au
   const csrf = auth.sessionCsrf(req);
   if (!csrf) return new Response('Se necesita una sesión local.', { status: 401 });
   if (req.headers.get('origin') !== `http://${auth.host}:${port}`) return new Response('Origin rechazado.', { status: 403 });
+  return runWebAction(req, stateDir, { csrf, validCsrf: token => auth.validCsrf(req, token), remember: (path, result) => auth.rememberNotice(req, path, result), who: 'web' },
+    usage, runnerCheck, extendCheckTimeout, jiraImport, options);
+}
+
+/** Lo que cambia entre la sesión local y la de servidor: el token CSRF, el aviso y quién ejecuta. */
+interface WebGate { csrf: string; validCsrf(token: string): boolean; remember(path: string, result: string): void; who: Who }
+
+export interface ServerWebOptions extends ServerWho {
+  /** `https://<host>` canónico (Origin exacto). */
+  publicOrigin: string;
+  /** Secreto de servicio del CSRF (el mismo de `identityRoutes`). */
+  secret: string;
+  /** Aviso del formulario por sesión; T119e lo conecta. */
+  remember?: (path: string, result: string) => void;
+}
+
+/**
+ * Mutaciones web en modo servidor (§3.1, §4.1): sesión web + Origin exacto + CSRF derivado del ID de sesión y, después, la misma
+ * tabla ACTIONS que la sesión local, con la política y el actor del principal. T119e lo monta tras `principalOf`.
+ */
+export async function serverWebAction(req: Request, stateDir: string, srv: ServerWebOptions, runnerCheck: ReturnType<typeof runnerCheckAction>,
+  extendCheckTimeout: () => void, jiraImport: ReturnType<typeof jiraImportAction>): Promise<Response> {
+  const p = srv.principal;
+  if (p.via !== 'web' || !p.sessionId) return new Response('Sesión no válida.', { status: 401 });
+  if (!originOk(req, srv.publicOrigin)) return new Response('Origin rechazado.', { status: 403 });
+  const csrf = csrfToken(srv.secret, p.sessionId);
+  return runWebAction(req, stateDir, { csrf, validCsrf: token => constantEqual(token, csrf), remember: srv.remember ?? (() => undefined), who: { principal: p, write: srv.write } },
+    undefined, runnerCheck, extendCheckTimeout, jiraImport, { server: true });
+}
+
+async function runWebAction(req: Request, stateDir: string, gate: WebGate, usage: ApiKeyUsage | undefined,
+  runnerCheck: ReturnType<typeof runnerCheckAction>, extendCheckTimeout: () => void, jiraImport: ReturnType<typeof jiraImportAction>,
+  options?: ActionOptions): Promise<Response> {
+  const csrf = gate.csrf;
   let destination = '/'; let result = 'ok'; let id = '';
   const pathname = new URL(req.url).pathname;
   const profilePath = /^\/perfiles\/(guardar|asignar)$/.exec(pathname);
@@ -687,30 +730,38 @@ export async function webAction(req: Request, stateDir: string, port: number, au
     const multipart: Multipart | undefined = name === 'changes/note' ? NOTE_MULTIPART
       : action?.importKind ? { limit: IMPORT_UPLOAD_LIMIT, fields: IMPORT_FIELDS[action.importKind], file: 'package' } : undefined;
     const { form, file } = await readForm(req, profilePath ? PROFILE_BODY_LIMIT : action?.automationForm ? AUTOMATION_FORM_LIMIT : name === 'automejora/save' ? AUTOMEJORA_FORM_LIMIT : action?.importKind ? IMPORT_FORM_LIMIT : 16384, multipart);
-    if (!auth.validCsrf(req, form.get('csrf') ?? '')) return new Response('CSRF rechazado.', { status: 403 });
+    if (!gate.validCsrf(form.get('csrf') ?? '')) return new Response('CSRF rechazado.', { status: 403 });
+    // T119c: la política va antes de resolver objetos, de la vista previa y de la red; la escritura la repite en su transacción.
+    preauthorize(stateDir, gate.who, profilePath ? `perfiles/${profilePath[1]}` : name ?? '');
     const invalid = file && name === 'changes/note' && validateNoteAttachment(file);
     if (invalid) throw new InputError(400, invalid);
     if (profilePath) {
-      ({ destination, result } = profileAction(stateDir, profilePath[1] as 'guardar' | 'asignar', form));
-      auth.rememberNotice(req, destination.split('?')[0]!, result);
+      ({ destination, result } = profileAction(stateDir, profilePath[1] as 'guardar' | 'asignar', form, gate.who));
+      gate.remember(destination.split('?')[0]!, result);
       return new Response(null, { status: 303, headers: { Location: destination } });
     }
     if (!name || !action) return new Response('Acción no encontrada.', { status: 404 });
     if (action.importKind && !form.has('payload')) {
       // Paso 1: sin confirmación; renderiza la vista previa y no escribe.
       if (!file?.bytes.byteLength) throw new InputError(400, 'Elige un fichero para importar.');
-      try { return importPreview(action.importKind, stateDir, form, file.bytes, csrf, escape); } catch (e) { throw importFailure(e); }
+      try {
+        // En servidor el destino de una definición es un alias del inventario; la ruta resuelta es lo que se sella.
+        if (isServer(gate.who) && action.importKind === 'definition') form.set('repo', repoByAlias(stateDir, form.get('repo') ?? ''));
+        return importPreview(action.importKind, stateDir, form, file.bytes, csrf, escape);
+      } catch (e) { throw importFailure(e); }
     }
     const raw = action.path.exec(pathname)![1] ?? '';
     if ('respond' in action) {
+      // Las claves de usuario del servidor las sirve `/cuenta/claves` (T119b); la tabla local no se toca desde aquí.
+      if (isServer(gate.who) || !usage) return new Response('Acción no encontrada.', { status: 404 });
       const response = action.respond(stateDir, raw, form, usage);
       const location = response.headers.get('location');
-      if (response.status === 303 && location) auth.rememberNotice(req, location, 'ok');
+      if (response.status === 303 && location) gate.remember(location, 'ok');
       return response;
     }
     if ('jira' in action) {
-      ({ destination, result } = await jiraImport(form));
-      auth.rememberNotice(req, destination.split('?')[0]!, result);
+      ({ destination, result } = await jiraImport(form, gate.who));
+      gate.remember(destination.split('?')[0]!, result);
       return new Response(null, { status: 303, headers: { Location: destination } });
     }
     id = name.endsWith('/create') ? '' : decodeURIComponent(raw);
@@ -730,9 +781,11 @@ export async function webAction(req: Request, stateDir: string, port: number, au
       delete fields.csrf;
       if (repeated) throw new InputError(400, 'El formulario contiene campos repetidos.');
     }
-    ({ destination, result } = await performAction(stateDir, name, id, fields, 'web', file, {
-      ...options, signalOrigin: options?.signalOrigin ?? { source: 'web', actorId: userInfo().username },
+    // Servidor: el originador lo fija el Store con el usuario de sesión; el usuario del sistema solo cuenta en local.
+    ({ destination, result } = await performAction(stateDir, name, id, fields, gate.who, file, {
+      ...options, signalOrigin: options?.signalOrigin ?? { source: 'web', actorId: isServer(gate.who) ? null : userInfo().username },
     }));
+    if (result === 'forbidden' || result === 'unauthorized') return new Response(result === 'forbidden' ? 'No autorizado.' : 'Sesión no válida.', { status: result === 'forbidden' ? 403 : 401 });
     if (action.httpErrors && result !== 'ok') {
       const status = result === 'conflict' ? 409 : result === 'not_found' ? 404 : result === 'invalid_input' ? 400 : 500;
       return inertPage(runnerErrors[result] ?? 'No se pudo guardar el runner', status, '', { href: '/workstreams', text: 'Volver a workstreams' });
@@ -744,9 +797,10 @@ export async function webAction(req: Request, stateDir: string, port: number, au
       return new Response(error.message, { status: error.status, headers: error.status === 413 ? { Connection: 'close' } : {} });
     }
     if (error instanceof ProfileInputError) return new Response(error.message, { status: 400 });
+    if (error instanceof StoreError && (error.code === 'forbidden' || error.code === 'unauthorized')) return new Response(error.code === 'forbidden' ? 'No autorizado.' : 'Sesión no válida.', { status: error.code === 'forbidden' ? 403 : 401 });
     if (error instanceof URIError) return new Response('Identificador inválido.', { status: 400 });
     result = 'error';
   }
-  auth.rememberNotice(req, destination.split('?')[0]!, result);
+  gate.remember(destination.split('?')[0]!, result);
   return new Response(null, { status: 303, headers: { Location: destination } });
 }

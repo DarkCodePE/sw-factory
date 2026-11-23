@@ -105,7 +105,10 @@ function credentialStatus(agent: string): string {
   return found ? 'Detectada' : 'No detectada';
 }
 
-function adapters(stateDir: string, escape: Escape): string {
+/** Modo servidor (§4.2): sin rutas absolutas y con los indicadores de credenciales del host solo para owner. */
+export interface ConfigView { credentials: boolean }
+
+function adapters(stateDir: string, escape: Escape, view?: ConfigView): string {
   const versionsFromRecord = loadAgentVersions(stateDir);
   const rows = AGENT_NAMES.map(agent => {
     const isPinned = PINNED_AGENTS.includes(agent);
@@ -165,15 +168,15 @@ function adapters(stateDir: string, escape: Escape): string {
     return `<tr${isMismatch ? ' class="pin-mismatch"' : ''}>`
       + `<td>${escape(agent)}</td>`
       + `<td>${statusCell}</td>`
-      + `<td>${cred}</td>`
-      + `<td>${escape(binPath)}</td>`
+      + (!view || view.credentials ? `<td>${cred}</td>` : '')
+      + (view ? '' : `<td>${escape(binPath)}</td>`)
       + `<td>${escape(version)}</td>`
       + `<td><code>${escape(pin)}</code></td>`
       + `</tr>`;
   }).join('');
 
   return `<div class="table-wrap" role="region" aria-label="Adaptadores" tabindex="0"><table class="config-adapters">
-    <thead><tr><th scope="col">Adaptador</th><th scope="col">Binario</th><th scope="col">Credencial local</th><th scope="col">Ruta</th><th scope="col">Versión</th><th scope="col">Pin guardado</th></tr></thead>
+    <thead><tr><th scope="col">Adaptador</th><th scope="col">Binario</th>${!view || view.credentials ? '<th scope="col">Credencial local</th>' : ''}${view ? '' : '<th scope="col">Ruta</th>'}<th scope="col">Versión</th><th scope="col">Pin guardado</th></tr></thead>
     <tbody>${rows}</tbody>
   </table></div>`;
 }
@@ -232,7 +235,7 @@ function buildMcpUsageMap(workstreams: Workstream[], stateDir: string): Map<stri
   return map;
 }
 
-function mcpRegistrySection(store: Store, stateDir: string, escape: Escape, workstreams: Workstream[]): string {
+function mcpRegistrySection(store: Store, stateDir: string, escape: Escape, workstreams: Workstream[], view?: ConfigView): string {
   try {
     const registry = loadMcpRegistry(stateDir);
     const entries = Object.entries(registry);
@@ -242,7 +245,7 @@ function mcpRegistrySection(store: Store, stateDir: string, escape: Escape, work
     const usageMap = buildMcpUsageMap(workstreams, stateDir);
     const rows = entries.map(([name, s]) => {
       const req = s.required.length
-        ? s.required.map(n => `${escape(n)} (${process.env[n] !== undefined ? 'definida en fab web' : 'no definida en fab web'})`).join(', ')
+        ? s.required.map(n => view && !view.credentials ? escape(n) : `${escape(n)} (${process.env[n] !== undefined ? 'definida en fab web' : 'no definida en fab web'})`).join(', ')
         : '—';
       const usages = usageMap.get(name) ?? [];
       const usageText = usages.length ? usages.map(u => escape(u)).join(', ') : '—';
@@ -267,7 +270,7 @@ async function mcpInventory(escape: Escape): Promise<string> {
   } catch { return '<p class="notice">Configuración MCP no disponible.</p>'; }
 }
 
-export async function configPage(store: Store, stateDir: string, url: URL, escape: Escape, csrf?: string) {
+export async function configPage(store: Store, stateDir: string, url: URL, escape: Escape, csrf?: string, view?: ConfigView) {
   const workstreams = store.listWorkstreams();
   const ws = url.searchParams.get('ws');
   const selected = ws ? store.getWorkstream(ws) : workstreams[0];
@@ -285,7 +288,7 @@ export async function configPage(store: Store, stateDir: string, url: URL, escap
       ['Aprobación de change', yesNo(selected.requireChangeApproval)],
       ['Aprobación de spec', yesNo(selected.requireApproval)],
     ])}</section>
-    ${accessSection(stateDir, selected, escape, csrf)}
+    ${accessSection(stateDir, selected, escape, csrf, view ? view.credentials : true)}
     <section><h2>Perfil vigente</h2>${profileView(stateDir, selected, escape)}</section>
     <section><h2>Definición</h2>
       <p>El árbol de definición agrupa la configuración, el perfil y las skills en ficheros versionables.</p>
@@ -298,17 +301,17 @@ export async function configPage(store: Store, stateDir: string, url: URL, escap
     ${csrf ? '<p><a href="/config/runners">Runners</a></p>' : ''}
     ${workstream}
     <section><h2>Perfiles guardados</h2>${savedProfiles(stateDir, escape)}</section>
-    <section><h2>Adaptadores</h2>${adapters(stateDir, escape)}</section>
+    <section><h2>Adaptadores</h2>${adapters(stateDir, escape, view)}</section>
     <section><h2>Sandbox y red</h2>${facts([
       ['Sandbox local', escape(sandbox.available ? sandbox.backend : 'No disponible')],
       ['Aislamiento de red disponible', yesNo(sandbox.network)],
       [`Última sonda de egress del workstream (últimas ${EGRESS_SCAN_LIMIT} activities)`, egress],
     ])}</section>
-    <section><h2>Integraciones</h2><p><a href="${API_KEYS_PATH}">Claves API</a></p>${facts([
+    <section><h2>Integraciones</h2><p><a href="${API_KEYS_PATH}">Claves API</a></p>${!view || view.credentials ? facts([
       ['Jira (entorno)', configured(jiraConfiguredInEnv())],
       ['GitHub (entorno)', configured(!!(process.env.GH_TOKEN?.trim() || process.env.GITHUB_TOKEN?.trim()))],
-    ])}</section>
+    ]) : ''}</section>
     ${entradaSection(stateDir, workstreams, escape, csrf)}
-    <section><h2>Servidores MCP</h2>${mcpRegistrySection(store, stateDir, escape, workstreams)}${mcp}</section>
+    <section><h2>Servidores MCP</h2>${mcpRegistrySection(store, stateDir, escape, workstreams, view)}${mcp}</section>
   </div>` };
 }

@@ -48,6 +48,11 @@ sudo systemctl enable --now fab.service
 ```
 El servicio gestiona directamente el ciclo de vida del socket Unix en `/run/fab/fab.sock` mediante `RuntimeDirectory=fab`, `RuntimeDirectoryMode=0770` y `UMask=0007`, garantizando permisos `0660` sin requerir activación por socket externa.
 
+**Identidad (T119e).** `fab web --server` no arranca sin la aplicación OAuth de GitHub ni sin el bootstrap del primer owner (§2):
+- `FAB_GITHUB_CLIENT_ID` (en la unidad) y los ficheros `/etc/fab/github-client-secret` y `/etc/fab/service-secret` (0600, propiedad de root), que systemd entrega como credenciales. `service-secret` fija el secreto de CSRF; sin él cambia en cada arranque.
+- El primer owner se crea por consola con emisor `github` y el ID numérico de su cuenta (`bootstrapOwner`). **Aún no hay comando `fab user bootstrap`** (pendiente).
+- Caddy debe emitir `X-Fab-Client-IP` y descartar `X-Forwarded-*`: de ahí salen los límites de login y pareo.
+
 Verificar estado y permisos del socket:
 ```bash
 sudo systemctl status fab.service

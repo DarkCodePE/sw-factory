@@ -28,7 +28,7 @@ const CONFIRM_FIELDS: Record<ImportKind, string[]> = { profile: ['csrf', 'ws', '
 // Sello de la vista previa (T105-H2): HMAC con un secreto por arranque sobre el paquete, el tipo y el destino. Sin estado:
 // la confirmación solo vale para exactamente lo que este servidor previsualizó (hasta que se reinicie la web).
 const SECRET = randomBytes(32);
-const seal = (kind: ImportKind, bytes: Uint8Array, ...target: string[]) =>
+export const seal = (kind: ImportKind, bytes: Uint8Array, ...target: string[]) =>
   createHmac('sha256', SECRET).update(JSON.stringify([kind, createHash('sha256').update(bytes).digest('hex'), ...target])).digest('hex');
 const sealOk = (given: string | undefined, expected: string) => !!given && given.length === expected.length && timingSafeEqual(Buffer.from(given), Buffer.from(expected));
 

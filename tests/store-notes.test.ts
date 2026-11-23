@@ -48,7 +48,7 @@ test('registra una nota sin su cuerpo en eventos y sin mover la activity en espe
   const [event] = store.listEvents(workstreamId, 1, changeId);
   expect(event).toMatchObject({
     severity: 'info', actor: userInfo().username,
-    message: `nota del dueño registrada (${note.id.slice(0, 8)}, ${Buffer.byteLength(body)} bytes)`,
+    message: `nota registrada (${note.id.slice(0, 8)}, ${Buffer.byteLength(body)} bytes)`,
   });
 });
 

@@ -89,7 +89,15 @@ export function sembrar(root: string): Semilla {
     const run = join(stateDir, 'runs', c.id);
     mkdirSync(run, { recursive: true });
     for (const [j, id] of [parent.id, child].entries()) {
-      writeFileSync(join(run, `${id}.json`), JSON.stringify({ durationMs: 18200 + i * 1000 + j * 3000, attemptCosts: [0.08 + i * 0.02], isolation: { adapter: 'native' } }));
+      const inferenceAttempts = (i === 0 && j === 0) ? [
+        { adapter: 'native', requestedModel: 'pedido', usage: { effectiveModel: 'modelo-semilla-efectivo', inputTokens: 100, outputTokens: 20, cacheReadTokens: 0, costUsd: 0.08, priceVersion: '2026-11-21-v1' } },
+      ] : undefined;
+      writeFileSync(join(run, `${id}.json`), JSON.stringify({
+        durationMs: 18200 + i * 1000 + j * 3000,
+        attemptCosts: [0.08 + i * 0.02],
+        isolation: { adapter: 'native' },
+        ...(inferenceAttempts ? { inferenceAttempts } : {}),
+      }));
       writeFileSync(join(run, `${id}.log`), `[fab] ejecución sintética\n[worker] ${title}\n`);
     }
     writeFileSync(join(run, 'run.json'), JSON.stringify({ fixture: true, status }));
