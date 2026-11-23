@@ -215,3 +215,8 @@ test('las páginas con formulario salen con Referrer-Policy same-origin y las qu
   expect(await (await s.call('/signals', { as: 'member' })).text()).toContain('Escritura habilitada');
   expect((await s.call('/style.css')).headers.get('referrer-policy')).toBe('no-referrer');
 });
+
+test('el enlace de un solo uso local (/auth?token=) no existe en servidor', async () => {
+  expect((await s.call('/auth?token=cualquiera')).status).toBe(401);
+  expect((await s.call('/auth?token=cualquiera', { as: 'owner' })).status).toBe(404);
+});
