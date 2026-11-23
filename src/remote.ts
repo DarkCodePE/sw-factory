@@ -56,6 +56,7 @@ export const VERBS: Record<string, Verb> = {
   'reject': { op: 'changes/cancel', args: ['id'] },
   'score add': { op: 'activities/score', args: ['id'] },
   'score backfill': { op: 'scorers/backfill' },
+  'scorer add': { op: 'scorers/create' }, // T114: perfil nuevo con el juez; asignarlo es del dueño (D-H)
   'question answer': { op: 'questions/answer', args: ['id', 'answer'] },
   'signal add': { op: 'signals/create', args: ['workstream', 'title'] },
   'triage': { op: 'signals/triage', args: ['id'] },

@@ -130,10 +130,58 @@ CREATE TRIGGER identity_audit_sin_reemplazo BEFORE INSERT ON identity_audit
   },
   {
     // T119c-H3: quien crea la señal (usuario de sesión) es el originador; se hereda en `changes.responsible_user_id` al triar.
-    // T110 (`signalOrigin`) no está en esta base: cuando llegue, este campo es el que debe enlazar.
+    // Con T110, `origin_actor_id` es la etiqueta de atribución y `origin_user_id` el usuario verificado; en servidor el Store escribe ambos del principal.
     id: 't119c-002-originador-de-senal',
     up(db) {
       if (!(db.query('PRAGMA table_info(signals)').all() as { name: string }[]).some((c) => c.name === 'origin_user_id')) db.exec('ALTER TABLE signals ADD COLUMN origin_user_id TEXT');
+    },
+  },
+  {
+    // T109: coste por intento. Idempotente: una base con la tabla pero sin registro (restaurada o de otra rama) no falla.
+    id: 't109-cost-attempts',
+    up(db) {
+      db.exec(`
+CREATE TABLE IF NOT EXISTS cost_attempts (
+  id TEXT PRIMARY KEY,
+  activity_id TEXT NOT NULL REFERENCES activities(id),
+  change_id TEXT NOT NULL REFERENCES changes(id),
+  workstream_id TEXT NOT NULL REFERENCES workstreams(id),
+  started_at TEXT NOT NULL,
+  closed_at TEXT,
+  adapter TEXT NOT NULL,
+  runner TEXT,
+  remote INTEGER NOT NULL CHECK (remote IN (0,1)),
+  legacy_count INTEGER NOT NULL,
+  rate_version TEXT NOT NULL,
+  rate_effective_from TEXT NOT NULL,
+  hourly_micro_usd INTEGER,
+  platform_micro_usd INTEGER NOT NULL,
+  effective_model TEXT,
+  inference_micro_usd INTEGER,
+  inference_basis TEXT,
+  inference_version TEXT,
+  compute_duration_ms INTEGER,
+  compute_micro_usd INTEGER
+);
+CREATE INDEX IF NOT EXISTS idx_cost_attempts_change ON cost_attempts(change_id, started_at, id);
+CREATE INDEX IF NOT EXISTS idx_cost_attempts_started ON cost_attempts(started_at);
+CREATE INDEX IF NOT EXISTS idx_cost_attempts_workstream ON cost_attempts(workstream_id, started_at);`);
+    },
+  },
+  {
+    // T110: atribución de origen (señal, change, intento). Columnas guardadas con `has`.
+    id: 't110-cost-attribution',
+    up(db) {
+      const has = (table: string, col: string) => (db.query(`PRAGMA table_info(${table})`).all() as { name: string }[]).some((c) => c.name === col);
+      const add = (table: string, col: string, ddl: string) => { if (!has(table, col)) db.exec(`ALTER TABLE ${table} ADD COLUMN ${col} ${ddl}`); };
+      add('signals', 'origin_actor_id', 'TEXT');
+      add('changes', 'origin_source', 'TEXT');
+      add('changes', 'origin_actor_id', 'TEXT');
+      add('cost_attempts', 'attributed', 'INTEGER NOT NULL DEFAULT 0 CHECK (attributed IN (0,1))');
+      add('cost_attempts', 'worker', 'TEXT');
+      add('cost_attempts', 'origin_source', 'TEXT');
+      add('cost_attempts', 'origin_actor_id', 'TEXT');
+      db.exec("CREATE INDEX IF NOT EXISTS idx_events_pr_opened ON events(change_id, id DESC) WHERE message GLOB 'pr_opened: https://*'");
     },
   },
 ];

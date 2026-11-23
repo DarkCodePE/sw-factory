@@ -98,7 +98,7 @@ test('T119a-H12: un rol desconocido deniega aunque empiece como uno válido', ()
 const SECTION_4_1: Record<string, string> = {
   'api-keys/create': 'OAM', 'api-keys/revoke': 'OAM', 'activities/review': 'OA', 'automejora/save': 'O', 'benchmarks/cancel': 'OA',
   'changes/suite-task': 'O', 'changes/retry': 'OA', 'changes/note': 'OAM', 'changes/rename': 'OAM', 'changes/cancel': 'OA',
-  'activities/score': 'OA', 'scorers/backfill': 'OA', 'questions/answer': 'OAM', 'signals/create': 'OAM', 'signals/triage': 'OA',
+  'activities/score': 'OA', 'scorers/backfill': 'OA', 'scorers/create': 'O', 'questions/answer': 'OAM', 'signals/create': 'OAM', 'signals/triage': 'OA',
   'signals/ignore': 'OA', 'automations/create': 'OA', 'automations/update': 'OA', 'automations/delete': 'OA', 'automations/run': 'OA',
   'automations/enable': 'OA', 'automations/disable': 'OA', 'workstreams/create': 'O', 'workstreams/settings': 'OA', 'workstreams/state': 'OA',
   'workstreams/adaptador': 'O', 'workstreams/archive': 'OA', 'workstreams/runner': 'O', 'workstreams/acceso': 'O', 'resident/config': 'O',

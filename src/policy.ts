@@ -26,7 +26,8 @@ export const ACTION_CAPABILITIES: Record<string, Capability> = {
   'activities/review': A('OA', true), 'automejora/save': A('O'), 'benchmarks/cancel': A('OA'),
   'changes/suite-task': A('O'), 'changes/retry': A('OA', true), 'changes/note': A('OAM', true),
   'changes/rename': A('OAM', true), 'changes/cancel': A('OA', true), 'activities/score': A('OA', true),
-  'scorers/backfill': A('OA', true), 'questions/answer': A('OAM', true), 'signals/create': A('OAM', true),
+  'scorers/backfill': A('OA', true), 'scorers/create': A('O'), // T114: guarda un perfil; como `perfiles/guardar`, del dueño y sin clave
+  'questions/answer': A('OAM', true), 'signals/create': A('OAM', true),
   'signals/triage': A('OA', true), 'signals/ignore': A('OA', true),
   'automations/create': A('OA'), 'automations/update': A('OA'), 'automations/delete': A('OA'),
   'automations/run': A('OA', true), 'automations/enable': A('OA', true), 'automations/disable': A('OA', true),

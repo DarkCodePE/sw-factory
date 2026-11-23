@@ -753,57 +753,6 @@ export class Store {
       .query(`UPDATE activities SET lease_expires_at = ? WHERE status = 'in_progress' AND lease_expires_at IS NULL`)
       .run(migrationTtl);
     applyMigrations(this.db, this.now());
-    this.migrateSchema('t109-cost-attempts', [], () => this.db.exec(`
-CREATE TABLE cost_attempts (
-  id TEXT PRIMARY KEY,
-  activity_id TEXT NOT NULL REFERENCES activities(id),
-  change_id TEXT NOT NULL REFERENCES changes(id),
-  workstream_id TEXT NOT NULL REFERENCES workstreams(id),
-  started_at TEXT NOT NULL,
-  closed_at TEXT,
-  adapter TEXT NOT NULL,
-  runner TEXT,
-  remote INTEGER NOT NULL CHECK (remote IN (0,1)),
-  legacy_count INTEGER NOT NULL,
-  rate_version TEXT NOT NULL,
-  rate_effective_from TEXT NOT NULL,
-  hourly_micro_usd INTEGER,
-  platform_micro_usd INTEGER NOT NULL,
-  effective_model TEXT,
-  inference_micro_usd INTEGER,
-  inference_basis TEXT,
-  inference_version TEXT,
-  compute_duration_ms INTEGER,
-  compute_micro_usd INTEGER
-);
-CREATE INDEX idx_cost_attempts_change ON cost_attempts(change_id, started_at, id);
-CREATE INDEX idx_cost_attempts_started ON cost_attempts(started_at);
-CREATE INDEX idx_cost_attempts_workstream ON cost_attempts(workstream_id, started_at);
-`));
-    this.migrateSchema('t110-cost-attribution', ['t109-cost-attempts'], () => this.db.exec(`
-      ALTER TABLE signals ADD COLUMN origin_actor_id TEXT;
-      ALTER TABLE changes ADD COLUMN origin_source TEXT;
-      ALTER TABLE changes ADD COLUMN origin_actor_id TEXT;
-      ALTER TABLE cost_attempts ADD COLUMN attributed INTEGER NOT NULL DEFAULT 0 CHECK (attributed IN (0,1));
-      ALTER TABLE cost_attempts ADD COLUMN worker TEXT;
-      ALTER TABLE cost_attempts ADD COLUMN origin_source TEXT;
-      ALTER TABLE cost_attempts ADD COLUMN origin_actor_id TEXT;
-      CREATE INDEX idx_events_pr_opened ON events(change_id, id DESC) WHERE message GLOB 'pr_opened: https://*';
-    `));
-  }
-
-  /** Pasos de esquema con ID estable. DDL y registro se confirman en la misma transacción. */
-  private migrateSchema(id: string, requires: string[], migrate: () => void): void {
-    this.withRetry(() => {
-      this.db.exec('CREATE TABLE IF NOT EXISTS schema_migrations (id TEXT PRIMARY KEY, applied_at TEXT NOT NULL)');
-      const applied = this.db.query('SELECT 1 FROM schema_migrations WHERE id = ?');
-      if (applied.get(id)) return;
-      for (const dependency of requires) {
-        if (!applied.get(dependency)) throw new Error(`falta la migración ${dependency} para ${id}`);
-      }
-      migrate();
-      this.db.query('INSERT INTO schema_migrations (id, applied_at) VALUES (?, ?)').run(id, this.now());
-    });
   }
 
   private addColumn(table: string, column: string, ddl: string): void {
