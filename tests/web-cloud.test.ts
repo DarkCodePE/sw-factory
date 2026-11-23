@@ -162,6 +162,28 @@ test('recuperación restringida: solo el owner designado entra, solo ve /recuper
   expect((await as('/signals')).status).toBe(200);
 });
 
+test('en recuperación no se empareja una CLI: ni la pantalla ni el canje, ni un pareo aprobado antes (T119e-H1)', async () => {
+  const verifier = 'verificador-secreto-de-la-terminal';
+  const json = { 'content-type': 'application/json' };
+  const pair = async () => ((await (await s.call('/cli/v1/pair/start', { method: 'POST', headers: json, body: JSON.stringify({ challenge: createHash('sha256').update(verifier).digest('hex') }) })).json()) as any).data.code as string;
+  const exchange = (code: string) => s.call('/cli/v1/pair/exchange', { method: 'POST', headers: json, body: JSON.stringify({ code, verifier }) });
+  const antes = await pair(); // aprobado por el owner antes de la recuperación
+  await s.post('owner', '/cuenta/cli/autorizar', { code: antes });
+  expect((await s.post('owner', '/cuenta/cli/autorizar', { code: antes, confirm: 'yes' })).status).toBeLessThan(400);
+  enterRecovery(s.c.store, 'op', 'restauración', s.c.web.owner.userId);
+  declareNoJournal(s.c.store, 'op', 'sin diario');
+  const token = issueSession(s.c.store, s.c.web.owner.userId, 'web').token;
+  const principal = resolvePrincipal(s.c.store, token, 'web')!;
+  const as = (path: string, init: RequestInit = {}) => s.call(path, { ...init, headers: { cookie: `__Host-fab_session=${token}`, ...(init.headers as Record<string, string>) } });
+  expect((await as('/cuenta/cli/autorizar')).status).toBe(403);
+  const durante = await pair();
+  const post = (fields: Record<string, string>) => as('/cuenta/cli/autorizar', { method: 'POST', body: new URLSearchParams({ csrf: csrfToken(SECRET, principal.sessionId!), ...fields }), headers: { origin: ORIGIN, 'content-type': 'application/x-www-form-urlencoded' } });
+  expect((await post({ code: durante })).status).toBe(403);
+  expect((await post({ code: durante, confirm: 'yes' })).status).toBe(403);
+  expect(s.c.store.db.query("SELECT count(*) n FROM user_sessions WHERE class = 'cli' AND revoked_at IS NULL").get()).toMatchObject({ n: 0 });
+  for (const code of [antes, durante]) expect((await exchange(code)).status).toBeGreaterThanOrEqual(400);
+});
+
 test('avisos de formulario por sesión: el resultado de un POST lo ve esa sesión una sola vez y no otra', async () => {
   const done = await s.post('owner', '/signals', { workstream: s.ws.slug, title: 'con aviso' });
   expect([done.status, done.headers.get('location')]).toEqual([303, '/signals']);

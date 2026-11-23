@@ -10,7 +10,7 @@ import { createHash, createHmac, randomBytes } from 'node:crypto';
 import { join } from 'node:path';
 import { Store, StoreError } from './store.ts';
 import {
-  createUserKey, inviteUser, issueSession, listInvitations, listSessions, listUserKeys, listUsers, resolvePrincipal, revokeInvitation, revokeSession,
+  createUserKey, inviteUser, issueSession, listInvitations, listSessions, listUserKeys, listUsers, recoveryStatus, resolvePrincipal, revokeInvitation, revokeSession,
   revokeUserKey, changeUserRole, disableUser, actorOf, runAs, type Principal, type Role,
 } from './users.ts';
 import { AdmissionDb, hasAdmission } from './admission/db.ts';
@@ -197,6 +197,7 @@ export function cliRoutes(opts: CliRoutesOptions) {
       return retry ? fail(429, 'rate_limited', 'demasiados intentos', { 'retry-after': String(retry) }) : fail(403, 'forbidden', 'pareo no válido');
     }
     try {
+      if (recoveryStatus(store).restricted) return fail(403, 'forbidden', 'pareo no válido'); // también un pareo aprobado antes de la recuperación
       const s = issueSession(store, r.approvedBy.userId, 'cli');
       return ok({ token: s.token, expiresAt: s.expiresAt });
     } catch { return fail(403, 'forbidden', 'pareo no válido'); }
@@ -207,6 +208,7 @@ export function cliRoutes(opts: CliRoutesOptions) {
     try {
       const p = webSession(store, req);
       if (!p) return new Response(null, { status: 303, headers: { location: '/login', 'cache-control': 'no-store' } });
+      if (p.recovery) return new Response('Recuperación en curso: no se empareja ninguna CLI.', { status: 403, headers: { 'cache-control': 'no-store' } }); // §3.3 (T119e-H1)
       const csrf = csrfToken(opts.secret, p.sessionId!);
       const hidden = `<input type="hidden" name="csrf" value="${csrf}">`;
       if (req.method === 'GET') {
