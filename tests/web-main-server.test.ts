@@ -4,7 +4,8 @@ import { existsSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { Store } from '../src/store.ts';
-import { bootstrapOwner } from '../src/users.ts';
+import { bootstrapOwner, issueSession } from '../src/users.ts';
+import { csrfToken } from '../src/web-auth.ts';
 import { webMain } from '../src/web.ts';
 
 let dir: string, state: string;
@@ -85,4 +86,48 @@ test('con credenciales y bootstrap arranca, sirve /login y /healthz por el socke
   expect([(await call('/healthz')).status, (await call('/login')).status, (await call('/')).status]).toEqual([200, 200, 401]);
   process.emit('SIGTERM');
   expect((await running).result).toBe(0);
+});
+
+async function arrancar(secretos: { servicio?: string; github: string }, sock: string) {
+  bootstrapped();
+  writeFileSync(join(dir, 'secret'), secretos.github + '\n');
+  env('FAB_GITHUB_CLIENT_ID', 'id'); env('FAB_GITHUB_CLIENT_SECRET_FILE', join(dir, 'secret'));
+  if (secretos.servicio) { writeFileSync(join(dir, 'servicio'), secretos.servicio + '\n'); env('FAB_SERVICE_SECRET_FILE', join(dir, 'servicio')); }
+  const socket = join(dir, sock);
+  const running = quiet(() => webMain(args(socket), state));
+  for (let i = 0; i < 100 && !existsSync(socket); i++) await Bun.sleep(20);
+  const call = (path: string, init: RequestInit & { headers?: Record<string, string> } = {}) =>
+    fetch(`http://localhost${path}`, { redirect: 'manual', unix: socket, ...init, headers: { host: 'fab.example.test', 'x-fab-client-ip': '203.0.113.9', ...init.headers } } as RequestInit);
+  return { call, stop: async () => { process.emit('SIGTERM'); await running; } };
+}
+
+test('el secreto de servicio del fichero es el que firma el CSRF (T119e-H8)', async () => {
+  const servicio = 's'.repeat(40);
+  const w = await arrancar({ servicio, github: 'secreto-sintetico' }, 'g.sock');
+  try {
+    const st = new Store(join(state, 'fabrica.db')); const owner = (st.db.query('SELECT id FROM users').get() as { id: string }).id;
+    const sess = issueSession(st, owner, 'web'); st.close();
+    const page = await (await w.call('/cuenta', { headers: { cookie: `__Host-fab_session=${sess.token}` } })).text();
+    expect(page).toContain(csrfToken(servicio, sess.id));
+    expect(page).not.toContain(csrfToken('', sess.id));
+  } finally { await w.stop(); }
+});
+
+test('el secreto de la aplicación de GitHub se lee del fichero por referencia y viaja en el canje (T119e-H8)', async () => {
+  const w = await arrancar({ github: 'secreto-de-github-sintetico' }, 'h.sock');
+  const real = globalThis.fetch; let canje: Record<string, unknown> | undefined;
+  globalThis.fetch = ((input: any, init?: any) => {
+    if (String(input?.url ?? input).includes('github.com/login/oauth/access_token')) { canje = JSON.parse(init.body); return Promise.resolve(Response.json({ error: 'bad_verification_code' })); }
+    return real(input, init);
+  }) as typeof fetch;
+  try {
+    const login = await w.call('/login');
+    const pre = /name="pre" value="([^"]+)"/.exec(await login.text())![1]!;
+    const preCookie = /(__Host-[^=]+=[^;]+)/.exec(login.headers.get('set-cookie')!)![1]!;
+    const start = await w.call('/auth/start', { method: 'POST', headers: { origin: 'https://fab.example.test', cookie: preCookie, 'content-type': 'application/x-www-form-urlencoded' }, body: new URLSearchParams({ pre }) });
+    const state = new URL(start.headers.get('location')!).searchParams.get('state')!;
+    const loginCookie = start.headers.getSetCookie().map(c => c.split(';')[0]!).join('; ');
+    await w.call(`/auth/callback?code=x&state=${state}`, { headers: { cookie: loginCookie } });
+    expect(canje?.client_secret).toBe('secreto-de-github-sintetico');
+  } finally { globalThis.fetch = real; await w.stop(); }
 });

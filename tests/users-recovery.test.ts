@@ -4,7 +4,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { Store, StoreError } from '../src/store.ts';
 import {
-  acceptInvitation, applyJournalToRestored, bootstrapOwner, changeUserRole, confirmRecovery, createUserKey, declareNoJournal, disableUser, enterRecovery,
+  acceptInvitation, recoveryUsers, applyJournalToRestored, bootstrapOwner, changeUserRole, confirmRecovery, createUserKey, declareNoJournal, disableUser, enterRecovery,
   exportIdentityJournal, getUser, inviteUser, issueSession, listUsers, recoveryStatus, resolvePrincipal, runAs, verifyIdentityJournal, verifyUserKey,
   type Principal, type Role,
 } from '../src/users.ts';
@@ -314,4 +314,22 @@ test('T119a-H10: una última línea cortada no rompe el diario y se reescribe; t
   const ops = readFileSync(j, 'utf8').trim().split('\n').map((l) => (JSON.parse(l) as { opId: string }).opId);
   expect(new Set(ops).size).toBe(ops.length);
   expect(ops.length).toBe((store.db.query('SELECT COUNT(*) n FROM identity_audit').get() as { n: number }).n);
+});
+
+test('recoveryUsers (T119e-H8): solo en recuperación, solo el owner designado, y no lista a los dados de baja', () => {
+  const o = bootstrapOwner(store, { issuer: 'github', subject: 'o', displayName: 'O', operator: 'op' });
+  const owner = login(store, o.id);
+  const otro = add(store, owner, 'member'), baja = add(store, owner, 'member');
+  changeUserRole(store, owner, otro, 'owner');
+  disableUser(store, owner, baja);
+  const otroP = login(store, otro);
+  expect(code(() => recoveryUsers(store, owner))).toBe('conflict'); // fuera de recuperación
+  enterRecovery(store, 'op', 'restauración', o.id);
+  declareNoJournal(store, 'op', 'sin diario');
+  const designado = login(store, o.id);
+  const ids = recoveryUsers(store, designado).map(u => u.id);
+  expect(ids).toContain(o.id); expect(ids).toContain(otro); expect(ids).not.toContain(baja);
+  // Otro owner con la sesión aún viva (no debería existir: entrar en recuperación las revoca): la guarda del designado lo para.
+  store.db.query('UPDATE user_sessions SET revoked_at = NULL WHERE id = ?').run(otroP.sessionId!);
+  expect(code(() => recoveryUsers(store, { ...otroP, recovery: true }))).toBe('forbidden');
 });

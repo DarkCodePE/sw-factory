@@ -4,6 +4,7 @@ import { afterEach, beforeEach, expect, test } from 'bun:test';
 import { createHash } from 'node:crypto';
 import { CANARIO_ACTIVITY, CANARIO_EVENT, cloudServer, HOST, type CloudServer } from './helpers/cloud-server.ts';
 import { ORIGIN, ROLE_LIST, SECRET } from './helpers/cloud.ts';
+import { AdmissionDb } from '../src/admission/db.ts';
 import { csrfToken } from '../src/web-auth.ts';
 import { enterRecovery, issueSession, resolvePrincipal, declareNoJournal, type Role } from '../src/users.ts';
 
@@ -279,4 +280,31 @@ test('una excepción no capturada sale con las cabeceras de seguridad y sin el m
   expect(r.headers.get('strict-transport-security')).toContain('max-age=31536000');
   expect(r.headers.get('content-security-policy')).toContain("frame-ancestors 'none'");
   expect(await r.text()).not.toContain('detalle-interno-secreto');
+});
+
+// ---- huecos de test de la verificación (T119e-H8) ----
+test('/webhooks en servidor sale de la vista del principal: el admin no ve el indicador del secreto del host y el owner sí', async () => {
+  new AdmissionDb(s.c.store); process.env.FAB_GITHUB_WEBHOOK_SECRET = 'secreto-canario-1234567890';
+  try {
+  const admin = await (await s.call('/webhooks', { as: 'admin' })).text();
+  const owner = await (await s.call('/webhooks', { as: 'owner' })).text();
+  expect(admin).not.toContain('Secreto en entorno'); expect(owner).toContain('Secreto en entorno');
+  } finally { delete process.env.FAB_GITHUB_WEBHOOK_SECRET; }
+});
+
+test('el viewer no recibe la barra de workstreams (enlaza a /changes) y el resto de roles sí', async () => {
+  expect(await (await s.call('/workstreams', { as: 'viewer' })).text()).not.toContain('class="ws-nav"');
+  expect(await (await s.call('/workstreams', { as: 'member' })).text()).toContain('class="ws-nav"');
+});
+
+test('X-Fab-Client-IP que no es una IP cae en un cubo común aunque el valor cambie en cada petición', async () => {
+  const start = (ip: string) => s.call('/auth/start', { method: 'POST', body: 'x', ip: '', headers: { 'x-fab-client-ip': ip, origin: ORIGIN, 'content-type': 'application/x-www-form-urlencoded' } });
+  const seen: number[] = [];
+  for (let i = 0; i < 12; i++) seen.push((await start(`basura-${i}`)).status);
+  expect(seen.slice(10)).toEqual([429, 429]);
+});
+
+test('métodos: los activos públicos y las rutas de negocio solo aceptan GET/HEAD/POST según toque, el resto 405', async () => {
+  for (const p of ['/style.css', '/poll.js', '/definition']) expect([p, (await s.call(p, { method: 'POST', headers: { origin: ORIGIN }, body: 'x' })).status]).toEqual([p, 405]);
+  for (const m of ['PUT', 'DELETE', 'PATCH']) expect([m, (await s.call('/signals', { method: m, as: 'owner', headers: { origin: ORIGIN } })).status]).toEqual([m, 405]);
 });
