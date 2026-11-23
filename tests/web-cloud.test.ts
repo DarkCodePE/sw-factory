@@ -211,6 +211,12 @@ test('avisos de formulario por sesión: el resultado de un POST lo ve esa sesió
   expect(await (await s.call('/signals', { as: 'owner' })).text()).not.toContain('role="status"');
 });
 
+test('un HEAD no consume el aviso de la sesión (T119e-H6)', async () => {
+  await s.post('owner', '/signals', { workstream: s.ws.slug, title: 'con aviso' });
+  expect((await s.call('/signals', { method: 'HEAD', as: 'owner' })).status).toBe(200);
+  expect(await (await s.call('/signals', { as: 'owner' })).text()).toContain('role="status"');
+});
+
 test('la IP del límite sale solo de X-Fab-Client-IP del proxy: X-Forwarded-For no cambia el cubo y sin cabecera hay un cubo común', async () => {
   const start = (headers: Record<string, string>) => s.call('/auth/start', { method: 'POST', body: 'x', ip: '', headers: { origin: ORIGIN, 'content-type': 'application/x-www-form-urlencoded', ...headers } });
   const seen: number[] = [];

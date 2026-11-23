@@ -415,7 +415,7 @@ export function startWeb(stateDir: string, port = 4310, options: {
         : id && structured ? (id[1] === 'changes' ? structuredChangePage(store, ui, decodeURIComponent(id[2]!)) : structuredActivityPage(store, ui, decodeURIComponent(id[2]!)))
         : page(store, stateDir, url, csrf);
       if (!content) return deny(404, 'Página no encontrada');
-      content.body = actionNotice(notices.take(principal.sessionId!, path)) + content.body;
+      content.body = actionNotice(req.method === 'GET' ? notices.take(principal.sessionId!, path) : undefined) + content.body; // un HEAD no consume el aviso (H6)
       return sendHtml(shell(store, content));
     } catch (error) {
       if (error instanceof StoreError && error.code === 'not_found') return deny(404, 'Registro no encontrado');
