@@ -14,6 +14,7 @@ export interface CardSeries { label: string; values: Array<number | null>; /** T
 export interface CardOpts {
   id: string; title: string; help: string; /** Cifra destacada ya formateada («No medido» si no hay). */ figure: string; sub?: string;
   days: string[]; series: CardSeries[]; stacked?: boolean; fmt: (n: number) => string; integer?: boolean; tableCaption: string; /** HTML ya escapado bajo el gráfico (p. ej. etiquetas). */ footer?: string;
+  tableNote?: string;
 }
 
 const MAX_SERIES = 4;
@@ -69,7 +70,7 @@ export function card(o: CardOpts): string {
   const has = ss.some(s => s.values.some(v => v !== null));
   const legend = ss.length > 1 || o.stacked ? ss.map((s, j) => `<input type="checkbox" id="c-${id}-${j}" class="sc sc${j}" checked><label for="c-${id}-${j}"><span class="sw sw${j}" aria-hidden="true"></span>${esc(s.label)}</label>`).join('') : '';
   const rows = o.days.map((d, i) => [esc(d), ...ss.map(s => { const v = s.values[i] ?? null; return v === null ? esc(s.missing?.(i) ?? 'Sin datos') : esc(o.fmt(v)); })]);
-  return `<section class="card" aria-labelledby="t-${id}">${head(id, o.title, o.help)}<p class="fig">${esc(o.figure)}</p>${o.sub ? `<p class="sub">${esc(o.sub)}</p>` : ''}<div class="chart">${has ? `${legend}${plot({ ...o, series: ss })}` : '<p class="empty">No medido: no hay datos en este rango.</p>'}</div>${o.footer ? `<div class="chips">${o.footer}</div>` : ''}${folded(o.tableCaption, table(o.tableCaption, ['Fecha', ...ss.map(s => s.label)], rows))}</section>`;
+  return `<section class="card" aria-labelledby="t-${id}">${head(id, o.title, o.help)}<p class="fig">${esc(o.figure)}</p>${o.sub ? `<p class="sub">${esc(o.sub)}</p>` : ''}<div class="chart">${has ? `${legend}${plot({ ...o, series: ss })}` : '<p class="empty">No medido: no hay datos en este rango.</p>'}</div>${o.footer ? `<div class="chips">${o.footer}</div>` : ''}${folded(o.tableCaption, `${table(o.tableCaption, ['Fecha', ...ss.map(s => s.label)], rows)}${o.tableNote ? `<p class="muted">${esc(o.tableNote)}</p>` : ''}`)}</section>`;
 }
 
 /** Tarjeta de cifras (p. ej. tiempos de ciclo): una cifra grande por celda, «No medido» si falta. */
