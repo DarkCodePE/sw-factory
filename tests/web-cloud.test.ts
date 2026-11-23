@@ -211,5 +211,7 @@ test('las páginas con formulario salen con Referrer-Policy same-origin y las qu
   const sinForm = await s.call('/workstreams', { as: 'viewer' });
   expect(await sinForm.clone().text()).not.toContain('<form');
   expect(sinForm.headers.get('referrer-policy')).toBe('no-referrer');
+  expect(await sinForm.text()).toContain('Solo lectura'); // el viewer no ve «Escritura habilitada»
+  expect(await (await s.call('/signals', { as: 'member' })).text()).toContain('Escritura habilitada');
   expect((await s.call('/style.css')).headers.get('referrer-policy')).toBe('no-referrer');
 });

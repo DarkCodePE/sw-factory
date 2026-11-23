@@ -363,7 +363,7 @@ export function startWeb(stateDir: string, port = 4310, options: {
     // una página con formulario sale con `same-origin`.
     const sendHtml = (body: string): Response => { const r = respond(body); if (body.includes('<form')) r.headers.set('Referrer-Policy', 'same-origin'); return r; };
     const f = flagsOf(url);
-    const label = options.write ? 'Escritura habilitada' : 'Solo lectura';
+    const label = options.write && principal.role !== 'viewer' ? 'Escritura habilitada' : 'Solo lectura';
     const visible = new Set(visiblePaths(principal, MENU)), allowed = (p: string) => visible.has(p);
     const shell = (store: Store, content: { title: string; body: string }, nav: URL = url, still = f.manual) =>
       filterNav(shellHtml(store, content, nav, still, f, label), allowed);

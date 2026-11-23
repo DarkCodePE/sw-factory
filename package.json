@@ -14,7 +14,8 @@
     "fab": "bun ./src/cli.ts",
     "test": "bun test tests",
     "typecheck": "tsc --noEmit -p .",
-    "e2e": "bun scripts/e2e/run.ts",
+    "e2e": "bun scripts/e2e/run.ts && bun scripts/e2e/nube.ts",
+    "e2e:nube": "bun scripts/e2e/nube.ts",
     "postinstall": "sh scripts/build-native.sh --if-needed"
   },
   "devDependencies": {
