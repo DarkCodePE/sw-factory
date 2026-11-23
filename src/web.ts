@@ -612,18 +612,21 @@ export async function webMain(args: string[], stateDir: string, resolve?: Parame
       const clientId = process.env.FAB_GITHUB_CLIENT_ID;
       const clientSecretFile = process.env.FAB_GITHUB_CLIENT_SECRET_FILE ?? (credDir ? join(credDir, 'github-client-secret') : undefined);
       const serviceSecretFile = process.env.FAB_SERVICE_SECRET_FILE ?? (credDir && existsSync(join(credDir, 'service-secret')) ? join(credDir, 'service-secret') : undefined);
-      if (!clientId || !clientSecretFile || !existsSync(clientSecretFile)) {
+      if (!clientId || !clientSecretFile || !existsSync(clientSecretFile) || !readFileSync(clientSecretFile, 'utf8').trim()) {
         console.error('fab web: el modo servidor requiere FAB_GITHUB_CLIENT_ID y el secreto de la aplicación en FAB_GITHUB_CLIENT_SECRET_FILE (o la credencial github-client-secret).');
         return 1;
       }
       // Un secreto de servicio vacío o corto haría calculable el CSRF y la firma del prelogin: se rechaza (T119e-H2).
+      if (serviceSecretFile && !existsSync(serviceSecretFile)) { console.error(`fab web: no existe el fichero del secreto de servicio (FAB_SERVICE_SECRET_FILE=${serviceSecretFile}).`); return 1; }
       const serviceSecret = serviceSecretFile ? readFileSync(serviceSecretFile, 'utf8').trim() : undefined;
       if (serviceSecret !== undefined && serviceSecret.length < 32) {
         console.error('fab web: el secreto de servicio (FAB_SERVICE_SECRET_FILE o la credencial service-secret) debe tener al menos 32 caracteres.');
         return 1;
       }
-      const boot = new Store(join(stateDir, 'fabrica.db'));
-      try { if (!isBootstrapped(boot)) { console.error('fab web: el modo servidor exige el bootstrap del primer owner por consola (§2).'); return 1; } } finally { boot.close(); }
+      // Solo lectura: el control no crea ni migra la base (T119e-H7). Sin base o con una anterior, no hay bootstrap.
+      let bootstrapped = false;
+      try { const boot = new Store(join(stateDir, 'fabrica.db'), { readonly: true }); try { bootstrapped = isBootstrapped(boot); } finally { boot.close(); } } catch { /* sin base legible */ }
+      if (!bootstrapped) { console.error('fab web: el modo servidor exige el bootstrap del primer owner por consola (§2).'); return 1; }
       const server = startWeb(stateDir, port, {
         write: values.write,
         server: true,

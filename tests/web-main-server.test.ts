@@ -58,6 +58,21 @@ test('un secreto de servicio vacío o corto no arranca el servidor (T119e-H2): e
   }
 });
 
+test('el control de arranque no crea ni migra la base, y un secreto de GitHub vacío o un fichero de servicio ausente no pasan (T119e-H7)', async () => {
+  writeFileSync(join(dir, 'secret'), 'secreto-sintetico\n');
+  env('FAB_GITHUB_CLIENT_ID', 'id'); env('FAB_GITHUB_CLIENT_SECRET_FILE', join(dir, 'secret'));
+  const vacio = join(dir, 'vacio'); Bun.spawnSync(['mkdir', '-m', '700', vacio]);
+  expect((await quiet(() => webMain(args(join(dir, 'd.sock')), vacio))).result).toBe(1);
+  expect(existsSync(join(vacio, 'fabrica.db'))).toBe(false); // el control abre en solo lectura: no crea nada
+  bootstrapped();
+  writeFileSync(join(dir, 'secret'), '\n');
+  const g = await quiet(() => webMain(args(join(dir, 'e.sock')), state));
+  expect(g.result).toBe(1); expect(g.err).toContain('FAB_GITHUB_CLIENT_SECRET_FILE');
+  writeFileSync(join(dir, 'secret'), 'secreto-sintetico\n'); env('FAB_SERVICE_SECRET_FILE', join(dir, 'no-existe'));
+  const f = await quiet(() => webMain(args(join(dir, 'f.sock')), state));
+  expect(f.result).toBe(1); expect(f.err).toContain('FAB_SERVICE_SECRET_FILE'); expect(f.err).not.toContain('FABRICA_HOME');
+});
+
 test('con credenciales y bootstrap arranca, sirve /login y /healthz por el socket y se detiene con SIGTERM', async () => {
   const store = new Store(join(state, 'fabrica.db'));
   bootstrapOwner(store, { issuer: 'github', subject: '1', displayName: 'Dueña', operator: 'op' }); store.close();
