@@ -2073,7 +2073,7 @@
         "Equipo y usuarios",
         "Spending: por usuario"
       ],
-      "pr": null,
+      "pr": "#98",
       "note": "Usuarios, roles, login GitHub (OAuth+PKCE), sesiones web y CLI, claves fabu_ por usuario, política por rol y vía en las 37 acciones, vistas por rol, CLI remota con pareo, recuperación restringida con owner designado y diario de identidad. Subtareas T119a–e, cada una verificada por Fable (dos pasadas donde hubo altos). Decisiones D-1..D-4, D-R1, D-R2 y las de cada verificación en A.",
       "followups": [
         "fab user bootstrap y fab user recover por consola, y GET /equipo: bloquean el piloto en VM (T120)",
