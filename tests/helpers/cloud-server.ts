@@ -22,7 +22,7 @@ export interface CloudServer {
   stop(): void;
 }
 
-export function cloudServer(options: { write?: boolean } = {}): CloudServer {
+export function cloudServer(options: { write?: boolean; clock?: () => Date } = {}): CloudServer {
   const c = cloud();
   const socket = join(c.dir, 'fab.sock');
   const gh = startFakeGithub(`${ORIGIN}/auth/callback`);
@@ -33,7 +33,7 @@ export function cloudServer(options: { write?: boolean } = {}): CloudServer {
   const act = c.store.listActivities({ changeId: change.id })[0]!;
   c.store.db.query("UPDATE activities SET review_comment = ? WHERE id = ?").run(CANARIO_ACTIVITY, act.id);
   c.store.event(ws.id, 'info', CANARIO_EVENT, change.id);
-  const server = startWeb(c.stateDir, 0, { server: true, write: options.write ?? true, publicOrigin: ORIGIN, socketPath: socket, github, secret: SECRET });
+  const server = startWeb(c.stateDir, 0, { server: true, write: options.write ?? true, publicOrigin: ORIGIN, socketPath: socket, github, secret: SECRET, clock: options.clock });
   const call: CloudServer['call'] = (path, { as, ip, headers, ...init } = {}) => fetch(`http://localhost${path}`, {
     redirect: 'manual', unix: socket, ...init,
     headers: { host: HOST, 'x-fab-client-ip': ip ?? '203.0.113.9', ...(as ? { cookie: `${SESSION_COOKIE}=${c.tokens.web[as]}` } : {}), ...headers },

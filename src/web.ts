@@ -429,6 +429,8 @@ export function startWeb(stateDir: string, port = 4310, options: {
     // Verifica la base antes de escuchar y vuelve a abrirla en cada petición.
     server = Bun.serve({
     ...serveOptions,
+    // Una excepción no capturada sale con las cabeceras de seguridad y sin detalle (T119e-H9).
+    ...(options.server ? { error: () => new Response('Error interno', { status: 500, headers: { ...SERVER_SECURITY_HEADERS, 'Content-Type': 'text/plain; charset=utf-8' } }) } : {}),
     async fetch(req) {
       const respHeaders = options.server ? SERVER_SECURITY_HEADERS : HEADERS;
       const respond = (body: string, status = 200, type = 'text/html; charset=utf-8') => new Response(req.method === 'HEAD' ? null : body, { status, headers: { ...respHeaders, ...(auth?.sessionCsrf(req) ? { 'Referrer-Policy': 'same-origin' } : {}), 'Content-Type': type, ...(status === 405 ? { Allow: 'GET, HEAD' } : {}) } });

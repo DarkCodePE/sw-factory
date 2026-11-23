@@ -267,3 +267,16 @@ test('el enlace de un solo uso local (/auth?token=) no existe en servidor', asyn
   expect((await s.call('/auth?token=cualquiera')).status).toBe(401);
   expect((await s.call('/auth?token=cualquiera', { as: 'owner' })).status).toBe(404);
 });
+
+test('una excepción no capturada sale con las cabeceras de seguridad y sin el mensaje (T119e-H9)', async () => {
+  s.stop();
+  let roto = false;
+  s = cloudServer({ clock: () => { if (roto) throw new Error('detalle-interno-secreto'); return new Date(); } });
+  roto = true;
+  const r = await s.call('/auth/start', { method: 'POST', headers: { origin: ORIGIN, 'content-type': 'application/x-www-form-urlencoded' }, body: 'x' });
+  expect(r.status).toBe(500);
+  expect(r.headers.get('x-frame-options')).toBe('DENY');
+  expect(r.headers.get('strict-transport-security')).toContain('max-age=31536000');
+  expect(r.headers.get('content-security-policy')).toContain("frame-ancestors 'none'");
+  expect(await r.text()).not.toContain('detalle-interno-secreto');
+});
