@@ -1,11 +1,13 @@
 // Jueces en la web (T65): pestaña de /metricas y bloque en el detalle de la activity. Los jueces son un aviso (D-G):
 // nada de aquí cambia estados ni bloquea. Lo que escribe va por ACTIONS (web-actions.ts) con --write, sesión y CSRF.
 import type { Store } from './store.ts';
-import { resolveProfile } from './profile.ts';
+import { SCORER_SCOPES, resolveProfile, saveProfile, type ScorerDef } from './profile.ts';
 import { redact } from './manifest.ts';
-import { passByDay, previewBackfill, scoreRows, scorersFor, scorerSummary, type ScoreFilter } from './scorers.ts';
+import { passByDay, previewBackfill, scoreRows, scorerRoles, scorersFor, scorerSummary, type ScoreFilter } from './scorers.ts';
 import type { Activity } from './store.ts';
 import { card } from './web-cards.ts';
+import { StoreError } from './store.ts';
+import { CONFINABLE_AGENTS } from './sandbox/confine.ts';
 
 const esc = (v: unknown) => redact(String(v ?? '')).replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[c]!);
 const enc = encodeURIComponent;
@@ -67,15 +69,81 @@ function scorerDays(r: RangeSel, rows: { day: string }[]): string[] {
   return days;
 }
 
-/** Una tarjeta por juez: tasa de aprobado por día. Sin puntuaciones hechas es «No medido», nunca 0 %. */
-function scorerCards(summary: ReturnType<typeof scorerSummary>, byDay: ReturnType<typeof passByDay>, r: RangeSel): string {
-  const days = scorerDays(r, byDay);
-  return `<div class="cards">${[...new Set(summary.map(s => s.scorer))].map(name => {
+/** Rol de activity que juzga un ámbito (mismos nombres que los runs de Productividad). */
+const roleOfScope = (scope: string) => scope === 'investigate' ? 'investigation' : scope === 'implement' || scope === 'change' ? 'implementation' : `validador:${scope}`;
+const MAX_CHIPS = 3;
+const chips = (roles: string[]) => [...roles.slice(0, MAX_CHIPS).map(r => `<span class="chip">${esc(r)}</span>`), ...(roles.length > MAX_CHIPS ? [`<span class="chip">y ${roles.length - MAX_CHIPS} más</span>`] : [])].join('');
+
+/** Jueces definidos en los perfiles de los workstreams a la vista; un perfil ilegible se omite (la tarjeta sale por sus puntuaciones). */
+function definedScorers(store: Store, stateDir: string, wsSlug?: string): Map<string, ScorerDef> {
+  const out = new Map<string, ScorerDef>();
+  for (const w of store.listWorkstreams().filter(w => wsSlug ? w.slug === wsSlug || w.id === wsSlug : w.state !== 'archived')) {
+    try { for (const [n, d] of Object.entries(resolveProfile(stateDir, w.profile).profile.scorers ?? {})) if (!out.has(n)) out.set(n, d); } catch { /* perfil no disponible */ }
+  }
+  return out;
+}
+
+/** Tarjeta «Añadir juez» (solo con sesión de escritura): crea un perfil nuevo con el juez; asignarlo sigue siendo del dueño (D-H). */
+function addScorerCard(store: Store, r: RangeSel, csrf: string): string {
+  const wss = store.listWorkstreams().filter(w => w.state !== 'archived');
+  if (!wss.length) return '';
+  return `<section class="card add" aria-label="Añadir juez"><details><summary>+ Añadir juez</summary>
+<form action="/scorers/nuevo" method="post" class="web-action"><input type="hidden" name="csrf" value="${esc(csrf)}">
+<label>Workstream<select name="ws">${wss.map(w => `<option value="${esc(w.slug)}"${r.ws === w.slug || r.ws === w.id ? ' selected' : ''}>${esc(w.slug)}</option>`).join('')}</select></label>
+<label>Nombre<input name="name" required maxlength="41" pattern="[a-z0-9][a-z0-9-]{0,40}" placeholder="claridad"></label>
+<label>Ámbito<select name="scope">${SCORER_SCOPES.map(s => `<option>${s}</option>`).join('')}</select></label>
+<label>Rúbrica<textarea name="rubric" rows="4" required maxlength="4000"></textarea></label>
+<label>Clases (una por línea, «etiqueta: puntuación de 0 a 1»)<textarea name="classes" rows="3" required maxlength="500">ok: 1\nmal: 0</textarea></label>
+<label>Adaptador del juez<select name="harness"><option value="">Hereda el del perfil</option>${CONFINABLE_AGENTS.map(a => `<option>${esc(a)}</option>`).join('')}</select></label>
+<label>Aprobado desde<input name="passing" type="number" min="0" max="1" step="any" value="0.5" required></label>
+<label>Muestreo (0 a 1)<input name="sampling" type="number" min="0" max="1" step="any" value="0.1" required></label>
+<button>Guardar como perfil nuevo</button><p class="muted">Crea una copia del perfil con el juez; para usarlo, asígnala en Perfiles. Cada juez nuevo parte del perfil vigente: para tener varios en un perfil, asigna la copia antes de añadir el siguiente. Es un aviso: no bloquea nada.</p></form></details></section>`;
+}
+
+/** Campos del formulario «Añadir juez» → definición. Un dato inválido es un StoreError invalid_input con texto fijo (sin eco de lo escrito). */
+export function scorerFromForm(raw: Record<string, string | undefined>): { ws: string; name: string; def: ScorerDef } {
+  const bad = (m: string) => new StoreError('invalid_input', m);
+  const name = raw.name ?? '', scope = raw.scope ?? '', rubric = (raw.rubric ?? '').replace(/\r\n?/g, '\n').trim();
+  if (!/^[a-z0-9][a-z0-9-]{0,40}$/.test(name)) throw bad('El nombre del juez debe ser minúsculas, números y guiones (máximo 41).');
+  if (!(SCORER_SCOPES as readonly string[]).includes(scope)) throw bad('Elige un ámbito válido.');
+  if (!rubric) throw bad('La rúbrica no puede estar vacía.');
+  const classes = (raw.classes ?? '').split(/\r?\n/).map(l => l.trim()).filter(Boolean).map(l => { const m = /^([a-z0-9_-]{1,24})\s*[:=]\s*(\d*\.?\d+)$/.exec(l); if (!m) throw bad('Cada clase se escribe «etiqueta: puntuación».'); return { label: m[1]!, score: Number(m[2]) }; });
+  const unit = (v?: string) => { const n = Number(v); if (!v?.trim() || !Number.isFinite(n) || n < 0 || n > 1) throw bad('Aprobado y muestreo son números de 0 a 1.'); return n; };
+  const harness = raw.harness ?? '';
+  if (harness && !CONFINABLE_AGENTS.includes(harness)) throw bad('Elige un adaptador confinable.');
+  return { ws: raw.ws ?? '', name, def: { scope: scope as ScorerDef['scope'], rubric, classes, passing: unit(raw.passing), sampling: unit(raw.sampling), ...(harness && { harness }) } };
+}
+
+/** Guarda una copia del perfil vigente del workstream con el juez nuevo y devuelve su digest. No la asigna (D-H) y deja un evento con el actor. */
+export function createScorer(store: Store, stateDir: string, input: ReturnType<typeof scorerFromForm>): { slug: string; digest: string; created: boolean } {
+  const ws = store.getWorkstream(input.ws);
+  if (ws.state === 'archived') throw new StoreError('conflict', 'el workstream está archivado');
+  const profile = structuredClone(resolveProfile(stateDir, ws.profile).profile);
+  if (profile.scorers?.[input.name]) throw new StoreError('conflict', 'ya existe un juez con ese nombre');
+  profile.schemaVersion = 2; // los jueces solo existen en perfiles v2
+  profile.scorers = { ...profile.scorers, [input.name]: input.def };
+  let saved: ReturnType<typeof saveProfile>;
+  try { saved = saveProfile(stateDir, profile); }
+  catch (e) { throw new StoreError('invalid_input', redact((e as Error).message).slice(0, 300)); }
+  // Reenviar el mismo formulario reutiliza el perfil ya guardado: no hay nada creado y no se emite un segundo evento.
+  if (saved.created) store.event(ws.id, 'info', `juez creado: ${input.name} (ámbito ${input.def.scope}) en el perfil ${saved.digest.slice(0, 8)}, sin asignar`);
+  return { slug: ws.slug, digest: saved.digest, created: saved.created };
+}
+
+/** Una tarjeta por juez (definido o con puntuaciones): tasa de aprobado por día. Sin puntuaciones hechas es «No medido», nunca 0 %. */
+function scorerCards(store: Store, stateDir: string, summary: ReturnType<typeof scorerSummary>, byDay: ReturnType<typeof passByDay>, f: ScoreFilter, r: RangeSel, csrf?: string): string {
+  const days = scorerDays(r, byDay), defined = definedScorers(store, stateDir, r.ws), scored = scorerRoles(store.db, f);
+  const names = [...new Set([...defined.keys(), ...summary.map(s => s.scorer)])].sort();
+  const cards = names.map(name => {
     const mine = summary.filter(s => s.scorer === name), done = mine.reduce((a, s) => a + s.done, 0), passed = mine.reduce((a, s) => a + s.passed, 0);
     const rate = days.map(d => { const x = byDay.find(y => y.day === d && y.scorer === name); return x && x.done ? x.passed / x.done * 100 : null; });
+    const scope = defined.get(name)?.scope ?? mine[0]?.scope;
+    const roles = [...new Set([...(scope ? [roleOfScope(scope)] : []), ...(scored.get(name) ?? [])])];
     return card({ id: `juez-${name}`, title: name, help: 'Porcentaje de ejecuciones aprobadas por el juez cada día, sobre las puntuaciones hechas con veredicto. Un día sin puntuaciones es un hueco. Es un aviso: no bloquea nada.',
-      figure: done ? `${Math.round(passed / done * 100)} %` : 'No medido', sub: pct(passed, done), days, series: [{ label: 'Aprobadas', values: rate }], fmt: n => `${Math.round(n)} %`, tableCaption: `Tasa de aprobado por día · ${name}` });
-  }).join('')}</div>`;
+      figure: done ? `${Math.round(passed / done * 100)} %` : 'No medido', sub: pct(passed, done), days, series: [{ label: 'Aprobadas', values: rate }], fmt: n => `${Math.round(n)} %`, tableCaption: `Tasa de aprobado por día · ${name}`, footer: chips(roles) });
+  });
+  const add = csrf ? addScorerCard(store, r, csrf) : '';
+  return cards.length || add ? `<div class="cards">${cards.join('')}${add}</div>${cards.length ? '' : '<p class="empty">No hay jueces definidos en los perfiles de estos workstreams.</p>'}` : '<p class="empty">No hay jueces definidos en los perfiles de estos workstreams.</p>';
 }
 
 /** Cuerpo de la pestaña «Jueces» de /metricas. Solo lectura sobre el Store `readonly`: sin tabla `scores`, no la crea. */
@@ -90,7 +158,7 @@ export function scorersPanel(store: Store, stateDir: string, url: URL, r: RangeS
     `<a href="?tab=jueces&amp;scorer=${enc(s.scorer)}&amp;${qsOf(r)}">${esc(s.scorer)}</a> <small>${esc(s.profileDigest.slice(0, 8))}</small>`, esc(s.scope), pct(s.passed, s.done), String(s.done), String(s.failed), String(s.pending),
     s.costUsd === null ? 'No medido' : `${usd(s.costUsd)}${s.unmeasured ? ` (${s.unmeasured} sin coste medido)` : ''}`])) : `<p class="empty">${NO_SCORES}</p>`;
   const days = passByDay(store.db, f);
-  const cards = summary.length ? scorerCards(summary, days, r) : '';
+  const cards = scorerCards(store, stateDir, summary, days, f, r, csrf);
   const trend = days.length ? table('Tasa de aprobado por día', ['Día', 'Juez', 'Aprobadas', 'Hechas'], days.map(d => [esc(d.day), esc(d.scorer), pct(d.passed, d.done), String(d.done)])) : '';
   const detail = scorer && summary.length ? `<section aria-labelledby="detalle"><h2 id="detalle">Detalle · ${esc(scorer)}</h2>${[...new Set(summary.map(s => s.profileDigest))].map(d => `<h3>Perfil <code>${esc(d.slice(0, 8))}</code></h3>${definition(stateDir, d, scorer)}`).join('')}<p><a href="?tab=jueces&amp;${qsOf(r)}">Ver todos los jueces</a></p></section>` : '';
   const history = rows.length ? table(`Historial (${rows.length}${rows.length === 200 ? ', los más recientes' : ''})`, HISTORY_HEAD, historyRows(rows)) : `<p class="empty">${NO_SCORES}</p>`;

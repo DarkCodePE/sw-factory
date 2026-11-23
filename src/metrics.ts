@@ -1,6 +1,9 @@
 // Agregados de lectura sobre una cohorte explícita. null siempre significa desconocido.
 import type { Store } from './store.ts';
 import { activityCosts, activityInference, activityMetadata, changeCost } from './evidence.ts';
+import { usdToMicro, type CostAttempt } from './attempt-cost.ts';
+import { tokenCount } from './inference-usage.ts';
+import { roleOf } from './profile.ts';
 export const METRICS_LIMIT = 1000;
 export type MetricsRange = '7' | '30' | '90' | 'all' | 'custom';
 export function distribution(values: number[]) {
@@ -14,6 +17,38 @@ function addCost(groups: Map<string, CostGroup>, name: string, value: number | n
   if (value === null) g.unknown++; else g.measured = (g.measured ?? 0) + value;
   g.total = g.unknown ? null : g.measured; groups.set(name, g);
 }
+type SpendAmounts = Record<'inferenceMicroUsd' | 'computeMicroUsd' | 'platformMicroUsd' | 'totalMicroUsd', number | null>;
+export type SpendAttempt = SpendAmounts & Pick<CostAttempt,
+  'changeId' | 'startedAt' | 'effectiveModel' | 'worker' | 'originActorId' | 'originSource' | 'prUrl' | 'attributed'
+> & { id: string | null };
+
+const SPEND_FIELDS = ['inferenceMicroUsd', 'computeMicroUsd', 'platformMicroUsd', 'totalMicroUsd'] as const;
+
+export function summarizeSpending(attempts: readonly SpendAttempt[]) {
+  const totals = SPEND_FIELDS.map(key => {
+    let measured = 0n, measuredCount = 0;
+    for (const attempt of attempts) {
+      const value = attempt[key];
+      if (value !== null) { measured += BigInt(value); measuredCount++; }
+    }
+    const known = measuredCount && measured <= BigInt(Number.MAX_SAFE_INTEGER) ? Number(measured) : null;
+    const unknown = attempts.length - measuredCount;
+    return { measured: known, unknown, total: unknown ? null : known };
+  });
+  return { inference: totals[0]!, compute: totals[1]!, platform: totals[2]!, total: totals[3]! };
+}
+
+function groupSpending(attempts: SpendAttempt[], key: (attempt: SpendAttempt) => string | null) {
+  const groups = new Map<string | null, SpendAttempt[]>();
+  for (const attempt of attempts) {
+    const name = key(attempt);
+    const group = groups.get(name);
+    if (group) group.push(attempt);
+    else groups.set(name, [attempt]);
+  }
+  return [...groups].map(([key, group]) => ({ key, name: key ?? 'Sin dato', ...summarizeSpending(group) }));
+}
+
 const counts = (values: string[]): [string, number][] => [...values.reduce((m, v) => m.set(v, (m.get(v) ?? 0) + 1), new Map<string, number>())].sort(([a], [b]) => a.localeCompare(b));
 const textField = (v: unknown) => typeof v === 'string' && v.trim() ? v : 'No medido';
 const DAY = /^\d{4}-\d{2}-\d{2}$/;
@@ -62,9 +97,23 @@ export function calculateMetrics(store: Store, stateDir: string, options: { ws?:
   }
 
   const cohort = store.metricsCohort(options.ws, since, until, METRICS_LIMIT);
+  const costAttempts = store.listCostAttempts(null, {
+    since, until, workstreamId: options.ws ? store.getWorkstream(options.ws).id : undefined,
+  });
+  const currentActivities = new Set(costAttempts.map(attempt => attempt.activityId));
+  const spendAttempts: SpendAttempt[] = costAttempts.map(attempt => ({
+    id: attempt.id, changeId: attempt.changeId, startedAt: attempt.startedAt, effectiveModel: attempt.effectiveModel,
+    attributed: attempt.attributed, worker: attempt.worker, originActorId: attempt.originActorId,
+    originSource: attempt.originSource, prUrl: attempt.prUrl,
+    inferenceMicroUsd: attempt.inferenceBasis === 'runner_declared' ? null : attempt.inferenceMicroUsd,
+    computeMicroUsd: attempt.computeMicroUsd, platformMicroUsd: attempt.platformMicroUsd, totalMicroUsd: attempt.totalMicroUsd,
+  }));
   const events = new Map(store.metricsEvents(cohort.changes.map(c => c.id), until).map(e => [e.changeId, e]));
   const values: number[][] = [[], [], [], []];
-  const kickoffPr: number[] = [], prMerge: number[] = [];
+  const kickoffPr: number[] = [], prMerge: number[] = [], kickoffMerge: number[] = [];
+  const prInteractions: Array<{ day: string; total: number }> = [];
+  // Runs de la cohorte; el rol es el de la activity (validador o tipo). T110 lo sustituirá por el rol atribuido al intento.
+  const runList: Array<{ day: string; role: string }> = [];
   const kinds: string[] = [], adapters = new Map<string, CostGroup>(), models = new Map<string, CostGroup>();
   const sources = new Map<string, CostGroup>(), actors = new Map<string, CostGroup>();
   const humans: Array<{ id: string; title: string; reviews: number; answers: number; retries: number; total: number }> = [];
@@ -83,7 +132,8 @@ export function calculateMetrics(store: Store, stateDir: string, options: { ws?:
     const prAt = e?.prOpenedAt ? Date.parse(e.prOpenedAt) : NaN;
     const mergeAt = e?.mergedAt ? Date.parse(e.mergedAt) : NaN;
     const createdMs = Date.parse(c.createdAt);
-    if (Number.isFinite(prAt) && prAt >= createdMs && prAt <= now) kickoffPr.push(prAt - createdMs);
+    if (Number.isFinite(prAt) && prAt >= createdMs && prAt <= now) { kickoffPr.push(prAt - createdMs); prInteractions.push({ day: new Date(prAt).toISOString().slice(0, 10), total: (e?.reviews ?? 0) + (e?.answers ?? 0) + (e?.retries ?? 0) }); }
+    if (Number.isFinite(prAt) && Number.isFinite(mergeAt) && mergeAt >= createdMs && mergeAt <= now) kickoffMerge.push(mergeAt - createdMs);
     if (Number.isFinite(prAt) && Number.isFinite(mergeAt) && mergeAt >= prAt && mergeAt <= now) prMerge.push(mergeAt - prAt);
 
     const reviews = e?.reviews ?? 0, answers = e?.answers ?? 0, retries = e?.retries ?? 0;
@@ -99,9 +149,24 @@ export function calculateMetrics(store: Store, stateDir: string, options: { ws?:
 
     for (const a of acts) {
       if (Date.parse(a.createdAt) > now) continue;
-      kinds.push(a.validator ? `validador:${a.validator}` : a.kind);
+      const role = a.validator ? `validador:${a.validator}` : a.kind;
+      kinds.push(role);
+      runList.push({ day: a.createdAt.slice(0, 10), role });
       let meta: Record<string, unknown> | null = null;
       try { meta = activityMetadata(stateDir, a); } catch { /* Fallo cerrado del lector compartido. */ }
+      if (roleOf(a) && a.createdAt <= until && (!since || a.createdAt >= since)) {
+        const legacyCount = tokenCount(meta?.costLegacyCount);
+        if (legacyCount !== undefined || !currentActivities.has(a.id) && (meta || a.retryCount > 0 || store.isTerminal(a.status))) {
+          const legacy = activityInference(a, meta).slice(0, legacyCount);
+          const historicalCosts = Array.isArray(meta?.attemptCosts) ? meta.attemptCosts : [];
+          for (const [index, attempt] of legacy.entries()) spendAttempts.push({
+            id: null, changeId: a.changeId, startedAt: a.createdAt, effectiveModel: attempt.usage?.effectiveModel ?? null,
+            attributed: false, worker: null, originActorId: null, originSource: null, prUrl: null,
+            inferenceMicroUsd: attempt.remoteDeclared ? null : usdToMicro(index in historicalCosts ? historicalCosts[index] : attempt.costUsd),
+            computeMicroUsd: null, platformMicroUsd: null, totalMicroUsd: null,
+          });
+        }
+      }
       if (Array.isArray(meta?.inferenceAttempts)) {
         for (const attempt of activityInference(a, meta)) {
           addCost(adapters, textField(attempt.adapter), attempt.costUsd);
@@ -185,17 +250,42 @@ export function calculateMetrics(store: Store, stateDir: string, options: { ws?:
     });
   }
 
+  // La revisión humana del PR no se mide (hace falta la API SDLC de solo lectura): sus dos tramos salen sin muestras, nunca 0.
   const prCycles = [
+    { name: 'Kickoff → merge', ...distribution(kickoffMerge) },
     { name: 'Kickoff → PR', ...distribution(kickoffPr) },
     { name: 'PR → primera revisión humana', ...distribution([]) },
+    { name: 'Primera revisión humana → merge', ...distribution([]) },
     { name: 'PR → merge', ...distribution(prMerge) },
   ];
 
+  // Interacciones humanas por PR: media sobre los changes con PR; la serie agrupa por el día en que se abrió el PR.
+  const prTotal = prInteractions.reduce((s, x) => s + x.total, 0);
+  const interactionsPerPr = { mean: prInteractions.length ? prTotal / prInteractions.length : null, prs: prInteractions.length,
+    daily: days.map(day => { const xs = prInteractions.filter(x => x.day === day); return xs.length ? xs.reduce((s, x) => s + x.total, 0) / xs.length : null; }) };
+
+  // Runs por día dentro de las fechas de las series; un día sin runs es un hueco (null), igual que el resto de series.
+  const inWindow = runList.filter(r => days.includes(r.day));
+  const perDay = (pick: (r: typeof runList[number]) => boolean) => days.map(day => { const n = inWindow.filter(r => r.day === day && pick(r)).length; return n || null; });
+  const runRoles = [...inWindow.reduce((m, r) => m.set(r.role, (m.get(r.role) ?? 0) + 1), new Map<string, number>())]
+    .sort(([a, x], [b, y]) => y - x || a.localeCompare(b)).map(([name, total]) => ({ name, total, daily: perDay(r => r.role === name) }));
+  // Raíz frente a subagentes queda fuera hasta T110: parent_activity_id encadena pasos del flujo, no subagentes (verif T112-H1).
+  const runs = { total: inWindow.length, roles: runRoles };
+
   return { count: cohort.changes.length, omitted: cohort.total - cohort.changes.length, since, until,
     cycles: ['Primera activity', 'Primera revisión pedida', 'Primera decisión humana', 'Primer estado terminal registrado'].map((name, i) => ({ name, ...distribution(values[i]!) })),
-    prCycles,
+    prCycles, interactionsPerPr, runs,
     humans, states: counts(cohort.changes.map(c => c.status)), kinds: counts(kinds),
     daily: { days, changes: dailyChanges, costs: dailyCosts, interventions: dailyInterventions, prs: dailyPrs },
+    spending: {
+      attempts: spendAttempts, ...summarizeSpending(spendAttempts),
+      by: {
+        worker: groupSpending(spendAttempts, a => a.worker),
+        user: groupSpending(spendAttempts, a => a.originActorId),
+        source: groupSpending(spendAttempts, a => a.originSource),
+        pr: groupSpending(spendAttempts, a => a.attributed ? a.prUrl ?? 'Sin PR' : null),
+      },
+    },
     cost: { total: unknownChanges ? null : measured, measured, unknownChanges,
       top: measuredCosts.sort((a, b) => b.cost - a.cost || a.id.localeCompare(b.id)).slice(0, 10),
       adapters: [...adapters.values()], models: [...models.values()],

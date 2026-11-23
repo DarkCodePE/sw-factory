@@ -1,5 +1,5 @@
 {
-  "updated": "2026-11-21",
+  "updated": "2026-11-22",
   "context": "Integración superagent → fab. Fase 0: PR #55 (feat/fase0-endurecer). Fase 1: PR #56 (feat/fase1-observe). Ambos apilados sobre PR #49 (feat/t2-corpus). Desde T46: web de fab y réplica de las capacidades de Warp Factories (docs/research/warp-platform/faltantes-fable.md), con fases en el campo phase.",
   "decisions": [
     {
@@ -85,6 +85,12 @@
       "topic": "fab corre en local y en nube; métricas y créditos como Warp",
       "date": "2026-11-21",
       "decision": "Sustituye a D-A. fab corre igual en local (127.0.0.1, un usuario) y en una máquina en la nube del dueño (modo servidor, varios usuarios). Las métricas replican las de Warp completas, con el coste en tres componentes (inferencia, cómputo y plataforma), gasto por worker, por modelo y por usuario, y un sistema de créditos con saldo. Se mantienen D-F (la web nunca da más poder que la CLI) y D-K (secretos solo por nombre). Pendiente del dueño: método de login en nube (T119), tarifas por defecto (T109, T115) y si las recargas son solo manuales o con pago (T117)."
+    },
+    {
+      "id": "D15",
+      "topic": "Decisiones del dueño de la etapa 2",
+      "date": "2026-11-22",
+      "decision": "Todas en su opción A (página techdocs factory/16-etapa2-decisiones). Nube: D-1 member con autoridad compartida sobre el texto que llega al prompt; D-2 viewer sin claves de API; D-3 fusionar solo por consola SSH; D-4 socket Unix con systemd y mTLS solo con Docker; login con GitHub; prueba en VM desechable del proveedor habitual (falta nombrarlo; nada se aprovisiona sin autorización). Créditos: C1–C6 en A (1 crédito = 0,01 USD, recargas manuales del owner, deuda si un intento supera el saldo, tope blando, reanuda el owner). Medición: T108-H3 «No medido» para Codex y AGY; T109-H1 el pool para antes de reclamar con cost-rates.json inválido, y su residuo N1 queda anotado; T112-H1 productividad parcial."
     }
   ],
   "tasks": [
@@ -1853,14 +1859,14 @@
       "acceptance": "Fixtures reales de cada adaptador con modelo y tokens. Un modelo sin precio da «No medido». Migración sin pérdida de las activities viejas. Mutación: quitar el parseo de tokens rompe un test.",
       "estimate": "2-3 d",
       "risk": "medio",
-      "status": "pending",
+      "status": "done",
       "depends_on": [
         "T54"
       ],
       "covers": [
         "Spending: gasto por modelo"
       ],
-      "pr": null
+      "pr": "#95"
     },
     {
       "id": "T109",
@@ -1872,7 +1878,7 @@
       "acceptance": "Los tres componentes suman el total. Cambiar una tarifa no altera los intentos ya cerrados. El runner que no declara tarifa sale «No medido». Tests de redondeo en céntimos.",
       "estimate": "2 d",
       "risk": "medio",
-      "status": "pending",
+      "status": "done",
       "depends_on": [
         "T108",
         "T74"
@@ -1880,7 +1886,14 @@
       "covers": [
         "Spending: Cost per PR con desglose Compute/Platform/Inference"
       ],
-      "pr": null
+      "pr": "#96",
+      "note": "Tres componentes por intento en micro-USD, tarifas versionadas con hash (versión#hash12). Dos pasadas de Fable.",
+      "followups": [
+        "N1: un cost-rates.json que se rompe entre el reclamo y el lanzamiento gasta un reintento por worker (decisión del dueño: A, anotado; B sería reencolar sin gastar)",
+        "H9: prueba corta con claude real y confinado",
+        "H5: el runner decide cuándo envía la marca de fin; T116 debe tenerlo en cuenta",
+        "I-H1: la pestaña Gasto suma como medido lo declarado por runners SSH; T113 pasa a leer spending y retira cost"
+      ]
     },
     {
       "id": "T110",
@@ -1892,14 +1905,19 @@
       "acceptance": "Agrupar por cualquiera de las cuatro dimensiones suma el total. Un change sin PR cuenta en «sin PR». Los datos viejos salen «sin dato», sin inventar.",
       "estimate": "1-2 d",
       "risk": "bajo",
-      "status": "pending",
+      "status": "done",
       "depends_on": [
         "T108"
       ],
       "covers": [
         "Spending: por fuente, por usuario, por worker"
       ],
-      "pr": null
+      "pr": "#96",
+      "note": "Atribución por worker, usuario, fuente y PR. La fuente webhook se quitó: nada la asignaba.",
+      "followups": [
+        "T119: pasar el usuario de sesión por signalOrigin (hoy la web usa el usuario del sistema; I-H3)",
+        "T113: pintar spending, null como «No medido» y escapar el actor (T109-H6)"
+      ]
     },
     {
       "id": "T111",
@@ -1911,12 +1929,12 @@
       "acceptance": "Las tres pestañas con el mismo rango y workstream. Contraste AA en claro y oscuro. Con cero datos, «No medido», sin gráfico falso. E2E con captura de cada pestaña.",
       "estimate": "2-3 d",
       "risk": "bajo",
-      "status": "pending",
+      "status": "done",
       "depends_on": [],
       "covers": [
         "Dashboard: pestañas y tarjetas"
       ],
-      "pr": null
+      "pr": "#95"
     },
     {
       "id": "T112",
@@ -1928,7 +1946,7 @@
       "acceptance": "Cada tramo con mediana, p90 y muestras. Los runs suman el total. Tests con datos sembrados de fechas conocidas.",
       "estimate": "2 d",
       "risk": "bajo",
-      "status": "pending",
+      "status": "partial",
       "depends_on": [
         "T111",
         "T110"
@@ -1936,7 +1954,11 @@
       "covers": [
         "Productivity: tiempo de ciclo, interacciones por PR, total runs por worker"
       ],
-      "pr": null
+      "pr": "#96",
+      "note": "Parcial (decisión T112-H1 A): runs por rol, interacciones por PR y ciclo kickoff→merge. Falta la partición raíz/subagentes y el rol por intento, que T110 no trae.",
+      "followups": [
+        "Partición raíz/subagentes y rol por intento (I-H2: los comentarios que dicen que vuelven con T110 están obsoletos)"
+      ]
     },
     {
       "id": "T113",
@@ -1969,7 +1991,7 @@
       "acceptance": "Sin --write, la tarjeta de crear no aparece. Al crear un juez, queda evento con actor. Tests de la rejilla vacía y con datos.",
       "estimate": "1-2 d",
       "risk": "bajo",
-      "status": "pending",
+      "status": "done",
       "depends_on": [
         "T111",
         "T65"
@@ -1978,7 +2000,8 @@
         "Scorers en el dashboard",
         "Setup"
       ],
-      "pr": null
+      "pr": "#96",
+      "note": "Jueces y puesta en marcha en la pestaña de métricas."
     },
     {
       "id": "T115",
@@ -2048,12 +2071,12 @@
       "acceptance": "Sin TLS, el modo servidor no arranca. Un Host u Origin ajeno da 403. El modo local pasa toda su suite sin cambios. Prueba de despliegue en una VM desechable con captura.",
       "estimate": "3 d",
       "risk": "alto",
-      "status": "pending",
+      "status": "done",
       "depends_on": [],
       "covers": [
         "Plataforma en nube"
       ],
-      "pr": null
+      "pr": "#95"
     },
     {
       "id": "T119",
