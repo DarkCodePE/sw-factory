@@ -43,7 +43,7 @@ test('inventario: cada acción de ACTIONS y los dos formularios de perfiles tien
   const registered = Object.keys(ACTIONS);
   expect(NAMES.filter(n => !registered.includes(n)).sort()).toEqual(['perfiles/asignar', 'perfiles/guardar']);
   expect(registered.filter(n => !NAMES.includes(n))).toEqual([]);
-  expect(registered.length).toBe(37);
+  expect(registered.length).toBe(38);
 });
 
 // Las claves personales (`api-keys/*`) las sirve `/cuenta/claves` (T119b, con su test por rol); aquí la tabla local no se despacha.

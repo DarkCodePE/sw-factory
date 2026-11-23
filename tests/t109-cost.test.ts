@@ -67,19 +67,20 @@ test('una base anterior se lee sin escribir y aplica el registro de esquema una 
   const path = join(dir, 'fab.db');
   try {
     const first = new Store(path);
-    first.db.exec(`DROP TABLE cost_attempts; DROP TABLE schema_migrations; DROP INDEX idx_events_pr_opened;
+    first.db.exec(`DROP TABLE cost_attempts; DELETE FROM schema_migrations WHERE id IN ('t109-cost-attempts','t110-cost-attribution'); DROP INDEX idx_events_pr_opened;
       ALTER TABLE changes DROP COLUMN origin_source; ALTER TABLE changes DROP COLUMN origin_actor_id;
       ALTER TABLE signals DROP COLUMN origin_actor_id; `);
     first.close();
     const reader = new Store(path, { readonly: true });
     try {
       expect(reader.listCostAttempts(null)).toEqual([]);
-      expect(reader.db.query("SELECT name FROM sqlite_master WHERE name = 'schema_migrations'").get()).toBeNull();
+      expect(reader.db.query("SELECT id FROM schema_migrations WHERE id IN ('t109-cost-attempts','t110-cost-attribution') ORDER BY id").all()).toEqual([]);
+      expect(reader.db.query("SELECT name FROM sqlite_master WHERE name = 'cost_attempts'").get()).toBeNull();
     } finally { reader.close(); }
     for (let opened = 0; opened < 2; opened++) {
       const writer = new Store(path);
       try {
-        expect(writer.db.query('SELECT id FROM schema_migrations').all()).toEqual([{ id: 't109-cost-attempts' }, { id: 't110-cost-attribution' }]);
+        expect(writer.db.query("SELECT id FROM schema_migrations WHERE id IN ('t109-cost-attempts','t110-cost-attribution') ORDER BY id").all()).toEqual([{ id: 't109-cost-attempts' }, { id: 't110-cost-attribution' }]);
       } finally { writer.close(); }
     }
   } finally { rmSync(dir, { recursive: true, force: true }); }
