@@ -40,6 +40,24 @@ test('con credenciales pero sin bootstrap del primer owner el servidor no arranc
   expect(result).toBe(1); expect(err).toContain('bootstrap'); expect(err).not.toContain('secreto-sintetico'); expect(existsSync(socket)).toBe(false);
 });
 
+function bootstrapped() {
+  const store = new Store(join(state, 'fabrica.db'));
+  bootstrapOwner(store, { issuer: 'github', subject: '1', displayName: 'Dueña', operator: 'op' }); store.close();
+}
+
+test('un secreto de servicio vacío o corto no arranca el servidor (T119e-H2): el CSRF sería calculable', async () => {
+  bootstrapped();
+  writeFileSync(join(dir, 'secret'), 'secreto-sintetico\n');
+  env('FAB_GITHUB_CLIENT_ID', 'id'); env('FAB_GITHUB_CLIENT_SECRET_FILE', join(dir, 'secret'));
+  for (const [i, contenido] of ['', '\n', 'x', 'a'.repeat(31)].entries()) {
+    writeFileSync(join(dir, 'servicio'), contenido); env('FAB_SERVICE_SECRET_FILE', join(dir, 'servicio'));
+    const socket = join(dir, `s${i}.sock`);
+    const { result, err } = await quiet(() => webMain(args(socket), state));
+    expect([contenido, result, err.includes('service-secret') || err.includes('FAB_SERVICE_SECRET_FILE')]).toEqual([contenido, 1, true]);
+    expect(existsSync(socket)).toBe(false);
+  }
+});
+
 test('con credenciales y bootstrap arranca, sirve /login y /healthz por el socket y se detiene con SIGTERM', async () => {
   const store = new Store(join(state, 'fabrica.db'));
   bootstrapOwner(store, { issuer: 'github', subject: '1', displayName: 'Dueña', operator: 'op' }); store.close();

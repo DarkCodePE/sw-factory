@@ -616,6 +616,12 @@ export async function webMain(args: string[], stateDir: string, resolve?: Parame
         console.error('fab web: el modo servidor requiere FAB_GITHUB_CLIENT_ID y el secreto de la aplicación en FAB_GITHUB_CLIENT_SECRET_FILE (o la credencial github-client-secret).');
         return 1;
       }
+      // Un secreto de servicio vacío o corto haría calculable el CSRF y la firma del prelogin: se rechaza (T119e-H2).
+      const serviceSecret = serviceSecretFile ? readFileSync(serviceSecretFile, 'utf8').trim() : undefined;
+      if (serviceSecret !== undefined && serviceSecret.length < 32) {
+        console.error('fab web: el secreto de servicio (FAB_SERVICE_SECRET_FILE o la credencial service-secret) debe tener al menos 32 caracteres.');
+        return 1;
+      }
       const boot = new Store(join(stateDir, 'fabrica.db'));
       try { if (!isBootstrapped(boot)) { console.error('fab web: el modo servidor exige el bootstrap del primer owner por consola (§2).'); return 1; } } finally { boot.close(); }
       const server = startWeb(stateDir, port, {
@@ -625,7 +631,7 @@ export async function webMain(args: string[], stateDir: string, resolve?: Parame
         socketPath,
         tls,
         github: new GithubConnector({ clientId, clientSecret: () => readFileSync(clientSecretFile, 'utf8').trim(), publicOrigin }),
-        secret: serviceSecretFile ? readFileSync(serviceSecretFile, 'utf8').trim() : undefined,
+        secret: serviceSecret,
       });
 
       console.log(`fab web --server · ${publicOrigin} · transporte: ${socketPath ? `socket unix ${socketPath}` : 'mTLS'} · ${values.write ? 'escritura habilitada' : 'solo lectura'}`);
