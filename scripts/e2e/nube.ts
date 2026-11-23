@@ -43,6 +43,7 @@ async function ab(...args: string[]): Promise<string> {
 const abrir = async (url: string) => { await ab('open', url); await ab('wait', '--load', 'domcontentloaded'); };
 const click = async (sel: string) => { await ab('scrollintoview', sel); return ab('click', sel); };
 const texto = (sel = 'body') => ab('get', 'text', sel);
+mkdirSync(CAPTURAS, { recursive: true }); // antes de los flujos: `foto()` escribe desde el primero (T119e-H3)
 const foto = (n: string) => ab('screenshot', '--full', join(CAPTURAS, `${String(++captura).padStart(2, '0')}-${n}.png`));
 
 // ---- infraestructura -------------------------------------------------------------------------------------------
@@ -211,7 +212,6 @@ try {
 }
 
 const fallos = resultados.filter(r => !r.ok);
-mkdirSync(CAPTURAS, { recursive: true });
 writeFileSync(join(CAPTURAS, 'resumen.json'), JSON.stringify({ fecha: new Date().toISOString(), total: resultados.length, ok: resultados.length - fallos.length, fallos: fallos.length, resultados }, null, 2) + '\n');
 console.log(`\ne2e nube: ${resultados.length - fallos.length} ok · ${fallos.length} fallos · ${CAPTURAS}/resumen.json`);
 for (const r of fallos) console.log(`FALLO ${r.flujo}: ${r.detalle.split('\n').slice(0, 3).join(' | ')}`);
