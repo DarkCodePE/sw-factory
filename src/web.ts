@@ -196,7 +196,8 @@ class Notices {
 
 /** Quita del menú los enlaces que darían 403 (`visiblePaths`). */
 const filterNav = (html: string, allowed: (path: string) => boolean): string => {
-  const out = html.replace(/<nav aria-label="Navegación principal">.*?<\/nav>/s, nav => nav.replace(/<a href="(\/[^"]*)"[^>]*>.*?<\/a>/gs, (a, path) => allowed(path) ? a : ''));
+  // «Cuenta» (sesiones, claves, CLI) es de todos los roles y no pertenece al menú de negocio (T119e-H4).
+  const out = html.replace(/<nav aria-label="Navegación principal">.*?<\/nav>/s, nav => nav.replace(/<a href="(\/[^"]*)"[^>]*>.*?<\/a>/gs, (a, path) => allowed(path) ? a : '').replace('</nav>', `<a href="/cuenta">Cuenta</a></nav>`));
   // La barra de workstreams enlaza a /changes?ws=…: sin acceso a /changes (viewer) no se ofrece.
   return allowed('/changes') ? out : out.replace(/<nav aria-label="Workstreams" class="ws-nav">.*?<\/nav>/s, '');
 };

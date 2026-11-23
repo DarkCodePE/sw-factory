@@ -67,6 +67,13 @@ test('menú filtrado: el viewer no ve enlaces a lo que daría 403, y el owner ve
   expect(nav(await (await s.call('/', { as: 'member' })).text())).not.toContain('href="/config"');
 });
 
+test('la barra lleva el enlace Cuenta para todos los roles (T119e-H4)', async () => {
+  for (const role of ['owner', 'admin', 'member', 'viewer'] as const) {
+    const t = await (await s.call(role === 'viewer' ? '/workstreams' : '/', { as: role })).text();
+    expect([role, /<nav aria-label="Navegación principal">.*href="\/cuenta".*<\/nav>/s.test(t)]).toEqual([role, true]);
+  }
+});
+
 test('/config: el admin no ve credenciales del host ni la ruta; el owner ve los indicadores', async () => {
   process.env.JIRA_HOSTNAME = 'j.invalid';
   try {
