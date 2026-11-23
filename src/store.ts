@@ -1,7 +1,7 @@
 // SQLite-backed store for workstreams, signals, changes, activities and events.
 // Every lifecycle transition goes through a compare-and-set UPDATE so concurrent workers
 // cannot double-claim or overwrite each other's results.
-import { DEFAULT_DIGEST, ROLES, isProfileDigest, resolveProfile, resolveRole, profileRunnerNames, roleOf, roleRunner, type Profile } from './profile.ts';
+import { DEFAULT_DIGEST, ROLES, isProfileDigest, resolveProfile, resolveRole, profileRunnerNames, roleOf, roleRunner, type Profile, type Role } from './profile.ts';
 import { isRunnerName } from './runners/name.ts';
 import { LIMITS as RUNNER_LIMITS } from './runners/protocol.ts';
 import { AGENT_NAMES } from './agents.ts';
@@ -44,6 +44,8 @@ import {
 import { DEFAULT_PROTECTED_PATHS, validateProtectedPatterns, type GateSnapshot } from './validators/integrity.ts';
 import { verifierArgv } from './agent/mission-evidence.ts';
 import { parseVerdict } from './validators/verdict.ts';
+import { completeCost, computeMicroUsd, usdToMicro, type CostAttempt, type CostAttemptStart, type CostRate } from './attempt-cost.ts';
+import { readUsage, tokenCount, type AgentUsage } from './inference-usage.ts';
 
 // Local extensions keep this task within the store ownership boundary.
 export type ActivityKind = BaseActivityKind | 'gates';
@@ -216,10 +218,32 @@ export interface Change {
   updatedAt: string;
 }
 
+const ORIGIN_SOURCES = ['web', 'cli', 'api', 'automation', 'jira', 'resident'] as const;
+export type OriginSource = (typeof ORIGIN_SOURCES)[number];
+export interface ChangeOrigin { source: OriginSource; actorId: string | null }
+
+function originSource(value: unknown): OriginSource | null {
+  return typeof value === 'string' && (ORIGIN_SOURCES as readonly string[]).includes(value) ? value as OriginSource : null;
+}
+
 export type ChangeSource = 'cli' | 'channel' | 'jira' | 'automation';
 /** `agents` y `roles` salen de las activities; vacíos = «No medido». `roles` es el validador o, si no hay, el tipo. */
 export interface ChangeAttribution extends Change { source: ChangeSource | null; creator: string | null }
 export interface ChangeSummary extends ChangeAttribution { activityCount: number; agents: string[]; roles: string[] }
+type PrUrlFields = { prEvent: string | null; prJson: string | null };
+
+function readPrUrl({ prEvent, prJson }: PrUrlFields): string | null {
+  const eventUrl = prEvent && /^pr_opened:\s*(https:\/\/\S+)/i.exec(prEvent)?.[1];
+  if (eventUrl) return eventUrl;
+  if (prJson) {
+    try {
+      const url: unknown = JSON.parse(prJson)?.url;
+      if (typeof url === 'string' && url.startsWith('https://')) return url;
+    } catch { /* El enlace histórico puede estar dañado. */ }
+  }
+  return null;
+}
+
 export interface ChangeLinks { source?: { system: string; key: string; url: string }; pr?: { repo: string; number: number; url: string } }
 
 export interface WebhookDelivery {
@@ -729,6 +753,57 @@ export class Store {
       .query(`UPDATE activities SET lease_expires_at = ? WHERE status = 'in_progress' AND lease_expires_at IS NULL`)
       .run(migrationTtl);
     applyMigrations(this.db, this.now());
+    this.migrateSchema('t109-cost-attempts', [], () => this.db.exec(`
+CREATE TABLE cost_attempts (
+  id TEXT PRIMARY KEY,
+  activity_id TEXT NOT NULL REFERENCES activities(id),
+  change_id TEXT NOT NULL REFERENCES changes(id),
+  workstream_id TEXT NOT NULL REFERENCES workstreams(id),
+  started_at TEXT NOT NULL,
+  closed_at TEXT,
+  adapter TEXT NOT NULL,
+  runner TEXT,
+  remote INTEGER NOT NULL CHECK (remote IN (0,1)),
+  legacy_count INTEGER NOT NULL,
+  rate_version TEXT NOT NULL,
+  rate_effective_from TEXT NOT NULL,
+  hourly_micro_usd INTEGER,
+  platform_micro_usd INTEGER NOT NULL,
+  effective_model TEXT,
+  inference_micro_usd INTEGER,
+  inference_basis TEXT,
+  inference_version TEXT,
+  compute_duration_ms INTEGER,
+  compute_micro_usd INTEGER
+);
+CREATE INDEX idx_cost_attempts_change ON cost_attempts(change_id, started_at, id);
+CREATE INDEX idx_cost_attempts_started ON cost_attempts(started_at);
+CREATE INDEX idx_cost_attempts_workstream ON cost_attempts(workstream_id, started_at);
+`));
+    this.migrateSchema('t110-cost-attribution', ['t109-cost-attempts'], () => this.db.exec(`
+      ALTER TABLE signals ADD COLUMN origin_actor_id TEXT;
+      ALTER TABLE changes ADD COLUMN origin_source TEXT;
+      ALTER TABLE changes ADD COLUMN origin_actor_id TEXT;
+      ALTER TABLE cost_attempts ADD COLUMN attributed INTEGER NOT NULL DEFAULT 0 CHECK (attributed IN (0,1));
+      ALTER TABLE cost_attempts ADD COLUMN worker TEXT;
+      ALTER TABLE cost_attempts ADD COLUMN origin_source TEXT;
+      ALTER TABLE cost_attempts ADD COLUMN origin_actor_id TEXT;
+      CREATE INDEX idx_events_pr_opened ON events(change_id, id DESC) WHERE message GLOB 'pr_opened: https://*';
+    `));
+  }
+
+  /** Pasos de esquema con ID estable. DDL y registro se confirman en la misma transacción. */
+  private migrateSchema(id: string, requires: string[], migrate: () => void): void {
+    this.withRetry(() => {
+      this.db.exec('CREATE TABLE IF NOT EXISTS schema_migrations (id TEXT PRIMARY KEY, applied_at TEXT NOT NULL)');
+      const applied = this.db.query('SELECT 1 FROM schema_migrations WHERE id = ?');
+      if (applied.get(id)) return;
+      for (const dependency of requires) {
+        if (!applied.get(dependency)) throw new Error(`falta la migración ${dependency} para ${id}`);
+      }
+      migrate();
+      this.db.query('INSERT INTO schema_migrations (id, applied_at) VALUES (?, ?)').run(id, this.now());
+    });
   }
 
   private addColumn(table: string, column: string, ddl: string): void {
@@ -1147,21 +1222,88 @@ export class Store {
     }).immediate());
   }
 
-  // ---- signals -----------------------------------------------------------
-
-  addSignal(workstream: string, title: string, body: string, opts?: { source?: 'web' }): Signal {
-    const source = opts?.source;
-    if (source !== undefined && source !== 'web') {
-      throw new StoreError('invalid_input', 'origen de señal inválido');
-    }
-    return this.withRetry(() => this.#insertSignal(this.getWorkstream(workstream).id, title, body, source ?? null));
+  beginCostAttempt(a: Activity, input: { id: string; rate: CostRate; remote: boolean; runner: string | null; adapter: string; legacyCount: number; startedAt?: string; worker?: Role | null }): void {
+    const { id, rate, runner, adapter, remote, legacyCount } = input;
+    this.withRetry(() => {
+      const origin = this.getChangeOrigin(a.changeId);
+      this.db.query(`INSERT INTO cost_attempts (
+        id, activity_id, change_id, workstream_id, started_at, adapter, runner, remote,
+        legacy_count, rate_version, rate_effective_from, hourly_micro_usd, platform_micro_usd,
+        attributed, worker, origin_source, origin_actor_id
+      ) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,1,?,?,?)`).run(
+        id, a.id, a.changeId, a.workstreamId, input.startedAt ?? this.now(), adapter, runner, Number(remote),
+        legacyCount, rate.version, rate.effectiveFrom, rate.hourlyMicroUsd, rate.platformMicroUsd,
+        input.worker === undefined ? roleOf(a) : input.worker, origin?.source ?? null, origin?.actorId ?? null,
+      );
+    });
   }
 
-  #insertSignal(workstreamId: string, title: string, body: string, source: string | null): Signal {
-    const row = this.db.query<Row, [string, string, string, string, string, string | null, string | null]>(
-      `INSERT INTO signals (id, workstream_id, title, body, status, change_id, created_at, source, origin_user_id)
-       VALUES (?,?,?,?,'new',NULL,?,?,?) RETURNING *`,
-    ).get(randomUUID(), workstreamId, title, body, this.now(), source, this.#actor?.userId ?? null)!;
+  finishCostAttempt(id: string, evidence: AgentUsage | undefined, durationMs: number | undefined): void {
+    const usage = readUsage(evidence);
+    const inference = usdToMicro(usage?.costUsd);
+    const duration = tokenCount(durationMs);
+    this.withRetry(() => {
+      const row = this.db.query<{ remote: number; hourly: number | null }, [string]>(
+        'SELECT remote, hourly_micro_usd AS hourly FROM cost_attempts WHERE id = ? AND closed_at IS NULL',
+      ).get(id);
+      if (!row) return;
+      const basis = inference === null ? null : row.remote ? 'runner_declared' : usage?.priceVersion ? 'catalog' : 'provider_reported';
+      this.db.query(`UPDATE cost_attempts SET closed_at = ?, effective_model = ?, inference_micro_usd = ?,
+        inference_basis = ?, inference_version = ?, compute_duration_ms = ?, compute_micro_usd = ? WHERE id = ?`)
+        .run(this.now(), usage?.effectiveModel ?? null, inference, basis, inference === null ? null : usage?.priceVersion ?? null,
+          duration ?? null, computeMicroUsd(row.hourly, duration), id);
+    });
+  }
+
+  /** La casa tiene prueba de rechazo antes de ejecutar. Una pérdida de conexión conserva el intento. */
+  discardUnstartedCostAttempt(id: string): void {
+    this.withRetry(() => this.db.query('DELETE FROM cost_attempts WHERE id = ? AND closed_at IS NULL').run(id));
+  }
+
+  listCostAttempts(changeIds: string[] | null, filters: { since?: string | null; until?: string; workstreamId?: string } = {}): CostAttempt[] {
+    if (changeIds?.length === 0 || !this.db.query("SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'cost_attempts'").get()) return [];
+    const { since, until, workstreamId } = filters;
+    const attributed = (this.db.query('PRAGMA table_info(cost_attempts)').all() as Row[]).some(row => row.name === 'attributed');
+    const attribution = attributed
+      ? 'attributed, worker, origin_actor_id AS originActorId, origin_source AS originSource'
+      : '0 AS attributed, NULL AS worker, NULL AS originActorId, NULL AS originSource';
+    const rows = this.db.query(`SELECT cost.id, activity_id AS activityId, cost.change_id AS changeId, cost.workstream_id AS workstreamId,
+      started_at AS startedAt, closed_at AS closedAt, adapter, runner, remote, legacy_count AS legacyCount,
+      rate_version AS rateVersion, rate_effective_from AS rateEffectiveFrom, hourly_micro_usd AS hourlyMicroUsd,
+      platform_micro_usd AS platformMicroUsd, effective_model AS effectiveModel, inference_micro_usd AS inferenceMicroUsd,
+      inference_basis AS inferenceBasis, inference_version AS inferenceVersion, compute_duration_ms AS computeDurationMs,
+      compute_micro_usd AS computeMicroUsd, ${attribution}, ${this.prUrlFields('cost.change_id')}
+      FROM cost_attempts cost WHERE 1
+      ${changeIds ? `AND cost.change_id IN (${changeIds.map(() => '?').join(',')})` : ''}
+      ${workstreamId ? 'AND cost.workstream_id = ?' : ''}
+      ${since ? 'AND started_at >= ?' : ''} ${until ? 'AND started_at <= ?' : ''} ORDER BY started_at, cost.rowid`)
+      .all(...(changeIds ?? []), ...(workstreamId ? [workstreamId] : []), ...(since ? [since] : []), ...(until ? [until] : [])) as
+      (Omit<CostAttempt, 'remote' | 'attributed' | 'totalMicroUsd' | 'prUrl'> & { remote: number; attributed: number } & PrUrlFields)[];
+    return rows.map(({ prEvent, prJson, ...row }) => ({
+      ...row, remote: !!row.remote, attributed: !!row.attributed,
+      prUrl: row.attributed ? readPrUrl({ prEvent, prJson }) : null,
+      totalMicroUsd: row.closedAt === null || row.remote ? null :
+        completeCost(row.inferenceMicroUsd, row.computeMicroUsd, row.platformMicroUsd),
+    }));
+  }
+
+  // ---- signals -----------------------------------------------------------
+
+  addSignal(workstream: string, title: string, body: string, opts?: { source: OriginSource; actorId?: string | null }): Signal {
+    const source = opts?.source;
+    if (source !== undefined && !originSource(source)) {
+      throw new StoreError('invalid_input', 'origen de señal inválido');
+    }
+    return this.withRetry(() => this.#insertSignal(this.getWorkstream(workstream).id, title, body, source ?? null, opts?.actorId ?? null));
+  }
+
+  #insertSignal(workstreamId: string, title: string, body: string, source: string | null, actorId: string | null = null): Signal {
+    // Servidor: el originador es el usuario de sesión (no se acepta otro); origin_actor_id lo refleja y origin_user_id lo hereda el change al triar (T119c-H3).
+    const userId = this.#actor?.userId ?? null;
+    const row = this.db.query<Row, [string, string, string, string, string, string | null, string | null, string | null]>(
+      `INSERT INTO signals (id, workstream_id, title, body, status, change_id, created_at, source, origin_actor_id, origin_user_id)
+       VALUES (?,?,?,?,'new',NULL,?,?,?,?) RETURNING *`,
+    ).get(randomUUID(), workstreamId, title, body, this.now(), source, userId ?? actorId, userId)!;
     return toSignal(row);
   }
 
@@ -1183,7 +1325,9 @@ export class Store {
         if (signal.status !== 'new') {
           throw new StoreError('invalid_transition', `signal ${signalId} is ${signal.status}, not new`);
         }
-        const change = this.createChange(signal.workstreamId, opts.title ?? signal.title, opts.description ?? signal.body);
+        const source = signal.source?.startsWith('automation:') ? 'automation' : originSource(signal.source);
+        const origin = source ? { source, actorId: (s.origin_actor_id as string | null) ?? null } : undefined;
+        const change = this.createChange(signal.workstreamId, opts.title ?? signal.title, opts.description ?? signal.body, origin);
         // El responsable es quien originó la señal, no quien la tria (T119c-H3).
         if (typeof s.origin_user_id === 'string') this.db.query('UPDATE changes SET responsible_user_id = ? WHERE id = ?').run(s.origin_user_id, change.id);
         this.db
@@ -1388,7 +1532,7 @@ export class Store {
 
   // ---- changes -----------------------------------------------------------
 
-  createChange(workstream: string, title: string, description: string): Change {
+  createChange(workstream: string, title: string, description: string, origin?: ChangeOrigin): Change {
     const ws = this.getWorkstream(workstream);
     const id = randomUUID();
     this.withRetry(() => {
@@ -1406,9 +1550,9 @@ export class Store {
       // A change awaiting human approval sits in review; otherwise it waits for a worker.
       const status: ChangeStatus = firstKind === 'change_review' ? 'in_review' : 'pending';
       this.db
-        .query(`INSERT INTO changes (id, workstream_id, title, description, status, branch, created_at, updated_at)
-                VALUES (?,?,?,?,?,NULL,?,?)`)
-        .run(id, ws.id, title, description, status, t, t);
+        .query(`INSERT INTO changes (id, workstream_id, title, description, status, branch, created_at, updated_at, origin_source, origin_actor_id)
+                VALUES (?,?,?,?,?,NULL,?,?,?,?)`)
+        .run(id, ws.id, title, description, status, t, t, origin?.source ?? null, origin?.actorId ?? null);
       if (firstKind === 'change_review') {
         this.insertActivity(ws.id, id, null, 'change_review', 'completed', 'awaiting');
       } else {
@@ -1423,6 +1567,12 @@ export class Store {
     const r = this.db.query('SELECT * FROM changes WHERE id = ?').get(id) as Row | null;
     if (!r) throw new StoreError('not_found', `change ${id} not found`);
     return toChange(r);
+  }
+
+  getChangeOrigin(changeId: string): ChangeOrigin | null {
+    const row = this.db.query('SELECT * FROM changes WHERE id = ?').get(changeId) as Row | null;
+    const source = originSource(row?.origin_source);
+    return source ? { source, actorId: (row?.origin_actor_id as string | null) ?? null } : null;
   }
 
   listChanges(workstream: string): Change[] {
@@ -2570,22 +2720,17 @@ export class Store {
 
   /** Obtiene la URL del PR asociada a un change, si existe y es https://. Solo lectura local. */
   getChangePrUrl(changeId: string): string | null {
-    const ev = this.db.query("SELECT message FROM events WHERE change_id = ? AND message GLOB 'pr_opened: https://*' ORDER BY id DESC LIMIT 1").get(changeId) as { message: string } | null;
-    if (ev) {
-      const match = /^pr_opened:\s*(https:\/\/\S+)/i.exec(ev.message);
-      if (match && match[1]) return match[1];
-    }
+    const fields = this.db.query<PrUrlFields, [string]>(
+      `SELECT ${this.prUrlFields('changes.id')} FROM changes WHERE id = ?`,
+    ).get(changeId);
+    return fields ? readPrUrl(fields) : null;
+  }
+
+  private prUrlFields(changeIdSql: 'changes.id' | 'cost.change_id'): string {
     const hasLinks = this.db.query("SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'change_links'").get();
-    if (hasLinks) {
-      const row = this.db.query('SELECT pr_json FROM change_links WHERE change_id = ?').get(changeId) as { pr_json: string | null } | null;
-      if (row?.pr_json) {
-        try {
-          const pr = JSON.parse(row.pr_json) as { url?: string };
-          if (pr.url && typeof pr.url === 'string' && pr.url.startsWith('https://')) return pr.url;
-        } catch {}
-      }
-    }
-    return null;
+    return `(SELECT message FROM events WHERE change_id = ${changeIdSql}
+      AND message GLOB 'pr_opened: https://*' ORDER BY id DESC LIMIT 1) AS prEvent,
+      ${hasLinks ? `(SELECT pr_json FROM change_links WHERE change_id = ${changeIdSql})` : 'NULL'} AS prJson`;
   }
 
   /** Intervenciones humanas agrupadas por día para series temporales. */

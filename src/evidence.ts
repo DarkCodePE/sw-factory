@@ -241,8 +241,11 @@ export function changeCost(store: Store, stateDir: string, changeId: string): nu
   if (!acts.length) return null;
   let total = 0;
   for (const a of acts) {
-    const costs = activityCosts(a, activityMetadata(stateDir, a));
+    const meta = activityMetadata(stateDir, a);
+    const costs = activityCosts(a, meta);
     if (!costs || costs.some(c => c === null)) return null;
+    const inferences = activityInference(a, meta);
+    if (inferences.some(i => i.remoteDeclared)) return null;
     total += (costs as number[]).reduce((sum, c) => sum + c, 0);
   }
   return total;

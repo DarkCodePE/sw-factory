@@ -50,7 +50,7 @@ export type LiveActivityCtx = {
   prompt: string;
   model?: string | null;
   timeoutMs?: number; signal: AbortSignal; confine?: boolean; capturePath?: string; claudeProjects?: string; mcpConfigDir?: string;
-  onAttemptStart?: () => void; onAttemptEnd?: (run: AgentRun) => void;
+  onAttemptStart?: (id: string) => void; onAttemptEnd?: (id: string, run?: AgentRun, executionMs?: number) => void;
   onSpawn: (pgid: number) => void; crash?: (point: CrashPoint) => void;
   /** T72: servidores MCP del rol, entorno declarado y valores a limpiar. Todo ausente en modo anterior. */
   mcpServers?: Record<string, unknown>; envDecl?: EnvDecl; scrub?: Record<string, string>;
@@ -122,18 +122,22 @@ export async function runLiveActivity(store: Store, adm: AdmissionDb, a: Activit
         attemptId, activityId: a.id, changeId: a.changeId, sessionId: session.sessionId,
         generation: session.generation, plan: reason, questionId,
       });
-      ctx.onAttemptStart?.();
+      ctx.onAttemptStart?.(attemptId);
       ctx.crash?.('session-launched');
       const record = reports.recorder(a.id, attemptId, ctx.crash);
       let result;
+      let executionMs: number | undefined;
       try {
         result = await runLiveTurn(adm, ctx.backend, a.changeId, {
           ...turn, model: meta.model ?? undefined, prompt, cwd: ctx.cwd, attemptId, timeoutMs: ctx.timeoutMs, signal: ctx.signal, confine: ctx.confine, capturePath: ctx.capturePath, claudeProjects: ctx.claudeProjects, mcpConfigDir: ctx.mcpConfigDir,
-          onSpawn: ctx.onSpawn, mcpServers: ctx.mcpServers, envDecl: ctx.envDecl, scrub: ctx.scrub,
+          onSpawn: ctx.onSpawn, onExecutionEnd: ms => { executionMs = ms; }, mcpServers: ctx.mcpServers, envDecl: ctx.envDecl, scrub: ctx.scrub,
           onReport: (r) => record(scrubReport(r, ctx.scrub ?? {})),
         });
       } catch (error) {
-        if (!(error instanceof CrashInjected)) turns.end(attemptId, { outcome: isSessionLoss(error) ? 'session_lost' : 'error' });
+        if (!(error instanceof CrashInjected)) {
+          ctx.onAttemptEnd?.(attemptId, undefined, executionMs);
+          turns.end(attemptId, { outcome: isSessionLoss(error) ? 'session_lost' : 'error' });
+        }
         throw error;
       }
       if (ctx.scrub) { // S6: antes del log del turno y del resultado; los backends que no pasan por runAgent también
@@ -141,11 +145,11 @@ export async function runLiveActivity(store: Store, adm: AdmissionDb, a: Activit
         result = { ...result, output: clean(result.output), stdout: result.stdout === undefined ? undefined : clean(result.stdout), stderr: result.stderr === undefined ? undefined : clean(result.stderr), reports: result.reports.map(r => scrubReport(r, v)) };
       }
       const outcome = liveOutcome(result.reports);
+      ctx.onAttemptEnd?.(attemptId, result, executionMs ?? result.executionMs);
       turns.end(attemptId, {
         outcome: outcome?.kind ?? 'no_report', exitCode: result.exitCode, durationMs: result.durationMs,
         costUsd: result.usage?.costUsd, log: writeTurnLog(ctx, a, attemptId, result),
       });
-      ctx.onAttemptEnd?.(result);
       const confirm = reserved > 0 && !ctx.signal.aborted && (!hasAttachments || result.exitCode === 0);
       if (questionId || confirm) adm.tx(() => {
         if (questionId) markAnswerDelivered(adm, questionId);

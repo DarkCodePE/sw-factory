@@ -24,7 +24,7 @@ export function applyAdmission(store: Store, adm: AdmissionDb, p: { thread: stri
     }
     const content = adm.db.query('SELECT title, body FROM adm_content WHERE thread_id = ?').get(p.thread) as { title: string; body: string } | null;
     if (!content) throw new Error(`hilo ${p.thread}: no hay contenido admitido (T20); no se crea el signal`);
-    const signal = store.addSignal(p.workstream, content.title, content.body);
+    const signal = store.addSignal(p.workstream, content.title, content.body, { source: 'resident' });
     const scope = p.decision.scope_max;
     const change = scope === 'change' ? store.triageSignal(signal.id) : undefined;
     adm.db.query('INSERT INTO adm_thread_signals(thread_id, signal_id, scope, created_at, trigger_key) VALUES (?,?,?,?,?)').run(p.thread, signal.id, scope, adm.iso(), p.triggerKey ?? null);

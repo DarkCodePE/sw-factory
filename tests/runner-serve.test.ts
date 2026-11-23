@@ -380,3 +380,15 @@ test('T98-H4: el argv lanzado es el del adaptador local y el entorno solo trae b
     s.end(); await s.done;
   }
 });
+
+test('T109-H5 (M36): serve envía la marca de fin de ejecución (log vacío) entre accepted y result', async () => {
+  const s = session(); hello(s);
+  await until(() => s.has('hello'), 'hello');
+  await sendJob(s);
+  await until(() => s.has('result'), 'result');
+  const types = s.messages().map(m => m.type === 'log' && m.data === '' ? 'fin' : m.type as string);
+  const at = (t: string) => types.indexOf(t);
+  expect(at('fin')).toBeGreaterThan(at('accepted'));
+  expect(at('fin')).toBeLessThan(at('result'));
+  s.end(); expect(await s.done).toBe(0);
+});

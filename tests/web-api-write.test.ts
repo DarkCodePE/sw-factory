@@ -32,6 +32,15 @@ test('nota con clave decide: 200 y evento con actor api:<name>', async () => {
   expect((store.db.query("SELECT COUNT(*) AS n FROM events WHERE actor='api:agente'").get() as { n: number }).n).toBeGreaterThan(0);
 });
 
+test('T110: el origen API viene de la petición autenticada y no de sus campos', async () => {
+  expect((await post('/signals', { workstream: 'prueba', title: 'señal API', source: 'web', actorId: 'otro' })).status).toBe(200);
+  const [signal] = store.listSignals('prueba', 'new');
+  expect(signal?.source).toBe('api');
+  expect((await post(`/signals/${signal!.id}/triage`, {})).status).toBe(200);
+  const [triaged] = store.listSignals('prueba', 'triaged');
+  expect(store.getChangeOrigin(triaged!.changeId!)).toEqual({ source: 'api', actorId: null });
+});
+
 test('A7: sin --write, clave decide da 405 y no cambia nada', async () => {
   boot(false);
   expect((await post(`/changes/${change}/note`, { body: 'x' })).status).toBe(405);
@@ -50,8 +59,8 @@ test('A2: clave en la URL o en cookie, o sesión: 401', async () => {
 });
 
 test('A5: merge, gate y rutas ajenas a ACTIONS dan 404; las rutas salen de ACTIONS', async () => {
-  for (const p of [`/changes/${change}/merge`, `/changes/${change}/gate`, `/changes/${change}/approve`, '/keys', '/perfiles/importar', '/definicion/importar']) expect((await post(p, {})).status).toBe(404);
-  expect(Object.keys(ACTIONS).sort()).toEqual(['activities/review', 'activities/score', 'api-keys/create', 'api-keys/revoke', 'automations/create', 'automations/delete', 'automations/disable', 'automations/enable', 'automations/run', 'automations/update', 'automejora/save', 'benchmarks/cancel', 'changes/cancel', 'changes/note', 'changes/rename', 'changes/retry', 'changes/suite-task', 'definicion/importar', 'jira/import', 'perfiles/importar', 'questions/answer', 'resident/config', 'runners/check', 'runners/create', 'runners/delete', 'runners/update', 'scorers/backfill', 'signals/create', 'signals/ignore', 'signals/triage', 'workstreams/acceso', 'workstreams/adaptador', 'workstreams/archive', 'workstreams/create', 'workstreams/runner', 'workstreams/settings', 'workstreams/state']);
+  for (const p of [`/changes/${change}/merge`, `/changes/${change}/gate`, `/changes/${change}/approve`, '/keys', '/perfiles/importar', '/definicion/importar', '/scorers/nuevo']) expect((await post(p, {})).status).toBe(404);
+  expect(Object.keys(ACTIONS).sort()).toEqual(['activities/review', 'activities/score', 'api-keys/create', 'api-keys/revoke', 'automations/create', 'automations/delete', 'automations/disable', 'automations/enable', 'automations/run', 'automations/update', 'automejora/save', 'benchmarks/cancel', 'changes/cancel', 'changes/note', 'changes/rename', 'changes/retry', 'changes/suite-task', 'definicion/importar', 'jira/import', 'perfiles/importar', 'questions/answer', 'resident/config', 'runners/check', 'runners/create', 'runners/delete', 'runners/update', 'scorers/backfill', 'scorers/create', 'signals/create', 'signals/ignore', 'signals/triage', 'workstreams/acceso', 'workstreams/adaptador', 'workstreams/archive', 'workstreams/create', 'workstreams/runner', 'workstreams/settings', 'workstreams/state']);
 });
 
 test('H1: una clave decide no crea ni activa workstreams (api: false); settings y archive siguen', async () => {

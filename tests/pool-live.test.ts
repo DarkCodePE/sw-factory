@@ -243,6 +243,7 @@ test('S4: el pool muere con el report ya guardado → se aplica en vez de reejec
   expect(backend.turns).toHaveLength(1); // el segundo claim no lanzó nada
   expect(store.listActivities({ changeId: c.id })[0]).toMatchObject({ status: 'waiting_reply' });
   expect(adm.db.query('SELECT status FROM adm_questions').all()).toEqual([{ status: 'open' }]);
+  expect(store.listCostAttempts([c.id]).map(a => a.id)).toEqual(backend.turns.map(t => t.attemptId));
 });
 
 test('S4: un report done guardado antes de morir cierra la activity sin relanzar', async () => {
@@ -347,7 +348,7 @@ test('T108: la activity conserva los tokens de la pregunta y de la reanudación 
   backend.run = async turn => {
     const result = await invoke(turn);
     const inputTokens = backend.turns.length * 10;
-    return { ...result, usage: { effectiveModel: `medido-${backend.turns.length}`, inputTokens, outputTokens: 1, costUsd: inputTokens / 100 } };
+    return { ...result, executionMs: 700, usage: { effectiveModel: `medido-${backend.turns.length}`, inputTokens, outputTokens: 1, costUsd: inputTokens / 100 } };
   };
   await pool(ws.id, { fake: backend });
   const [inv] = store.listActivities({ changeId: c.id });
@@ -359,6 +360,10 @@ test('T108: la activity conserva los tokens de la pregunta y de la reanudación 
   expect(metadata.inferenceAttempts.map((a: { usage: unknown }) => a.usage)).toEqual([
     { effectiveModel: 'medido-1', inputTokens: 10, outputTokens: 1, costUsd: 0.1 },
     { effectiveModel: 'medido-2', inputTokens: 20, outputTokens: 1, costUsd: 0.2 },
+  ]);
+  expect(store.listCostAttempts([c.id]).map(a => [a.id, a.totalMicroUsd, a.computeDurationMs, a.computeMicroUsd, a.platformMicroUsd])).toEqual([
+    [backend.turns[0]!.attemptId, 100_000, 700, 0, 0],
+    [backend.turns[1]!.attemptId, 200_000, 700, 0, 0],
   ]);
 });
 

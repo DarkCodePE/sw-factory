@@ -8,7 +8,7 @@ import { join } from 'node:path';
 import { boundedAgentOutput, type AgentRun } from '../agents.ts';
 import { parseReportStatus } from '../prompts.ts';
 import { discardBundle, importResult, makeJobBundle, type Bundle } from './bundle.ts';
-import { LIMITS, ProtocolError, decodeLine, encode, logBudget, type Message, type MessageType } from './protocol.ts';
+import { EXECUTION_ENDED_LOG, LIMITS, ProtocolError, decodeLine, encode, logBudget, type Message, type MessageType } from './protocol.ts';
 
 export type RunnerErrorCode = 'RUNNER_UNREACHABLE' | 'RUNNER_REFUSED' | 'RUNNER_BUSY' | 'RUNNER_LOST' | 'RUNNER_RESULT_REJECTED';
 /** Error tipado que el pool (T74f) mapea a bloquear, reencolar o fallar. El detalle lo escribe casa, nunca el runner. */
@@ -21,11 +21,11 @@ export class RunnerError extends Error {
 
 export interface RemoteRunner { name: string; /** Alias de ~/.ssh/config del dueño. */ target: string }
 export interface RemoteJob {
-  activityId: string; attempt: number; adapter: string; model: string | null; readOnly: boolean; expectChanges: boolean;
+  activityId: string; attempt: number; attemptId?: string; adapter: string; model: string | null; readOnly: boolean; expectChanges: boolean;
   prompt: string; repo: string; worktree: string; head: string; base: string; timeoutMs: number; repoKey: string;
   /** Tope de ida en MiB del runner (`--max-bundle-mb`); el del protocolo (512 MiB) manda si es menor. */
   maxBundleMb?: number;
-  signal?: AbortSignal; onSpawn?: (pgid: number) => void; onDispatch?: () => void;
+  signal?: AbortSignal; onSpawn?: (pgid: number) => void; onDispatch?: () => void; onAccepted?: () => void; onExecutionEnd?: (durationMs: number | undefined) => void;
 }
 export interface Declared { fabSha: string; agentSha256: string | null; sandbox: string }
 export interface RemoteDeps {
@@ -33,6 +33,7 @@ export interface RemoteDeps {
   timer?: (fire: () => void, ms: number) => () => void;
   /** Margen sobre `timeoutMs` para que el runner mate al agente y alcance a contestar. */
   graceMs?: number;
+  monotonicNow?: () => number;
 }
 export type Transport = (runner: RemoteRunner) => string[];
 
@@ -173,7 +174,7 @@ const failedRun = (cause: Cause, start: number, log: string, exitCode: number): 
 
 export async function runRemoteAgent(runner: RemoteRunner, job: RemoteJob, transport: Transport = sshTransport, deps: RemoteDeps = {}): Promise<AgentRun & { declared: Declared }> {
   const start = Date.now();
-  const jobId = `${job.activityId}-${job.attempt}`;
+  const jobId = job.attemptId ?? `${job.activityId}-${job.attempt}`;
   const s = openSession(runner, transport, deps, job.timeoutMs + (deps.graceMs ?? 30_000), job.signal, job.onSpawn);
   const tmp = mkdtempSync(join(tmpdir(), 'fab-remote-'));
   const budget = logBudget();
@@ -200,10 +201,23 @@ export async function runRemoteAgent(runner: RemoteRunner, job: RemoteJob, trans
 
     const accepted = await next(s, ['accepted'], 'job');
     if (accepted.type !== 'accepted' || accepted.jobId !== jobId) throw new RunnerError('RUNNER_RESULT_REJECTED', 'accepted con otro jobId');
+    const monotonicNow = deps.monotonicNow ?? (() => performance.now());
+    const acceptedAt = monotonicNow();
+    job.onAccepted?.();
+    let executionMs: number | undefined;
+    let ended = false;
     let result: Extract<Message, { type: 'result' }> | undefined;
     while (!result) {
       const m = await next(s, ['log', 'result'], 'job', { expectChanges: job.expectChanges });
-      if (m.type === 'log') { const kept = budget.take(Buffer.from(m.data, 'base64')); if (kept.length) log.push(kept); } else if (m.type === 'result') result = m;
+      if (m.type === 'result') result = m;
+      if (m.type === 'log' && m.data === EXECUTION_ENDED_LOG) {
+        executionMs = ended ? undefined : Math.round(monotonicNow() - acceptedAt);
+        ended = true;
+        job.onExecutionEnd?.(executionMs);
+      } else if (m.type === 'log') {
+        const kept = budget.take(Buffer.from(m.data, 'base64'));
+        if (kept.length) log.push(kept);
+      }
     }
     if (result.jobId !== jobId) throw new RunnerError('RUNNER_RESULT_REJECTED', 'result con otro jobId');
     // R6: solo con el resultado completo se toca el worktree; importResult verifica tamaño, hash, padre y fast-forward.
@@ -218,7 +232,7 @@ export async function runRemoteAgent(runner: RemoteRunner, job: RemoteJob, trans
     const text = Buffer.concat(log).toString('utf8') + (budget.dropped ? `\n[log: ${budget.dropped} bytes descartados]\n` : '');
     const st = parseReportStatus(output);
     return {
-      ok: result.exitCode === 0 && output.length > 0, output, exitCode: result.exitCode, durationMs: result.durationMs,
+      ok: result.exitCode === 0 && output.length > 0, output, exitCode: result.exitCode, durationMs: result.durationMs, executionMs,
       status: { kind: st.kind, reason: st.reason }, ...(result.usage ? { usage: result.usage } : {}), stdout: text, declared,
     };
   } catch (e) {

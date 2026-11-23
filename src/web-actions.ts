@@ -1,7 +1,8 @@
 // Adaptación HTTP: las transiciones, el cercado y los eventos siguen en los comandos existentes.
 import { createHash } from 'node:crypto';
 import { join } from 'node:path';
-import { AutomationNameTakenError, isRunnerName, Store, StoreError, WorkstreamBusyError } from './store.ts';
+import { userInfo } from 'node:os';
+import { AutomationNameTakenError, isRunnerName, Store, StoreError, WorkstreamBusyError, type ChangeOrigin } from './store.ts';
 import { AGENT_NAMES } from './agents.ts';
 import { AUTO_INSTRUCTIONS_MAX, isProfileDigest } from './profile.ts';
 import { ANCESTOR_PATH_PREFIX, assertPrivateNoteDatabase, NOTE_ATTACHMENT_REMOTE, NOTE_ATTACHMENT_STATE, validateNoteAttachment, type NoteAttachment } from './note-attachments.ts';
@@ -22,6 +23,7 @@ import { noteForm } from './web-note-form.ts';
 import type { WebAuth } from './web-auth.ts';
 import { PROFILE_BODY_LIMIT, ProfileInputError, checkProfileFields, profileAction } from './web-profile.ts';
 import { enqueueBackfill, enqueueManual, ensureSchema, previewBackfill } from './scorers.ts';
+import { createScorer, scorerFromForm } from './web-scorers.ts';
 import { archiveWorkstream, createWorkstream, workstreamSettings, workstreamState, wsFields } from './web-ws.ts';
 import { accessInput, setAccess } from './web-access.ts';
 import { JIRA_IMPORT_PATH, JIRA_MESSAGES, residentChanges, residentInput, type jiraImportAction } from './web-entrada.ts';
@@ -108,7 +110,7 @@ export class InputError extends Error {
 
 type Raw = Record<string, string | undefined>;
 type Outcome = { destination: string; result: string; repo?: string };
-export type ActionOptions = { server?: boolean };
+export type ActionOptions = { server?: boolean; signalOrigin?: ChangeOrigin };
 type Action = { path: RegExp; /** T105: sube un paquete (multipart) y pasa por vista previa antes de escribir. */ importKind?: ImportKind; automationForm?: 'create' | 'update' | 'delete'; /** false: solo la web con sesión; la API con clave no la expone (decisión del dueño sobre H1). */ api?: false; httpErrors?: true; input: (raw: Raw, options?: ActionOptions) => Raw; run: (store: Store, id: string, input: Raw, out: Outcome, actor: string, stateDir: string, attachment?: NoteAttachment, options?: ActionOptions) => void };
 
 type CheckAction = { path: RegExp; importKind?: undefined; automationForm?: undefined; api: false; check: true };
@@ -334,6 +336,17 @@ export const ACTIONS: Record<string, Action | CheckAction | WebResponseAction | 
       store.event(ws.id, 'info', `${input.expected} puntuaciones encoladas (rango pasado${input.scorer ? `, juez ${input.scorer}` : ''})`);
     },
   },
+  // T114: «Añadir juez». Guarda un perfil nuevo con el juez; asignarlo es del dueño (D-H), así que la API con clave no lo expone.
+  'scorers/create': {
+    api: false,
+    path: /^\/(scorers)\/nuevo$/,
+    input: raw => { for (const k of ['rubric', 'classes']) limit(text(raw, k), 4096); return Object.fromEntries(['ws', 'name', 'scope', 'rubric', 'classes', 'passing', 'sampling', 'harness'].map(k => [k, text(raw, k)])); },
+    run: (store, _id, input, out, _actor, stateDir) => {
+      out.destination = '/metricas?tab=jueces';
+      const { slug, digest, created } = asInput(() => createScorer(store, stateDir, scorerFromForm(input)));
+      out.destination = `/perfiles?${new URLSearchParams({ ws: slug, digest, nuevo: created ? '1' : '0' })}`;
+    },
+  },
   'questions/answer': {
     path: route('questions', 'answer'),
     input: raw => {
@@ -353,9 +366,9 @@ export const ACTIONS: Record<string, Action | CheckAction | WebResponseAction | 
   'signals/create': {
     path: /^\/(signals)$/,
     input: raw => { limit(text(raw, 'body'), SIGNAL_BODY_MAX); return { title: titleOf(raw), body: text(raw, 'body'), workstream: text(raw, 'workstream') }; },
-    run: (store, _id, input, out) => {
+    run: (store, _id, input, out, _actor, _stateDir, _attachment, options) => {
       out.destination = '/signals';
-      const s = store.addSignal(input.workstream!, input.title!, input.body || input.title!);
+      const s = store.addSignal(input.workstream!, input.title!, input.body || input.title!, options?.signalOrigin);
       store.event(s.workstreamId, 'info', `signal creada desde la web: ${input.title}`);
     },
   },
@@ -768,7 +781,10 @@ async function runWebAction(req: Request, stateDir: string, gate: WebGate, usage
       delete fields.csrf;
       if (repeated) throw new InputError(400, 'El formulario contiene campos repetidos.');
     }
-    ({ destination, result } = await performAction(stateDir, name, id, fields, gate.who, file, options));
+    // Servidor: el originador lo fija el Store con el usuario de sesión; el usuario del sistema solo cuenta en local.
+    ({ destination, result } = await performAction(stateDir, name, id, fields, gate.who, file, {
+      ...options, signalOrigin: options?.signalOrigin ?? { source: 'web', actorId: isServer(gate.who) ? null : userInfo().username },
+    }));
     if (result === 'forbidden' || result === 'unauthorized') return new Response(result === 'forbidden' ? 'No autorizado.' : 'Sesión no válida.', { status: result === 'forbidden' ? 403 : 401 });
     if (action.httpErrors && result !== 'ok') {
       const status = result === 'conflict' ? 409 : result === 'not_found' ? 404 : result === 'invalid_input' ? 400 : 500;

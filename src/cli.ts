@@ -5,6 +5,7 @@ import { Console } from 'node:console';
 import { readFileSync, statSync } from 'node:fs';
 import { basename, resolve } from 'node:path';
 import { parseArgs } from 'node:util';
+import { userInfo } from 'node:os';
 
 import { captureMain } from './manifest-capture.ts';
 import { AGENT_NAMES } from './agents.ts';
@@ -379,7 +380,7 @@ async function main(argv: string[]): Promise<number> {
         if (sub === 'add') {
           const [slug, title] = rest;
           if (!slug || !title) throw new StoreError('invalid_input', 'usage: fab signal add <slug> <title> [--body text]');
-          const s = store.addSignal(slug, title, values.body ?? title);
+          const s = store.addSignal(slug, title, values.body ?? title, { source: 'cli', actorId: process.env.FAB_ACTOR ?? userInfo().username });
           console.log(`signal ${short(s.id)} añadida`);
         } else if (sub === 'list') {
           for (const s of store.listSignals(rest[0] ?? '')) console.log(`${short(s.id)} ${s.status.padEnd(9)} ${s.title}`);

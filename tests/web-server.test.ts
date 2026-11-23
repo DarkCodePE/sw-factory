@@ -82,10 +82,13 @@ describe('T118a: Modo servidor, frontera HTTP y arranque', () => {
     const socketPath = join(tempDir, 'fab-guarda.sock');
     const server = startWeb(stateDir, 0, { server: true, publicOrigin: 'https://fab.ejemplo.com', socketPath });
     try {
-      for (const path of ['/metricas', '/metricas?tab=gasto', '/activities/a1']) {
+      for (const path of ['/metricas', '/metricas?tab=gasto', '/metricas?tab=jueces', '/activities/a1']) {
         const res = await fetch(`http://localhost${path}`, { unix: socketPath, headers: { Host: 'fab.ejemplo.com' } } as any);
         expect(res.status).toBe(401);
       }
+      // T114: «Añadir juez» es una escritura nueva; sin sesión no llega a la acción.
+      const post = await fetch('http://localhost/scorers/nuevo', { method: 'POST', unix: socketPath, headers: { Host: 'fab.ejemplo.com', Origin: 'https://fab.ejemplo.com' }, body: new URLSearchParams({ name: 'x' }) } as any);
+      expect(post.status).toBe(401);
     } finally { server.stop(true); }
   });
 
