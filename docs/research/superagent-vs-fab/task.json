@@ -2065,7 +2065,7 @@
       "acceptance": "Matriz de permisos rol × acción con tests. Un viewer no puede ninguna acción. Cerrar la sesión invalida en servidor. Sin secretos en el repo; el client secret de OIDC va solo por nombre (D-K).",
       "estimate": "3-4 d",
       "risk": "alto",
-      "status": "pending",
+      "status": "partial",
       "depends_on": [
         "T118"
       ],
@@ -2073,7 +2073,16 @@
         "Equipo y usuarios",
         "Spending: por usuario"
       ],
-      "pr": null
+      "pr": null,
+      "note": "Usuarios, roles, login GitHub (OAuth+PKCE), sesiones web y CLI, claves fabu_ por usuario, política por rol y vía en las 37 acciones, vistas por rol, CLI remota con pareo, recuperación restringida con owner designado y diario de identidad. Subtareas T119a–e, cada una verificada por Fable (dos pasadas donde hubo altos). Decisiones D-1..D-4, D-R1, D-R2 y las de cada verificación en A.",
+      "followups": [
+        "fab user bootstrap y fab user recover por consola, y GET /equipo: bloquean el piloto en VM (T120)",
+        "Prueba con GitHub real, Caddy real y mTLS con navegador (falta proveedor de VM del dueño)",
+        "Eventos con código estructurado y texto libre aparte (T119c-H13 opción C), por si las vistas lo necesitan",
+        "Exigir enterRecovery tras toda restauración en código, no solo en el contrato (T119a-H20)",
+        "HMAC o ancla externa del diario de identidad: hoy la cadena da integridad, no autenticidad",
+        "Vistas estructuradas para viewer de /, /changes, /flujo, /metricas y demás (hoy 403)"
+      ]
     }
   ]
 }
