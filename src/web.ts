@@ -359,6 +359,9 @@ export function startWeb(stateDir: string, port = 4310, options: {
       return deny(403, 'Recuperación en curso: solo el owner designado confirma la lista en /recuperacion.');
     }
 
+    // Con `no-referrer` el navegador manda `Origin: null` en un POST de formulario del mismo origen y `originOk` lo rechazaría (T119b-H1):
+    // una página con formulario sale con `same-origin`.
+    const sendHtml = (body: string): Response => { const r = respond(body); if (body.includes('<form')) r.headers.set('Referrer-Policy', 'same-origin'); return r; };
     const f = flagsOf(url);
     const label = options.write ? 'Escritura habilitada' : 'Solo lectura';
     const visible = new Set(visiblePaths(principal, MENU)), allowed = (p: string) => visible.has(p);
@@ -395,7 +398,7 @@ export function startWeb(stateDir: string, port = 4310, options: {
       }
       if (turn) {
         if (!turn.found) return deny(404, 'Registro no encontrado');
-        return respond(shell(store, { title: 'Turno', body: `<p><a href="/changes/${enc(turn.changeId)}">Volver al change</a></p>` + transcriptSection(turn.log, url, ui) }));
+        return sendHtml(shell(store, { title: 'Turno', body: `<p><a href="/changes/${enc(turn.changeId)}">Volver al change</a></p>` + transcriptSection(turn.log, url, ui) }));
       }
       const id = /^\/(changes|activities)\/([^/]+)$/.exec(path);
       const content = f.isAutomationEditor ? automationEditor(store, csrf!, {
@@ -412,7 +415,7 @@ export function startWeb(stateDir: string, port = 4310, options: {
         : page(store, stateDir, url, csrf);
       if (!content) return deny(404, 'Página no encontrada');
       content.body = actionNotice(notices.take(principal.sessionId!, path)) + content.body;
-      return respond(shell(store, content));
+      return sendHtml(shell(store, content));
     } catch (error) {
       if (error instanceof StoreError && error.code === 'not_found') return deny(404, 'Registro no encontrado');
       if (error instanceof URIError) return deny(400, 'Ruta inválida');

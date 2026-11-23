@@ -202,3 +202,14 @@ test('la CSP de /login admite en form-action solo el origen de autorización de 
   expect(page).toContain('<link rel="stylesheet" href="/style.css">'); // style-src 'self' no admite estilos en línea
   expect(page).not.toContain('<style>');
 });
+
+// El navegador real lo descubrió (e2e de nube): con `no-referrer` Chrome manda `Origin: null` en el POST de un formulario del mismo origen.
+test('las páginas con formulario salen con Referrer-Policy same-origin y las que no, con no-referrer', async () => {
+  const conForm = await s.call('/signals', { as: 'owner' });
+  expect(await conForm.clone().text()).toContain('<form');
+  expect(conForm.headers.get('referrer-policy')).toBe('same-origin');
+  const sinForm = await s.call('/workstreams', { as: 'viewer' });
+  expect(await sinForm.clone().text()).not.toContain('<form');
+  expect(sinForm.headers.get('referrer-policy')).toBe('no-referrer');
+  expect((await s.call('/style.css')).headers.get('referrer-policy')).toBe('no-referrer');
+});
