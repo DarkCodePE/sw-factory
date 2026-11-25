@@ -69,7 +69,7 @@ test('HTTP: escapado, CSP, sin sondeo, HEAD, Host, 405 y disco inalterado', asyn
   seed(1, 2); store.close();
   const tree = () => readdirSync(dir, { recursive: true }).map(p => String(p)).sort();
   const before = tree(), bytes = readFileSync(join(dir, 'fabrica.db'));
-  const server = startWeb(dir, 0), url = `http://127.0.0.1:${server.port}/metricas`;
+  const server = startWeb(dir, 0), base = `http://127.0.0.1:${server.port}/metricas`, url = base + '?range=all';
   try {
     const r = await fetch(url); const html = await r.text();
     expect(r.status).toBe(200); expect(r.headers.get('content-security-policy')).toContain("default-src 'none'");
@@ -78,7 +78,7 @@ test('HTTP: escapado, CSP, sin sondeo, HEAD, Host, 405 y disco inalterado', asyn
     expect(await (await fetch(url, { method: 'HEAD' })).text()).toBe('');
     expect((await fetch(url, { headers: { Host: 'evil.test' } })).status).toBe(403);
     for (const method of ['POST','PUT','PATCH','DELETE','OPTIONS']) expect((await fetch(url, { method })).status).toBe(405);
-    expect((await fetch(url+'?range=bad')).status).toBe(400);
+    expect((await fetch(base+'?range=bad')).status).toBe(400);
     expect(tree()).toEqual(before); expect(readFileSync(join(dir, 'fabrica.db'))).toEqual(bytes);
   } finally { server.stop(true); store = new Store(join(dir, 'fabrica.db')); }
 });
@@ -734,7 +734,7 @@ test('T108 H6: el gasto y la tabla distinguen modelos efectivos, caché medida y
   });
 
   // IE2O1-H1 / IE2O1-H2: Gasto muestra los modelos efectivos y el pie actualizado
-  const gastoHtml = metricsPage(store, dir, new URL('http://127.0.0.1:4310/metricas?tab=gasto')).body;
+  const gastoHtml = metricsPage(store, dir, new URL('http://127.0.0.1:4310/metricas?tab=gasto&range=all')).body;
   expect(gastoHtml).toContain('servido-1');
   expect(gastoHtml).toContain('servido-2');
   expect(gastoHtml).not.toContain('pedido');
