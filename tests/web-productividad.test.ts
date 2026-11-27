@@ -114,6 +114,8 @@ test('T112-H2: una activity fuera de los días de la serie no entra en «Runs to
 
 test('T112-H2: con «Todo el historial» el subtítulo de runs dice los últimos 90 días', () => {
   seed();
+  // «Todo el historial» mira los últimos 90 días del reloj real: una activity de ayer garantiza que haya runs en la ventana.
+  store.db.query("UPDATE activities SET created_at=? WHERE id='c1'").run(new Date(Date.now() - 86400000).toISOString());
   const h = metricsPage(store, dir, new URL('http://127.0.0.1:4310/metricas?range=all')).body;
   expect(card(h, 'runs')).toContain('en los últimos 90 días');
 });
